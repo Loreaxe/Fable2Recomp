@@ -8,9 +8,10 @@ using Refii.Ui;
 /// Screen 21's three pages, owned — arrest notice, fine and parole terms. Not cursor-driven:
 /// the text is written once in the screen's activate (`sub_826A8C78`) and `sub_826A8E28` only
 /// toggles page visibility off a `screen+196` detector holding `Float3` (modes 50/51/52).
-/// Every value is a plain load — `sub_823C4128` composes both notices into LHStrings on the
-/// screen object with the fine beside them, so `RefiiHostGetCrimeScreen` needs no guest thread.
-/// Both strings are already Babel-resolved; only the fine's caption is a tag.
+/// The screen's one opener `sub_823C4128` states its arguments (`@CrimeScreen.Open`,
+/// crime_screen_stated.cpp); the two notices it composes from them are composed here the same
+/// way: `Babel(GUI_SCREEN_CRIME_YOU_HAVE_BEEN_CHARGED_WITH) + "\n" + charge` and
+/// `Babel(GUI_SCREEN_CRIME_COMMUNITY_SERVICE) + "\n" + Babel(serviceKey)` (`sub_826A96F0`).
 /// </summary>
 public static class Engine_UiCrimePage
 {
@@ -30,7 +31,27 @@ public static class Engine_UiCrimePage
 	/// </summary>
 	private const string BrokenParoleTag = "TEXT_AI_CRIME_THREE_STRIKES_BROKEN_PAROLE";
 
-	/// <summary>The values for the crime screen's three pages, or blanks when none is up.</summary>
+	private const string ChargedWithTag = "GUI_SCREEN_CRIME_YOU_HAVE_BEEN_CHARGED_WITH";
+
+	private const string CommunityServiceTag = "GUI_SCREEN_CRIME_COMMUNITY_SERVICE";
+
+	/// <summary>What the opener last stated: `Charge` its charge text, `Service` its service key.</summary>
+	public static Refii.Host.HostBridge.CrimeScreen Stated { get; private set; }
+
+	/// <summary>`@CrimeScreen.Open`: charge, fine, payFine, communityService, service key.</summary>
+	public static void Open(Engine_UiModel.GuiNativeCall call)
+	{
+		if (call.Arguments.Count == 5 &&
+			int.TryParse(call.Argument(1).Text, System.Globalization.NumberStyles.Integer,
+				System.Globalization.CultureInfo.InvariantCulture, out int fine))
+		{
+			Stated = new Refii.Host.HostBridge.CrimeScreen(
+				true, fine, call.Argument(2).Text == "1", call.Argument(3).Text == "1",
+				call.Argument(0).Text ?? string.Empty, call.Argument(4).Text ?? string.Empty);
+		}
+	}
+
+	/// <summary>The values for the crime screen's three pages, or blanks when none was opened.</summary>
 	public static IReadOnlyDictionary<string, string> Values(
 		Refii.Host.HostBridge.CrimeScreen crime,
 		Refii.Text.Engine_BabelDatabase? strings)
@@ -51,16 +72,29 @@ public static class Engine_UiCrimePage
 		// (`sub_826A8C78`); this screen uses newlines, not the completed-quests page's `<br>`.
 		string caption = Babel(strings, FineAmountTag);
 		string fine = crime.Fine.ToString(System.Globalization.CultureInfo.InvariantCulture);
-		values[Page1Text] = $"{Format(caption, fine)}\n\n{crime.Charge}";
+		string charge = $"{Babel(strings, ChargedWithTag)}\n{crime.Charge}";
+		values[Page1Text] = $"{Format(caption, fine)}\n\n{charge}";
 
 		// Page two — the charges alone.
-		values[Page2Text] = crime.Charge;
+		values[Page2Text] = charge;
 
 		// Page three — the charges, then the community-service terms or the broken-parole notice.
-		// The branch is `screen+45`, the same flag that gates the CommunityService row.
-		string terms = crime.CanServe ? crime.Service : Babel(strings, BrokenParoleTag);
-		values[Page3Text] = $"{crime.Charge}\n{terms}";
+		// The branch is the opener's communityService argument, which also gates that row.
+		string terms = crime.CanServe
+			? $"{Babel(strings, CommunityServiceTag)}\n{BabelKey(strings, crime.Service)}"
+			: Babel(strings, BrokenParoleTag);
+		values[Page3Text] = $"{charge}\n{terms}";
 		return values;
+	}
+
+	/// <summary>
+	/// A key as the guest's lookup `sub_8230E0E8` resolves it: the key itself, then `TEXT_` + key
+	/// (0x8230e1a4).
+	/// </summary>
+	private static string BabelKey(Refii.Text.Engine_BabelDatabase? strings, string key)
+	{
+		string value = Babel(strings, key);
+		return value.Length != 0 ? value : Babel(strings, "TEXT_" + key);
 	}
 
 	/// <summary>

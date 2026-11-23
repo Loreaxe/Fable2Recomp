@@ -20,9 +20,9 @@ using Refii.Ui;
 /// so they go through <see cref="Engine_UiOwnedBook.HostPositions"/> while their labels and the
 /// speaker-mode pickbox use the text channel.
 ///
-/// The profile blob is a dead end: every reader allocates 40 bytes, reads and frees before
-/// returning. The screen keeps its own copy — `sub_829C07D0` stores gamma on page 3 and
-/// `sub_829C1488` the audio set on page 4 — so all five are plain loads while it is open.
+/// The committed five are the levels the guest's own calls state (the profile's gamma getter and
+/// setter, the audio manager's four setters — `HostBridge.GetOptionSliders`); an open page's pips
+/// are its slider widgets' stated values.
 /// </summary>
 public static class Engine_UiOptionsPage
 {
@@ -49,14 +49,17 @@ public static class Engine_UiOptionsPage
 
 	private const string OnTag = "GUI_CONTROLS_ON";
 
-	/// <summary>The breadcrumb sizes, and the thresholds the row picks between them.</summary>
-	private static readonly (float Least, string Tag)[] BreadcrumbSizes =
+	/// <summary>
+	/// The breadcrumb row's captions by pickbox index: sizes 0, 0.5, 1, 1.5, 2 (`flt_8209B4A8`, the
+	/// thresholds its populate `sub_829BE4C8` steps the index through).
+	/// </summary>
+	private static readonly string[] BreadcrumbTags =
 	{
-		(0.0f, "GUI_OPTIONS_BCRUMB_OFF"),
-		(0.5f, "GUI_OPTIONS_BCRUMB_LOW"),
-		(1.0f, "GUI_OPTIONS_BCRUMB_MEDIUM"),
-		(1.5f, "GUI_OPTIONS_BCRUMB_HIGH"),
-		(2.0f, "GUI_OPTIONS_BCRUMB_VERYHIGH"),
+		"GUI_OPTIONS_BCRUMB_OFF",
+		"GUI_OPTIONS_BCRUMB_LOW",
+		"GUI_OPTIONS_BCRUMB_MEDIUM",
+		"GUI_OPTIONS_BCRUMB_HIGH",
+		"GUI_OPTIONS_BCRUMB_VERYHIGH",
 	};
 
 	/// <summary>Multiplayer orbs is three-state, not a toggle.</summary>
@@ -125,9 +128,7 @@ public static class Engine_UiOptionsPage
 			return places;
 		}
 
-		// While a page is open the pips follow the slider WIDGETS' live values, read back from
-		// the guest (see Engine_UiOptionsPending), not the page fields the export reads — page 3
-		// writes its field only on commit.
+		// The pips follow the slider WIDGETS' stated values (see Engine_UiOptionsPending).
 		sliders = Engine_UiOptionsPending.Pending(sliders);
 
 		Place(places, Gamma, sliders.Gamma);
@@ -151,14 +152,19 @@ public static class Engine_UiOptionsPage
 
 	/// <summary>The pickbox captions for the current settings, or blanks.</summary>
 	/// <param name="pageOpen">
-	/// True while the page level is open, when the pickbox captions are the GUEST's: LEFT/RIGHT
-	/// moves the pickbox's own index at once (`sub_828820B0`) but the setting commits only on A
-	/// (`sub_829BF698`), so a caption from the committed bytes would show the old choice. The
-	/// open page's captions are painted at the index read back from the guest's pickbox
-	/// (<see cref="Engine_UiOptionsPending.IndexOf"/>), blank until it has been read.
+	/// True while the page level is open: only the open page's rows are painted. Otherwise every
+	/// page's rows are.
 	/// </param>
+	/// <remarks>
+	/// Every caption is the index the guest's pickbox STATED (`@PickBox.Set`). The screen's enter
+	/// runs each page's populate (TU1 `sub_826D9D40` → `sub_82990610`, vtable +4 per page; disc
+	/// `sub_82582968`), which sets every pickbox to the committed setting: Game `sub_829BE130`
+	/// (disc `sub_828D7588`) — subtitles, breadcrumb, tutorials, orbs, auto-joinable — and Controls
+	/// `sub_829BFCF0` (disc `sub_828D9268`) — invert. LEFT/RIGHT moves the open page's pickbox at
+	/// once (`sub_828820B0`), A commits it (`sub_829BF698`) and B re-runs the populate, so outside an
+	/// open page the stated index IS the committed setting.
+	/// </remarks>
 	public static IReadOnlyDictionary<string, string> Values(
-		Refii.Host.HostBridge.GameOptions options,
 		Refii.Host.HostBridge.OptionSliders sliders,
 		Refii.Text.Engine_BabelDatabase? strings,
 		bool pageOpen = false)
@@ -166,43 +172,20 @@ public static class Engine_UiOptionsPage
 		var values = new Dictionary<string, string>(11);
 		if (!pageOpen)
 		{
-			values[Subtitles] = string.Empty;
-			values[Breadcrumb] = string.Empty;
-			values[TutorialBoxes] = string.Empty;
-			values[MultiplayerOrbs] = string.Empty;
-			values[AutoJoinable] = string.Empty;
-			values[InvertCamera] = string.Empty;
 			values[Speaker] = string.Empty;
 		}
 
-		// THE FOUR SLIDER CAPTIONS ARE NOT OURS TO WRITE, and writing them was reaching nothing:
-		// a real run reported `4 key(s) MATCHED NO ELEMENT` on this screen, one per slider.
-		//
-		// `sub_829C08B8` resolves `GUI_SCREEN_OPTIONS_GAMMA` through Babel and hands it to
-		// `sub_82881EF0` on a slider WIDGET — the object `sub_829C18B8(…, screen+28, n)` returns
-		// — not to an element the way the pickbox captions are written. `slider1.grp.text` was an
-		// invention by analogy with `..._pickbox.grp.text`, and there is no such element, so the
-		// caption these four wrote landed nowhere at all.
-		//
-		// Removing them changes nothing on screen and removes a false signal from the channel
-		// report. Painting them properly means reaching whatever element the widget composes its
-		// caption into, which needs the screen's own document rather than a guessed path.
+		// THE FOUR SLIDER CAPTIONS ARE NOT OURS TO WRITE: `sub_829C08B8` hands the caption to a slider
+		// WIDGET (`sub_82881EF0`), not to an element, so there is no `slider1.grp.text` to paint.
 
 		if (pageOpen)
 		{
-			// THE GUEST'S OWN PICKBOX INDICES, not yet committed — see Engine_UiOptionsPending.
-			// The guest's captions are a direct element write the clone never sees, so the host
-			// paints them from the same tables at the index each pickbox holds.
 			if (Engine_UiOptionsPending.Open)
 			{
 				switch (Engine_UiOptionsPending.Page)
 				{
 					case "Game":
-						values[Subtitles] = Toggle(strings, Engine_UiOptionsPending.IndexOf(0));
-						values[Breadcrumb] = Pick(strings, BreadcrumbTags, Engine_UiOptionsPending.IndexOf(1));
-						values[TutorialBoxes] = Toggle(strings, Engine_UiOptionsPending.IndexOf(2));
-						values[MultiplayerOrbs] = Pick(strings, OrbModes, Engine_UiOptionsPending.IndexOf(3));
-						values[AutoJoinable] = Toggle(strings, Engine_UiOptionsPending.IndexOf(4));
+						GamePage(values, strings, Engine_UiOptionsPending.IndexOf);
 						break;
 					case "Controls":
 						values[InvertCamera] = Toggle(strings, Engine_UiOptionsPending.IndexOf(0));
@@ -218,47 +201,26 @@ public static class Engine_UiOptionsPage
 
 		if (sliders.Known)
 		{
-			int mode = sliders.Speaker;
+			int mode = Engine_UiOptionsPending.Pending(sliders).Speaker;
 			values[Speaker] = mode >= 0 && mode < SpeakerModes.Length
 				? Babel(strings, SpeakerModes[mode])
 				: string.Empty;
 		}
 
-		if (!options.Known)
-		{
-			return values;
-		}
-
-		values[Subtitles] = Toggle(strings, options.Subtitles);
-		values[TutorialBoxes] = Toggle(strings, options.TutorialBoxes);
-		values[AutoJoinable] = Toggle(strings, options.AutoJoinable);
-		values[InvertCamera] = Toggle(strings, options.InvertCamera);
-		values[Breadcrumb] = Babel(strings, BreadcrumbTag(options.Breadcrumb));
-
-		int orbs = options.MultiplayerOrbs;
-		values[MultiplayerOrbs] = orbs >= 0 && orbs < OrbModes.Length
-			? Babel(strings, OrbModes[orbs])
-			: string.Empty;
-
+		GamePage(values, strings, row => Engine_UiOptionsPending.StatedIndex("Game", row));
+		values[InvertCamera] = Toggle(strings, Engine_UiOptionsPending.StatedIndex("Controls", 0));
 		return values;
 	}
 
-	/// <summary>
-	/// The size band a breadcrumb value falls in — the LAST threshold it reaches, not the
-	/// nearest, so a value between two bands shows the lower one.
-	/// </summary>
-	private static string BreadcrumbTag(float size)
+	/// <summary>The Game page's five pickboxes, each at the index <paramref name="indexOf"/> answers for its row.</summary>
+	private static void GamePage(
+		Dictionary<string, string> values, Refii.Text.Engine_BabelDatabase? strings, Func<int, int> indexOf)
 	{
-		string tag = BreadcrumbSizes[0].Tag;
-		foreach ((float least, string candidate) in BreadcrumbSizes)
-		{
-			if (size >= least)
-			{
-				tag = candidate;
-			}
-		}
-
-		return tag;
+		values[Subtitles] = Toggle(strings, indexOf(0));
+		values[Breadcrumb] = Pick(strings, BreadcrumbTags, indexOf(1));
+		values[TutorialBoxes] = Toggle(strings, indexOf(2));
+		values[MultiplayerOrbs] = Pick(strings, OrbModes, indexOf(3));
+		values[AutoJoinable] = Toggle(strings, indexOf(4));
 	}
 
 	private static string Toggle(Refii.Text.Engine_BabelDatabase? strings, bool on) =>
@@ -271,10 +233,6 @@ public static class Engine_UiOptionsPage
 	/// <summary>A pickbox's caption at its index; blank when unstated or past its table.</summary>
 	private static string Pick(Refii.Text.Engine_BabelDatabase? strings, string[] tags, int index) =>
 		index >= 0 && index < tags.Length ? Babel(strings, tags[index]) : string.Empty;
-
-	/// <summary>The breadcrumb row's captions by pickbox index — the same order as its sizes.</summary>
-	private static readonly string[] BreadcrumbTags =
-		Array.ConvertAll(BreadcrumbSizes, size => size.Tag);
 
 	private static string Babel(Refii.Text.Engine_BabelDatabase? strings, string tag) =>
 		strings is not null && strings.TryGetString(tag, out string value) ? value : string.Empty;

@@ -301,7 +301,7 @@ public class TitleBoundaryTests
 	}
 
 	/// <summary>
-	/// THE SHELL BINDS ONE ABI. Every export the shared HostBridge declares is answered by every
+	/// THE SHELL BINDS ONE ABI. Every export the shared HostBridge and NetBridge declare is answered by every
 	/// title's bridge — by the core, or by the title's own feeds — so a title switch never meets
 	/// an entry point that is not there. And Fable 3's "nothing stated" answers are only for
 	/// exports the shell still binds: one the shell dropped is deleted, not kept.
@@ -314,6 +314,7 @@ public class TitleBoundaryTests
 
 		var bound = new HashSet<string>(StringComparer.Ordinal);
 		string bridge = File.ReadAllText(Path.Combine(root!, "Godot", "src", "host", "HostBridge.cs")) +
+			File.ReadAllText(Path.Combine(root!, "Godot", "src", "host", "NetBridge.cs")) +
 			File.ReadAllText(Path.Combine(root!, "Godot", "src", "android", "HostBridge.Android.cs"));
 		foreach (Match match in ManagedImport.Matches(bridge))
 		{

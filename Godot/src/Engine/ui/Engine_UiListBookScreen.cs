@@ -172,7 +172,7 @@ public sealed class Engine_UiListBookScreen(uint screenId, string menuName, stri
 		Engine_UiExpandableMenu.Item? row = _menu?.Highlighted;
 		_book!.HostValues = Engine_UiDetailPages.Values(
 			screenId, row,
-			default, default, EmptyQuests, default, default, default, default,
+			default, default, EmptyQuests, default, default, default,
 			_book.Book?.Strings);
 		_book.HostTextures =
 			Engine_UiDetailPages.Textures(screenId, row);

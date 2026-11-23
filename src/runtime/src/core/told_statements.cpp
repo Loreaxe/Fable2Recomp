@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -75,10 +76,21 @@ struct HeadlessFile {
     std::string file;
     std::vector<std::pair<uint32_t, uint32_t>> elements;  // (parent id, name hash)
     bool live = true;
+    bool draw_parked = false;    // the guest's last write through the presentation's draw gate
+    bool update_parked = false;  // and through its update gate
+    int32_t screen = -1;         // the screen id the guest loaded it for, -1 for none
 };
 
 std::mutex g_headless_lock;
 std::unordered_map<uint32_t, HeadlessFile> g_headless;
+std::atomic<uint32_t> g_headless_generation{0};
+std::atomic<uint32_t> g_stated_screen{refii::vfs::kNoStatedScreen};
+std::atomic<uint32_t> g_stated_modal_mode{1};
+std::atomic<uint32_t> g_stated_modal_id{0};
+std::atomic<uint32_t> g_stated_tab{0};
+std::atomic<uint32_t> g_stated_screens_up{0};
+constexpr uint32_t kStatedValues = 32u;
+std::atomic<uint32_t> g_stated_values[kStatedValues]{};
 
 }  // namespace
 
@@ -91,6 +103,69 @@ extern "C" void refii_bridge_told_headless_presentation(uint32_t presentation, u
     }
     std::lock_guard<std::mutex> lock(g_headless_lock);
     g_headless[presentation] = std::move(entry);
+    ++g_headless_generation;
+}
+
+extern "C" void refii_bridge_told_headless_parked(uint32_t presentation, uint32_t gate, uint32_t parked) {
+    std::lock_guard<std::mutex> lock(g_headless_lock);
+    const auto it = g_headless.find(presentation);
+    if (it == g_headless.end() || !it->second.live) {
+        return;
+    }
+    bool& flag = gate == 0u ? it->second.draw_parked : it->second.update_parked;
+    if (flag != (parked != 0u)) {
+        flag = parked != 0u;
+        ++g_headless_generation;
+    }
+}
+
+extern "C" void refii_bridge_told_headless_screen(uint32_t presentation, uint32_t screen) {
+    std::lock_guard<std::mutex> lock(g_headless_lock);
+    const auto it = g_headless.find(presentation);
+    if (it == g_headless.end() || !it->second.live || it->second.screen == static_cast<int32_t>(screen)) {
+        return;
+    }
+    it->second.screen = static_cast<int32_t>(screen);
+    ++g_headless_generation;
+}
+
+extern "C" void refii_bridge_stated_screen(uint32_t screen) {
+    if (g_stated_screen.exchange(screen) != screen) {
+        ++g_headless_generation;
+    }
+}
+
+extern "C" uint32_t refii_bridge_stated_screen_now(void) { return g_stated_screen.load(); }
+
+extern "C" void refii_bridge_stated_modal(uint32_t mode, uint32_t id) {
+    g_stated_modal_mode.store(mode);
+    g_stated_modal_id.store(id);
+}
+
+extern "C" void refii_bridge_stated_tab(uint32_t tab) { g_stated_tab.store(tab); }
+
+extern "C" void refii_bridge_stated_value(uint32_t key, uint32_t value) {
+    if (key < kStatedValues) g_stated_values[key].store(value);
+}
+
+extern "C" uint32_t refii_bridge_stated_value_now(uint32_t key) {
+    return key < kStatedValues ? g_stated_values[key].load() : 0u;
+}
+
+extern "C" void refii_bridge_stated_screens_up(uint32_t up) {
+    g_stated_screens_up.store(up);
+    if (up == 0u) {
+        g_stated_modal_mode.store(1u);
+        g_stated_modal_id.store(0u);
+        g_stated_tab.store(0u);
+    }
+}
+
+extern "C" uint32_t refii_bridge_stated_pause(uint32_t* modal_mode, uint32_t* modal_id, uint32_t* tab) {
+    if (modal_mode != nullptr) *modal_mode = g_stated_modal_mode.load();
+    if (modal_id != nullptr) *modal_id = g_stated_modal_id.load();
+    if (tab != nullptr) *tab = g_stated_tab.load();
+    return g_stated_screens_up.load();
 }
 
 extern "C" void refii_bridge_told_headless_gone(uint32_t presentation, uint32_t serial) {
@@ -98,6 +173,7 @@ extern "C" void refii_bridge_told_headless_gone(uint32_t presentation, uint32_t 
     const auto it = g_headless.find(presentation);
     if (it != g_headless.end() && it->second.serial == serial) {
         it->second.live = false;
+        ++g_headless_generation;
     }
 }
 
@@ -169,15 +245,33 @@ uint32_t ToldHeadlessFile(uint32_t presentation, uint32_t serial, char* out, uin
     return length;
 }
 
-uint32_t ToldHeadlessLive(uint32_t* out, uint32_t capacity) {
+uint32_t ToldHeadlessGeneration() { return g_headless_generation.load(); }
+
+uint32_t ToldHeadlessList(uint32_t* words, uint32_t word_capacity, char* names, uint32_t name_capacity) {
     std::lock_guard<std::mutex> lock(g_headless_lock);
     uint32_t count = 0;
+    uint32_t chars = 0;
     for (const auto& [presentation, entry] : g_headless) {
         if (!entry.live) {
             continue;
         }
-        if (out != nullptr && count < capacity) {
-            out[count] = presentation;
+        const uint32_t offset = chars;
+        for (const char c : entry.file) {
+            if (names != nullptr && chars < name_capacity) {
+                names[chars] = c;
+            }
+            ++chars;
+        }
+        if (names != nullptr && chars < name_capacity) {
+            names[chars] = '\0';
+        }
+        ++chars;
+        if (words != nullptr && count * 5u + 4u < word_capacity) {
+            words[count * 5u] = presentation;
+            words[count * 5u + 1u] = entry.serial;
+            words[count * 5u + 2u] = offset;
+            words[count * 5u + 3u] = (entry.draw_parked ? 1u : 0u) | (entry.update_parked ? 2u : 0u);
+            words[count * 5u + 4u] = static_cast<uint32_t>(entry.screen + 1);
         }
         ++count;
     }

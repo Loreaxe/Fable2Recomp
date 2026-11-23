@@ -22,6 +22,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <initializer_list>
+#include <utility>
 #include <vector>
 
 #include "vfs_hooks_private.h"
@@ -249,6 +251,171 @@ std::string WideText(uint8_t* base, uint32_t at) {
 
 }  // namespace
 
+namespace {
+
+/// What the writers last said, forgotten. The maps drop a statement that repeats the last one, and
+/// the guest moves the bound elements without a writer in three places: a level change or a save
+/// load resets every binding (`sub_827F16F8`, disc `sub_827CE0B0`: slot 2 of each, from
+/// `sub_82371AA0`), and the HUD's registries are destroyed and built again (`sub_827F0E20` /
+/// `sub_827F0F00`, disc `sub_827CD7D8` / `sub_827CD8B8`). After any of them the guest's next
+/// statement is news even when it repeats the last one.
+uint32_t g_targeted_said = 0xFFFFFFFFu;  // under g_said_lock
+
+void ForgetWhatWasSaid() {
+    std::lock_guard<std::mutex> lock(g_said_lock);
+    g_said.clear();
+    g_images.clear();
+    g_values_said.clear();
+    g_targeted_said = 0xFFFFFFFFu;
+}
+
+}  // namespace
+
+// The targeted readout's publisher `sub_823FD410(f1 opinion, r3 block, r4 record)` (disc
+// `sub_8256CB40`): the record's first word is the entity it publishes (`sub_821B2390(*a3)`
+// 0x823fd478, `*(*a3 + 144) & 0x40` 0x823fd530). Everything else it publishes goes through the
+// registry writers above; the entity is stated here, when it is another one.
+REX_EXTERN(rex_lhHudTargeted_Publish) {
+    const uint32_t record = ctx.r4.u32;
+    const uint32_t entity = Plausible(record) ? refii::vfs::LoadGuestU32(base, record) : 0u;
+    __imp__rex_lhHudTargeted_Publish(ctx, base);
+    {
+        std::lock_guard<std::mutex> lock(g_said_lock);
+        if (g_targeted_said == entity) return;
+        g_targeted_said = entity;
+    }
+    refii::vfs::GuiNativeCall call;
+    call.name = "@Hud.Targeted";
+    refii::vfs::GuiNativeArgument argument;
+    argument.kind = refii::vfs::GuiNativeArgument::Kind::kString;
+    argument.text = std::to_string(entity);
+    call.arguments.push_back(std::move(argument));
+    refii::vfs::PostGuiNativeCall(std::move(call));
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE TOPBOX. Its composer `sub_821787D0(mgr, f1 dt)` (disc `sub_82178598`) states the front
+// record through the registry writers above, and asks two things on the way that it never
+// writes anywhere: the front record (`sub_8230D4F0(mgr)` at 0x82178848, disc `sub_82333930`) and
+// its channel (`sub_8230D130(mgr)` at 0x82178970, disc `sub_82333570`). What those two answered
+// inside one composition is stated here, with the record's own fields (`+0` name hash, `+4` title
+// tag, `+16/+17` A shown / held, `+24/+25` Y shown / held).
+//
+// The composer is gated (its countdown `mgr+32`, the hidden bytes `mgr+0/+1` at 0x8217881c): a
+// call that never asks for the front states nothing. `sub_8230C7A8(mgr, hidden)` (disc
+// `sub_82332BE8`, `stb r4,0(r3)` 0x8230c7dc) is `GUI.SetTopBoxHidden`'s write, stated as it is.
+//
+// The title and body go through the text group writer `sub_823FCEB0(registry, group hash, vector)`
+// (disc `sub_8257BE90`, 0x82178c14): the vector's `+4/+8` are the begin and end of 16-byte entries,
+// `+0` the element's name hash and `+4` its LHString, already resolved. The writer frees the
+// vector, so the entries are read before the call.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+thread_local bool t_composing = false;
+thread_local bool t_front_asked = false;
+thread_local uint32_t t_front[7] = {};  // present, name, title, showA, holdA, showY, holdY
+thread_local uint32_t t_front_channel = 0;
+
+void PostWords(const char* name, std::initializer_list<uint32_t> words) {
+    refii::vfs::GuiNativeCall call;
+    call.name = name;
+    for (const uint32_t word : words) {
+        refii::vfs::GuiNativeArgument argument;
+        argument.kind = refii::vfs::GuiNativeArgument::Kind::kString;
+        argument.text = std::to_string(word);
+        call.arguments.push_back(std::move(argument));
+    }
+    refii::vfs::PostGuiNativeCall(std::move(call));
+}
+
+}  // namespace
+
+REX_EXTERN(rex_lhHudTopBox_Front) {
+    __imp__rex_lhHudTopBox_Front(ctx, base);
+    if (!t_composing) return;
+    const uint32_t record = ctx.r3.u32;
+    t_front_asked = true;
+    t_front[0] = Plausible(record) ? 1u : 0u;
+    if (t_front[0] != 0u) {
+        t_front[1] = refii::vfs::LoadGuestU32(base, record);
+        t_front[2] = refii::vfs::LoadGuestU32(base, record + 4u);
+        t_front[3] = refii::vfs::LoadGuestU8(base, record + 16u);
+        t_front[4] = refii::vfs::LoadGuestU8(base, record + 17u);
+        t_front[5] = refii::vfs::LoadGuestU8(base, record + 24u);
+        t_front[6] = refii::vfs::LoadGuestU8(base, record + 25u);
+    }
+}
+
+REX_EXTERN(rex_lhHudTopBox_FrontChannel) {
+    __imp__rex_lhHudTopBox_FrontChannel(ctx, base);
+    if (t_composing) t_front_channel = ctx.r3.u32;
+}
+
+REX_EXTERN(rex_lhHudTopBox_Compose) {
+    t_composing = true;
+    t_front_asked = false;
+    t_front_channel = 0u;
+    for (uint32_t& word : t_front) word = 0u;
+    __imp__rex_lhHudTopBox_Compose(ctx, base);
+    t_composing = false;
+    if (t_front_asked) {
+        PostWords("@Hud.TopBoxFront", {t_front[0], t_front_channel, t_front[1], t_front[2], t_front[3], t_front[4],
+                                       t_front[5], t_front[6]});
+    }
+}
+
+REX_EXTERN(rex_lhHudTopBox_SetHidden) {
+    const uint32_t hidden = (ctx.r4.u32 & 0xFFu) != 0u ? 1u : 0u;
+    __imp__rex_lhHudTopBox_SetHidden(ctx, base);
+    PostWords("@Hud.TopBoxHidden", {hidden});
+}
+
+REX_EXTERN(rex_lhGuiRegistry_SetTextGroup) {
+    const uint32_t group = ctx.r4.u32;
+    const uint32_t vector = ctx.r5.u32;
+    std::vector<std::pair<uint32_t, std::string>> entries;
+    if (Plausible(vector)) {
+        const uint32_t begin = refii::vfs::LoadGuestU32(base, vector + 4u);
+        const uint32_t end = refii::vfs::LoadGuestU32(base, vector + 8u);
+        if (Plausible(begin) && end >= begin && end - begin <= 16u * 64u) {
+            for (uint32_t at = begin; at + 16u <= end; at += 16u) {
+                entries.emplace_back(refii::vfs::LoadGuestU32(base, at), WideText(base, at + 4u));
+            }
+        }
+    }
+    __imp__rex_lhGuiRegistry_SetTextGroup(ctx, base);
+    for (auto& [element, text] : entries) {
+        refii::vfs::GuiNativeCall call;
+        call.name = "@Gui.TextGroup";
+        for (std::string value : {std::to_string(group), std::to_string(element), std::move(text)}) {
+            refii::vfs::GuiNativeArgument argument;
+            argument.kind = refii::vfs::GuiNativeArgument::Kind::kString;
+            argument.text = std::move(value);
+            call.arguments.push_back(std::move(argument));
+        }
+        refii::vfs::PostGuiNativeCall(std::move(call));
+    }
+}
+
+REX_EXTERN(rex_lhHudRegistries_ResetBindings) {
+    __imp__rex_lhHudRegistries_ResetBindings(ctx, base);
+    ForgetWhatWasSaid();
+}
+
+REX_EXTERN(rex_lhHudRegistries_Destroy) {
+    __imp__rex_lhHudRegistries_Destroy(ctx, base);
+    ForgetWhatWasSaid();
+    PostWords("@Gui.RegistryReset", {});
+}
+
+REX_EXTERN(rex_lhHudRegistries_Build) {
+    ForgetWhatWasSaid();
+    PostWords("@Gui.RegistryReset", {});
+    __imp__rex_lhHudRegistries_Build(ctx, base);
+}
+
 REX_EXTERN(rex_lhGuiRegistry_SetMeter) {
     const uint32_t registry = ctx.r3.u32;
     const uint32_t hash = ctx.r4.u32;
@@ -282,6 +449,34 @@ REX_EXTERN(rex_lhGuiRegistry_ScrubMeter) {
     const float value = static_cast<float>(ctx.f1.f64);
     __imp__rex_lhGuiRegistry_ScrubMeter(ctx, base);
     PostValue(base, "@Gui.Meter", registry, hash, {"scrub", Number(value), "0", "0"});
+}
+
+// The meter registry's stop `sub_823FE4A0(registry, hash)` (disc `sub_8257C5D8`): every binding's
+// target becomes its current value and its rate 0 (`v11[7] = v11[5]; v11[6] = 0.0` 0x823fe4e0).
+REX_EXTERN(rex_lhGuiRegistry_FreezeMeter) {
+    const uint32_t registry = ctx.r3.u32;
+    const uint32_t hash = ctx.r4.u32;
+    __imp__rex_lhGuiRegistry_FreezeMeter(ctx, base);
+    PostValue(base, "@Gui.Meter", registry, hash, {"freeze", "0", "0", "0"});
+}
+
+// The pulser registry's writers: `sub_828F09C0(registry, hash, f1 rate)` (disc `sub_8283E958`)
+// sets every binding's rate and mode 0 (`*(v12 + 24) = a9; *(v12 + 12) = 0` 0x828f09fc), and
+// `sub_828F0A28(registry, hash)` (disc `sub_8283E9C0`) turns a looping one to finishing
+// (`if ( !*(b + 12) ) *(b + 12) = 1` 0x828f0a58).
+REX_EXTERN(rex_lhGuiRegistry_StartPulser) {
+    const uint32_t registry = ctx.r3.u32;
+    const uint32_t hash = ctx.r4.u32;
+    const float rate = static_cast<float>(ctx.f1.f64);
+    __imp__rex_lhGuiRegistry_StartPulser(ctx, base);
+    PostValue(base, "@Gui.Pulser", registry, hash, {"start", Number(rate)});
+}
+
+REX_EXTERN(rex_lhGuiRegistry_StopPulser) {
+    const uint32_t registry = ctx.r3.u32;
+    const uint32_t hash = ctx.r4.u32;
+    __imp__rex_lhGuiRegistry_StopPulser(ctx, base);
+    PostValue(base, "@Gui.Pulser", registry, hash, {"stop", "0"});
 }
 
 REX_EXTERN(rex_lhGuiRegistry_SetText) {

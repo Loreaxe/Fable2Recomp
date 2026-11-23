@@ -62,11 +62,10 @@ public partial class GameUi
 		_guiRoutesReady = true;
 		Fable2PageProviders.Widgets = _widgets;
 
-		// The fade family is deliberately not routed: the host draws the pixels from the guest's
-		// own state object at `*(GUI+64)` — `+0` progress `t`, `+4` duration in seconds,
-		// `+8..11` from-colour, `+12..15` to-colour, `+0x21` lock byte, `+0x28` draw-quad
-		// handle. The on-screen colour is never stored; `sub_822C7970` lerps it per read.
-		// `sub_822C1FC0` advances `t` from the 15 Hz game tick by a fixed `1/(15 * duration)`.
+		// The fade family is deliberately not routed: the host draws the pixels from the fader as
+		// its one start `sub_823CE950` and its per-tick advance `sub_822C1FC0` state it
+		// (screen_fade_stated.cpp) — progress `t`, from-colour, to-colour and the lock. The
+		// on-screen colour is never stored; `sub_822C7970` lerps it per read.
 		//
 		// Four guest consumers hard-gate on it, two of which deadlock rather than glitch:
 		//   `CmdLoadSaveGame_Update` (0x823D7778) stays in state 1 while it fades and does NOT
@@ -255,6 +254,14 @@ public partial class GameUi
 				call.Argument(3).Text == "1");
 		});
 
+		_guiNatives.Register("@MenuBox.Select", call =>
+		{
+			if (GuestAddress(call) is { } box && int.TryParse(call.Argument(1).Text, out int index))
+			{
+				Engine_UiDisplayBoxes.MenuSelected(box, index);
+			}
+		});
+
 		_guiNatives.Register("@MenuBox.Close", call =>
 		{
 			if (GuestAddress(call) is { } box)
@@ -273,6 +280,43 @@ public partial class GameUi
 				int.TryParse(call.Argument(2).Text, out int slide))
 			{
 				_hud?.Values.StateRegistrySlide(registry, hash, slide, call.Argument(3).Text == "1");
+			}
+		});
+
+		// The TopBox composer's front record, its hidden write and its texts (gui_registry_hooks.cpp).
+		_guiNatives.Register("@Hud.TopBoxFront", call =>
+		{
+			var words = new uint[8];
+			for (int i = 0; i < words.Length; ++i)
+			{
+				if (!uint.TryParse(call.Argument(i).Text, out words[i]))
+				{
+					return;
+				}
+			}
+
+			Engine_UiHudTopBox.StateFront(
+				words[0] != 0u, (int)words[1], words[2], words[3],
+				words[4] != 0u, words[5] != 0u, words[6] != 0u, words[7] != 0u);
+		});
+
+		_guiNatives.Register("@Hud.TopBoxHidden", call =>
+			Engine_UiHudTopBox.StateHidden(call.Argument(0).Text == "1"));
+
+		_guiNatives.Register("@Gui.TextGroup", call =>
+		{
+			if (uint.TryParse(call.Argument(1).Text, out uint element))
+			{
+				Engine_UiHudTopBox.StateText(element, call.Argument(2).Text ?? string.Empty);
+			}
+		});
+
+		// The targeted readout's publisher stating its entity (gui_registry_hooks.cpp), 0 for none.
+		_guiNatives.Register("@Hud.Targeted", call =>
+		{
+			if (uint.TryParse(call.Argument(0).Text, out uint entity))
+			{
+				Engine_UiHudTargetedQuery.Entity = entity;
 			}
 		});
 
@@ -349,6 +393,36 @@ public partial class GameUi
 				player is 1 or 2)
 			{
 				_boxes.SeatBox(box, player);
+			}
+		});
+
+		// Time Control's dial as its draw was given it (slow_time_dial_stated.cpp): the record's
+		// address, the alpha, then eight words per segment; its close states it down.
+		_guiNatives.Register("@SlowTime.Draw", call =>
+		{
+			if (GuestAddress(call) is not { } dial || call.Arguments.Count != 18)
+			{
+				return;
+			}
+
+			var words = new uint[17];
+			for (int i = 0; i < words.Length; ++i)
+			{
+				if (!uint.TryParse(call.Argument(i + 1).Text, System.Globalization.NumberStyles.Integer,
+					System.Globalization.CultureInfo.InvariantCulture, out words[i]))
+				{
+					return;
+				}
+			}
+
+			_statedSlowTimeDials[dial] = words;
+		});
+
+		_guiNatives.Register("@SlowTime.End", call =>
+		{
+			if (GuestAddress(call) is { } dial)
+			{
+				_statedSlowTimeDials.Remove(dial);
 			}
 		});
 
@@ -637,7 +711,7 @@ public partial class GameUi
 		// starters write the object at `*(*(GUI+32)+44)`, the GUI tick advances the pip
 		// (`sub_822ACBF8`), the guest's own A press judges it (`sub_823D21C0`) and the four
 		// predicates answer from it. A host copy here judged nothing and answered nothing; the
-		// HUD draws the object instead — RefiiHostGetExpressionMeter and
+		// HUD draws what the meter's own methods state (`@Hud.ExpressionMeter`) —
 		// Engine_UiHudExpressionMeter.
 		foreach (string meterNative in new[]
 			{

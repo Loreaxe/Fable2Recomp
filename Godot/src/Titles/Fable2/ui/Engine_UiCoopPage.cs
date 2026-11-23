@@ -21,7 +21,8 @@ using Refii.Ui;
 /// slide when !L = (s || !q || accR) ? 5 : r==1 ? 3 : 4.</item>
 /// <item>PROFILES (`sub_8281F010`): a published widget (+56 == 4) puts its selector on slide 2.</item>
 /// <item>ACCEPT (`sub_8243AC48`, `sub_824398B8`): each side's `AcceptGroup` at 50 accepted, 100
-/// not; with flag 298 each `CancelGroup` at 100 accepted, 50 not.</item>
+/// not; with flag 298 each `CancelGroup` at 100 accepted, 50 not. Accepted is stated by
+/// SetAccepted itself (<see cref="Engine_UiCoopStated"/>).</item>
 /// <item>CONNECTING (`sub_82437810`): on the online host path while the peer is not ready, the
 /// right page's selector, pickboxes and buttons hide and `Connecting.Text` is on slide 2 with
 /// `GUI_SCREEN_COOP_CONNECTING_TO_X` (the peer's name) or `GUI_SCREEN_COOP_CONNECTING`.</item>
@@ -87,6 +88,10 @@ public static class Engine_UiCoopPage
 			}
 		}
 
+		// Each page's accepted, as its SetAccepted stated it (Engine_UiCoopStated).
+		bool acceptedLeft = Engine_UiCoopStated.Current?.LeftAccepted ?? false;
+		bool acceptedRight = Engine_UiCoopStated.Current?.RightAccepted ?? false;
+
 		// The buttons.
 		bool local = coop.Session == 2;
 		bool signedIn = coop.RightSignedIn;
@@ -94,7 +99,7 @@ public static class Engine_UiCoopPage
 		int r = !ok || coop.UserRightSave == -1 ? 0 : signedIn ? 2 : local ? 1 : 0;
 		bool q = local && !signedIn && (!coop.Flag297 || coop.Flag298);
 		bool s = coop.SaveChosen;
-		said.Slides[Right + "buttons"] = signedIn ? (r == 2 && !s && !coop.AcceptedRight ? 2 : 3) : 1;
+		said.Slides[Right + "buttons"] = signedIn ? (r == 2 && !s && !acceptedRight ? 2 : 3) : 1;
 		if (!remotePlayerTwo)
 		{
 			said.Values[Right + "buttons.LoadGroup.LoadText"] =
@@ -109,7 +114,7 @@ public static class Engine_UiCoopPage
 
 		if (!signedIn)
 		{
-			said.Slides[Right + "ProfileSelector"] = s || !q || coop.AcceptedRight ? 5 : r == 1 ? 3 : 4;
+			said.Slides[Right + "ProfileSelector"] = s || !q || acceptedRight ? 5 : r == 1 ? 3 : 4;
 		}
 		else if (coop.ProfileRight == 4)
 		{
@@ -117,12 +122,12 @@ public static class Engine_UiCoopPage
 		}
 
 		// Accept and cancel.
-		said.Opacities[Left + "buttons.AcceptGroup"] = coop.AcceptedLeft ? 0.5f : 1f;
-		said.Opacities[Right + "buttons.AcceptGroup"] = coop.AcceptedRight ? 0.5f : 1f;
+		said.Opacities[Left + "buttons.AcceptGroup"] = acceptedLeft ? 0.5f : 1f;
+		said.Opacities[Right + "buttons.AcceptGroup"] = acceptedRight ? 0.5f : 1f;
 		if (coop.Flag298)
 		{
-			said.Opacities[Left + "buttons.CancelGroup"] = coop.AcceptedLeft ? 1f : 0.5f;
-			said.Opacities[Right + "buttons.CancelGroup"] = coop.AcceptedRight ? 1f : 0.5f;
+			said.Opacities[Left + "buttons.CancelGroup"] = acceptedLeft ? 1f : 0.5f;
+			said.Opacities[Right + "buttons.CancelGroup"] = acceptedRight ? 1f : 0.5f;
 		}
 
 		said.Values[Left + "buttons.CancelGroup.CancelText"] = Text(strings, "GUI_SCREEN_COOP_REJECT");

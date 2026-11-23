@@ -79,13 +79,14 @@ public sealed class Engine_HudValues
     /// <summary>Elements hidden or shown through `GUI.ToggleElement`; same key rule. The set at `STORE+40` is separate from the fade-in set at `STORE+0`: fading out does not clear toggled visibility.</summary>
     private readonly Dictionary<uint, bool> _toggled = new();
 
-    /// <summary>Drops every statement: they belong to the game that made them, and the view
-    /// outlives it across quit-to-title.</summary>
+    /// <summary>Drops every statement the natives made: they belong to the game that made them,
+    /// and the view outlives it across quit-to-title. The meters stand: their bindings keep their
+    /// values across a load, and the guest restates one only when it changes
+    /// (<see cref="ForgetMeters"/> is their end).</summary>
     public void Reset()
     {
         _stated.Clear();
         _toggled.Clear();
-        _statedMeters.Clear();
         _faded.Clear();
         _slideSets.Clear();
         DpadCentered = null;
@@ -220,6 +221,19 @@ public sealed class Engine_HudValues
 
         seek.Target = target;
         seek.Rate = seconds <= 0f ? 0f : (target - seek.Current) / seconds;
+    }
+
+    /// <summary>The guest destroyed or rebuilt its registries: no meter it stated stands.</summary>
+    public void ForgetMeters() => _statedMeters.Clear();
+
+    /// <summary>The meter stops where it stands: its target becomes its current value.</summary>
+    public void FreezeMeter(uint elementHash)
+    {
+        if (_statedMeters.TryGetValue(elementHash, out Seek? seek))
+        {
+            seek.Target = seek.Current;
+            seek.Rate = 0f;
+        }
     }
 
     /// <summary>

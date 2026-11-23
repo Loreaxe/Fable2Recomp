@@ -1094,7 +1094,7 @@ public partial class GameDebugServer : Node
 
 				return Ok(new Dictionary<string, object?>
 				{
-					// Both gates: the guest's byte_8331924F and the launcher's controller_vibration.
+					// Both gates: the guest's SetRumbleEnabled switch and the launcher's controller_vibration.
 					["guestSwitch"] = Refii.Core.Engine_TitleGame.Active.GuestVibrationEnabled,
 					["launcherSwitch"] = GameInput.ControllerVibration,
 					["pads"] = pads,
@@ -4256,11 +4256,10 @@ public partial class GameDebugServer : Node
 			{
 				// The title's armed byte — the press that "does not land" is this being false.
 				"frontend-armed" => Refii.Host.HostBridge.TryGetFrontEnd(
-					out _, out _, out bool canPressA, out _, out _, out _) && canPressA,
+					out _, out _, out bool canPressA, out _) && canPressA,
 
 				// The front end exists at all (title or menu).
-				"frontend" => Refii.Host.HostBridge.TryGetFrontEnd(
-					out _, out _, out _, out _, out _, out _),
+				"frontend" => Refii.Host.HostBridge.TryGetFrontEnd(out _, out _, out _, out _),
 
 				// The in-game screen manager exists — the world is up.
 				"world" => Engine_UiSource.Current.GetInGameScreens() is not null,
@@ -4311,7 +4310,7 @@ public partial class GameDebugServer : Node
 	{
 		if (!Refii.Host.HostBridge.TryGetFrontEnd(
 				out Engine_UiModel.FrontEndScreen screen, out uint state, out bool canPressA,
-				out uint cursor, out int sceneSlide, out int slideCount))
+				out uint cursor))
 		{
 			return new Dictionary<string, object?> { ["up"] = false };
 		}
@@ -4326,10 +4325,6 @@ public partial class GameDebugServer : Node
 			// this being false rather than the press being lost.
 			["canPressA"] = canPressA,
 			["cursor"] = cursor,
-
-			// Slide 1 on the main menu is `PressStart` — the row list is not up yet.
-			["slide"] = sceneSlide,
-			["slideCount"] = slideCount,
 		};
 	}
 

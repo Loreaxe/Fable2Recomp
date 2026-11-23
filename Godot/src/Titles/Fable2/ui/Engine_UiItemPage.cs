@@ -565,13 +565,9 @@ public static class Engine_UiItemPage
 	}
 
 	/// <summary>
-	/// THE SPINNING PREVIEW, resolved from the item's own record instead of from the guest.
-	///
-	/// The bridge's `RefiiHostGetUiPreviewObject` reads a struct the guest fills when ITS
-	/// highlight changes — and that highlight stops moving the moment Godot owns the list, so
-	/// the ring showed whatever was under the guest's cursor when the screen opened, or nothing
-	/// at all (`base[preview + 64] == 0`, "nothing spawned"). The placement is shipped data, so
-	/// the host can state it for the row the player is actually on.
+	/// THE SPINNING PREVIEW for the row the player is on, resolved from the item's own record —
+	/// for a screen whose preview the guest has not stated (Engine_UiPreviewItems). The placement
+	/// is shipped data.
 	///
 	/// Returns null when the item names no mesh — most consumables do not, and an empty ring is
 	/// correct for them.
@@ -600,6 +596,31 @@ public static class Engine_UiItemPage
 			return null;
 		}
 
+		// The row's item INSTANCE, so the panel asks what dye the guest holds on this copy — the
+		// dye is the instance's own record, and a second copy of a dyed record is not dyed.
+		return FromDetail(screenId, detail, row.Name, row.Instance);
+	}
+
+	/// <summary>
+	/// THE PREVIEW THE GUEST STATED: the record its preview set was handed for that screen
+	/// (`sub_828C3B30`, Engine_UiPreviewItems), resolved the same way as a row's. Null when the
+	/// record names no mesh or is not in the database.
+	/// </summary>
+	public static Fable2Bridge.UiPreviewObject? PreviewOfRecord(uint screenId, uint record)
+	{
+		if (record == 0u || Engine_GameGdb.Database is not { } multi ||
+			Engine_ItemDetails.BuildOne(multi, record) is not { } detail)
+		{
+			ReportPreview($"stated record {record:X8} on screen {screenId}: no record");
+			return null;
+		}
+
+		return FromDetail(screenId, detail, $"stated {record:X8}", 0u);
+	}
+
+	private static Fable2Bridge.UiPreviewObject? FromDetail(
+		uint screenId, ItemDetail detail, string name, uint instance)
+	{
 		// WHICH MESH: `GUIScreenMesh` when the item states one, else the item's OWN model. The
 		// weapon and clothing components state `GUIScreenMesh` as the null tag (0x811C9DC5,
 		// FNV-1 of ""), so every weapon page drew an empty ring — while the definition's
@@ -612,7 +633,7 @@ public static class Engine_UiItemPage
 				? detail.WornModelPathHash
 				: detail.ModelPathHash;
 
-		ReportPreview($"'{row.Name}' → mesh 0x{mesh:X8} " +
+		ReportPreview($"'{name}' → mesh 0x{mesh:X8} " +
 			$"(stated {detail.PreviewMesh:X8}, worn {detail.WornModelPathHash:X8}, " +
 			$"model {detail.ModelPathHash:X8}) scale {detail.PreviewScale} axis {detail.PreviewRotationAxis} " +
 			$"at {detail.PreviewTranslation}");
@@ -631,9 +652,7 @@ public static class Engine_UiItemPage
 			detail.PreviewRotation,
 			detail.PreviewScale,
 			detail.PreviewRotationAxis,
-			// The row's item INSTANCE, so the panel asks what dye the guest holds on this copy —
-			// the dye is the instance's own record, and a second copy of a dyed record is not dyed.
-			Item: row.Instance);
+			Item: instance);
 	}
 
 	/// <summary>An outfit row — the inventory source routes its press to `Inventory:outfit`.</summary>

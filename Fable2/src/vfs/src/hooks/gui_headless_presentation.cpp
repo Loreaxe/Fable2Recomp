@@ -98,6 +98,7 @@
 #include "core/headless_presentation.h"
 #include "core/payload_bridge_fable2.h"
 #include "gui/gui_told_statements.h"
+#include "hooks/frontend_stated.h"
 #include "hooks/ppc_externs.h"
 
 extern "C" uint8_t* RefiiGuestBase(void);
@@ -375,6 +376,9 @@ std::vector<uint16_t> TagText(PPCContext& ctx, uint8_t* base, uint32_t tag) {
 
 namespace refii::vfs {
 
+// gui_stated_screens.cpp: the screen id being filed on this thread, -1 for none.
+int32_t StatedScreenLoading();
+
 bool HeadlessElementKey(uint32_t element, uint32_t* presentation, uint32_t* serial, uint32_t* id) {
     return refii::headless::ElementKey(element, presentation, serial, id);
 }
@@ -384,7 +388,13 @@ bool HeadlessElementKey(uint32_t element, uint32_t* presentation, uint32_t* seri
 /// CGameface vtable +28 — (r3 gameface, r4 path) → a headless presentation, or 0.
 REX_EXTERN(rex_CGameface_CreatePresentation) {
     REX_FUNC_PROLOGUE();
-    ctx.r3.u32 = refii::headless::Create(Table(), ctx, base, ctx.r3.u32, ctx.r4.u32);
+    const uint32_t made = refii::headless::Create(Table(), ctx, base, ctx.r3.u32, ctx.r4.u32);
+    // Made while the screen set files a screen (gui_stated_screens.cpp): that screen's.
+    const int32_t screen = refii::vfs::StatedScreenLoading();
+    if (made != 0u && screen >= 0) {
+        refii_bridge_told_headless_screen(made, static_cast<uint32_t>(screen));
+    }
+    ctx.r3.u32 = made;
 }
 
 /// CGameface vtable +32 — (r3 gameface, r4 presentation).
@@ -405,8 +415,27 @@ REX_EXTERN(rex_CGameface_Destructor) {
     REX_FUNC_PROLOGUE();
     const uint32_t gameface = ctx.r3.u32;
     refii::headless::DestroyRemaining(Table(), ctx, base, gameface);
+    refii_bridge_stated_screen(0xFFFFFFFFu);  // no Gameface, no screen up
+    refii_bridge_stated_screens_up(0u);
     ctx.r3.u32 = gameface;
     __imp__rex_CGameface_Destructor(ctx, base);
+}
+
+/// CPresentation vf +92 (TU1 `sub_82BB0858`, disc `sub_82BAA110`): `stb r4,0x368(r3); blr`, the
+/// scene-draw gate. Non-zero parks the presentation. The constructor's zero is the only other
+/// write of the byte.
+REX_EXTERN(rex_CPresentation_SetDrawParked) {
+    REX_FUNC_PROLOGUE();
+    refii_bridge_told_headless_parked(ctx.r3.u32, 0u, ctx.r4.u32 & 0xFFu);
+    __imp__rex_CPresentation_SetDrawParked(ctx, base);
+}
+
+/// CPresentation vf +100 (TU1 `sub_82BB0860`, disc `sub_82BAA118`): `stb r4,0x369(r3); blr`, the
+/// per-frame update gate.
+REX_EXTERN(rex_CPresentation_SetUpdateParked) {
+    REX_FUNC_PROLOGUE();
+    refii_bridge_told_headless_parked(ctx.r3.u32, 1u, ctx.r4.u32 & 0xFFu);
+    __imp__rex_CPresentation_SetUpdateParked(ctx, base);
 }
 
 /// Element service vf +84 — (r3 service, r4 name hash, r5 parent or 0). The original answers;
@@ -795,6 +824,7 @@ REX_EXTERN(rex_lhGui_FrontendRoot_StampSaveCard) {
     t_card_portrait = 0u;
     __imp__rex_lhGui_FrontendRoot_StampSaveCard(ctx, base);
     t_stamping_card = false;
+    refii::vfs::FrontEndCardStamped();
     const uint32_t texture = t_card_portrait != 0u ? t_card_portrait : LoadGuestU32(base, kCardBlankTexture);
     PostFrontEnd("@FrontEnd.SaveCard", {std::to_string(index), std::to_string(slot), Hex(texture)});
     const uint64_t n = ++g_cards_stated;
@@ -810,9 +840,12 @@ REX_EXTERN(rex_lhGui_FrontendRoot_StampSaveCard) {
 // the card the first save sits on, by the count: 1-2 saves card 3, 3-4 card 2, else card 1
 // (0x8243b1fc..0x8243b224, disc 0x8247c4b4..0x8247c4dc), and stamps cards 1..6 through `sub_8243B520`
 // / disc `sub_8247C7D8` (save k - first's screenshot, else the blank; 0x8243b2b4 / 0x8243b2d4, disc
-// 0x8247c56c / 0x8247c58c — each portrait stated by RefiiHeadlessInlineTexture). Stated after the
-// call as `@CoopPicker.Open` (screen, first card, saves): the first card is the opener's own result,
-// taken from +396 after it returned; nothing is stated when its gate turned it away.
+// 0x8247c56c / 0x8247c58c — each portrait stated by RefiiHeadlessInlineTexture). It sets the cursor
+// (+392, 0x8243b318 / disc 0x8247c5d0) and shows the picker (`sub_8243B440(screen, 1)` 0x8243b370,
+// disc 0x8247c628). Stated after the call as `@CoopPicker.Open` (screen, first card, saves, cursor, a bit
+// per save whose header parsed — `*(+452) + 40i + 24`, A is refused on the others at 0x82438db4 —
+// then each card's text as `sub_8243B678` built it into +436): the opener's own products, taken when
+// it returned; nothing is stated when its gate turned it away.
 PPC_EXTERN_FUNC(__imp__rex_lhGuiCoopScreen_OpenSavePicker);
 REX_EXTERN(rex_lhGuiCoopScreen_OpenSavePicker) {
     REX_FUNC_PROLOGUE();
@@ -826,8 +859,35 @@ REX_EXTERN(rex_lhGuiCoopScreen_OpenSavePicker) {
     if (saves == 0u || saves > 4096u) {
         return;
     }
-    PostFrontEnd("@CoopPicker.Open", {Hex(screen), std::to_string(first), std::to_string(saves)});
-    REXLOG_INFO("Refii co-op picker: opened by 0x{:08X}, {} save(s) from card {}", screen, saves, first);
+    const uint32_t cursor = LoadGuestU32(base, screen + 392u);
+    const uint32_t headers = LoadGuestU32(base, screen + 452u);
+    uint32_t valid = 0u;
+    for (uint32_t i = 0; i < saves && i < 32u && Plausible(headers); ++i) {
+        if (base[headers + (40u * i) + 24u] != 0u) valid |= 1u << i;
+    }
+    const uint32_t texts = LoadGuestU32(base, screen + 436u);
+    const uint32_t texts_end = LoadGuestU32(base, screen + 440u);
+    const uint32_t described = Plausible(texts) && texts_end >= texts ? (texts_end - texts) / 4u : 0u;
+
+    refii::vfs::GuiNativeCall call;
+    call.name = "@CoopPicker.Open";
+    const auto add = [&call](std::string value) {
+        refii::vfs::GuiNativeArgument argument;
+        argument.kind = refii::vfs::GuiNativeArgument::Kind::kString;
+        argument.text = std::move(value);
+        call.arguments.push_back(std::move(argument));
+    };
+    add(Hex(screen));
+    add(std::to_string(first));
+    add(std::to_string(saves));
+    add(std::to_string(cursor));
+    add(std::to_string(valid));
+    for (uint32_t i = 0; i < saves && i < 32u; ++i) {
+        add(i < described ? Utf8(WideUnits(base, texts + (i * 4u))) : std::string());
+    }
+    refii::vfs::PostGuiNativeCall(std::move(call));
+    REXLOG_INFO("Refii co-op picker: opened by 0x{:08X}, {} save(s) from card {}, cursor {}", screen, saves,
+                first, cursor);
 }
 
 // THE FRONT END'S DIALOG. OpenDialog (TU1 `sub_826E40E0`, disc `sub_826CB158`) is vtable slot
@@ -849,7 +909,9 @@ REX_EXTERN(rex_lhGui_FrontendRoot_OpenDialog) {
     const std::string ok = Utf8(WideUnits(base, ctx.r4.u32));
     const std::string body = Utf8(WideUnits(base, ctx.r5.u32));
     const bool allow_cancel = (ctx.r6.u32 & 0xFFu) != 0u;
+    refii::vfs::FrontEndDialogOpening();
     __imp__rex_lhGui_FrontendRoot_OpenDialog(ctx, base);
+    refii::vfs::FrontEndDialogOpened(owner);
     const uint32_t glyph = LoadGuestU32(base, allow_cancel ? kGlyphCancelTexture : kGlyphOtherTexture);
     PostFrontEnd("@FrontEnd.Dialog", {Hex(owner), ok, body, allow_cancel ? "1" : "0",
                                       allow_cancel ? "GUI_BUTTONS_CANCEL" : "", Hex(glyph)});
@@ -1009,6 +1071,16 @@ std::atomic<uint64_t> g_expressions_filled{0};
 std::mutex g_pickbox_mutex;
 std::unordered_map<uint32_t, std::string> g_pickbox_paths;
 
+// Each row widget's path, as its base Init was handed it (under g_pickbox_mutex).
+std::unordered_map<uint32_t, std::string> g_widget_paths;
+std::atomic<uint64_t> g_sliders_stated{0};
+
+std::string WidgetPath(uint32_t widget) {
+    std::lock_guard<std::mutex> lock(g_pickbox_mutex);
+    const auto found = g_widget_paths.find(widget);
+    return found != g_widget_paths.end() ? found->second : std::string();
+}
+
 /// Runs an entry whose own element writes are stated by the hook: their told statements are
 /// dropped and SetText's string is returned.
 template <typename Original>
@@ -1111,6 +1183,73 @@ REX_EXTERN(rex_lhGuiPickBox_SetIndex) {
     }
 }
 
+// THE ROW WIDGET'S ELEMENT. The base Init the pickbox's and the slider's Init both open with (TU1
+// `sub_82882340`, disc `sub_82886458`): r3 the widget, r4 its presentation, r5 its path
+// (CCharString). It stores the presentation at +4 (0x82882368), assigns the path to +8
+// (0x82882378), resolves it into +32 (0x82882390) and sets +25 (0x828823a4), returning 1. Stated
+// after the call as `@Widget.Init` (widget, path) when it returned 1; the widget's SetSelected and
+// a slider's SetValue are stated under that path.
+PPC_EXTERN_FUNC(__imp__rex_lhGuiWidget_Init);
+REX_EXTERN(rex_lhGuiWidget_Init) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t widget = ctx.r3.u32;
+    const std::string path = CharStringText(base, ctx.r5.u32);
+    __imp__rex_lhGuiWidget_Init(ctx, base);
+    if ((ctx.r3.u32 & 0xFFu) == 0u) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_pickbox_mutex);
+        g_widget_paths[widget] = path;
+    }
+    PostFrontEnd("@Widget.Init", {Hex(widget), path});
+}
+
+// THE ROW CURSOR. SetSelected (TU1 `sub_82882440`, disc `sub_82886558`): r3 the widget, r4 the
+// flag. With +12 and +25 set it stores the flag at +24 (0x82882480) and moves the widget's element
+// to slide 2 (selected) or 1 (0x828824c0), returning 1. Its callers are the two row selectors, TU1
+// `sub_829C0438(map, key)` and `sub_829C0C08(map)` (disc `sub_828D8FF0`, `sub_828DA098`), which
+// clear the old row's widget, set the new one's and store the key at map+12 (0x829c053c,
+// 0x829c0d10). Stated after the call as `@Widget.Select` (widget, path, 0|1) when it returned 1.
+PPC_EXTERN_FUNC(__imp__rex_lhGuiWidget_SetSelected);
+REX_EXTERN(rex_lhGuiWidget_SetSelected) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t widget = ctx.r3.u32;
+    const bool selected = (ctx.r4.u32 & 0xFFu) != 0u;
+    __imp__rex_lhGuiWidget_SetSelected(ctx, base);
+    if ((ctx.r3.u32 & 0xFFu) == 0u) {
+        return;
+    }
+    PostFrontEnd("@Widget.Select", {Hex(widget), WidgetPath(widget), selected ? "1" : "0"});
+}
+
+// THE SLIDER'S VALUE. SetValue (TU1 `sub_82881E38`, disc `sub_82885F50`): r3 the slider, f1 the
+// value. With +12 set (0x82881e50) it clamps the value to 0..1 (0x82881e6c..0x82881e84), stores it
+// at +40 (0x82881e88) and places `<path>` + ".grp.pip" at x = value * 440 - 210 (0x82881eb0,
+// `sub_824251E0` 0x82881ed8). Callers: the slider's own left/right (`sub_82881D60`), the options
+// pages (`sub_829C08B8`, `sub_829C09F0`, `sub_829C12E0`), the co-op screen and the logbook's
+// meters. Stated after the call as `@Slider.Set` (slider, path, the clamped value's float bits)
+// when +12 was set.
+PPC_EXTERN_FUNC(__imp__rex_lhGuiSlider_SetValue);
+REX_EXTERN(rex_lhGuiSlider_SetValue) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t slider = ctx.r3.u32;
+    const float value = std::clamp(static_cast<float>(ctx.f1.f64), 0.0f, 1.0f);
+    const bool ready = Plausible(slider) && base[slider + 12u] != 0u;
+    __imp__rex_lhGuiSlider_SetValue(ctx, base);
+    if (!ready) {
+        return;
+    }
+    uint32_t bits = 0u;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const std::string path = WidgetPath(slider);
+    PostFrontEnd("@Slider.Set", {Hex(slider), path, std::to_string(bits)});
+    const uint64_t n = ++g_sliders_stated;
+    if (Milestone(n)) {
+        REXLOG_INFO("Refii slider: 0x{:08X} '{}' set to {} (#{})", slider, path, value, n);
+    }
+}
+
 // THE LOGBOOK'S EXPRESSION PAGE. FillExpression (TU1 `sub_829BCDF0`, disc `sub_828D61D0`): r3 the
 // screen, r4 the row (type, id). On type 61 (0x829bce10) it looks the id up (`sub_821DA348`
 // 0x829bce1c) and writes the record's `NameTag` (0x829bce94), `IconGraphic` (GuiElement_SetTexture
@@ -1124,5 +1263,64 @@ REX_EXTERN(rex_lhGuiLogbookScreen_FillExpression) {
     const uint64_t n = ++g_expressions_filled;
     if (Milestone(n)) {
         REXLOG_INFO("Refii logbook: expression page filled by the guest, untold (#{})", n);
+    }
+}
+
+// THE CO-OP SCREEN (24), STATED. Its handler keeps the left page's row map at +32 and the right's at
+// +144 (each map +12 the focus, +16 accepted), the save picker's shown byte +304 and cursor +392,
+// and the closing byte +268. Their writers, besides the constructor `sub_82434DD8`:
+//   OnEnter (TU1 `sub_824353E0`, disc `sub_82476600`; vtable slot +8): accepted 0 on both pages
+//     (0x824359f4 / 0x824359f8, disc 0x82476c14 / 0x82476c18) and closing 0 (0x8243597c, disc
+//     0x82476b9c), all `r27`, which is `li r27, 0` (0x82435408 / disc 0x82476628) — `@Coop.Enter`;
+//   SetAccepted (TU1 `sub_8243AC48`, disc `sub_8247BF00`): r3 the map, r4 the page's name prefix,
+//     r5 the flag, stored at map+16 (0x8243ac60 / disc 0x8247bf18) — `@Coop.Accepted`;
+//   Finish (TU1 `sub_8243A4D0`, disc `sub_8247B6C8`): closing = 1 (0x8243a5c0 / disc 0x8247b7b8)
+//     on every path past its own `+268` gate (0x8243a4e8 / disc 0x8247b6e0) — `@Coop.Closing`;
+//   the picker's SetShown (TU1 `sub_8243B440`, disc `sub_8247C6F8`): r4 stored at +304
+//     (0x8243b4f0 / disc 0x8247c7a8) — `@CoopPicker.Shown`;
+//   the picker's cursor (TU1 `sub_82439738`, disc `sub_8247A930`): r4 stored at +392 when in range,
+//     returning 1 (0x82439854 / disc 0x8247aa4c) — `@CoopPicker.Cursor`;
+//   the picker's open, above, with the cursor it starts on.
+// The right page's focus is the row cursor's own statement (`@Widget.Select` on its pickboxes).
+REX_EXTERN(rex_lhGuiCoopScreen_OnEnter) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t screen = ctx.r3.u32;
+    __imp__rex_lhGuiCoopScreen_OnEnter(ctx, base);
+    PostFrontEnd("@Coop.Enter", {Hex(screen)});
+    REXLOG_INFO("Refii co-op screen: 0x{:08X} entered", screen);
+}
+
+REX_EXTERN(rex_lhGuiCoopScreen_SetAccepted) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t map = ctx.r3.u32;
+    const std::string page = CharStringText(base, ctx.r4.u32);
+    const bool accepted = (ctx.r5.u32 & 0xFFu) != 0u;
+    __imp__rex_lhGuiCoopScreen_SetAccepted(ctx, base);
+    PostFrontEnd("@Coop.Accepted", {Hex(map), page, accepted ? "1" : "0"});
+    REXLOG_INFO("Refii co-op screen: '{}' {}accepted", page, accepted ? "" : "not ");
+}
+
+REX_EXTERN(rex_lhGuiCoopScreen_Finish) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t screen = ctx.r3.u32;
+    __imp__rex_lhGuiCoopScreen_Finish(ctx, base);
+    PostFrontEnd("@Coop.Closing", {Hex(screen)});
+}
+
+REX_EXTERN(rex_lhGuiCoopScreen_SetPickerShown) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t screen = ctx.r3.u32;
+    const bool shown = (ctx.r4.u32 & 0xFFu) != 0u;
+    __imp__rex_lhGuiCoopScreen_SetPickerShown(ctx, base);
+    PostFrontEnd("@CoopPicker.Shown", {Hex(screen), shown ? "1" : "0"});
+}
+
+REX_EXTERN(rex_lhGuiCoopScreen_SetPickerCursor) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t screen = ctx.r3.u32;
+    const uint32_t cursor = ctx.r4.u32;
+    __imp__rex_lhGuiCoopScreen_SetPickerCursor(ctx, base);
+    if ((ctx.r3.u32 & 0xFFu) != 0u) {
+        PostFrontEnd("@CoopPicker.Cursor", {Hex(screen), std::to_string(cursor)});
     }
 }

@@ -45,7 +45,8 @@ public class HudRegistryWritesTests
 
 		// `sub_823D1F98` 0x823d20f4: the sweet spot shrinks from its initial size toward its
 		// minimum at a negated rate (`a2 * -1.0`), `sub_82265D20` stepping current by rate × dt.
-		Engine_UiHudRegistryWrites.StateMeter(values, 1, FillSize.Hash, "run", 30f, 10f, -10f);
+		// The rate is per unit of the bindings' clock, a millisecond: -0.01 is -10 percent a second.
+		Engine_UiHudRegistryWrites.StateMeter(values, 1, FillSize.Hash, "run", 30f, 10f, -0.01f);
 		values.Advance(1f);
 		AssertThat(values.StatedMeter(FillSize.Hash) ?? -1f).IsEqualApprox(20f, 0.01f);
 		values.Advance(5f);
@@ -55,11 +56,11 @@ public class HudRegistryWritesTests
 	}
 
 	[TestCase]
-	public void ASeekReachesItsTargetOverItsSeconds()
+	public void ASeekReachesItsTargetOverItsMilliseconds()
 	{
 		Engine_UiSource.Current = new EmptySource();
 		var values = new Engine_HudValues();
-		Engine_UiHudRegistryWrites.StateMeter(values, 1, Charge.Hash, "seek", 100f, 1f, 0f);
+		Engine_UiHudRegistryWrites.StateMeter(values, 1, Charge.Hash, "seek", 100f, 1000f, 0f);
 		values.Advance(0.5f);
 		AssertThat(values.StatedMeter(Charge.Hash) ?? -1f).IsEqualApprox(50f, 0.01f);
 		values.Advance(1f);

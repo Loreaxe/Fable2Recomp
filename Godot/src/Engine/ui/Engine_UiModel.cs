@@ -189,12 +189,6 @@ public static class Engine_UiModel
 				: 0f;
 	}
 
-	public readonly record struct LiveAttribute(uint RawValue, bool Present)
-	{
-		/// <summary>The value read as a float, which is what layout attributes are.</summary>
-		public float AsFloat => BitConverter.UInt32BitsToSingle(RawValue);
-	}
-
 	/// <summary>The GUI modal gate: underlying screen id, pending modal id and MODE, tab.</summary>
 	/// <remarks>
 	/// Screen id 0 is the pause ROOT — the window in which the owned menu may stand and tab
@@ -244,30 +238,6 @@ public static class Engine_UiModel
 	/// world point it projects, in the guest's coordinates.
 	/// </summary>
 	public readonly record struct MapMarker(string Token, float X, float Y, float Z);
-
-	/// <summary>
-	/// The front end as a MODEL — which entries exist and which screen is up — for a menu Godot
-	/// draws itself. The main menu has no C++ item list and no C++ highlight: items, order, nesting
-	/// and highlight live in the shipped Lua `g_Menu` and the C++ side only spawns into it, so what
-	/// a native menu needs from the guest is which entries its spawn conditions will honour.
-	/// </summary>
-	public readonly record struct FrontEndModel(
-		bool SignedIn, uint UserIndex, uint LanguageCount, uint LanguageIndex,
-		bool HasNewDownloadableContent, bool MenuIsUp, uint MenuState, uint TitleState,
-		bool CanPressA, uint LoadCardCursor, uint EnumeratedSaves)
-	{
-		/// <summary>
-		/// Saves the guest has ENUMERATED, from the vector its own "Load Game" branch tests. Zero
-		/// means none enumerated yet, not that none exist — that needs a XamContentCreateEnumerator.
-		/// </summary>
-		public bool HasSaves => EnumeratedSaves > 0;
-
-		/// <summary>
-		/// Whether the "Language" entry is spawned — only above one installed language
-		/// (`lwz r11, dword_83319934` / `cmplwi r11, 1` / `ble` past the spawn).
-		/// </summary>
-		public bool HasLanguageEntry => LanguageCount > 1;
-	}
 
 	/// <summary>Which of the guest's front-end screens is up, and its state.</summary>
 	public enum FrontEndScreen { None = 0, Title = 1, MainMenu = 2 }
@@ -490,10 +460,11 @@ public static class Engine_UiModel
 	/// <summary>One installed language, as the guest's own table holds it.</summary>
 	public readonly record struct Language(int Index, string Name, bool IsCurrent);
 
-	/// <summary>One live Gameface presentation: where it is, its root, its path, and whether
-	/// it is actually on screen.</summary>
+	/// <summary>One live Gameface presentation: where it is, its creation serial (a later one is
+	/// larger; 0 for an entry the host stands itself), its path, and whether it is actually on
+	/// screen.</summary>
 	public readonly record struct Presentation(
-		uint Address, uint Root, string Name, uint State, uint ActiveElements)
+		uint Address, uint Serial, string Name, uint State, int Screen)
 	{
 		/// <summary>
 		/// The guest is drawing this screen. Live is not visible: closed menus stay in the registry
@@ -507,7 +478,7 @@ public static class Engine_UiModel
 		/// walking the tree.
 		/// </remarks>
 		public bool IsShowing =>
-			(State & 1u) != 0u && (State & 2u) == 0u && (State & 4u) == 0u && Root != 0u;
+			(State & 1u) != 0u && (State & 2u) == 0u && (State & 4u) == 0u && (State & 8u) != 0u;
 
 		/// <summary>Held at last frame's content rather than being updated.</summary>
 		public bool IsFrozen => (State & 2u) != 0u;

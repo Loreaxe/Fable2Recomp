@@ -174,36 +174,10 @@ public partial class HostDrivenCheck : Node
 			$"(inGame={HostBridge.IsInGame})");
 		foreach (Engine_UiModel.Presentation p in live)
 		{
-			// Opacity is only read for a screen we would actually draw — it costs a full
-			// element walk, and a parked menu's answer is stale anyway.
-			string opacity = string.Empty;
-			if (p.IsShowing)
-			{
-				Engine_UiModel.LiveAttribute[,]? attrs =
-					HostBridge.GetUiAttributes(Engine_UiLiveAttributes.OpacityIds, p.Address);
-				if (attrs is null)
-				{
-					opacity = " opacity=NONE";
-				}
-				else
-				{
-					int reported = 0;
-					int zero = 0;
-					for (int i = 0; i < attrs.GetLength(0); ++i)
-					{
-						if (!attrs[i, Engine_UiLiveAttributes.OpacitySlot].Present) continue;
-						++reported;
-						if (attrs[i, Engine_UiLiveAttributes.OpacitySlot].AsFloat <= 0.001f) ++zero;
-					}
-
-					opacity = $" opacity={reported} reported/{zero} at zero";
-				}
-			}
-
-			GD.Print($"[presentation]   {p.Address:X8} root={p.Root:X8} " +
-				$"{(p.IsShowing ? "SHOWING" : "hidden ")} active={p.ActiveElements,-5} " +
+			GD.Print($"[presentation]   {p.Address:X8} " +
+				$"{(p.IsShowing ? "SHOWING" : "hidden ")} " +
 				$"{(p.IsFrozen ? "FROZEN " : string.Empty)}{(p.IsSuppressed ? "PARKED " : string.Empty)}" +
-				$"'{p.Name}'{opacity}");
+				$"'{p.Name}'");
 		}
 	}
 

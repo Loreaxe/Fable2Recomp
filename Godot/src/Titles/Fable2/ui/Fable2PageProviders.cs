@@ -21,7 +21,6 @@ public static class Fable2PageProviders
 	public const string Achievements = "achievements";
 	public const string RealEstate = "realestate";
 	public const string QuestBox = "questbox";
-	public const string QueryCard = "querycard";
 	public const string InfoCard = "infocard";
 	public const string Multiplayer = "multiplayer";
 	public const string Coop = "coop";
@@ -84,7 +83,6 @@ public static class Fable2PageProviders
 		Engine_UiPageProviders.RegisterShipped(Achievements, new AchievementsProvider());
 		Engine_UiPageProviders.RegisterShipped(RealEstate, new RealEstateProvider());
 		Engine_UiPageProviders.RegisterShipped(QuestBox, new QuestBoxProvider());
-		Engine_UiPageProviders.RegisterShipped(QueryCard, new QueryCardProvider());
 		Engine_UiPageProviders.RegisterShipped(InfoCard, new InfoCardProvider());
 		Engine_UiPageProviders.RegisterShipped(Multiplayer, new MultiplayerProvider());
 		Engine_UiPageProviders.RegisterShipped(Coop, new CoopProvider());
@@ -452,14 +450,9 @@ public static class Fable2PageProviders
 
 	private sealed class LogbookProvider : Engine_UiPageProvider
 	{
-		/// <summary>The other player an orb's View Stats opened the book on; null for the hero.</summary>
-		private Fable2Bridge.LogbookOrbView? _orb;
-
-		public void Prepare(in Engine_UiPageContext page) =>
-			_orb = Fable2Bridge.GetLogbookOrbView();
-
 		public IReadOnlyDictionary<string, string> Values(in Engine_UiPageContext page) =>
-			Engine_UiLogbookPage.Values(page.Row, page.Hero, page.Quests, page.Strings, _orb);
+			Engine_UiLogbookPage.Values(
+				page.Row, page.Hero, page.Quests, page.Strings, Engine_UiLogbookPage.OtherPlayer);
 
 		public IReadOnlyDictionary<string, bool> Active(in Engine_UiPageContext page) =>
 			Engine_UiLogbookPage.Active(page.Row);
@@ -608,38 +601,6 @@ public static class Fable2PageProviders
 
 		public IReadOnlyDictionary<string, int> Slides(in Engine_UiPageContext page) =>
 			Engine_UiQuestBoxPage.Slides(Stated(page));
-	}
-
-	/// <summary>
-	/// The villager card (screen 10). Its text, toggles and meters are registry statements; the
-	/// one direct write is the rename prompt, `elements.buttons` slide 1 when the subject can be
-	/// renamed and 2 when not (`sub_826CCFC0` 0x826cd14c..84 → `sub_823A3C40`: the subject's
-	/// component-20 byte `+34`, unless its name key `+48` is one of the five charity children).
-	/// </summary>
-	private sealed class QueryCardProvider : Engine_UiPageProvider
-	{
-		public bool FillsOnDraw => true;
-
-		private static readonly uint[] CharityChildren =
-		{
-			Refii.Core.Engine_GameHash.Fnv1("TEXT_CREATURE_NAME_CHILDSPLAYCHARITY_FARMER"),
-			Refii.Core.Engine_GameHash.Fnv1("TEXT_CREATURE_NAME_CHILDSPLAYCHARITY_MONK"),
-			Refii.Core.Engine_GameHash.Fnv1("TEXT_CREATURE_NAME_CHILDSPLAYCHARITY_POSH"),
-			Refii.Core.Engine_GameHash.Fnv1("TEXT_CREATURE_NAME_CHILDSPLAYCHARITY_QUEST"),
-			Refii.Core.Engine_GameHash.Fnv1("TEXT_CREATURE_NAME_CHILDSPLAYCHARITY_SHOPKEEPER"),
-		};
-
-		public IReadOnlyDictionary<string, int> Slides(in Engine_UiPageContext page)
-		{
-			(bool known, uint key, bool byteSet) = Fable2Bridge.GetQueryCard();
-			if (!known)
-			{
-				return NoSlides;
-			}
-
-			bool renamable = byteSet && System.Array.IndexOf(CharityChildren, key) < 0;
-			return new Dictionary<string, int> { ["elements.buttons"] = renamable ? 1 : 2 };
-		}
 	}
 
 	/// <summary>
@@ -855,8 +816,7 @@ public static class Fable2PageProviders
 			Engine_UiOptionsPending.Open ? Engine_UiOptionsPending.Page : page.Row?.Name;
 
 		public IReadOnlyDictionary<string, string> Values(in Engine_UiPageContext page) =>
-			Engine_UiOptionsPage.Values(
-				page.Options, page.Sliders, page.Strings, page.OptionsPageOpen);
+			Engine_UiOptionsPage.Values(page.Sliders, page.Strings, page.OptionsPageOpen);
 
 		public IReadOnlyDictionary<string, Vector3> Positions(in Engine_UiPageContext page)
 		{

@@ -75,13 +75,12 @@ public static class Engine_UiDetailPages
 		List<Refii.Host.HostBridge.CompletedQuest> quests,
 		Refii.Host.HostBridge.CrimeScreen crime,
 		Refii.Host.HostBridge.WorldMapRegion worldMap,
-		Refii.Host.HostBridge.GameOptions options,
 		Refii.Host.HostBridge.OptionSliders sliders,
 		Refii.Text.Engine_BabelDatabase? strings,
 		bool optionsPageOpen = false)
 	{
 		Engine_UiPageContext page = Context(
-			screenId, row, vitals, hero, quests, crime, worldMap, options, sliders, strings,
+			screenId, row, vitals, hero, quests, crime, worldMap, sliders, strings,
 			optionsPageOpen, false);
 		return Provider(screenId)?.Values(page) ?? Engine_UiPageProviders.NoValues;
 	}
@@ -222,7 +221,7 @@ public static class Engine_UiDetailPages
 	/// <summary>A context carrying only what the row-keyed questions need.</summary>
 	private static Engine_UiPageContext Row(uint screenId, Engine_UiExpandableMenu.Item? row) =>
 		Context(
-			screenId, row, default, default, EmptyQuests, default, default, default, default,
+			screenId, row, default, default, EmptyQuests, default, default, default,
 			null, false, false);
 
 	private static Engine_UiPageContext Context(
@@ -233,7 +232,6 @@ public static class Engine_UiDetailPages
 		List<Refii.Host.HostBridge.CompletedQuest> quests,
 		Refii.Host.HostBridge.CrimeScreen crime,
 		Refii.Host.HostBridge.WorldMapRegion worldMap,
-		Refii.Host.HostBridge.GameOptions options,
 		Refii.Host.HostBridge.OptionSliders sliders,
 		Refii.Text.Engine_BabelDatabase? strings,
 		bool optionsPageOpen,
@@ -247,7 +245,6 @@ public static class Engine_UiDetailPages
 			Quests = quests,
 			Crime = crime,
 			WorldMap = worldMap,
-			Options = options,
 			Sliders = sliders,
 			Strings = strings,
 			OptionsPageOpen = optionsPageOpen,

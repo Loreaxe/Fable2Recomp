@@ -51,9 +51,19 @@ uint32_t TakeToldTexts(uint32_t* words, uint32_t word_capacity, uint16_t* units,
 /// (at most `capacity - 1`, NUL-terminated), 0 when `serial` is not the one at `presentation`.
 uint32_t ToldHeadlessFile(uint32_t presentation, uint32_t serial, char* out, uint32_t capacity);
 
-/// HOST BRIDGE side: the headless presentations alive now (made, not yet destroyed), up to
-/// `capacity`; returns how many there are.
-uint32_t ToldHeadlessLive(uint32_t* out, uint32_t capacity);
+/// The id a title states when no screen is up.
+constexpr uint32_t kNoStatedScreen = 0xFFFFFFFFu;
+
+/// HOST BRIDGE side: a count that moves whenever the live list or the stated screen changes — a
+/// presentation made, destroyed or given a screen, a gate written with another value, another
+/// screen stated.
+uint32_t ToldHeadlessGeneration();
+
+/// HOST BRIDGE side: the live headless presentations, five words each (address, serial, name
+/// offset, gates: bit 0 the draw gate is parked, bit 1 the update gate; then the screen id the
+/// guest loaded it for plus one, 0 for none), the files NUL-separated into `names`. Returns how
+/// many there are, which may be more than fitted.
+uint32_t ToldHeadlessList(uint32_t* words, uint32_t word_capacity, char* names, uint32_t name_capacity);
 
 /// HOST BRIDGE side: element `id`'s parent id (0 the root) and name hash; false when unknown.
 bool ToldHeadlessElement(uint32_t presentation, uint32_t serial, uint32_t id, uint32_t* parent_id,

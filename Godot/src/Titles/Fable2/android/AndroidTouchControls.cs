@@ -503,8 +503,7 @@ public partial class AndroidTouchControls : Control, IAndroidTouchControls
         }
 
         // A villager's Y prompt comes and goes as the hero looks about: read every frame.
-        HostBridge.TargetedQuery query = Fable2Bridge.GetTargetedQuery();
-        bool villager = query.Known && query.Present && query.Button;
+        bool villager = Engine_UiHudTargetedQuery.Present && Engine_UiHudTargetedQuery.Button;
         _heroClock -= delta;
         if (_heroClock > 0.0)
         {

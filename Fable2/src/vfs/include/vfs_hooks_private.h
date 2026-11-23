@@ -210,10 +210,27 @@ uint32_t MenuRowLabel(uint32_t index, char* out_label, size_t label_capacity);
 /// The screen the published capture belongs to, or 0xFFFFFFFF for none.
 uint32_t MenuScreenId();
 
-/// The in-game GUI's roots, or false when no in-game screen is up. Defined in
-/// hooks/guest_tick_pump.cpp; shared so a menu boundary in another TU can key its population by
-/// the screen the guest states rather than publishing it as belonging to none.
-bool InGameScreenRoots(uint8_t* base, uint32_t* out_owner, uint32_t* out_screen_id);
+/// The in-game screen set as the guest's own calls state it: false while the set is not up or a
+/// box holds the modal latch; the screen in TU1 numbering, 31 when none is up. Defined in
+/// hooks/guest_tick_pump.cpp; shared so a menu boundary in another TU keys its population by the
+/// same stated screen.
+bool StatedInGameScreen(uint32_t* out_screen_id);
+
+/// The handler the in-game GUI holds for a screen (TU1 id), by the guest's own lookup
+/// `lhGuiManager_FindScreenHandler`; 0 when absent. An object to call or to compare an argument
+/// against, never one to read. Defined in hooks/guest_tick_pump.cpp.
+uint32_t InGameScreenHandler(PPCContext& ctx, uint8_t* base, uint32_t screen_id);
+
+/// The keeper the shop screen's opener was last handed (hooks/shop_keeper_stated.cpp); 0 before.
+uint32_t StatedShopkeeper();
+
+/// Whether the pause root handler's player, as its setter last stated it, is player two
+/// (hooks/gui_stated_screens.cpp).
+bool StatedPausePlayerTwo();
+
+/// Whether the abilities screen's `+4` (whose book it is), as its setter and its enter last
+/// stated it, names player two (hooks/gui_stated_screens.cpp).
+bool StatedAbilitiesPlayerTwo();
 
 /// The list key Godot states its front-end main menu's fold under (`RefiiHostSetListFoldDepth`);
 /// in-game screens are keyed by their TU1 id, all below 64.
@@ -245,10 +262,12 @@ void DisarmFloat1();
 /// (0x823df7e4). Dropped with the Float1 answer by the runner's next chunk.
 void AnswerNextString2(std::string value);
 
-/// The guest's population ticket for the item `record` on the row-id map every list screen
-/// shares (`*(*(GUI+0x1C)+0x3C)+4`, keyed by `sub_82880AC8`'s `++*a1`), or 0 when no row holds
-/// it. Defined in hooks/gui_menu_hooks.cpp.
-uint32_t MenuTicketForRecord(uint8_t* base, uint32_t record);
+/// The guest's population ticket for the item `record` on the row registry every list screen
+/// shares, as its allocate and clear stated it (the lowest when several rows hold it), or 0 when
+/// no row holds it; and that registry, the argument its lookup `sub_82880BC0` takes, 0 before
+/// one was stated. Defined in hooks/menu_tickets_stated.cpp.
+uint32_t MenuTicketForRecord(uint32_t record);
+uint32_t MenuTicketRegistry();
 
 /// Posts one presentation event the host's slide playback stated (`PresentationEvent:` action,
 /// `<presentation>:<parent element>:<EVENT>`) to the callback the guest registered for it, on the

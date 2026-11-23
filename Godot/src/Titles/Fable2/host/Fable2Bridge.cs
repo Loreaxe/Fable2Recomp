@@ -23,11 +23,7 @@ public static class Fable2Bridge
 {
 	static Fable2Bridge() => Refii.Core.Engine_NativeLibraries.Install();
 
-	[ThreadStatic]
-	private static uint[]? _topBoxFrontWords;
 
-	[ThreadStatic]
-	private static uint[]? _targetedQueryWords;
 
 	[ThreadStatic]
 	private static uint[]? _playerTwoQueryWords;
@@ -52,9 +48,6 @@ public static class Fable2Bridge
 	private static byte[]? _realEstateOccupant;
 
 	[DllImport("refii_hostbridge")]
-	private static extern int RefiiHostGetLoadingScreenLayout(uint[] outWords);
-
-	[DllImport("refii_hostbridge")]
 	private static extern int RefiiHostGetLoadingScreenText(
 		uint[] outWords, byte[] text, uint capacity);
 
@@ -66,10 +59,8 @@ public static class Fable2Bridge
 	private const int DyeStateWords = 3;
 	private static readonly byte[] _estateIntent = new byte[128];
 	private static float[]? _exitRequestAt;
-	private static uint[]? _frontEndModelWords;
 	private static uint[]? _furnitureWords;
 	private static readonly byte[] _properties = new byte[32768];
-	private static uint[]? _queryCardWords;
 	private static byte[]? _shopFrontText;
 	private static uint[]? _shopFrontWords;
 	private static byte[]? _topBoxLiteral;
@@ -124,37 +115,11 @@ public static class Fable2Bridge
 		TryGetAbiVersion() is null ? AllPauseTabs : RefiiHostPauseTabsAvailable();
 
 	/// <summary>
-	/// True while the abilities screen's spell-assignment blade is up — the guest's own mode
-	/// byte at `screen14+620`, whose only writers are the enter/exit pair. False on the normal
-	/// list AND when the screen object does not exist; the caller needs no distinction, both
-	/// mean "drive the list, not the blade".
+	/// True while the abilities screen's spell-assignment blade is up: between the guest's own
+	/// enter (`sub_826C2480`) and exit (`sub_826C25C0`) of that mode.
 	/// </summary>
 	public static bool AbilitiesAssignmentOpen() =>
-		TryGetAbiVersion() is not null && RefiiHostGetAbilitiesMode() == 1;
-
-	/// <summary>
-	/// The front-end model, or null when the front-end GUI is not up — including once the game
-	/// starts, where the guest republishes its GUI global as a base-only instance with no
-	/// screens.
-	/// </summary>
-	public static FrontEndModel? GetFrontEndModel()
-	{
-		if (TryGetAbiVersion() is null)
-		{
-			return null;
-		}
-
-		_frontEndModelWords ??= new uint[11];
-		if (RefiiHostGetFrontEndModel(_frontEndModelWords) == 0)
-		{
-			return null;
-		}
-
-		uint[] w = _frontEndModelWords;
-		return new FrontEndModel(
-			w[0] != 0, w[1], w[2], w[3], w[4] != 0, w[5] != 0, w[6], w[7], w[8] != 0, w[9],
-			w[10]);
-	}
+		HostBridge.Stated(HostBridge.StatedValue.AbilitiesAssignMode) == 1u;
 
 	/// <summary>
 	/// The player who owns the open in-game GUI (1 or 2) — the guest's own owner of its pause and
@@ -410,36 +375,14 @@ public static class Fable2Bridge
 		Vector3 Translation, Vector3 Rotation, float Scale, int RotationAxis,
 		uint Item = 0);
 
-	public static UiPreviewObject? GetUiPreviewObject()
-	{
-		if (TryGetAbiVersion() is null)
-		{
-			return null;
-		}
-
-		var values = new float[8];
-		uint screen = RefiiHostGetUiPreviewObject(
-			out uint hash, out uint entity, values, (uint)values.Length);
-		if (screen == 0 || hash == 0)
-		{
-			return null;
-		}
-
-		return new UiPreviewObject(
-			screen, hash, entity,
-			new Vector3(values[0], values[1], values[2]),
-			new Vector3(values[3], values[4], values[5]),
-			values[6], (int)values[7]);
-	}
-
 	/// <summary>
 	/// Which of the three ways the guest lays its loading art out. A normal level load packs the
 	/// 1280x720 image into a square texture in two pieces with the right-hand strip stored
 	/// ROTATED; a fixed-art screen is one plain full-bleed quad.
 	/// </summary>
-	/// <param name="FixedArt">`screen+315` — one quad, plain UVs (inset on 4:3).</param>
-	/// <param name="QuitFade">`screen+310` — the quit-without-save fade; one quad, plain UVs.</param>
-	/// <param name="Narrow">`screen+320` — the 4:3 inset variant.</param>
+	/// <param name="FixedArt">The screen constructor's fixed-art argument — one quad, plain UVs (inset on 4:3).</param>
+	/// <param name="QuitFade">Set by the art decision — the quit-without-save fade; one quad, plain UVs.</param>
+	/// <param name="Narrow">The text-only constructor made the screen (`screen+320`).</param>
 	public readonly record struct LoadingLayout(bool FixedArt, bool QuitFade, bool Narrow)
 	{
 		/// <summary>
@@ -454,24 +397,24 @@ public static class Fable2Bridge
 	/// The loading screen's TEXT and its spinner clock.
 	/// </summary>
 	/// <param name="TipKey">
-	/// The Babel key of the tip currently up, or 0 when the list is empty. It is a KEY, not a
-	/// string: the guest keeps a list of tag hashes and localises on the fly, so the host
-	/// resolves it through its own Babel database rather than calling into the guest.
+	/// The Babel key of the tip the guest last drew (the tag its DrawTip resolved), or 0 before
+	/// it has drawn one. It is a KEY, not a string: the host resolves it through its own Babel
+	/// database. The guest rotates the tip on its own ten-second clock.
 	/// </param>
 	/// <param name="TipIndex">Which tip, and <paramref name="TipCount"/> how many there are.</param>
 	/// <param name="SpinnerFrame">
-	/// The screen's frame counter. The spinner is `counter % 25` into a 5x5 grid — a timed
-	/// flipbook, NOT load progress. The game has no progress bar at all.
+	/// The screen's frame counter, counted from its spinner draws. The spinner is `counter % 25`
+	/// into a 5x5 grid — a timed flipbook, NOT load progress. The game has no progress bar at all.
 	/// </param>
-	/// <param name="TipsEnabled">`screen+313`.</param>
-	/// <param name="BannerEnabled">`screen+314`.</param>
-	/// <param name="LevelName">The level the banner names.</param>
-	/// <param name="Overlay">Host-set overlay text, usually empty.</param>
+	/// <param name="TipsEnabled">On for every screen its constructor states.</param>
+	/// <param name="BannerEnabled">On for the level screen, off for the text-only one.</param>
+	/// <param name="LevelName">The level the banner names, the level screen's constructor argument.</param>
+	/// <param name="Overlay">The text-only screen's text, or the manager's set text; usually empty.</param>
 	public readonly record struct LoadingText(
 		uint TipKey, int TipIndex, int TipCount, uint SpinnerFrame,
 		bool TipsEnabled, bool BannerEnabled, string LevelName, string Overlay);
 
-	/// <summary>Reads the loading screen's text state, or null when there is no screen.</summary>
+	/// <summary>The loading screen's text as its own calls state it, or null when there is no screen.</summary>
 	public static LoadingText? GetLoadingScreenText()
 	{
 		uint[] words = new uint[6];
@@ -496,23 +439,13 @@ public static class Fable2Bridge
 	}
 
 	/// <summary>The loading screen's art layout, or null when no screen object exists.</summary>
-	public static LoadingLayout? GetLoadingScreenLayout()
-	{
-		uint[] words = new uint[3];
-		try
-		{
-			if (RefiiHostGetLoadingScreenLayout(words) == 0)
-			{
-				return null;
-			}
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return null;
-		}
-
-		return new LoadingLayout(words[0] != 0, words[1] != 0, words[2] != 0);
-	}
+	public static LoadingLayout? GetLoadingScreenLayout() =>
+		HostBridge.GetLoadingScreen() is { Screen: not 0u }
+			? new LoadingLayout(
+				HostBridge.Stated(HostBridge.StatedValue.LoadingFixedArt) != 0u,
+				HostBridge.Stated(HostBridge.StatedValue.LoadingQuitFade) != 0u,
+				HostBridge.Stated(HostBridge.StatedValue.LoadingTextOnly) != 0u)
+			: null;
 
 	/// <summary>
 	/// This player's role in a co-op session, as the network manager states it: 0 no session,
@@ -615,8 +548,9 @@ public static class Fable2Bridge
 	}
 
 	/// <summary>
-	/// The weapon switches the menu has pending (ABI 236), as record ids — what the weapons list
-	/// emphasises before the weapon in hand until play resumes and the swap lands. 0 for none.
+	/// The weapon switches the menu has pending, as record ids — what the weapons list emphasises
+	/// before the weapon in hand until the menu closes and the swap is applied. 0 for none. Stated
+	/// by the menu's pick and clear (pending_weapons_stated.cpp).
 	/// </summary>
 	public static (uint Melee, uint Ranged)? PendingWeapons()
 	{
@@ -625,8 +559,7 @@ public static class Fable2Bridge
 			return null;
 		}
 
-		RefiiHostGetPendingWeapons(out uint melee, out uint ranged);
-		return (melee, ranged);
+		return (HostBridge.Stated(HostBridge.StatedValue.PendingMelee), HostBridge.Stated(HostBridge.StatedValue.PendingRanged));
 	}
 
 	/// <summary>The co-op session's raw words off the authoritative network manager (ABI 134).</summary>
@@ -658,95 +591,6 @@ public static class Fable2Bridge
 			w[0] != 0, w[1] != 0, w[2] != 0, w[3] != 0, w[4] != 0, w[5] != 0, w[6], w[7], w[8],
 			w[9] != 0,
 			count >= 12 ? w[10] : 0u, count >= 12 ? w[11] : 0xFFFFFFFFu);
-	}
-
-	/// <summary>
-	/// The clothing screen's (16) preview mannequin entity — spawned by the guest at screen open
-	/// in the hero's clothes — or null when the screen is not up.
-	/// </summary>
-	public static uint? ClothingMannequin()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return null;
-		}
-
-		try
-		{
-			uint entity = RefiiHostGetClothingMannequin();
-			return entity != 0u ? entity : null;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return null;
-		}
-	}
-
-	/// <summary>The co-op screen's own state — see <see cref="CoopScreen"/>.</summary>
-	/// <param name="LeftFocus">Player one's focused row (`+44`).</param>
-	/// <param name="LeftAccepted">Player one has accepted (`+48`).</param>
-	/// <param name="RightFocus">Player two's focused pickbox, 0..2 (`+156`).</param>
-	/// <param name="RightAccepted">Player two has accepted (`+160`).</param>
-	/// <param name="PickerOpen">Player two's save picker is up (`+304`).</param>
-	/// <param name="PickerCursor">The picked save, 0-based (`+392`).</param>
-	/// <param name="Saves">The picker's cards, in save order: the guest's finished text and whether
-	/// the save's header parsed (A is refused on one that did not).</param>
-	/// <param name="Closing">The screen is closing (`+268`); it takes no input.</param>
-	public readonly record struct CoopScreenState(
-		int LeftFocus, bool LeftAccepted, int RightFocus, bool RightAccepted, bool PickerOpen,
-		int PickerCursor, IReadOnlyList<(string Text, bool Valid)> Saves, bool Closing);
-
-	/// <summary>
-	/// The co-op screen's state, or null when screen 24 is not up. <paramref name="withText"/>
-	/// reads the picker's card text too, which only matters when the picker opens.
-	/// </summary>
-	public static CoopScreenState? CoopScreen(bool withText)
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return null;
-		}
-
-		uint[] words = new uint[10];
-		byte[]? text = withText ? new byte[8192] : null;
-		if (RefiiHostGetCoopScreen(words, (uint)words.Length, text, (uint)(text?.Length ?? 0)) < 10u)
-		{
-			return null;
-		}
-
-		var saves = new List<(string Text, bool Valid)>();
-		int at = 0;
-		for (int i = 0; i < (int)words[7]; ++i)
-		{
-			string line = string.Empty;
-			if (text is not null && at < text.Length && Array.IndexOf(text, (byte)0, at) is var end and >= 0)
-			{
-				line = Encoding.UTF8.GetString(text, at, end - at);
-				at = end + 1;
-			}
-
-			saves.Add((line, i < 32 && (words[8] & (1u << i)) != 0u));
-		}
-
-		return new CoopScreenState(
-			(int)words[0], words[1] != 0u, (int)words[2], words[3] != 0u, words[4] != 0u,
-			(int)words[5], saves, words[9] != 0u);
-	}
-
-	/// <summary>
-	/// Both co-op screen figures: player two's henchman (`screen+276`) and the player-one mannequin
-	/// the original spawns for the left page (`screen+280`'s preview ticket). An entity is 0 for a
-	/// figure not standing; null when screen 24 is not up.
-	/// </summary>
-	public static (uint Henchman, uint PlayerOne)? CoopFigures()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return null;
-		}
-
-		uint[] words = new uint[4];
-		return RefiiHostGetCoopFigures(words, (uint)words.Length) >= 4u ? (words[0], words[2]) : null;
 	}
 
 	/// <summary>
@@ -868,46 +712,6 @@ public static class Fable2Bridge
 	}
 
 	/// <summary>
-	/// The load fan's save FILE names in card order (ABI 218): the folder names under the
-	/// content root the cards were enumerated from, so index N of <see cref="GetSaveCards"/> and of
-	/// <see cref="LoadSave"/> is the save named here at N. Empty when the fan is not up.
-	/// </summary>
-	public static List<string> GetSaveCardNames()
-	{
-		var names = new List<string>();
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return names;
-		}
-
-		byte[] buffer = new byte[4096];
-		uint count;
-		try
-		{
-			count = RefiiHostGetSaveCardNames(buffer, (uint)buffer.Length);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return names;
-		}
-
-		int at = 0;
-		for (uint i = 0; i < count && at < buffer.Length; i++)
-		{
-			int end = Array.IndexOf(buffer, (byte)0, at);
-			if (end < 0)
-			{
-				break;
-			}
-
-			names.Add(System.Text.Encoding.UTF8.GetString(buffer, at, end - at));
-			at = end + 1;
-		}
-
-		return names;
-	}
-
-	/// <summary>
 	/// One record in the hero's inventory. NOT one item — see <see cref="Fable2Bridge.GetHeroInventory"/>.
 	/// </summary>
 	/// <param name="RecordId">The FNV-1 GDB key. NOT unique across records.</param>
@@ -919,74 +723,6 @@ public static class Fable2Bridge
 	/// Meaningful only until the next inventory sample.</param>
 	public readonly record struct InventoryRecord(
 		uint RecordId, int Count, int Category, bool Viewed, uint Item = 0);
-
-	/// <summary>
-	/// One options page as the GUEST holds it while the screen is open: the row its cursor is on
-	/// (<see cref="Cursor"/>, -1 before the page has been shown) and each row widget's own state —
-	/// a pickbox's index in <see cref="Indices"/>, a slider's 0..1 value in <see cref="Values"/>;
-	/// the other kind's slot is noise, the caller knows which rows are which. Pages are in the
-	/// screen's order: 0 Game, 1 Controls, 2 Video, 3 Audio. <see cref="Known"/> false when the
-	/// screen or the page is not live. See `RefiiHostGetOptionsPage` for the guest's layout.
-	/// </summary>
-	public readonly record struct GuestOptionsPage(bool Known, int Cursor, int[] Indices, float[] Values)
-	{
-		public static readonly GuestOptionsPage None =
-			new(false, -1, Array.Empty<int>(), Array.Empty<float>());
-	}
-
-	/// <summary>Reads one options page's cursor and row widgets. See <see cref="GuestOptionsPage"/>.</summary>
-	public static GuestOptionsPage GetOptionsPage(int page)
-	{
-		if (page < 0 || TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return GuestOptionsPage.None;
-		}
-
-		try
-		{
-			const uint capacity = 8u;
-			var indices = new int[capacity];
-			var values = new float[capacity];
-			uint rows = RefiiHostGetOptionsPage((uint)page, out int cursor, indices, values, capacity);
-			if (rows == 0u)
-			{
-				return GuestOptionsPage.None;
-			}
-
-			int count = (int)Math.Min(rows, capacity);
-			return new GuestOptionsPage(true, cursor, indices[..count], values[..count]);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return GuestOptionsPage.None;
-		}
-	}
-
-	/// <summary>Reads the options screen's settings. See <see cref="GameOptions"/>.</summary>
-	public static GameOptions GetOptions()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		var words = new uint[6];
-		try
-		{
-			if (RefiiHostGetOptions(words, (uint)words.Length, out float breadcrumb) == 0)
-			{
-				return default;
-			}
-
-			return new GameOptions(
-				true, words[1] != 0u, words[2] != 0u, unchecked((int)words[3]),
-				words[4] != 0u, words[5] != 0u, breadcrumb);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
-	}
 
 	/// <summary>
 	/// Names the region to sample. The pump answers one tick later — it cannot know which row
@@ -1188,35 +924,6 @@ public static class Fable2Bridge
 			(int)words[9], (int)words[10], (int)words[11], (int)words[12], words[13],
 			occupant[0] == 0 ? string.Empty : Utf8(occupant), words[14]);
 
-	/// <summary>Reads the crime screen. See <see cref="CrimeScreen"/>.</summary>
-	public static CrimeScreen GetCrimeScreen()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		var charge = new byte[512];
-		var service = new byte[512];
-		try
-		{
-			if (RefiiHostGetCrimeScreen(
-					out int fine, out uint flags, charge, (uint)charge.Length,
-					service, (uint)service.Length) == 0)
-			{
-				return default;
-			}
-
-			return new CrimeScreen(
-				true, fine, (flags & 1u) != 0u, (flags & 2u) != 0u,
-				Utf8(charge), Utf8(service));
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
-	}
-
 	/// <summary>
 	/// The hero's completed quests, UNSORTED. The page's order is descending by the GDB property
 	/// `DisplayPriority`, which is a lookup for the caller to do.
@@ -1267,80 +974,7 @@ public static class Fable2Bridge
 		bool Known, bool Present, int Class, uint Key, uint Second, uint Third, uint Fourth,
 		uint TitleTag, uint NameHash, string Literal);
 
-	public static TopBoxBody GetTopBoxBody()
-	{
-		var words = new uint[8];
-		_topBoxLiteral ??= new byte[1024];
-		uint count;
-		try
-		{
-			count = RefiiHostGetTopBoxBody(words, (uint)words.Length, _topBoxLiteral, (uint)_topBoxLiteral.Length);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
 
-		if (count < 8u)
-		{
-			return default;
-		}
-
-		int length = System.Array.IndexOf(_topBoxLiteral, (byte)0);
-		string literal = length > 0
-			? System.Text.Encoding.UTF8.GetString(_topBoxLiteral, 0, length)
-			: string.Empty;
-		return new TopBoxBody(true, words[0] != 0u, (int)words[1], words[2], words[3], words[4],
-			words[5], words[6], words[7], literal);
-	}
-
-	public static TopBoxFront GetTopBoxFront()
-	{
-		uint[] words = _topBoxFrontWords ??= new uint[9];
-		uint count;
-		try
-		{
-			count = RefiiHostGetTopBoxFront(words, (uint)words.Length);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
-
-		if (count < 9u)
-		{
-			return default;
-		}
-
-		return new TopBoxFront(
-			true, words[0] != 0u, words[1], words[2] != 0u, words[3] != 0u, words[4] != 0u,
-			words[5] != 0u, (int)words[6], words[7], unchecked((int)words[8]));
-	}
-
-	public static TargetedQuery GetTargetedQuery()
-	{
-		uint[] words = _targetedQueryWords ??= new uint[12];
-		uint count;
-		try
-		{
-			count = RefiiHostGetTargetedQuery(words, (uint)words.Length);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
-
-		if (count < 12u)
-		{
-			return default;
-		}
-
-		static float Bits(uint value) => BitConverter.Int32BitsToSingle(unchecked((int)value));
-		return new TargetedQuery(
-			true, words[0] != 0u, words[1], words[3] != 0u, Bits(words[4]), words[5] != 0u,
-			unchecked((int)words[6]), words[7] != 0u, Bits(words[8]), words[9] != 0u,
-			Bits(words[10]), Bits(words[11]));
-	}
 
 	/// <summary>
 	/// PLAYER TWO'S targeted-citizen readout on split screen, in <see cref="TargetedQuery"/>'s
@@ -1527,42 +1161,6 @@ public static class Fable2Bridge
 		}
 
 		return sales;
-	}
-
-	/// <summary>The other player the logbook is showing: their 124 counters and their name.</summary>
-	public sealed record LogbookOrbView(int[] Stats, string Name);
-
-	/// <summary>
-	/// The player the logbook was opened on from an orb's View Stats, or null when it shows the
-	/// hero — RefiiHostGetLogbookOrbView: the stats object the orb box handed the screen.
-	/// </summary>
-	public static LogbookOrbView? GetLogbookOrbView()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return null;
-		}
-
-		try
-		{
-			var stats = new int[124];
-			var name = new byte[64];
-			if (RefiiHostGetLogbookOrbView(stats, (uint)stats.Length, name, (uint)name.Length) == 0)
-			{
-				return null;
-			}
-
-			int end = System.Array.IndexOf(name, (byte)0);
-			return new LogbookOrbView(stats, System.Text.Encoding.UTF8.GetString(name, 0, end < 0 ? name.Length : end));
-		}
-		catch (System.DllNotFoundException)
-		{
-			return null;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return null;
-		}
 	}
 
 	public static List<(uint NameHash, uint Ordinal)> GetFastTravelRegions()
@@ -2351,11 +1949,11 @@ public static class Fable2Bridge
 	}
 
 	/// <summary>The co-op screen's decision state (screen 24) — see <c>CoopScreen</c> in hero_derived.h.
-	/// Words 13..15 (the pickboxes' indices) are not read: each caption is stated by its SetIndex
+	/// Words 11..13 (the pickboxes' indices) are not read: each caption is stated by its SetIndex
 	/// (<see cref="Engine_UiPickBoxes"/>).</summary>
 	public readonly record struct CoopPageState(
 		bool Known, int Session, bool OnlineClient, bool RightSignedIn,
-		bool AcceptedLeft, bool AcceptedRight, bool PeerReady, bool Flag297, bool Flag298,
+		bool PeerReady, bool Flag297, bool Flag298,
 		bool Child, bool ChildLevel, int UserRightSave, bool SaveChosen,
 		bool[] PickEnabled, int[] PickState, int ProfileLeft, int ProfileRight);
 
@@ -2366,7 +1964,7 @@ public static class Fable2Bridge
 			return default;
 		}
 
-		uint[] w = _coopWords ??= new uint[22];
+		uint[] w = _coopWords ??= new uint[20];
 		try
 		{
 			if (RefiiHostGetCoopState(w, (uint)w.Length) == 0u)
@@ -2380,33 +1978,11 @@ public static class Fable2Bridge
 		}
 
 		return new CoopPageState(
-			true, unchecked((int)w[1]), w[2] != 0u, w[3] != 0u, w[4] != 0u, w[5] != 0u, w[6] != 0u,
-			w[7] != 0u, w[8] != 0u, w[9] != 0u, w[10] != 0u, unchecked((int)w[11]), w[12] != 0u,
-			new[] { (w[16] & 1u) != 0u, (w[16] & 2u) != 0u, (w[16] & 4u) != 0u },
-			new[] { unchecked((int)w[17]), unchecked((int)w[18]), unchecked((int)w[19]) },
-			unchecked((int)w[20]), unchecked((int)w[21]));
-	}
-
-	/// <summary>The villager card's subject: its component-20 name key and rename byte, or
-	/// unknown — see RefiiHostGetQueryCard.</summary>
-	public static (bool Known, uint NameKey, bool RenameByte) GetQueryCard()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		uint[] words = _queryCardWords ??= new uint[3];
-		try
-		{
-			return RefiiHostGetQueryCard(words, (uint)words.Length) != 0u
-				? (true, words[1], words[2] != 0u)
-				: default;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return default;
-		}
+			true, unchecked((int)w[1]), w[2] != 0u, w[3] != 0u, w[4] != 0u,
+			w[5] != 0u, w[6] != 0u, w[7] != 0u, w[8] != 0u, unchecked((int)w[9]), w[10] != 0u,
+			new[] { (w[14] & 1u) != 0u, (w[14] & 2u) != 0u, (w[14] & 4u) != 0u },
+			new[] { unchecked((int)w[15]), unchecked((int)w[16]), unchecked((int)w[17]) },
+			unchecked((int)w[18]), unchecked((int)w[19]));
 	}
 
 	/// <summary>
@@ -2633,9 +2209,6 @@ public static class Fable2Bridge
 	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
 	private static extern uint RefiiHostGetGoldenCockInteraction();
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetUiPreviewObject(
-		out uint modelHash, out uint entity, [Out] float[] values, uint valueCount);
 
 	[DllImport(Library)]
 	private static extern int RefiiHostGetMenuOwner();
@@ -2692,9 +2265,6 @@ public static class Fable2Bridge
 	private static extern uint RefiiHostGetCoopHeroSaveName(byte[] outText, uint capacity);
 
 	[DllImport(Library)]
-	private static extern uint RefiiHostGetSaveCardNames(byte[] outText, uint capacity);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetCoopSession(uint[] outWords, uint capacity);
 
 	[DllImport(Library)]
@@ -2706,29 +2276,14 @@ public static class Fable2Bridge
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetHeroWeapons(out uint melee, out uint ranged);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetPendingWeapons(out uint melee, out uint ranged);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetCoopHeldUids(uint player, out ulong melee, out ulong ranged);
 
 	[DllImport(Library)]
-	private static extern uint RefiiHostGetCoopFigures([Out] uint[] outWords, uint capacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetCoopScreen([Out] uint[] outWords, uint capacity, [Out] byte[]? text, uint textCapacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetClothingMannequin();
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetHeroStateApplied(uint player);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetTopBoxFront([Out] uint[] words, uint capacity);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetTargetedQuery([Out] uint[] words, uint capacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetPlayerTwoTargetedQuery([Out] uint[] words, uint capacity);
@@ -2753,9 +2308,6 @@ public static class Fable2Bridge
 	private static extern uint RefiiHostGetShopPrice(out uint outTicket, out int outPrice, out uint outRecord);
 
 	[DllImport(Library)]
-	private static extern int RefiiHostGetLogbookOrbView(int[] stats, uint statsCapacity, byte[] name, uint nameCapacity);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetQuestLog(uint[] outWords, uint wordCapacity);
 
 	[DllImport(Library)]
@@ -2770,11 +2322,6 @@ public static class Fable2Bridge
 	[DllImport(Library)]
 	private static extern uint RefiiHostPauseTabsAvailable();
 
-	[DllImport(Library)]
-	private static extern int RefiiHostGetAbilitiesMode();
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetFrontEndModel(uint[] outWords);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetMinimapLive(uint[] outWords, uint capacity);
@@ -2790,9 +2337,6 @@ public static class Fable2Bridge
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetFurniture(uint[] words, uint capacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetQueryCard(uint[] words, uint capacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetCoopState(uint[] words, uint capacity);
@@ -2819,19 +2363,6 @@ public static class Fable2Bridge
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetPropertyEstate(
 		ulong uid, uint[] words, uint wordCapacity, byte[] occupant, uint occupantCapacity);
-
-	[DllImport(Library)]
-	private static extern int RefiiHostGetOptions(
-		uint[] words, uint wordCapacity, out float outBreadcrumb);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetOptionsPage(
-		uint page, out int outCursor, int[] indices, float[] values, uint capacity);
-
-	[DllImport(Library)]
-	private static extern int RefiiHostGetCrimeScreen(
-		out int outFine, out uint outFlags, byte[] charge, uint chargeCapacity,
-		byte[] service, uint serviceCapacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetCompletedQuests(
@@ -2897,9 +2428,6 @@ public static class Fable2Bridge
 	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
 	private static extern uint RefiiHostTakePubGameEvents();
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetTopBoxBody(
-		[Out] uint[] outWords, uint capacity, [Out] byte[] outText, uint textCapacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetItemDyeLayers(

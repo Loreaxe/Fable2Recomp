@@ -12,7 +12,7 @@ public static class Engine_UiStatedScreens
 {
 	/// <summary>The registry entry a stated screen stands as: root active, live, contributing.</summary>
 	public static Engine_UiModel.Presentation Entry(uint address, string file) =>
-		new(address, address, file + ".bgf", 9u, 1u);
+		new(address, 0u, file + ".bgf", 9u, -1);
 
 	/// <summary>
 	/// The presentation the manager holds for screen <paramref name="screenId"/> and its file: the

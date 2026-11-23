@@ -172,7 +172,7 @@ public partial class GameInput : Node
 	/// <para>Under the focus rule: an unfocused window publishes a neutral pad and must not keep a
 	/// controller buzzing on the desk either, so <paramref name="devices"/> false silences every
 	/// pad, and the guest's pair is picked up again on the first focused frame.</para>
-	/// <para>Two switches, both required: the guest's own (<c>byte_8331924F</c>, the Controls
+	/// <para>Two switches, both required: the guest's own (its `SetRumbleEnabled` switch, the Controls
 	/// fold's Controller Vibration page — zero and no effect is ever stated) and the launcher's
 	/// <see cref="ControllerVibration"/>, which silences the joypad whatever is stated.</para>
 	/// </remarks>

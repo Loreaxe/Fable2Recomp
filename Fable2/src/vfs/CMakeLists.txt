@@ -43,6 +43,7 @@ set(REFII_VFS_RUNTIME_SOURCES
     ${REFII_VFS_ROOT}/src/core/texture_layer_state.cpp
     # The decals the guest states, filled by Fable2/src/vfs/src/hooks/decals.cpp.
     ${REFII_VFS_ROOT}/src/core/decal_state.cpp
+    ${REFII_VFS_ROOT}/src/core/loading_text_state.cpp
     # The FX mesh particle descriptors, filled by Fable2/src/vfs/src/hooks/fx_meshes.cpp.
     ${REFII_VFS_ROOT}/src/core/fx_mesh_state.cpp
     ${REFII_VFS_ROOT}/src/core/item_dye_layer_state.cpp
@@ -107,6 +108,27 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/gui_pause_hooks.cpp
     # Gameface presentations built headless: the guest keeps its UI objects, Godot draws.
     ${REFII_VFS_ROOT}/src/hooks/gui_headless_presentation.cpp
+    # The screen that is up and each screen's presentation, stated from the calls that set them.
+    ${REFII_VFS_ROOT}/src/hooks/gui_stated_screens.cpp
+    ${REFII_VFS_ROOT}/src/hooks/loading_screen_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/options_levels_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/rumble_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/screen_fade_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/spell_widget_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/hud_expression_meter_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/slow_time_dial_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/crime_screen_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/frontend_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/logbook_stats_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/preview_figures_stated.cpp
+    # The shopkeeper, the previewed item, the pending weapons and the experience counter's
+    # visibility, stated from the calls that set them.
+    ${REFII_VFS_ROOT}/src/hooks/shop_keeper_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/preview_item_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/pending_weapons_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/experience_counter_stated.cpp
+    # The list screens' row tickets, from their allocate and clear.
+    ${REFII_VFS_ROOT}/src/hooks/menu_tickets_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_element_hooks.cpp
     # The world icons, stated at their Init, Updates and destructor into the shared table.
     ${REFII_VFS_ROOT}/src/hooks/world_icon_hooks.cpp

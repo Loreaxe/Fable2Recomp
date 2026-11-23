@@ -199,7 +199,9 @@ REX_EXTERN(rex_lhCoopScreen_SpawnPreviewMannequin) {
   using refii::vfs::LoadGuestU32;
 
   const uint32_t screen = ctx.r3.u32;
+  const char* outer = refii::vfs::SetPreviewFigureRole("henchman");
   __imp__rex_lhCoopScreen_SpawnPreviewMannequin(ctx, base);
+  refii::vfs::SetPreviewFigureRole(outer);
 
   if (Plausible(screen)) {
     REXLOG_INFO("coop MANNEQUIN: sub_82438818 ran — screen+276(entity)=0x{:08X} ticket=0x{:08X}",

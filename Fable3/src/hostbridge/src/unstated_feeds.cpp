@@ -34,31 +34,7 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostDescribeGameFlowQueue(char* /*out*/, uin
     return 0;
 }
 
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostFrontEndPresentation(void) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetDisplayBox(uint32_t* /*out_vtable*/) {
-    return 0;
-}
-
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetEntityLocomotion(uint32_t /*entity*/, uint32_t* /*out_words*/, uint32_t /*word_count*/, char* /*out_name*/, uint32_t /*name_capacity*/) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetExpressionMeter(float* /*out_values*/, uint32_t /*capacity*/) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT int RefiiHostFrontEndGuiIsUp(void) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT int RefiiHostGetFrontEnd(uint32_t* /*out*/) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT int RefiiHostGetFrontEndInit(uint32_t* /*out*/) {
     return 0;
 }
 
@@ -70,15 +46,12 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetGameLoopPacer(uint32_t* /*words*/, ui
     return 0;
 }
 
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetHudScriptMeters(uint32_t* /*out_hashes*/, float* /*out_ratios*/, uint32_t /*capacity*/) {
+// The shared NetBridge's two title reads (hosting and joinable live on Fable 2's net context).
+REFII_HOST_ABI_EXPORT uint32_t RefiiNetHostState(char* /*out*/, uint32_t /*capacity*/) {
     return 0;
 }
 
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetHudScriptTexts(uint32_t* /*out_hashes*/, uint32_t* /*out_text_ids*/, uint32_t /*capacity*/) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT int RefiiHostGetInGameScreen(uint32_t* /*out*/) {
+REFII_HOST_ABI_EXPORT int RefiiNetSetJoinable(int /*on*/) {
     return 0;
 }
 
@@ -88,15 +61,7 @@ REFII_HOST_ABI_EXPORT void RefiiHostGetInitMarkers(uint32_t* out) {
     }
 }
 
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetInventoryScreenMode(void) {
-    return 0;
-}
-
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMapMarkers(uint32_t* /*out_hashes*/, float* /*out_values*/, uint32_t /*cap*/) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMenuBox(uint32_t* /*out_selected*/, uint32_t* /*out_flags*/, uint32_t* /*out_enabled_mask*/) {
     return 0;
 }
 
@@ -120,19 +85,11 @@ REFII_HOST_ABI_EXPORT int RefiiHostGetPlayerTwoHoldPrompt(float* /*out_at*/, cha
     return 0;
 }
 
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetPresentations(uint32_t* /*words*/, uint32_t /*word_capacity*/, char* /*names*/, uint32_t /*name_capacity*/) {
-    return 0;
-}
-
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetPromptTitles(char* /*out*/, uint32_t /*capacity*/) {
     return 0;
 }
 
 REFII_HOST_ABI_EXPORT int RefiiHostGetRenderFence(uint32_t* /*out_manager*/, double* /*out_submitted*/, double* /*out_retired*/, uint32_t* /*out_busy*/, uint32_t* /*out_arms*/) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetSaveCards(uint32_t* /*out_cursor*/, uint32_t* /*out_base_slot*/, char* /*text*/, uint32_t /*capacity*/) {
     return 0;
 }
 
@@ -150,14 +107,6 @@ REFII_HOST_ABI_EXPORT int RefiiHostGetSpellAssign(uint32_t* /*out*/) {
     return 0;
 }
 
-REFII_HOST_ABI_EXPORT int RefiiHostGetSpellBlade(uint32_t* /*out*/, uint32_t /*capacity*/) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT int RefiiHostGetSpellWheel(uint32_t /*player*/, uint32_t* /*out*/, uint32_t /*capacity*/) {
-    return 0;
-}
-
 REFII_HOST_ABI_EXPORT int RefiiHostGetStartLevel(char* /*world*/, char* /*level*/, char* /*entrance*/, uint32_t /*capacity*/) {
     return 0;
 }
@@ -165,10 +114,6 @@ REFII_HOST_ABI_EXPORT int RefiiHostGetStartLevel(char* /*world*/, char* /*level*
 /// -1: not stated (Fable 2's 1 on, 0 off).
 REFII_HOST_ABI_EXPORT int RefiiHostGetSubtitles(void) {
     return -1;
-}
-
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetUiAttributes(uint32_t /*requested_presentation*/, const uint32_t* /*ids*/, uint32_t /*id_count*/, uint32_t* /*out*/, uint32_t /*out_capacity*/) {
-    return 0;
 }
 
 REFII_HOST_ABI_EXPORT int RefiiHostGetVideoFrame(uint8_t* /*out_rgba*/, uint32_t /*capacity*/, uint32_t* /*out_width*/, uint32_t* /*out_height*/) {
@@ -212,10 +157,6 @@ REFII_HOST_ABI_EXPORT void RefiiHostMenuChunkCounters(uint64_t* out_recorded, ui
 }
 
 REFII_HOST_ABI_EXPORT int RefiiHostMenuPopulating(void) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT int RefiiHostPauseTabSelect(uint32_t /*tab*/) {
     return 0;
 }
 

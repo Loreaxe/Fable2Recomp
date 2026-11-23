@@ -1812,9 +1812,13 @@ REX_EXTERN(rex_lhGuiItemsScreen_Update) {
   __imp__rex_lhGuiItemsScreen_Update(ctx, base);
 }
 
+// The mannequin this open files with the preview scene is the clothing screen's
+// (preview_figures_stated.cpp).
 REX_EXTERN(rex_lhGuiClothingScreen_OnEnter) {
   HeroTwoLend lend(base, PlayerTwoOwnsPause(base));
+  const char* outer = refii::vfs::SetPreviewFigureRole("clothing");
   __imp__rex_lhGuiClothingScreen_OnEnter(ctx, base);
+  refii::vfs::SetPreviewFigureRole(outer);
 }
 
 REX_EXTERN(rex_lhGuiClothingScreen_Update) {

@@ -28,7 +28,7 @@ using Refii.Game;
 public partial class GameUi
 {
 	/// <summary>The co-op screen's state this frame, or null while it is not up.</summary>
-	private Fable2Bridge.CoopScreenState? _coopScreen;
+	private Engine_UiCoopStated.State? _coopScreen;
 
 	/// <summary>The Load Game fan for player two's save picker, cloned from the co-op file.</summary>
 	private Engine_FrontEndSaveCards? _coopSaveCards;
@@ -38,25 +38,6 @@ public partial class GameUi
 
 	/// <summary>How many of the fan's portraits had resolved when it was last filled.</summary>
 	private int _coopSaveCardsPortraits;
-
-	/// <summary>
-	/// The picker's last stated open (`@CoopPicker.Open`, gui_headless_presentation.cpp): the card
-	/// its first save sits on and how many saves it listed. The opener sets the first card from the
-	/// count alone (TU1 0x8243b1fc..0x8243b224), so a statement for the same count answers any open.
-	/// </summary>
-	private (int FirstCard, int Saves)? _coopPickerStated;
-
-	/// <summary>`@CoopPicker.Open`: screen (hex), first card, saves.</summary>
-	private void StateCoopPickerOpen(Engine_UiModel.GuiNativeCall call)
-	{
-		if (int.TryParse(call.Argument(1).Text, System.Globalization.NumberStyles.Integer,
-				System.Globalization.CultureInfo.InvariantCulture, out int first) &&
-			int.TryParse(call.Argument(2).Text, System.Globalization.NumberStyles.Integer,
-				System.Globalization.CultureInfo.InvariantCulture, out int saves))
-		{
-			_coopPickerStated = (first, saves);
-		}
-	}
 
 	/// <summary>Player one's screen row, shown on the couch.</summary>
 	private Engine_UiCoopModeRow? _coopModeRow;
@@ -95,7 +76,7 @@ public partial class GameUi
 	private void DriveCoopScreen(double delta)
 	{
 		Engine_UiOwnedBook? book = CoopBook();
-		_coopScreen = book is null ? null : Fable2Bridge.CoopScreen(withText: false);
+		_coopScreen = book is null ? null : Engine_UiCoopStated.Current;
 		Fable2PageProviders.CoopPlayerTwoAccepted = _coopScreen?.RightAccepted ?? false;
 		Fable2PageProviders.CoopRemotePlayerTwo = SessionRole == 1u && !CoopSession.LocalCoop;
 
@@ -211,31 +192,27 @@ public partial class GameUi
 		PointCoopSaveFan(state);
 	}
 
-	private void FillCoopSaveFan(Engine_UiOwnedBook book, Fable2Bridge.CoopScreenState state)
+	private void FillCoopSaveFan(Engine_UiOwnedBook book, Engine_UiCoopStated.State state)
 	{
-		if (_coopSaveCards is null || Fable2Bridge.CoopScreen(withText: true) is not { } read)
+		// The first card and the cards' texts are the picker's opener's (`@CoopPicker.Open`); until
+		// it has stated them, the fan waits.
+		if (_coopSaveCards is null ||
+			state.FirstCard is not (>= 1 and <= Engine_FrontEndSaveCards.MaxCards))
 		{
 			return;
 		}
 
-		// The first card the picker's opener stated for this many saves; until it has, the fan waits.
-		if (_coopPickerStated is not { } stated || stated.Saves != read.Saves.Count ||
-			stated.FirstCard is not (>= 1 and <= Engine_FrontEndSaveCards.MaxCards))
-		{
-			return;
-		}
-
-		int baseSlot = stated.FirstCard;
+		int baseSlot = state.FirstCard;
 		var saves = new List<Engine_FrontEndSaveCards.Save>();
 		int portraits = 0;
-		for (int i = 0; i < read.Saves.Count && i < Engine_FrontEndSaveCards.MaxCards; ++i)
+		for (int i = 0; i < state.Saves.Count && i < Engine_FrontEndSaveCards.MaxCards; ++i)
 		{
 			// Card k (1-based) shows save k − base: `sub_8243B520(screen, k, texture, …)` writes
 			// `loadgame.Group.Card{k}…screenshot`.
 			int card = baseSlot + i;
 			Texture2D? portrait = book.StatedTexture($"loadgame.Group.Card{card}.Group.screenshot");
 			portraits += portrait is null ? 0 : 1;
-			saves.Add(new Engine_FrontEndSaveCards.Save(read.Saves[i].Text, portrait));
+			saves.Add(new Engine_FrontEndSaveCards.Save(state.Saves[i].Text, portrait));
 		}
 
 		if (portraits == _coopSaveCardsPortraits && _coopSaveCards.Visible)
@@ -256,7 +233,7 @@ public partial class GameUi
 	/// guest's cursor to it, a click on it loads it. A click anywhere else on the fan is taken so
 	/// it cannot fall through as A.
 	/// </summary>
-	private void PointCoopSaveFan(Fable2Bridge.CoopScreenState state)
+	private void PointCoopSaveFan(Engine_UiCoopStated.State state)
 	{
 		if (_coopSaveCards is null || !CoopDrivesRightPage || Engine_UiPointer.Canvas is not { } at)
 		{
@@ -468,8 +445,16 @@ public partial class GameUi
 	/// </summary>
 	private void DriveCoopFigures()
 	{
+		if (!HostBridge.IsInGame)
+		{
+			Engine_UiPreviewFigures.Reset();
+		}
+
 		Engine_UiOwnedBook? book = _coopScreen is { PickerOpen: false } ? CoopBook() : null;
-		(uint Henchman, uint PlayerOne)? figures = book is null ? null : Fable2Bridge.CoopFigures();
+		(uint Henchman, uint PlayerOne)? figures = book is null
+			? null
+			: (Engine_UiPreviewFigures.Entity(Engine_UiPreviewFigures.Henchman),
+				Engine_UiPreviewFigures.Entity(Engine_UiPreviewFigures.PlayerOne));
 		GameEntities? feed = GetParent()?.GetNodeOrNull<GameWorld>("GameWorld")?.Entities;
 		if (book is null || figures is not { } stood)
 		{

@@ -76,7 +76,52 @@ public static class Engine_UiHudTopBox
 	/// <summary>The diagnostic sink; the test host, which cannot call Godot, replaces it.</summary>
 	public static System.Action<string> Log { get; set; } = line => Godot.GD.Print(line);
 
-	/// <param name="front">The manager's front record, read out of the guest.</param>
+	/// <summary>
+	/// The front record the guest's composer last composed (`@Hud.TopBoxFront`, gui_registry_hooks.cpp),
+	/// not present while `GUI.SetTopBoxHidden` hides the box (`@Hud.TopBoxHidden`).
+	/// </summary>
+	public static Fable2Bridge.TopBoxFront Front =>
+		_hidden ? _front with { Present = false } : _front;
+
+	/// <summary>The body the composer stated for <see cref="Front"/> (`@Gui.TextGroup`), a literal.</summary>
+	public static Fable2Bridge.TopBoxBody Body =>
+		new(true, _front.Present, 3, 0u, 0u, 0u, 0u, _front.TitleTag, _front.NameHash, _body);
+
+	private static Fable2Bridge.TopBoxFront _front = new(true, false, 0u, false, false, false, false, 0, 0u, 0);
+
+	private static bool _hidden;
+
+	private static string _body = string.Empty;
+
+	private static string? _composing;
+
+	private static readonly uint TopMainHash = Refii.Core.Engine_GameHash.Fnv1("TopMain");
+
+	/// <summary>
+	/// `@Hud.TopBoxFront present channel name title showA holdA showY holdY`: one composition's
+	/// front record. The texts of that composition were stated before it.
+	/// </summary>
+	public static void StateFront(
+		bool present, int channel, uint nameHash, uint titleTag, bool showA, bool holdA, bool showY, bool holdY)
+	{
+		_front = new Fable2Bridge.TopBoxFront(true, present, titleTag, showA, holdA, showY, holdY, channel, nameHash, 0);
+		_body = present ? _composing ?? string.Empty : string.Empty;
+		_composing = null;
+	}
+
+	/// <summary>`@Hud.TopBoxHidden hidden`.</summary>
+	public static void StateHidden(bool hidden) => _hidden = hidden;
+
+	/// <summary>`@Gui.TextGroup group element text`: a text the composer is stating; the body is `TopMain`'s.</summary>
+	public static void StateText(uint elementHash, string text)
+	{
+		if (elementHash == TopMainHash)
+		{
+			_composing = text;
+		}
+	}
+
+	/// <param name="front">The composer's front record, as stated (<see cref="Front"/>).</param>
 	/// <param name="strings">Babel, for `TextManager_HasKey` on the title tag.</param>
 	/// <param name="hostNotice">
 	/// Refii's own notice (co-op joined/left, a partner waiting at an exit), shown as a body-only
@@ -86,9 +131,9 @@ public static class Engine_UiHudTopBox
 		Fable2Bridge.TopBoxFront front, bool aHeld, bool yHeld,
 		Engine_HudValues values, Refii.Text.Engine_BabelDatabase? strings, string? hostNotice = null) =>
 		Publish(front, aHeld, yHeld, values, strings, hostNotice,
-			static () => Fable2Bridge.GetTopBoxBody());
+			static () => Body);
 
-	/// <param name="readBody">The front record's body provider, read out of the guest (ABI 118).</param>
+	/// <param name="readBody">The front record's body, as the composer stated it.</param>
 	public static void Publish(
 		Fable2Bridge.TopBoxFront front, bool aHeld, bool yHeld,
 		Engine_HudValues values, Refii.Text.Engine_BabelDatabase? strings, string? hostNotice,
@@ -202,10 +247,9 @@ public static class Engine_UiHudTopBox
 		if (_shown != front.NameHash)
 		{
 			_shown = front.NameHash;
-			string lifetime = front.LifetimeMs <= 0 ? "until removed" : $"{front.LifetimeMs} ms left";
 			Log($"[hud-topbox] front record 0x{front.NameHash:X8} on channel {front.Channel}" +
 				$" — title {(hasTitle ? "yes" : "no")}, A {(showA ? (holdA ? "hold" : "press") : "off")}," +
-				$" Y {(showY ? (holdY ? "hold" : "press") : "off")}, {lifetime}");
+				$" Y {(showY ? (holdY ? "hold" : "press") : "off")}");
 		}
 	}
 
@@ -218,7 +262,7 @@ public static class Engine_UiHudTopBox
 		}
 	}
 
-	/// <summary>The body a provider object states, by its class — see RefiiHostGetTopBoxBody.</summary>
+	/// <summary>The body by its class: 3 is the literal the composer stated; 0 to 2 are Babel keys.</summary>
 	private static string ComposeBody(Fable2Bridge.TopBoxBody body, Refii.Text.Engine_BabelDatabase? strings)
 	{
 		if (!body.Known || !body.Present)

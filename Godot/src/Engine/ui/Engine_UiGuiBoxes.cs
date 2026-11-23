@@ -780,18 +780,6 @@ public sealed class Engine_UiGuiBoxes
 		++Generation;
 	}
 
-	/// <summary>
-	/// A stated box that is no longer an open MessageBox — freed without its destructor or
-	/// Close being seen. Dropped so an owned view does not stand, masking the pad, over nothing.
-	/// </summary>
-	public void GuestMessageLost(uint box)
-	{
-		if (_guestMessages.RemoveAll(m => m.Box == box) != 0)
-		{
-			++Generation;
-		}
-	}
-
 	/// <summary>One line for the report.</summary>
 	public string Describe()
 	{

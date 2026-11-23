@@ -104,12 +104,6 @@ inline uint32_t FrontEndMenuField(uint32_t tu1_offset) {
   return Current() == Build::kUnpatched && tu1_offset >= 72u ? tu1_offset - 12u : tu1_offset;
 }
 
-/// The same for the title screen object (vtable 0x820D09C4 in TU1), which grew by 8: the
-/// timestamp is +72 and +64, the press-A latch +80 and +72.
-inline uint32_t FrontEndTitleField(uint32_t tu1_offset) {
-  return Current() == Build::kUnpatched && tu1_offset >= 72u ? tu1_offset - 8u : tu1_offset;
-}
-
 /// One embedded ChapterSave record in the main menu's save vector: 40 bytes in TU1, 36
 /// unpatched (TU1 appended a field at +36). `+12` level name and `+24` compatible are the same.
 inline uint32_t SaveRecordStride() { return Pick(40u, 36u); }

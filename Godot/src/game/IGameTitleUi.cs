@@ -24,7 +24,7 @@ public interface IGameTitleUi
 
 	void Conceal(string reason = "unstated");
 
-	void FollowGuest(Engine_UiModel.FrontEndScreen screen, int sceneSlide);
+	void FollowGuest(Engine_UiModel.FrontEndScreen screen);
 
 	/// <summary>The theme photo mode's own panel is drawn in, or null until the UI has one.</summary>
 	Engine_UiTheme? PhotoModeTheme { get; }

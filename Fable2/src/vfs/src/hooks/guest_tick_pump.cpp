@@ -61,6 +61,7 @@
 #include "core/refii_mod_events.h"
 #include "core/refii_mod.h"
 #include "gui/gui_display_box.h"
+#include "hooks/frontend_stated.h"
 #include "hooks/ppc_externs.h"
 #include "gui/gui_told_statements.h"
 #include "core/gui_native_calls.h"
@@ -105,6 +106,8 @@ PPC_EXTERN_FUNC(rex_CNetworkManager_LeaveSession);
 PPC_EXTERN_FUNC(rex_CGameModePause_ctor);
 PPC_EXTERN_FUNC(rex_GameFlow_QueueCommand);
 PPC_EXTERN_FUNC(rex_GameFlow_PopCommand);
+PPC_EXTERN_FUNC(rex_lhGuiTabStrip_Push);
+PPC_EXTERN_FUNC(rex_lhLua_SetRumbleEnabled);
 extern "C" int RefiiCoopShoppingPlayerTwo(void);
 extern "C" int32_t RefiiPropertyRepair(PPCContext& ctx, uint8_t* base, uint32_t hero, uint64_t uid);
 extern "C" void RefiiPropertyRepairAll(PPCContext& ctx, uint8_t* base, uint32_t hero, int32_t* repaired, int32_t* spent,
@@ -179,9 +182,9 @@ PPC_EXTERN_FUNC(rex_lhDisplayNumericAdjuster_HandleAction);
 PPC_EXTERN_FUNC(rex_lhDisplayQuestBox_HandleAction);
 PPC_EXTERN_FUNC(rex_lhDisplayMessageBox_HandleAction);
 
-// The MenuBox close — `sub_823DC2B0(ctl)`. Publishes the result (value = ctl+13 ? 0 :
-// selIdx+1) and tears the box down. Used for the host's cancel.
-PPC_EXTERN_FUNC(rex_lhMenuBox_Close);
+// The MenuBox input handler — `sub_823DBC70(ctl, input)` (disc `sub_8240BEA0`). Its B arm is the
+// only place the guest cancels a box: cancelled byte, then the close (0x823dc0cc..0x823dc0d4).
+PPC_EXTERN_FUNC(rex_lhMenuBox_HandleInput);
 
 // The MenuBox selector — `sub_823DBB48(ctl, index)`: old selection to slide 1, new to slide 2,
 // writes ctl+0. Keeps the guest's drawn selection in step with the host highlight.
@@ -344,6 +347,8 @@ PPC_EXTERN_FUNC(rex_lhRegionStats_FormatSilverKeysText);   // region silver keys
 PPC_EXTERN_FUNC(rex_lhRegionStats_GetEconomyRating);   // region economy, as a STAR COUNT
 PPC_EXTERN_FUNC(rex_lhRegionManager_FindRegionOwningLevel);   // the region that OWNS a level, by level name
 PPC_EXTERN_FUNC(rex_lhWorldMap_CanFastTravelTo);   // can this quest be fast-travelled to
+PPC_EXTERN_FUNC(rex_CECShopkeeper_BuyPrice);   // a shop row's price, buy (event 30)
+PPC_EXTERN_FUNC(rex_CECShopkeeper_SellPrice);   // a shop row's price, sell (event 31)
 PPC_EXTERN_FUNC(rex_lhQuestTrail_IsTrailActive);   // is a trail already running
 PPC_EXTERN_FUNC(rex_lhQuestTrail_HasNoDestination);   // has the world no trail destination
 PPC_EXTERN_FUNC(rex_lhCharString_OperatorNotEqual);   // LHString CCharString operator!= -- NEGATED, see below
@@ -548,26 +553,54 @@ bool StartNewGame(PPCContext& ctx, uint8_t* base, bool female) {
   return true;
 }
 
-/// The GUI object, and the main-menu screen hanging off it at +184. The vtable check is
-/// load-bearing: `dword_83496B08` has two writers through the same base ctor, and once the game
-/// has taken over it holds a BASE-ONLY object whose +184 is not a screen pointer.
+/// The GUI object `dword_83496B08`: two writers through the same base constructor, the front
+/// end's and the in-game one.
 constexpr refii::guest::Addr kGuiObject{0x83496B08u};
-constexpr refii::guest::Addr kFrontEndGuiVtable{0x820A924Cu};
-constexpr uint32_t kMainMenuScreenOffset = 184u;
 
-uint32_t MainMenuScreen(uint8_t* base) {
+/// THE IN-GAME SCREEN SET, AS THE GUEST'S OWN CALLS STATE IT (gui_stated_screens.cpp, the openers
+/// in display_box_hooks.cpp, the screen setter in mod_events.cpp): false while the set is not up
+/// or a box holds the modal latch — a box owns input while it is up, and its own lever answers.
+/// The screen is in TU1 numbering, 31 when none is up.
+bool StatedInGameScreen(uint32_t* out_screen_id) {
+  uint32_t mode = 1u;
+  if (refii_bridge_stated_pause(&mode, nullptr, nullptr) == 0u || mode != 1u) {
+    return false;
+  }
+  if (out_screen_id != nullptr) {
+    const uint32_t stated = refii_bridge_stated_screen_now();
+    *out_screen_id = stated == 0xFFFFFFFFu ? 31u : stated;
+  }
+  return true;
+}
+
+/// The in-game screen owner `*(GUI + 28)`: the object the guest's own screen lookup, modal router
+/// and exit are CALLED on. 0 when the GUI object up is not the in-game one — `dword_83496B08` has
+/// two writers, and only the in-game object (vtable 0x82001610) has an owner there.
+uint32_t InGameScreenOwner(uint8_t* base) {
+  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
   const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  if (gui < 0x10000u || gui >= 0xC0000000u) {
-    return 0;
+  if (!plausible(gui) || LoadGuestU32(base, gui) != refii::guest::Address(0x82001610u)) {
+    return 0u;
   }
+  const uint32_t owner = LoadGuestU32(base, gui + 28u);
+  return plausible(owner) ? owner : 0u;
+}
 
-  if (LoadGuestU32(base, gui) != kFrontEndGuiVtable) {
-    // The base-only instance — the game has taken the front end over.
-    return 0;
+/// The handler the in-game GUI holds for a screen (TU1 id), by the guest's own lookup
+/// `lhGuiManager_FindScreenHandler(owner, id)` (0x8236FFC0, disc 0x823381B8): a find on the map at
+/// `owner + 68` that answers 0 for an absent key and inserts nothing (0x8236fffc..0x82370034, disc
+/// 0x823381f4..0x8233822c). An object to call or to hand to a guest call, never a value to mirror.
+uint32_t InGameScreenHandler(PPCContext& ctx, uint8_t* base, uint32_t screen_id) {
+  const uint32_t owner = InGameScreenOwner(base);
+  if (owner == 0u) {
+    return 0u;
   }
-
-  const uint32_t screen = LoadGuestU32(base, gui + kMainMenuScreenOffset);
-  return (screen >= 0x10000u && screen < 0xC0000000u) ? screen : 0;
+  PPCContext work = ctx;
+  work.r3.u32 = owner;
+  work.r4.u32 = refii::guest::ScreenId(screen_id);  // the guest's map is keyed by ITS id
+  rex_lhGuiManager_FindScreenHandler(work, base);
+  const uint32_t handler = work.r3.u32;
+  return handler >= 0x10000u && handler < 0xC0000000u ? handler : 0u;
 }
 
 /// Takes one saved-game count, on the guest's thread, by calling the guest's own probe.
@@ -583,7 +616,7 @@ void SampleSavedGameCount(PPCContext& ctx, uint8_t* base) {
   if (!GuestTickPumpWantsSaveCount()) {
     return;
   }
-  if (MainMenuScreen(base) == 0) {
+  if (!FrontEndUp()) {
     // Front end not up: left pending rather than answered with a zero (-1 is not 0).
     return;
   }
@@ -730,7 +763,9 @@ bool LoadSavedGame(PPCContext& ctx, uint8_t* base, uint32_t index) {
     return true;
   }
 
-  const uint32_t screen = MainMenuScreen(base);
+  // The main menu its own activate stated; the two vectors are read only for the handle slots
+  // the call takes, and the compatibility byte the guest's own confirm tests before it.
+  const uint32_t screen = FrontEndMenuScreen();
   if (screen == 0) {
     return false;
   }
@@ -797,8 +832,6 @@ constexpr uint32_t kCommandSetLanguage = 302u;
 constexpr uint32_t kCommandActivateItem = 2u;
 
 // Subtitles sampling edges — see the sampler at the end of OnGuestTick.
-uint32_t g_last_menu_screen = 0;
-bool g_sample_subtitles_after_drain = false;
 /// "Language:<index>" — the index rides in the name because the queue carries only names. The
 /// guest spawns one language entry per installed language with command 302 and the row index.
 constexpr const char* kActionLanguagePrefix = "Language:";
@@ -807,6 +840,16 @@ constexpr const char* kActionLanguagePrefix = "Language:";
 /// {type 2, param} contract: 0 save-and-continue, 1 save-and-quit, 2 quit-without-saving.
 /// A number, not a name: the guest's dispatch never reads the name on this path.
 constexpr const char* kActionPauseSavingPrefix = "PauseSaving:";
+
+/// "PauseTab:<tab>" — a pause tab picked: 1 root, 2 map, 3 abilities, 4 items, 5 weapons,
+/// 6 clothing, 7 logbook, 8 options. The guest's own tab request ends in `sub_826B89E0(tab)`
+/// when the tab is not the one the strip is on (`cmpw cr6,r3,r11; beq; bl sub_826B89E0`
+/// 0x8229ad14); this makes that call under the same rule, on the pause root with no box up.
+constexpr const char* kActionPauseTabPrefix = "PauseTab:";
+
+/// "Rumble:<0|1>" — the rumble switch through its one writer, the `SetRumbleEnabled` native
+/// (`stb r3, byte_8331924F` 0x823b3a7c).
+constexpr const char* kActionRumblePrefix = "Rumble:";
 
 /// "QuickWheel:open|close|select|back|release|point:<i>" — the expression wheel through the
 /// guest's own routines, because the GameAction chain that would run them (40 hold / 41
@@ -842,7 +885,7 @@ constexpr const char* kActionSpellsMenuPrefix = "SpellsMenu:";
 /// IT IS WIRED ON THE ABILITIES SCREEN AND NOWHERE ELSE. `sub_826C2958` routes that screen's
 /// input into `sub_826B5430(screen14 + 200, ...)` at 0x826c29a0, which `DispatchScreenAction`
 /// reaches. The quick blade is the SAME class at `*(*(GUI+32)+92)` (player 1) / `+96` (player
-/// 2), standing over the running game with no screen up — so `InGameScreenRoots` refuses it and
+/// 2), standing over the running game with no screen up — so `StatedInGameScreen` refuses it and
 /// nothing else here can address it. `sub_82405190`, the guest's own route, needs an object
 /// whose vtable slot 16 returns the player index; we have no such object and will not fabricate
 /// one. `sub_826B5430` needs neither a vtable nor a player index, so it is the first
@@ -1009,7 +1052,7 @@ constexpr const char* kActionFurniturePrefix = "Furniture:";
 bool IsInGameUiAction(const std::string& name) {
   static constexpr const char* kPrefixes[] = {
       "MenuEvent:",   "ScreenAction:", "QueryAnswer:",
-      "BoxAction:",   "ReceiveItemsAction:", "MenuBoxSelect:", "MenuBoxAnswer:",
+      "BoxAction:",   "ReceiveItemsAction:", "MenuBoxSelect:", "MenuBoxAnswer:", "PauseTab:",
   };
   for (const char* prefix : kPrefixes) {
     if (name.rfind(prefix, 0) == 0) {
@@ -1080,7 +1123,7 @@ bool DispatchByName(PPCContext& ctx, uint8_t* base, const std::string& name,
     return true;
   }
 
-  const uint32_t screen = MainMenuScreen(base);
+  const uint32_t screen = FrontEndMenuScreen();
   if (screen == 0) {
     return false;
   }
@@ -1133,25 +1176,15 @@ bool DispatchByName(PPCContext& ctx, uint8_t* base, const std::string& name,
 ///
 /// Drops rather than defers when the window is gone: the post is only made from the live pause
 /// root, so a failed gate means a stale request, and re-queuing would fire a save dialog over
-/// the next screen. The in-game vtable gate mirrors `MainMenuScreen`'s: `dword_83496B08` has
-/// two writers, and only the in-game object (vtable 0x82001610) has a screen manager at +56.
+/// the next screen.
 bool DispatchPauseSavingEvent(PPCContext& ctx, uint8_t* base, uint32_t param) {
-  const uint32_t kInGameGuiVtable = refii::guest::Address(0x82001610u);
   const uint32_t kPauseHandlerVtable = refii::guest::Address(0x820CDE18u);
-  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
-  const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  if (!plausible(gui) || LoadGuestU32(base, gui) != kInGameGuiVtable) {
-    REXLOG_INFO("Refii guest-tick pump: PauseSaving:{} with no in-game GUI — dropped", param);
-    return true;
-  }
-
-  const uint32_t manager = LoadGuestU32(base, gui + 56u);
-  const uint32_t owner = LoadGuestU32(base, gui + 28u);
-  if (!plausible(manager) || !plausible(owner) ||
-      LoadGuestU32(base, manager + 4u) != 0u ||   // the pause ROOT is the active screen
-      LoadGuestU32(base, owner + 44u) != 0u ||    // no query box pending
-      LoadGuestU32(base, owner + 40u) != 1u) {    // the modal latch is idle
+  // Stated: the pause ROOT is the screen up, no box is pending and the modal latch is idle.
+  uint32_t mode = 1u;
+  uint32_t modal = 0u;
+  if (refii_bridge_stated_pause(&mode, &modal, nullptr) == 0u || mode != 1u || modal != 0u ||
+      refii_bridge_stated_screen_now() != 0u) {
     REXLOG_INFO("Refii guest-tick pump: PauseSaving:{} outside the pause root — dropped",
                 param);
     return true;
@@ -1160,12 +1193,8 @@ bool DispatchPauseSavingEvent(PPCContext& ctx, uint8_t* base, uint32_t param) {
   // The handler for screen id 0, out of the guest's own map, checked against the pause handler's
   // vtable before `sub_826A26E8` is called statically on it.
   const PPCContext saved = ctx;
-  ctx.r3.u32 = owner;
-  ctx.r4.u32 = 0u;
-  rex_lhGuiManager_FindScreenHandler(ctx, base);
-  const uint32_t handler = ctx.r3.u32;
-  if (!plausible(handler) || LoadGuestU32(base, handler) != kPauseHandlerVtable) {
-    ctx = saved;
+  const uint32_t handler = InGameScreenHandler(ctx, base, 0u);
+  if (handler == 0u || LoadGuestU32(base, handler) != kPauseHandlerVtable) {
     REXLOG_INFO("Refii guest-tick pump: PauseSaving:{} found no pause handler — dropped",
                 param);
     return true;
@@ -1204,37 +1233,21 @@ bool DispatchPauseSavingEvent(PPCContext& ctx, uint8_t* base, uint32_t param) {
 /// SCREEN input, not modal input: the card is a pushed screen (id 8) whose handler consumes
 /// GameAction codes on vtable+24, not the modal router's +28, so the QueryAnswer lever cannot
 /// reach it. The handler comes from the guest's screen map and its vtable is checked first.
-/// Drops when stale: gated on the card being the current screen with the modal latch idle.
+/// Drops when stale: gated on the card being the stated screen with the modal latch idle.
 bool DispatchReceiveItemsAction(PPCContext& ctx, uint8_t* base, uint32_t code) {
-  const uint32_t kInGameGuiVtable = refii::guest::Address(0x82001610u);
   const uint32_t kReceiveItemsVtable = refii::guest::Address(0x820C0E08u);
   constexpr uint32_t kReceiveItemsScreen = 8u;
-  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
-  const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  if (!plausible(gui) || LoadGuestU32(base, gui) != kInGameGuiVtable) {
-    REXLOG_INFO("Refii guest-tick pump: ReceiveItemsAction:{} with no in-game GUI — dropped",
-                code);
-    return true;
-  }
-
-  const uint32_t manager = LoadGuestU32(base, gui + 56u);
-  const uint32_t owner = LoadGuestU32(base, gui + 28u);
-  if (!plausible(manager) || !plausible(owner) ||
-      refii::guest::ScreenIdToTu1(LoadGuestU32(base, manager + 4u)) != kReceiveItemsScreen ||
-      LoadGuestU32(base, owner + 40u) != 1u) {
+  uint32_t screen_id = 0;
+  if (!StatedInGameScreen(&screen_id) || screen_id != kReceiveItemsScreen) {
     REXLOG_INFO("Refii guest-tick pump: ReceiveItemsAction:{} off the card screen — dropped",
                 code);
     return true;
   }
 
   const PPCContext saved = ctx;
-  ctx.r3.u32 = owner;
-  ctx.r4.u32 = kReceiveItemsScreen;
-  rex_lhGuiManager_FindScreenHandler(ctx, base);
-  const uint32_t handler = ctx.r3.u32;
-  if (!plausible(handler) || LoadGuestU32(base, handler) != kReceiveItemsVtable) {
-    ctx = saved;
+  const uint32_t handler = InGameScreenHandler(ctx, base, kReceiveItemsScreen);
+  if (handler == 0u || LoadGuestU32(base, handler) != kReceiveItemsVtable) {
     REXLOG_INFO("Refii guest-tick pump: ReceiveItemsAction:{} found no card handler — dropped",
                 code);
     return true;
@@ -1308,9 +1321,11 @@ bool DispatchMenuBoxSelect(PPCContext& ctx, uint8_t* base, uint32_t index) {
 
 /// Answers the MenuBox: 0 cancels, n >= 1 accepts option n-1.
 ///
-/// The guest's accept (`sub_823DC720`) re-checks the item's enabled byte, fires the callback,
-/// publishes the result and tears the box down, so the host writes the index and makes ONE
-/// call. Cancel sets the cancelled byte and calls the close, which publishes value 0.
+/// Cancel is the guest's own B: the box's input handler given a press event (type `+44` 13,
+/// button `+8` 0xC → case 1, 0x823dbce8 / disc 0x8240bf18), which sets the cancelled byte and
+/// closes behind its own gates — cancellable `+14`, 0.3 s since its last action. Accept is the
+/// selector (stores the index, 0x823dbbb0 / disc 0x8240bde0) then `sub_823DC720`, which
+/// re-checks the enabled byte, fires the callback, publishes and closes.
 bool DispatchMenuBoxAnswer(PPCContext& ctx, uint8_t* base, uint32_t answer) {
   const uint32_t control = MenuBoxController(base);
   if (control == 0u) {
@@ -1321,10 +1336,21 @@ bool DispatchMenuBoxAnswer(PPCContext& ctx, uint8_t* base, uint32_t answer) {
   const PPCContext saved = ctx;
 
   if (answer == 0u) {
-    base[control + 13u] = 1u;  // the cancelled byte the close reads for its published value
+    // The press on a frame claimed below the guest's sp; the handler's frame goes below it.
+    const uint32_t frame = (saved.r1.u32 - 0x80u) & ~0xFu;
+    const uint32_t press = frame + 0x20u;
+    for (uint32_t i = 0; i < 0x40u; i += 4u) StoreGuestU32(base, press + i, 0u);
+    StoreGuestU8(base, press + 8u, 0x0Cu);
+    StoreGuestU32(base, press + 44u, 13u);
+    ctx.r1.u32 = frame;
     ctx.r3.u32 = control;
-    rex_lhMenuBox_Close(ctx, base);
+    ctx.r4.u32 = press;
+    rex_lhMenuBox_HandleInput(ctx, base);
     ctx = saved;
+    if (LoadGuestU8(base, control + 12u) != 0u) {
+      REXLOG_INFO("Refii guest-tick pump: MenuBoxAnswer:0 — the box's own B refused it (not "
+                  "cancellable, or inside its 0.3 s)");
+    }
     return true;
   }
 
@@ -1338,7 +1364,10 @@ bool DispatchMenuBoxAnswer(PPCContext& ctx, uint8_t* base, uint32_t answer) {
     return true;
   }
 
-  StoreGuestU32(base, control + 0u, index);
+  ctx.r3.u32 = control;
+  ctx.r4.u32 = index;
+  rex_lhMenuBox_SetSelection(ctx, base);
+  ctx = saved;
   ctx.r3.u32 = control;
   rex_lhMenuBox_Accept(ctx, base);
   ctx = saved;
@@ -1420,48 +1449,30 @@ bool DispatchDisplayBoxAction(PPCContext& ctx, uint8_t* base, uint32_t code,
 }
 
 /// Answers the front end's `dialog` box. Every front-end warning goes through `sub_826E40E0`
-/// (the main-menu root reaches it via slot +32 `sub_826E1C50`, the title directly), which
-/// writes `dialog.Group.OK` / `yousure` / `cancel` and sets `+57`; the dialog's DIALOG_ACTIVE
-/// event puts the root in mode 6 (`sub_826E1040`). The answer is the owner's own input slot
-/// (+12): root `sub_826DEE40` (36 accept, 37 cancel when `+206`), title `sub_826E2F18` (36),
-/// each taking only the pad in `dword_83496AF8`. Objects: `F = *(*(*(0x83496AC0)+8)+0x50)`,
-/// root `*(F+0xB8)`, title `*(F+0xB4)` (0x8230FF60..0x8230FF98).
+/// (the main-menu root reaches it via slot +32 `sub_826E1C50`, the title directly), and its
+/// answer is the owner's own input slot (+12): root `sub_826DEE40` (36 accept, 37 cancel when
+/// `+206`), title `sub_826E2F18` (36), each taking only the pad in `dword_83496AF8`. The owner is
+/// the one OpenDialog was called on, while its warning is raised (frontend_stated.cpp).
 bool DispatchFrontEndDialog(PPCContext& ctx, uint8_t* base, uint32_t code) {
-  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-  const uint32_t app = LoadGuestU32(base, refii::guest::Address(0x83496AC0u));
-  const uint32_t shell = plausible(app) ? LoadGuestU32(base, app + 8u) : 0u;
-  const uint32_t front = plausible(shell) ? LoadGuestU32(base, shell + 0x50u) : 0u;
-  if (!plausible(front)) {
-    REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{} with no front end — dropped", code);
+  bool title = false;
+  const uint32_t owner = FrontEndDialogOwner(&title);
+  if (owner == 0u) {
+    REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{} with no dialog up — dropped", code);
     return true;
   }
 
-  for (const uint32_t offset : {0xB8u, 0xB4u}) {
-    const uint32_t owner = LoadGuestU32(base, front + offset);
-    if (!plausible(owner) || refii::vfs::LoadGuestU8(base, owner + 57u) == 0u) {
-      continue;
-    }
-
-    const uint32_t vtable = LoadGuestU32(base, owner);
-    const PPCContext saved = ctx;
-    ctx.r3.u32 = owner;
-    ctx.r4.u32 = code;
-    ctx.r5.u32 = LoadGuestU32(base, refii::guest::Address(0x83496AF8u));
-    switch (refii::guest::ToTu1(vtable)) {
-      case 0x820D0934u: rex_lhGui_FrontendRoot_OnScreenAction(ctx, base); break;  // main-menu root
-      case 0x820D09C4u: rex_lhGui_FrontendTitle_OnScreenAction(ctx, base); break;  // title
-      default:
-        ctx = saved;
-        REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{} — owner 0x{:08X} has vtable "
-                    "0x{:08X}, not a dialog owner", code, owner, vtable);
-        return true;
-    }
-    ctx = saved;
-    REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{} answered 0x{:08X}", code, owner);
-    return true;
+  const PPCContext saved = ctx;
+  ctx.r3.u32 = owner;
+  ctx.r4.u32 = code;
+  ctx.r5.u32 = LoadGuestU32(base, refii::guest::Address(0x83496AF8u));
+  if (title) {
+    rex_lhGui_FrontendTitle_OnScreenAction(ctx, base);
+  } else {
+    rex_lhGui_FrontendRoot_OnScreenAction(ctx, base);
   }
-
-  REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{} with no dialog up — dropped", code);
+  ctx = saved;
+  REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{} answered 0x{:08X} ({})", code, owner,
+              title ? "title" : "main menu");
   return true;
 }
 
@@ -1491,61 +1502,24 @@ bool DispatchStatedMessageBoxAction(PPCContext& ctx, uint8_t* base, uint32_t box
   return true;
 }
 
-/// The in-game GUI's roots, or false when no in-game screen is up.
-bool InGameScreenRoots(uint8_t* base, uint32_t* out_owner, uint32_t* out_screen_id) {
-  const uint32_t kInGameGuiVtable = refii::guest::Address(0x82001610u);
-  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-
-  const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  if (!plausible(gui) || LoadGuestU32(base, gui) != kInGameGuiVtable) {
-    return false;
-  }
-
-  const uint32_t manager = LoadGuestU32(base, gui + 56u);
-  const uint32_t owner = LoadGuestU32(base, gui + 28u);
-  if (!plausible(manager) || !plausible(owner)) {
-    return false;
-  }
-
-  // The modal latch must be idle: a box owns input while it is up, and its own lever answers.
-  if (LoadGuestU32(base, owner + 40u) != 1u) {
-    return false;
-  }
-
-  if (out_owner != nullptr) *out_owner = owner;
-  if (out_screen_id != nullptr) *out_screen_id = refii::guest::ScreenIdToTu1(LoadGuestU32(base, manager + 4u));
-  return true;
-}
-
-/// Shows the HUD again on the edges where the guest's own machine would have.
+/// Plays a NEW HUD instance's root to slide 1, its shown pose. Deliberate replacement: a level's
+/// fresh HUD presentation comes up on its authored hidden pose and the headless build has nothing
+/// that plays it shown — the guest's only show is its exit transition, and a load runs no exit.
 ///
-/// THE HUD'S VISIBILITY IS A MODE OBJECT, `M = *(GUI + 68)`, played by `sub_821764D8` each GUI
-/// tick: every in-game screen open (`sub_8236E630` -> `sub_82405678`) puts the HUD root on
-/// slide 2 and stores `*M = 4, M+5 = 0`; the guest's own screen EXIT (`sub_8236ED98`,
-/// 0x8236f0a0..0x8236f0bc) stores `*M = 3, M+5 = 1`, and three ticks later the machine plays
-/// root slide 1 — `sub_82426BA8(sub_82426518(pres), pres, 1)` on `pres = *(*(GUI+32)+4)`
-/// (0x82176770..84) — and sets `M+4 = M+5`. Nothing on the level-load path writes M, and the
-/// level's fresh HUD instance comes up on its authored (hidden) pose while M still reads
-/// "shown, idle" (peeked live: *M 0, M+4 1, M+5 1 with UpperElements dark). Godot owns the
-/// in-game screens, so the exit never runs for us either. Hence EDGES, not M: a screen just
-/// closed, or the HUD presentation is a new instance — then the root slide is played the
-/// guest's way and M is left exactly as its machine leaves it. The machine's own fade wait
-/// (`sub_82387CE0`, a SleepEx loop) is not entered.
+/// Everything else is the guest's own, on the mode object `M = *(GUI + 68)`: a screen open
+/// (`sub_8236E630` → `sub_82405678`) plays slide 2 and stores `*M = 4, M+5 = 0`; the exits store
+/// `*M = 3, M+5 = 1` (`sub_8236ED98` 0x8236f0b8 / disc 0x823372b8, `sub_82370178` 0x823703c4 /
+/// disc 0x823385bc); the machine `sub_821764D8` (disc `sub_821762A0`) plays root slide 1 at
+/// `*M == 1` (0x82176784 / disc 0x8217654c) and sets `M+4 = M+5`. The stated screen reads "none"
+/// only from inside those exits (gui_stated_screens.cpp), so a close needs nothing here, and M is
+/// never written.
 void ArmHudShow(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kNoScreen = 31u;
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-  static uint32_t last_screen = kNoScreen;
   static uint32_t last_presentation = 0u;
 
-  uint32_t owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner, &screen_id)) {
-    return;
-  }
-
-  const bool closed = last_screen != kNoScreen && screen_id == kNoScreen;
-  last_screen = screen_id;
-  if (screen_id != kNoScreen) {
+  if (!StatedInGameScreen(&screen_id) || screen_id != kNoScreen) {
     return;
   }
 
@@ -1557,11 +1531,10 @@ void ArmHudShow(PPCContext& ctx, uint8_t* base) {
     return;
   }
 
-  const bool fresh = presentation != last_presentation;
-  last_presentation = presentation;
-  if (!closed && !fresh) {
+  if (presentation == last_presentation) {
     return;
   }
+  last_presentation = presentation;
 
   if (static_cast<int32_t>(LoadGuestU32(base, mode)) > 0) {
     return;  // the guest's own transition is playing; it will land on its own
@@ -1581,35 +1554,27 @@ void ArmHudShow(PPCContext& ctx, uint8_t* base) {
   call.r4.u32 = presentation;
   call.r5.u32 = 1u;
   rex_lhGuiElement_GoToSlide(call, base);
-
-  StoreGuestU32(base, mode, 0u);
-  StoreGuestU8(base, mode + 4u, 1u);
-  StoreGuestU8(base, mode + 5u, 1u);
-  REXLOG_INFO("Refii guest-tick pump: HUD shown — root slide 1 played on HUD presentation 0x{:08X} "
-              "({}), mode object left shown/idle",
-              presentation, closed ? "a screen closed" : "a fresh HUD instance");
+  REXLOG_INFO("Refii guest-tick pump: HUD shown — root slide 1 played on the fresh HUD "
+              "presentation 0x{:08X}",
+              presentation);
 }
 
 /// One action code to the current in-game screen's own input method (vtable+24).
 ///
 /// Named statically per screen id because the recompiler emits no indirect-call path; the id is
-/// the guest's own `mgr+4` and each handler comes from the guest's own map. The third argument
-/// is the PLAYER INDEX (1 or 2) — gift, selection and decoration `bnelr` unless it is 1.
+/// the screen the guest's setter states and each handler comes from the guest's own map. The
+/// third argument is the PLAYER INDEX (1 or 2) — gift, selection and decoration `bnelr` unless it
+/// is 1.
 bool DispatchScreenAction(PPCContext& ctx, uint8_t* base, uint32_t code) {
-  uint32_t owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner, &screen_id)) {
+  if (!StatedInGameScreen(&screen_id)) {
     REXLOG_INFO("Refii guest-tick pump: ScreenAction:{} with no in-game screen — dropped", code);
     return true;
   }
 
   const PPCContext saved = ctx;
-  ctx.r3.u32 = owner;
-  ctx.r4.u32 = refii::guest::ScreenId(screen_id);  // the guest's map is keyed by ITS id
-  rex_lhGuiManager_FindScreenHandler(ctx, base);
-  const uint32_t handler = ctx.r3.u32;
-  if (handler < 0x10000u || handler >= 0xC0000000u) {
-    ctx = saved;
+  const uint32_t handler = InGameScreenHandler(ctx, base, screen_id);
+  if (handler == 0u) {
     REXLOG_INFO("Refii guest-tick pump: ScreenAction:{} — screen {} has no handler",
                 code, screen_id);
     return true;
@@ -2126,8 +2091,6 @@ bool DispatchDye(PPCContext& ctx, uint8_t* base, const std::string& arguments) {
   return true;
 }
 
-uint32_t ScreenObjectRO(uint8_t* base, uint32_t screen_id);
-
 /// One guest call on a frame claimed below `saved.r1`; returns r3 and restores the context.
 uint32_t CallGuestAt(PPCContext& ctx, uint8_t* base, const PPCContext& saved, uint32_t frame,
                      uint32_t address, uint32_t r3, uint32_t r4 = 0u, uint32_t r5 = 0u) {
@@ -2228,43 +2191,6 @@ void DressOutfit(PPCContext& ctx, uint8_t* base, const PPCContext& saved, uint32
               "owned piece(s) put on", suit_hash, worn, owned);
 }
 
-/// THE CLOTHING SCREEN'S MANNEQUIN. Screen 16's open (`sub_826D2B88`) spawns a
-/// `CreatureHeroMannequin*` through `sub_826D7650`, cloned from the hero in the hero's clothes,
-/// and keeps only its TICKET at `screen+44`; `sub_826D8008(*(GUI+8), ticket)` resolves it. The
-/// preview manager `*(GUI+8)` (vtable 0x82006CC0) holds 24-byte records at `*(pm+56)..*(pm+60)`:
-/// `+4` the entity holder (`*holder` = entity), `+16` the ticket, `+20` active. 0 when screen 16
-/// is not up.
-uint32_t ClothingMannequin(uint8_t* base) {
-  const uint32_t screen = ScreenObjectRO(base, 16u);
-  if (screen == 0u) {
-    return 0u;
-  }
-
-  const uint32_t ticket = LoadGuestU32(base, screen + 44u);
-  const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  const uint32_t pm = LooksLikeGuestPointer(gui) ? LoadGuestU32(base, gui + 8u) : 0u;
-  if (ticket == 0u || !LooksLikeGuestPointer(pm) || LoadGuestU32(base, pm) != refii::guest::Address(0x82006CC0u)) {
-    return 0u;
-  }
-
-  const uint32_t begin = LoadGuestU32(base, pm + 56u);
-  const uint32_t end = LoadGuestU32(base, pm + 60u);
-  if (!LooksLikeGuestPointer(begin) || end < begin || end - begin > 24u * 16u) {
-    return 0u;
-  }
-
-  for (uint32_t rec = begin; rec + 24u <= end; rec += 24u) {
-    if (LoadGuestU32(base, rec + 16u) != ticket || base[rec + 20u] == 0u) {
-      continue;
-    }
-    const uint32_t holder = LoadGuestU32(base, rec + 4u);
-    const uint32_t entity = LooksLikeGuestPointer(holder) ? LoadGuestU32(base, holder) : 0u;
-    return LooksLikeGuestPointer(entity) ? entity : 0u;
-  }
-
-  return 0u;
-}
-
 /// TRYING AN OUTFIT ON — `Inventory:tryon:<record>`, the remaster's preview of the highlighted
 /// outfit on screen 16's mannequin. The original changes the mannequin only on a press; in dye
 /// mode it already dresses it on HIGHLIGHT (`sub_826D31E0`), and that is the mechanism used here.
@@ -2277,7 +2203,7 @@ uint32_t ClothingMannequin(uint8_t* base) {
 /// itself otherwise. Record 0 only resets.
 void TryOnMannequin(PPCContext& ctx, uint8_t* base, const PPCContext& saved, uint32_t frame,
                     uint32_t hero, uint32_t record) {
-  const uint32_t mannequin = ClothingMannequin(base);
+  const uint32_t mannequin = StatedClothingMannequin();
   const uint32_t dummy = mannequin != 0u ? HeroComponent(base, mannequin, 15u) : 0u;
   const uint32_t worn = HeroComponent(base, hero, 15u);
   const uint32_t inventory = HeroComponent(base, hero, 13u);
@@ -2477,21 +2403,19 @@ bool DispatchAugment(PPCContext& ctx, uint8_t* base, const std::string& argument
 ///   its YES (`sub_826C4CC0`) gives the item, or the orb in orb mode (`+48 == 1`,
 ///   `sub_826C5578`), then leaves the screen (0x826C4DEC, disc 0x825A0C58's twin).
 ///
-/// The row's id is the populate's TICKET for the item (MenuTicketForRecord). Items and clothing
-/// act on the handle their Update cached from the highlight, which the highlight answer fills
-/// for Godot's stated row; a commit that lands before that Update has run takes the Update's own
-/// lookup (`sub_82880BC0(map, ticket, screen+cache)`, 0x826D1754 / 0x826D2EDC, disc
-/// `sub_827BE1E8`) first.
+/// The row's id is the populate's TICKET for the item (MenuTicketForRecord, as the ticket
+/// allocator stated it). Items and clothing act on the handle their Update caches from the
+/// highlight, so the commit first makes the Update's own lookup for that ticket
+/// (`sub_82880BC0(registry, ticket, screen+cache)`, 0x826D1754 / 0x826D2EDC, disc `sub_827BE1E8`):
+/// a handle assign (`sub_8218DF38`), the same handle again when the Update already ran.
 ///
 /// Player two's books keep the direct calls: the screens' answers act on player one.
 /// False when this is not that screen, or the row is not on it.
 bool CommitItemThroughScreen(PPCContext& ctx, uint8_t* base, const std::string& op,
                              uint32_t record) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-  uint32_t owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner, &screen_id) || IsCoopJoiner(base) ||
-      MenusActForPlayerTwo(base)) {
+  if (!StatedInGameScreen(&screen_id) || IsCoopJoiner(base) || MenusActForPlayerTwo(base)) {
     return false;
   }
 
@@ -2504,7 +2428,7 @@ bool CommitItemThroughScreen(PPCContext& ctx, uint8_t* base, const std::string& 
     return false;
   }
 
-  const uint32_t ticket = MenuTicketForRecord(base, record);
+  const uint32_t ticket = MenuTicketForRecord(record);
   if (ticket == 0u) {
     REXLOG_INFO("Refii guest-tick pump: Inventory:{} — record 0x{:08X} is on no row of screen "
                 "{}'s map", op, record, screen_id);
@@ -2512,28 +2436,23 @@ bool CommitItemThroughScreen(PPCContext& ctx, uint8_t* base, const std::string& 
   }
 
   if (cache != 0u) {
-    const uint32_t screen = ScreenObjectRO(base, screen_id);
+    const uint32_t screen = InGameScreenHandler(ctx, base, screen_id);
     if (screen == 0u) {
       return false;
     }
-    const uint32_t cached = LoadGuestU32(base, screen + cache);
-    if (!plausible(cached) || LoadGuestU32(base, cached + 4u) != record) {
-      const uint32_t gui = LoadGuestU32(base, kGuiObject);
-      const uint32_t manager = plausible(gui) ? LoadGuestU32(base, gui + 0x1Cu) : 0u;
-      const uint32_t helper = plausible(manager) ? LoadGuestU32(base, manager + 0x3Cu) : 0u;
-      PPCFunc* lookup = FindGuestFunction(refii::guest::Address(0x82880BC0u));
-      if (!plausible(helper) || lookup == nullptr) {
-        return false;
-      }
-      const PPCContext saved = ctx;
-      ctx.r1.u32 = (saved.r1.u32 - 0x100u) & ~0xFu;
-      ctx.r3.u32 = helper + 4u;
-      ctx.r4.u32 = ticket;
-      ctx.r5.u32 = screen + cache;
-      ctx.ctr.u32 = refii::guest::Address(0x82880BC0u);
-      lookup(ctx, base);
-      ctx = saved;
+    const uint32_t registry = MenuTicketRegistry();
+    PPCFunc* lookup = FindGuestFunction(refii::guest::Address(0x82880BC0u));
+    if (!plausible(registry) || lookup == nullptr) {
+      return false;
     }
+    const PPCContext saved = ctx;
+    ctx.r1.u32 = (saved.r1.u32 - 0x100u) & ~0xFu;
+    ctx.r3.u32 = registry;
+    ctx.r4.u32 = ticket;
+    ctx.r5.u32 = screen + cache;
+    ctx.ctr.u32 = refii::guest::Address(0x82880BC0u);
+    lookup(ctx, base);
+    ctx = saved;
   }
 
   char name[32];
@@ -3003,16 +2922,16 @@ bool DispatchAbilityAction(PPCContext& ctx, uint8_t* base, const std::string& bo
     return true;
   }
 
-  // THE HERO FLAG IS THE SCREEN'S OWN: `screen+4 == 0` (0x826C2D58, disc 0x8259ED08), the
-  // player its opener stated through SetPlayer (the pause root's `stw` at 0x826A6264, OnEnter's
-  // re-derivation at 0x826C2150).
-  const uint32_t screen = ScreenObjectRO(base, 14u);
+  // THE HERO FLAG IS THE SCREEN'S OWN: `screen+4 == 0` (0x826C2D58, disc 0x8259ED08), as its
+  // setter and its enter stated it (StatedAbilitiesPlayerTwo). The handler is looked up only to
+  // hand to the ghosting call below.
+  const uint32_t screen = InGameScreenHandler(ctx, base, 14u);
   if (screen == 0u) {
     REXLOG_INFO("Refii guest-tick pump: Ability:{}:{} with no abilities screen — dropped", verb,
                 index);
     return true;
   }
-  const bool player_two = LoadGuestU32(base, screen + 4u) != 0u;
+  const bool player_two = StatedAbilitiesPlayerTwo();
   const PPCContext saved = ctx;
   ctx.r3.u32 = static_cast<uint32_t>(index);
   ctx.r4.u32 = player_two ? 0u : 1u;
@@ -3065,41 +2984,6 @@ bool DispatchFurnitureAction(PPCContext& ctx, uint8_t* base, const std::string& 
   REXLOG_INFO("Refii guest-tick pump: Furniture:upgrade:{} — {}", level,
               outcome >= 0 && outcome < 6 ? kOutcome[outcome] : "?");
   return true;
-}
-
-/// The screen object the in-game GUI holds for `screen_id`, or 0 — READ ONLY.
-///
-/// `sub_8243BD60`, the guest's own lookup, **INSERTS** a default entry when the key is absent,
-/// so calling it to ask a question would change the map. The map is `std::map<int, CScreen*>`
-/// at `owner+68`: `owner+72` is the header node and each node is
-/// {left +0, parent +4, right +8, key +12, value +16}. Descend left while the wanted id is
-/// below the key, right otherwise; reaching the header again means "not open".
-uint32_t ScreenObjectRO(uint8_t* base, uint32_t screen_id) {
-  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-
-  const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  if (!plausible(gui) || LoadGuestU32(base, gui) != refii::guest::Address(0x82001610u)) {
-    return 0u;
-  }
-
-  const uint32_t owner = LoadGuestU32(base, gui + 28u);
-  const uint32_t end_node = plausible(owner) ? LoadGuestU32(base, owner + 72u) : 0u;
-  if (!plausible(end_node)) {
-    return 0u;
-  }
-
-  uint32_t node = LoadGuestU32(base, end_node + 4u);
-  for (uint32_t step = 0; step < 64u && plausible(node) && node != end_node; ++step) {
-    const uint32_t key = refii::guest::ScreenIdToTu1(LoadGuestU32(base, node + 12u));
-    if (key == screen_id) {
-      const uint32_t screen = LoadGuestU32(base, node + 16u);
-      return plausible(screen) ? screen : 0u;
-    }
-
-    node = LoadGuestU32(base, node + (screen_id < key ? 0u : 8u));
-  }
-
-  return 0u;
 }
 
 /// The `Player` with this id, out of the `PlayerManager` at `game+156`.
@@ -3930,31 +3814,6 @@ bool CoopScarPlayer(PPCContext& ctx, uint8_t* base, int player, uint32_t entity)
 ///
 /// Called from the hooks after a body build and from the tick, keyed on the entity address, so
 /// a body created by the join sync — a path no hook covers — is dressed on the next tick.
-/// The co-op screen's preview entity and the screen handler that owns it: `gui+56` is the
-/// current screen (its id at +4 must be 24), `gui+28` the owner whose map at +72 keys handlers
-/// by screen id; the handler holds the entity at +276 (0x824388CC). The same walk the bridge's
-/// co-op screen exports make (`CoopScreenHandler`).
-std::pair<uint32_t, uint32_t> CoopMannequin(uint8_t* base) {
-  const uint32_t gui = LoadGuestU32(base, refii::guest::Address(0x83496B08u));
-  if (!LooksLikeGuestPointer(gui) || LoadGuestU32(base, gui) != refii::guest::Address(0x82001610u)) return {0u, 0u};
-  const uint32_t manager = LoadGuestU32(base, gui + 56u);
-  const uint32_t owner = LoadGuestU32(base, gui + 28u);
-  if (!LooksLikeGuestPointer(manager) || !LooksLikeGuestPointer(owner)) return {0u, 0u};
-  if (refii::guest::ScreenIdToTu1(LoadGuestU32(base, manager + 4u)) != 24u) return {0u, 0u};
-  const uint32_t end_node = LoadGuestU32(base, owner + 72u);
-  if (!LooksLikeGuestPointer(end_node)) return {0u, 0u};
-  uint32_t node = LoadGuestU32(base, end_node + 4u);
-  uint32_t handler = 0u;
-  for (uint32_t step = 0; step < 64u && LooksLikeGuestPointer(node) && node != end_node; ++step) {
-    const uint32_t key = refii::guest::ScreenIdToTu1(LoadGuestU32(base, node + 12u));
-    if (key == 24u) { handler = LoadGuestU32(base, node + 16u); break; }
-    node = LoadGuestU32(base, node + (24u < key ? 0u : 8u));
-  }
-  if (!LooksLikeGuestPointer(handler)) return {0u, 0u};
-  const uint32_t entity = LoadGuestU32(base, handler + 276u);
-  return {LooksLikeGuestPointer(entity) ? entity : 0u, handler};
-}
-
 /// The co-op screen's preview follows the own-hero bit: when the bit flips while the screen
 /// is up the guest is asked to respawn the preview (`sub_82438818(handler)`, which now answers
 /// the hero mannequin through the overridden name table), and a hero preview is dressed in
@@ -3964,13 +3823,20 @@ std::pair<uint32_t, uint32_t> CoopMannequin(uint8_t* base) {
 bool g_coop_bit_seen = false;
 
 void CoopDressMannequin(PPCContext& ctx, uint8_t* base) {
+  constexpr uint32_t kCoopScreenId = 24u;
   const bool bit = g_coop_own_hero.load(std::memory_order_relaxed);
-  const auto [entity, handler] = CoopMannequin(base);
-  if (handler == 0u) {
+  if (refii_bridge_stated_screen_now() != kCoopScreenId) {
     return;
   }
 
+  // The henchman figure as the preview scene filed it (preview_figures_stated.cpp); the handler
+  // only as the object the guest's respawn is called on.
+  const uint32_t entity = StatedPreviewFigure("henchman");
   if (bit != g_coop_bit_seen) {
+    const uint32_t handler = InGameScreenHandler(ctx, base, kCoopScreenId);
+    if (handler == 0u) {
+      return;
+    }
     g_coop_bit_seen = bit;
     PPCContext work = ctx;
     work.r1.u32 = (ctx.r1.u32 - 0x100u) & ~0xFu;
@@ -4141,58 +4007,39 @@ void CoopResetSession() {
 /// clears the byte (0x8220dc08–0x8220dc38) — so it is re-set here every tick while the co-op
 /// screen holds a preview. Whatever idle the creature's own controller carries then advances
 /// with the sim's step, and the feed's rig follows it.
-/// Every preview mannequin the guest keeps, posed from the tick. Preview manager `*(GUI+8)`
-/// (vtable 0x82006CC0): records `*(pm+56)..*(pm+60)`, 24 bytes each — `+4` entity holder
-/// (`*holder` = entity), `+16` ticket, `+20` active (`sub_822CD208`, `sub_826D8008`). The guest
-/// poses them only from the Gameface render path, so the motion force byte (comp3+132,
-/// `sub_8220D1B8`) is re-set every tick.
-void PosePreviewMannequins(uint8_t* base, uint32_t coop_entity) {
+/// Every preview figure the guest's preview scene has filed and not destroyed
+/// (preview_figures_stated.cpp), posed from the tick: the guest poses them only from the Gameface
+/// render path, so the motion force byte (comp3+132, `sub_8220D1B8`) is re-set every tick.
+void PosePreviewFigures(uint8_t* base) {
   // A ring of the entities already reported, overwritten oldest-first: a ninth entity evicts
   // one rather than logging every tick.
   static uint32_t said[8] = {};
   static uint32_t said_next = 0u;
-  auto pose = [&](uint32_t entity, const char* what) {
-    if (!LooksLikeGuestPointer(entity)) return;
+
+  uint32_t entities[8];
+  const char* roles[8];
+  const uint32_t count = StatedPreviewFigures(entities, roles, 8u);
+  for (uint32_t i = 0u; i < count; ++i) {
+    const uint32_t entity = entities[i];
+    if (!LooksLikeGuestPointer(entity)) continue;
     const uint32_t motion = EntityComponent(base, entity, 3u);
-    if (motion == 0u) return;
+    if (motion == 0u) continue;
     base[motion + 132u] = 1u;
-    for (uint32_t& seen : said) {
-      if (seen == entity) return;
+    bool seen = false;
+    for (uint32_t reported : said) {
+      seen = seen || reported == entity;
     }
+    if (seen) continue;
     said[said_next++ % 8u] = entity;
-    REXLOG_INFO("Refii guest-tick pump: {} preview 0x{:08X} is posed by the simulation "
-                "(force byte comp3+132 re-set each tick)", what, entity);
-  };
-
-  pose(coop_entity, "co-op henchman");
-
-  const uint32_t gui = LoadGuestU32(base, refii::guest::Address(0x83496B08u));
-  if (!LooksLikeGuestPointer(gui) || LoadGuestU32(base, gui) != refii::guest::Address(0x82001610u)) return;
-  const uint32_t pm = LoadGuestU32(base, gui + 8u);
-  if (!LooksLikeGuestPointer(pm) || LoadGuestU32(base, pm) != refii::guest::Address(0x82006CC0u)) return;
-  const uint32_t begin = LoadGuestU32(base, pm + 56u);
-  const uint32_t end = LoadGuestU32(base, pm + 60u);
-  if (!LooksLikeGuestPointer(begin) || end < begin || end - begin > 24u * 16u) return;
-  for (uint32_t rec = begin; rec + 24u <= end; rec += 24u) {
-    if (base[rec + 20u] == 0u) continue;
-    const uint32_t holder = LoadGuestU32(base, rec + 4u);
-    if (!LooksLikeGuestPointer(holder)) continue;
-    pose(LoadGuestU32(base, holder), "screen");
+    REXLOG_INFO("Refii guest-tick pump: '{}' preview 0x{:08X} is posed by the simulation "
+                "(force byte comp3+132 re-set each tick)", roles[i], entity);
   }
-}
-
-void CoopAnimatePreview(PPCContext& ctx, uint8_t* base) {
-  (void)ctx;
-  const auto [entity, handler] = CoopMannequin(base);
-  (void)handler;
-  PosePreviewMannequins(base, entity);
-  PublishClothingMannequin(ClothingMannequin(base));
 }
 
 void CoopRedress(PPCContext& ctx, uint8_t* base) {
   CoopRepairNetworkSlot(base);
   CoopDressMannequin(ctx, base);
-  CoopAnimatePreview(ctx, base);
+  PosePreviewFigures(base);
   // A peer standing online, or LOCAL CO-OP (game+0x11C == 2, the guest's IsLocalCoopGame): local
   // player two is their own hero too, from the save they picked (GameUi posts their record).
   static bool was_live = false;
@@ -5917,59 +5764,29 @@ bool DispatchMenuEventDirect(PPCContext& ctx, uint8_t* base, const std::string& 
                              uint32_t type, uint32_t id) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
-  // THE STALE MODAL LATCH IS CLEARED BEFORE THE GATE, NOT AFTER IT.
-  //
-  // `sub_8236FA68`, the box opener, acts only when the mode reads idle and otherwise does
-  // nothing at all, silently (0x8236fa90). On the real estate screen Buy does not purchase —
-  // `sub_826B2210` case 111 only raises a confirm box, mode 3 id 30 — so the FIRST A latched
-  // the mode and every A after it was a no-op. Measured live: seventy-nine presses, three
-  // boxes, one purchase. The mode also gates the close, since `sub_8236ED98` is guarded by
-  // `sub_822A5D70` = `*(M + 40) != 1`, so a stuck mode wedges Back too.
-  //
-  // AND THE WEDGE IS SELF-SUSTAINING, which is why this cannot live below `InGameScreenRoots`:
-  // that helper's own first act is `if (*(owner + 40) != 1) return false`. A clear placed after
-  // it is unreachable by construction — the only code that could free the latch sat behind a
-  // gate demanding the latch already free. The same gate silently disables every other pump
-  // path while a mode is stuck.
-  //
-  // The stale id (mode idle, id left behind) is normalised at the start of every UI pass
-  // (NormaliseModalLatch); a box that is genuinely up (mode 2/3/5) is drawn and answered by its
-  // surface, and the event is refused here as the guest's own gate would refuse it — it is not
-  // forced idle, which orphaned a box opened between Godot's sample and this tick.
+  // A BOX THAT IS UP REFUSES THE EVENT, as the guest's own gate would. `sub_8236FA68`, the box
+  // opener, acts only when the mode reads idle and otherwise does nothing at all, silently
+  // (0x8236fa90), and every screen handler (`sub_826C2660` and its siblings) returns before
+  // reading the event unless the box id is zero. The box is drawn and answered by its own
+  // surface; the event is not forced through, which orphaned a box opened between Godot's sample
+  // and this tick. Mode and id are the openers' own statements.
   {
-    const uint32_t kInGameGuiVtable = refii::guest::Address(0x82001610u);
-    const uint32_t gui = LoadGuestU32(base, kGuiObject);
-    if (plausible(gui) && LoadGuestU32(base, gui) == kInGameGuiVtable) {
-      const uint32_t latch = LoadGuestU32(base, gui + 28u);
-      if (plausible(latch) && LoadGuestU32(base, latch + 40u) != 1u) {
-        REXLOG_INFO("Refii guest-tick pump: '{}' not committed — a box is up (mode {}, id {})",
-                    name, LoadGuestU32(base, latch + 40u), LoadGuestU32(base, latch + 44u));
-        return true;
-      }
+    uint32_t mode = 1u;
+    uint32_t modal = 0u;
+    if (refii_bridge_stated_pause(&mode, &modal, nullptr) != 0u && mode != 1u) {
+      REXLOG_INFO("Refii guest-tick pump: '{}' not committed — a box is up (mode {}, id {})",
+                  name, mode, modal);
+      return true;
     }
   }
 
-  uint32_t owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner, &screen_id)) {
+  if (!StatedInGameScreen(&screen_id)) {
     return false;
   }
 
-  // THE BOX-ID LATCH GATES EVERY SCREEN HANDLER. `sub_826C2660` (and its siblings) returns
-  // before reading the event unless `*(owner+44)` — the active box id — is zero. The guest
-  // pairs it with the mode byte: the openers (`sub_8236FA68`/`sub_8236FCA8`) set both, and the
-  // one clear site (`sub_8236E630` at 0x8236e71c) stores `+44 = 0; +40 = 1` together on the
-  // screen change a box teardown causes. Godot owns the box lifecycle, so that screen change
-  // never runs: the mode came back to 1 but the id stayed, and every identity commit after the
-  // first box — the spell selector's type 23 included — was swallowed unread. A MenuEvent is
-  // only sent while the host has no box up, so the id is stale by definition here; finish the
-  // guest's own clear before dispatching.
-  PPCContext probe = ctx;
-  probe.r3.u32 = owner;
-  probe.r4.u32 = refii::guest::ScreenId(screen_id);
-  rex_lhGuiManager_FindScreenHandler(probe, base);
-  const uint32_t handler = probe.r3.u32;
-  if (!plausible(handler)) {
+  const uint32_t handler = InGameScreenHandler(ctx, base, screen_id);
+  if (handler == 0u) {
     return false;
   }
 
@@ -6263,7 +6080,7 @@ void RunCoopKickCountdown(PPCContext& ctx, uint8_t* base) {
 }
 
 /// LOCAL CO-OP, AND PLAYER TWO OWNS THE OPEN PAUSE: the menus are player two's. The guest states
-/// the owner (`sub_8236FFC0`, sampled each tick by SampleMenuOwner) and opens player two's root
+/// the owner (the pause root's stated player, StateMenuOwner) and opens player two's root
 /// for them (`sub_826A2C88(…, 0)`), but its pages read "the local player" — record 1 on one
 /// machine (`sub_821C7CE0`, and inline in `sub_829B1968` at 0x829B19B4). So while this holds,
 /// the hero the menus read and act on is player two's, as it is on an online joiner's machine.
@@ -6526,9 +6343,8 @@ void SampleFamily(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kWorldMapScreenId = 23u;
 
   static uint32_t s_family_cadence = 0u;
-  uint32_t owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner, &screen_id) || screen_id != kWorldMapScreenId) {
+  if (!StatedInGameScreen(&screen_id) || screen_id != kWorldMapScreenId) {
     s_family_cadence = 0u;
     return;
   }
@@ -6703,9 +6519,8 @@ void SampleWorldMapRegion(PPCContext& ctx, uint8_t* base) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
   static uint32_t s_last_world_map_region = ~0u;
-  uint32_t owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner, &screen_id) || screen_id != kWorldMapScreenId) {
+  if (!StatedInGameScreen(&screen_id) || screen_id != kWorldMapScreenId) {
     s_last_world_map_region = ~0u;
     return;
   }
@@ -7009,9 +6824,8 @@ void SampleQuestTravel(PPCContext& ctx, uint8_t* base) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
   static uint32_t s_last_quest = ~0u;
-  uint32_t owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner, &screen_id) || screen_id != kWorldMapScreenId) {
+  if (!StatedInGameScreen(&screen_id) || screen_id != kWorldMapScreenId) {
     s_last_quest = ~0u;
     return;
   }
@@ -7250,35 +7064,36 @@ void SampleQuestTravel(PPCContext& ctx, uint8_t* base) {
   s_last_quest = wanted;
 }
 
-/// ONE SHOP ROW'S ASKING PRICE — screen 22.
+/// ONE SHOP ROW'S ASKING PRICE — screen 22, for the row Godot asks about (`RequestShopPrice`).
 ///
-/// The item book shows an item's WORTH; a shop shows what it charges, and the two are different
-/// numbers. `sub_82992F90` is the guest's own price display and states the whole contract:
+/// The item book shows an item's WORTH; a shop shows what it charges. The guest's own price display
+/// `sub_82992F90(pages, presentation, itemHandle, buy)` (called by the page fill `sub_82992998` with
+/// `buy = (eventType == 30)`, 0x82992c24..0x82992c3c) asks the shopkeeper's component 27:
 ///
-///     screen 22 -> **(screen + 404)      the shopkeeper ENTITY, two dereferences
-///     entity + 144 & 0x40                live
-///     component 27                       CECShopkeeper, looked up every time
-///     sell ? sub_828727B8 : sub_82872910 the price
+///     buy  ? sub_828727B8 : sub_82872910       (0x82993144..0x82993150)
 ///
-/// Both weight a base price by the shopkeeper's `CECOpinionReaction` axes and the shop's
-/// wealth (buy multiplies where sell divides), so there is no ratio to reproduce here — the
-/// number is asked for.
+/// so the price is asked for here the same way, through the same hooked functions (mod_events.cpp),
+/// for the row Godot names:
 ///
-/// The row is named by TICKET, resolved as the guest's own `sub_826AFF48` resolves it. A stale
-/// ticket is the ordinary case for a list repopulated since the row was drawn, and answers
-/// nothing rather than a wrong price.
+///     keeper   the shop opener's argument (shop_keeper_stated.cpp)
+///     item     `sub_826AF370(handler, ticket, out)` (disc `sub_82593890`), the fill's own resolve
+///              of a row's ticket (0x82992a6c), on the handler the guest's lookup answers; the
+///              handle it fills is released as the fill releases it (0x82992ef8)
+///     record   the item's `+4`, the record the price itself reads
+///
+/// A stale ticket is the ordinary case for a list repopulated since the row was drawn, and
+/// answers nothing rather than a wrong price.
 void SampleShopPrice(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kShopScreenId = 22u;
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
-  static uint32_t s_last_screen = 0u;
+  static uint32_t s_last_keeper = 0u;
   static uint32_t s_last_ticket = 0u;
   static bool s_last_sell = false;
 
-  uint32_t owner_screen = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner_screen, &screen_id) || screen_id != kShopScreenId) {
-    s_last_screen = 0u;
+  if (!StatedInGameScreen(&screen_id) || screen_id != kShopScreenId) {
+    s_last_keeper = 0u;
     s_last_ticket = 0u;
     return;
   }
@@ -7296,34 +7111,25 @@ void SampleShopPrice(PPCContext& ctx, uint8_t* base) {
     return;
   }
 
-  const uint32_t screen = ScreenObjectRO(base, kShopScreenId);
-  if (screen == s_last_screen && ticket == s_last_ticket && sell == s_last_sell) {
+  const uint32_t keeper = StatedShopkeeper();
+  if (keeper == s_last_keeper && ticket == s_last_ticket && sell == s_last_sell) {
     return;
   }
 
-  const uint32_t holder = plausible(screen) ? LoadGuestU32(base, screen + 404u) : 0u;
-  const uint32_t shopkeeper = plausible(holder) ? LoadGuestU32(base, holder) : 0u;
-  if (!plausible(shopkeeper) || (LoadGuestU8(base, shopkeeper + 144u) & 0x40u) == 0u) {
+  const auto fail = [&]() {
     s_last_ticket = 0u;
     PublishShopPrice(answer);
+  };
+  if (!plausible(keeper) || (LoadGuestU8(base, keeper + 144u) & 0x40u) == 0u) {
+    fail();
     return;
   }
 
-  const uint32_t shop_component = HeroComponent(base, shopkeeper, 27u);
-  const uint32_t root = LoadGuestU32(base, refii::guest::Address(0x83496B08u));
-  const uint32_t owner = plausible(root) ? LoadGuestU32(base, root + 28u) : 0u;
-  const uint32_t registry = plausible(owner) ? LoadGuestU32(base, owner + 60u) : 0u;
-  if (shop_component == 0u || !plausible(registry)) {
-    s_last_ticket = 0u;
-    PublishShopPrice(answer);
-    return;
-  }
-
-  PPCFunc* lookup = FindGuestFunction(refii::guest::Address(0x82880BC0u));
-  PPCFunc* price = FindGuestFunction(sell ? refii::guest::Address(0x828727B8u) : refii::guest::Address(0x82872910u));
-  if (lookup == nullptr || price == nullptr) {
-    s_last_ticket = 0u;
-    PublishShopPrice(answer);
+  const uint32_t shop_component = HeroComponent(base, keeper, 27u);
+  const uint32_t handler = InGameScreenHandler(ctx, base, kShopScreenId);
+  PPCFunc* resolve = FindGuestFunction(refii::guest::Address(0x826AF370u));
+  if (shop_component == 0u || handler == 0u || resolve == nullptr) {
+    fail();
     return;
   }
 
@@ -7336,38 +7142,41 @@ void SampleShopPrice(PPCContext& ctx, uint8_t* base) {
 
   ctx = saved;
   ctx.r1.u32 = frame;
-  ctx.r3.u32 = registry + 4u;
+  ctx.r3.u32 = handler;
   ctx.r4.u32 = ticket;
   ctx.r5.u32 = item;
-  const bool found = SafeInvokeGuestCall(lookup, ctx, base) && (ctx.r3.u32 & 0xFFu) != 0u;
+  const bool found = SafeInvokeGuestCall(resolve, ctx, base) && (ctx.r3.u32 & 0xFFu) != 0u;
   ctx = saved;
 
-  const uint32_t object = found ? LoadGuestU32(base, item) : 0u;
-  if (!plausible(object)) {
-    s_last_ticket = 0u;
-    PublishShopPrice(answer);
-    return;
-  }
-
-  // The item's record, as the price itself reads it: `sub_8296B310` resolves
-  // `sub_821B24F8(*holder + 4)` — a lazy `{hash, cache}` ref whose first word is the hash.
-  answer.record = LoadGuestU32(base, object + 4u);
-
-  ctx = saved;
-  ctx.r1.u32 = frame;
-  ctx.r3.u32 = shop_component;
-  ctx.r4.u32 = item;
-  if (!SafeInvokeGuestCall(price, ctx, base)) {
+  const uint32_t object = LoadGuestU32(base, item);
+  bool priced = false;
+  if (found && plausible(object)) {
+    answer.record = LoadGuestU32(base, object + 4u);
     ctx = saved;
-    s_last_ticket = 0u;
-    PublishShopPrice(answer);
+    ctx.r1.u32 = frame;
+    ctx.r3.u32 = shop_component;
+    ctx.r4.u32 = item;
+    priced = SafeInvokeGuestCall(sell ? rex_CECShopkeeper_SellPrice : rex_CECShopkeeper_BuyPrice, ctx, base);
+    answer.price = static_cast<int32_t>(ctx.r3.u32);
+    ctx = saved;
+  }
+
+  if (plausible(object)) {
+    ctx = saved;
+    ctx.r1.u32 = frame;
+    ctx.r3.u32 = object;
+    ctx.r4.u32 = item;
+    SafeInvokeGuestCall(rex_lhTrackedObject_RemoveHandleRef, ctx, base);
+    ctx = saved;
+  }
+
+  if (!priced) {
+    fail();
     return;
   }
-  answer.price = static_cast<int32_t>(ctx.r3.u32);
-  ctx = saved;
 
   answer.known = true;
-  s_last_screen = screen;
+  s_last_keeper = keeper;
   s_last_ticket = ticket;
   s_last_sell = sell;
   PublishShopPrice(answer);
@@ -7531,9 +7340,8 @@ void SampleRealEstate(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kBuildingHandleComponent = 142u;
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
-  uint32_t owner_screen = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner_screen, &screen_id) ||
+  if (!StatedInGameScreen(&screen_id) ||
       screen_id != kRealEstateScreenId) {
     return;
   }
@@ -7593,9 +7401,8 @@ void SampleFurniture(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kBuildingComponent = 67u;
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
-  uint32_t owner_screen = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner_screen, &screen_id) || screen_id != kFurnitureScreenId) {
+  if (!StatedInGameScreen(&screen_id) || screen_id != kFurnitureScreenId) {
     return;
   }
 
@@ -7671,9 +7478,8 @@ void SampleShopFront(PPCContext& ctx, uint8_t* base) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
   ShopFront front;
-  const uint32_t screen = ScreenObjectRO(base, kShopScreenId);
-  const uint32_t keeper_ref = plausible(screen) ? LoadGuestU32(base, screen + 404u) : 0u;
-  const uint32_t keeper = plausible(keeper_ref) ? LoadGuestU32(base, keeper_ref) : 0u;
+  uint32_t screen_id = 0;
+  const uint32_t keeper = StatedInGameScreen(&screen_id) && screen_id == kShopScreenId ? StatedShopkeeper() : 0u;
   if (!plausible(keeper) || (LoadGuestU8(base, keeper + 0x90u) & 0x40u) == 0u) {
     PublishShopFront(front);
     return;
@@ -7806,7 +7612,7 @@ void SampleCoopScreen(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kCoopScreenId = 24u;
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
-  const uint32_t screen = ScreenObjectRO(base, kCoopScreenId);
+  const uint32_t screen = InGameScreenHandler(ctx, base, kCoopScreenId);
   CoopScreen coop;
   const uint32_t root = LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
   const uint32_t game = plausible(root) ? LoadGuestU32(base, root + 12u) : 0u;
@@ -7820,8 +7626,6 @@ void SampleCoopScreen(PPCContext& ctx, uint8_t* base) {
   const uint32_t net = LoadGuestU32(base, game + 0x8Cu);
   coop.online_client = plausible(net) && LoadGuestU8(base, net + 0x34u) != 0u &&
                        LoadGuestU8(base, net + 0x36u) != 0u;
-  coop.accepted_left = LoadGuestU8(base, screen + 48u) != 0u;
-  coop.accepted_right = LoadGuestU8(base, screen + 160u) != 0u;
   coop.peer_ready = LoadGuestU8(base, screen + 296u) != 0u;
   coop.flag297 = LoadGuestU8(base, screen + 297u) != 0u;
   coop.flag298 = LoadGuestU8(base, screen + 298u) != 0u;
@@ -7881,10 +7685,9 @@ void SamplePropertyEstate(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kWorldMapScreenId = 23u;
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
-  uint32_t owner_screen = 0;
   uint32_t screen_id = 0;
   const uint64_t uid = RequestedPropertyEstate();
-  if (uid == 0u || !InGameScreenRoots(base, &owner_screen, &screen_id) ||
+  if (uid == 0u || !StatedInGameScreen(&screen_id) ||
       screen_id != kWorldMapScreenId) {
     return;
   }
@@ -8153,9 +7956,8 @@ uint32_t BuildItemDyeLayers(PPCContext& ctx, uint8_t* base, const PPCContext& sa
 /// item+16; only what the dye list offers is asked about — categories 9..11 and 17..24
 /// (`sub_829B2168`).
 void SampleDyeStates(PPCContext& ctx, uint8_t* base) {
-  uint32_t screen_owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &screen_owner, &screen_id) || (screen_id != 15u && screen_id != 16u)) {
+  if (!StatedInGameScreen(&screen_id) || (screen_id != 15u && screen_id != 16u)) {
     return;
   }
 
@@ -8278,9 +8080,8 @@ void SamplePauseTabs(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kFirstTab = 2u;
   constexpr uint32_t kLastTab = 8u;
 
-  uint32_t screen_owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &screen_owner, &screen_id)) {
+  if (!StatedInGameScreen(&screen_id)) {
     return;
   }
 
@@ -8356,9 +8157,8 @@ void SampleAttractiveness(PPCContext& ctx, uint8_t* base, uint32_t hero, HeroDer
   constexpr uint32_t kAppearanceComponent = 15u;
   constexpr uint32_t kLogbookScreenId = 17u;
 
-  uint32_t owner = 0;
   uint32_t screen_id = 0;
-  if (!InGameScreenRoots(base, &owner, &screen_id) || screen_id != kLogbookScreenId) {
+  if (!StatedInGameScreen(&screen_id) || screen_id != kLogbookScreenId) {
     return;
   }
 
@@ -8433,20 +8233,18 @@ void SampleAttractiveness(PPCContext& ctx, uint8_t* base, uint32_t hero, HeroDer
 }
 
 void SampleLogbookAttractiveness(PPCContext& ctx, uint8_t* base, bool logbook_active) {
-  static uint32_t s_last_screen = 0u;
+  static bool s_sampled_this_visit = false;
   static uint32_t s_last_total_bits = 0u;
   static bool s_last_total_known = false;
 
   if (!logbook_active) {
-    s_last_screen = 0u;
+    s_sampled_this_visit = false;
     return;
   }
 
-  const uint32_t screen = ScreenObjectRO(base, 17u);
   const bool total_known = g_attractiveness_total_known.load(std::memory_order_relaxed);
   const uint32_t total_bits = g_attractiveness_total_bits.load(std::memory_order_relaxed);
-  if (screen != 0u && screen == s_last_screen && total_known == s_last_total_known &&
-      total_bits == s_last_total_bits) {
+  if (s_sampled_this_visit && total_known == s_last_total_known && total_bits == s_last_total_bits) {
     return;
   }
 
@@ -8459,13 +8257,13 @@ void SampleLogbookAttractiveness(PPCContext& ctx, uint8_t* base, bool logbook_ac
   SampleAttractiveness(ctx, base, hero, sampled);
   PublishHeroDerived(sampled);
 
-  s_last_screen = screen;
+  s_sampled_this_visit = true;
   s_last_total_known = total_known;
   s_last_total_bits = total_bits;
 }
 
 /// The hero's inventory, walked on the guest's OWN thread and published for the host
-/// (`RefiiHostGetHeroInventory` serves the snapshot). The walk Godot ran per sourced entry from
+/// (`RefiiHostGetHeroInventoryItems` serves the snapshot). The walk Godot ran per sourced entry from
 /// its own thread read an MS-STL `std::list` the guest was patching: `_Mysize` is bumped before
 /// the links, and an erase frees its node the moment a count reaches zero. Here nothing moves
 /// under the walk. The shape is the bridge's: five words per record — {recordId, count,
@@ -8633,9 +8431,8 @@ void SampleHeroDerived(PPCContext& ctx, uint8_t* base) {
   // opening is invisible. When the logbook is closed, `sampled` already holds the previous
   // attractiveness snapshot from `HeroDerivedSnapshot()` above.
   constexpr uint32_t kLogbookScreenId = 17u;
-  uint32_t screen_owner = 0;
   uint32_t screen_id = 0;
-  if (InGameScreenRoots(base, &screen_owner, &screen_id) && screen_id == kLogbookScreenId) {
+  if (StatedInGameScreen(&screen_id) && screen_id == kLogbookScreenId) {
     SampleAttractiveness(ctx, base, hero, sampled);
   }
 
@@ -8645,35 +8442,10 @@ void SampleHeroDerived(PPCContext& ctx, uint8_t* base) {
 /// Commits a menu row by identity — see kActionMenuEventPrefix.
 bool DispatchMenuEvent(PPCContext& ctx, uint8_t* base, const std::string& name, uint32_t type,
                        uint32_t id) {
-  // The abilities screen's A is armed before it is delivered, because in the guest the arm is
-  // part of the press. `sub_826C2958` (the screen's vtable+24) answers A and Y by writing one
-  // byte and only then firing the event chain:
-  //
-  //     case 36: v4 = 1; goto LABEL_17;      // A — learn
-  //     case 39: v4 = 0;
-  //     LABEL_17: result[198] = v4; result = sub_826D58F0(result);
-  //
-  // and the consumer `sub_826C2D40` branches on that byte: set goes to the purchase
-  // `sub_8246C970`, clear to the discard confirm. Only A is ever pushed by identity — the
-  // discard is `Ability:unlearn:<index>`, called by type — so the byte is set here. The base is
-  // the HANDLER — the object `sub_8236FFC0(owner, screenId)` returns, the same one
-  // DispatchScreenAction calls vtable+24 on — not the screen record or the GUI. The byte is 1
-  // from the constructor (`stb r29, 0xC6(r31)` at `0x826c1fa4`) and only `ScreenAction(39)`
-  // clears it, so writing it is normally a no-op.
-  {
-    uint32_t owner = 0;
-    uint32_t screen_id = 0;
-    if (InGameScreenRoots(base, &owner, &screen_id) && screen_id == 14u) {
-      PPCContext handler_ctx = ctx;
-      handler_ctx.r3.u32 = owner;
-      handler_ctx.r4.u32 = refii::guest::ScreenId(screen_id);
-      rex_lhGuiManager_FindScreenHandler(handler_ctx, base);
-      const uint32_t handler = handler_ctx.r3.u32;
-      if (handler >= 0x10000u && handler < 0xC0000000u) {
-        StoreGuestU8(base, handler + 198u, 1u);
-      }
-    }
-  }
+  // The abilities screen's learn/discard arm (handler `+198`, read by `sub_826C2D40`) is the
+  // guest's: 1 from the constructor (0x826c1fa4), and written only by its own input method
+  // `sub_826C2958` — A sets it, Y clears it (0x826c2b30 / disc 0x8259eae0). Godot sends no Y to
+  // this screen (the discard is `Ability:unlearn:<index>`, by type), so it stays armed.
 
   // The screen's own handler, called with the event. The guest's Lua event queue
   // (`guieventqueue.lua`, drained by `sub_82370450`) is cut with the rest of its UI Lua, so a
@@ -8691,20 +8463,19 @@ bool DispatchMenuEvent(PPCContext& ctx, uint8_t* base, const std::string& name, 
 
 bool DispatchQueryAnswer(PPCContext& ctx, uint8_t* base, uint32_t code, bool addressed,
                          uint32_t modal_id) {
-  const uint32_t kInGameGuiVtable = refii::guest::Address(0x82001610u);
-  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-
-  const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  if (!plausible(gui) || LoadGuestU32(base, gui) != kInGameGuiVtable) {
+  // The box that is up, as its opener stated it (display_box_hooks.cpp): the mode and the id.
+  uint32_t mode = 1u;
+  uint32_t stated_id = 0u;
+  const bool up = refii_bridge_stated_pause(&mode, &stated_id, nullptr) != 0u;
+  const uint32_t owner = up ? InGameScreenOwner(base) : 0u;  // the router is called on it
+  if (owner == 0u) {
     REXLOG_INFO("Refii guest-tick pump: QueryAnswer:{} with no in-game GUI — dropped", code);
     return true;
   }
 
-  const uint32_t owner = LoadGuestU32(base, gui + 28u);
-  if (!plausible(owner) ||
-      LoadGuestU32(base, owner + 40u) == 1u) {    // the modal latch is idle — no box
+  if (mode == 1u) {    // the modal latch is idle — no box
     // The gate is the MODE alone: query id 0 is a real box (the shop's tattoo notice), so
-    // "+44 == 0" would drop a live answer. Modes 2 (MessageBox), 3 (QueryBox) and 5 (the
+    // "id == 0" would drop a live answer. Modes 2 (MessageBox), 3 (QueryBox) and 5 (the
     // numeric adjuster) all answer through the same router.
     REXLOG_INFO("Refii guest-tick pump: QueryAnswer:{} with no box pending — dropped", code);
     return true;
@@ -8714,10 +8485,10 @@ bool DispatchQueryAnswer(PPCContext& ctx, uint8_t* base, uint32_t code, bool add
   // time, and every handler re-reads `owner+44` for the id; an answer posted for one box and
   // landing after it closed answered the next one — a save confirm's 46 dismissing its own
   // result box. The surface states the id it drew; a mismatch is dropped, not delivered.
-  if (addressed && LoadGuestU32(base, owner + 44u) != modal_id) {
+  if (addressed && stated_id != modal_id) {
     REXLOG_INFO("Refii guest-tick pump: QueryAnswer:{}@{} — the box up is {} (mode {}), not "
                 "the one answered — dropped",
-                code, modal_id, LoadGuestU32(base, owner + 44u), LoadGuestU32(base, owner + 40u));
+                code, modal_id, stated_id, mode);
     return true;
   }
 
@@ -9037,38 +8808,9 @@ bool PerformQuickslot(PPCContext& ctx, uint8_t* base, uint32_t player, uint32_t 
   return done;
 }
 
-/// Whether the in-game GUI is up: the object at `dword_83496B08` carries the in-game vtable.
-bool InGameGuiUp(uint8_t* base) {
-  const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  return gui >= 0x10000u && gui < 0xC0000000u &&
-         LoadGuestU32(base, gui) == refii::guest::Address(0x82001610u);
-}
-
-/// THE MODAL LATCH'S INVARIANT, restored where the guest's own close would restore it.
-/// `sub_8236FF58` stores `owner+40 = 1` and `owner+44 = 0` together; `sub_8236E630`
-/// (0x8236e71c) stores both on the screen change a box teardown causes. Godot owns the box
-/// lifecycle, so that screen change never runs, and the id outlived the mode: every handler
-/// (`sub_826C2660` and its siblings), `PauseTabSelect` and `PauseSaving` refuse while `+44`
-/// is non-zero, so the first box of a visit silenced every press after it. Mode idle with an id
-/// set is stale by the guest's own invariant and is cleared; a mode that is not idle is a box
-/// that is up, and is left alone.
-void NormaliseModalLatch(uint8_t* base) {
-  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-  const uint32_t gui = LoadGuestU32(base, kGuiObject);
-  if (!plausible(gui) || LoadGuestU32(base, gui) != refii::guest::Address(0x82001610u)) {
-    return;
-  }
-  const uint32_t latch = LoadGuestU32(base, gui + 28u);
-  if (!plausible(latch)) {
-    return;
-  }
-  const uint32_t id = LoadGuestU32(base, latch + 44u);
-  if (LoadGuestU32(base, latch + 40u) == 1u && id != 0u) {
-    StoreGuestU32(base, latch + 44u, 0u);
-    REXLOG_INFO("Refii guest-tick pump: modal latch idle with box id {} left behind — cleared, "
-                "as the guest's own close (sub_8236FF58) would have", id);
-  }
-}
+/// Whether the in-game GUI is up: its init stated the screen set (rex_lhGuiScreenSet_ShowRoot)
+/// and its Gameface has not been destroyed since.
+bool InGameGuiUp() { return refii_bridge_stated_pause(nullptr, nullptr, nullptr) != 0u; }
 
 /// One pass over the queue. `ui_pass` false is the tick-delegate pass (the simulation's
 /// actions: inventory, abilities, co-op, the front end); true is the GUI-tick pass inside the
@@ -9081,10 +8823,7 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
     return;
   }
 
-  const bool gui_up = InGameGuiUp(base);
-  if (ui_pass && gui_up) {
-    NormaliseModalLatch(base);
-  }
+  const bool gui_up = InGameGuiUp();
 
   struct Draining {
     Draining() { g_pump_draining.store(true, std::memory_order_relaxed); }
@@ -9472,6 +9211,26 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
       refii_bridge_ui_data_changed();
     } else if (name == kActionRegisterPlayer) {
       ran = DispatchRegisterPlayer(ctx, base);
+    } else if (name.rfind(kActionPauseTabPrefix, 0) == 0) {
+      const uint32_t tab = static_cast<uint32_t>(std::strtoul(name.c_str() + std::strlen(kActionPauseTabPrefix), nullptr, 10));
+      uint32_t modal = 0u;
+      uint32_t shown = 0u;
+      const bool up = refii_bridge_stated_pause(nullptr, &modal, &shown) != 0u;
+      if (tab < 2u || tab > 8u || !up || modal != 0u || refii_bridge_stated_screen_now() != 0u || tab == shown) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screens {}, modal {}, tab {})", name, up, modal, shown);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      PPCContext work = refii::mods::Frame(ctx);
+      work.r3.u32 = tab;
+      rex_lhGuiTabStrip_Push(work, base);
+      ran = true;
+    } else if (name.rfind(kActionRumblePrefix, 0) == 0) {
+      PPCContext work = refii::mods::Frame(ctx);
+      work.r3.u32 = name.c_str()[std::strlen(kActionRumblePrefix)] == '1' ? 1u : 0u;
+      rex_lhLua_SetRumbleEnabled(work, base);
+      REXLOG_INFO("Refii guest-tick pump: SetRumbleEnabled({})", work.r3.u32);
+      ran = true;
     } else if (name.rfind(kActionPauseSavingPrefix, 0) == 0) {
       const std::string index = name.substr(std::strlen(kActionPauseSavingPrefix));
       char* end = nullptr;
@@ -9604,9 +9363,6 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
       // whole job — the subtitle arms write the setting (`sub_82443820`) and swap the emphasis,
       // and Downloadable Content raises its own no-profile dialog when nobody is signed in.
       ran = DispatchByName(ctx, base, name, kCommandActivateItem, 0u);
-      if (ran && name[0] == 'S') {
-        g_sample_subtitles_after_drain = true;
-      }
     } else if (name.rfind("UiCue:", 0) == 0) {
       // `UiCue:<fe|game>:<cue>` — a sound the guest's own screen code plays for a press Godot
       // handled itself (the gender card, a host-made fold or commit), so the arm that states it
@@ -9817,14 +9573,8 @@ void MaybeFadeInCoopScreen(PPCContext& ctx, uint8_t* base) {
     return;
   }
 
-  // The screen the manager says is up — `sub_8236E630` writes it at 0x8236EB20.
-  const uint32_t app = LoadGuestU32(base, refii::guest::Address(0x83496B08u));
-  const uint32_t owner = LooksLikeGuestPointer(app) ? LoadGuestU32(base, app + 56u) : 0u;
-  const uint32_t current = LooksLikeGuestPointer(owner)
-                               ? refii::guest::ScreenIdToTu1(LoadGuestU32(base, owner + 4u))
-                               : 0u;
-
-  if (current != kCoopScreenId) {
+  // The screen the guest's setter states is up (`sub_8236E630`, its argument).
+  if (refii_bridge_stated_screen_now() != kCoopScreenId) {
     g_coop_screen_faded_in.store(0, std::memory_order_relaxed);
     return;
   }
@@ -9861,18 +9611,21 @@ void MaybeExitJoinerCoopPause(PPCContext& ctx, uint8_t* base) {
     g_joiner_gui_exit_armed.store(false, std::memory_order_relaxed);
     return;
   }
-  const uint32_t app = LoadGuestU32(base, refii::guest::Address(0x83496B08u));
-  const uint32_t owner = LooksLikeGuestPointer(app) ? LoadGuestU32(base, app + 56u) : 0u;
-  const uint32_t gui = LooksLikeGuestPointer(app) ? LoadGuestU32(base, app + 28u) : 0u;
-  if (!LooksLikeGuestPointer(owner) || !LooksLikeGuestPointer(gui)) {
+  // The stated screen set: the screen its setter says is up, 31 when its exit says none is.
+  if (refii_bridge_stated_pause(nullptr, nullptr, nullptr) == 0u) {
     return;
   }
-  const uint32_t current = refii::guest::ScreenIdToTu1(LoadGuestU32(base, owner + 4u));
+  const uint32_t stated = refii_bridge_stated_screen_now();
+  const uint32_t current = stated == 0xFFFFFFFFu ? 31u : stated;
   if (current == 24u) {
     g_joiner_gui_exit_armed.store(true, std::memory_order_relaxed);
     return;
   }
   if (!g_joiner_gui_exit_armed.load(std::memory_order_relaxed) || current != 31u) {
+    return;
+  }
+  const uint32_t gui = InGameScreenOwner(base);  // the object the guest's exit is called on
+  if (gui == 0u) {
     return;
   }
 
@@ -9916,22 +9669,21 @@ std::atomic<uint32_t> g_finished_loading_screen{0};
 
 /// Bring the IN-GAME loading screen down — the host standing in for the present loop that would.
 ///
+/// DELIBERATE REPLACEMENT, with its writes: the take-down is inline in the screen's render update
+/// `sub_8235E5A0` (0x8235E7C4..0x8235E7D4, disc `sub_8235ABA0`), which no headless thread can run
+/// (below), and no other guest function makes it.
+///
 /// Nothing presents in this headless mode, so after an in-game level load the guest never runs
 /// the render tick that fades its loading screen out and releases the game thread; it sits at
 /// `fade=1 requested=0` with the loading music playing. This runs from the in-game tick
-/// (`sub_82276D10` -> the pump).
-///
-/// Gated on the game world being active so it can only touch an in-game screen. Sequence: keep
-/// the frame past the fade's ten-tick guard, drop the fade, request teardown, run the guest's
-/// own fade/teardown tick, and if `done` does not latch, finish it directly and pulse the event
-/// `sub_82361458` blocks the game thread on.
+/// (`sub_82276D10` -> the pump), gated on the game world being active so it can only touch an
+/// in-game screen.
 void MaybeFinishInGameLoadingScreen(PPCContext& ctx, uint8_t* base) {
   if (base == nullptr) {
     return;
   }
 
-  static const bool enabled = ReadEnvFlag("REFII_FINISH_INGAME_LOADSCREEN", true);
-  if (!enabled || !InGameWorldActive(base) || refii_bridge_world_build_pending() != 0) {
+  if (!InGameWorldActive(base) || refii_bridge_world_build_pending() != 0) {
     return;
   }
 
@@ -10001,6 +9753,7 @@ void MaybeFinishInGameLoadingScreen(PPCContext& ctx, uint8_t* base) {
     ::__imp__rex_SetEvent(signal_ctx, base);
   }
 
+  refii_bridge_loading_screen_updated(screen, 0.0f, 0, 1);
   g_finished_loading_screen.store(screen, std::memory_order_relaxed);
   REXLOG_INFO("Refii in-game loading screen brought down (screen=0x{:08X})", screen);
 }
@@ -10066,12 +9819,6 @@ void MaybeArmInGameSimulation(PPCContext& ctx, uint8_t* base) {
 
 /// One tick's worth of pump work. Split out so the hook body stays the delegation it must be.
 
-/// Who owns the open in-game GUI, sampled for the host (split screen routes that player's pad to
-/// the menu and seats it in their half). The guest's own test is `sub_8236E400(gui)`, gui =
-/// `*(*(0x83496B08)+0x1C)` (sub_826D5AF0 passes it at 0x826d5b38): the game-state gate
-/// `sub_821ECA30`, then the context keyed 0 in the GUI's map at +0x44 (`sub_8236FFC0(gui, 0)`),
-/// whose +4 is 1 when PLAYER TWO opened it. Run as its two parts rather than whole: the lookup
-/// answers 0 when the map holds no key 0, and the predicate would then read address 4.
 /// Set across player two's d-pad fill, so the shared tutorial calls inside it are skipped.
 std::atomic<bool> g_dpad_two_querying{false};
 
@@ -10220,18 +9967,17 @@ void DrivePlayerTwoDrunk(PPCContext& ctx, uint8_t* base) {
   RefiiCoopLocalPlayerTwoCall(0);
 }
 
-void SampleMenuOwner(PPCContext& ctx, uint8_t* base) {
-  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-  const uint32_t manager = LoadGuestU32(base, refii::guest::Address(0x83496B08u));
-  const uint32_t gui = plausible(manager) ? LoadGuestU32(base, manager + 0x1Cu) : 0u;
+/// Who owns the open in-game GUI, for the host (split screen routes that player's pad to the menu
+/// and seats it in their half). The guest's own test is `sub_8236E400(owner)`: the game-flow gate
+/// `sub_821ECA30()` (the top command is the GUI mode) and the pause root handler's player being 1
+/// (0x8236e430). The player is the handler's setter's own argument (StatedPausePlayerTwo,
+/// gui_stated_screens.cpp); the game-flow gate is asked of the guest, as it asks it.
+void StateMenuOwner(PPCContext& ctx, uint8_t* base) {
   int32_t two = 0;
-  if (plausible(gui)) {
+  if (StatedPausePlayerTwo()) {
     const PPCContext saved = ctx;
     const uint32_t frame = (saved.r1.u32 - 0x200u) & ~0xFu;
-    if ((CallGuestAt(ctx, base, saved, frame, refii::guest::Address(0x821ECA30u), 0u) & 0xFFu) != 0u) {
-      const uint32_t context = CallGuestAt(ctx, base, saved, frame, refii::guest::Address(0x8236FFC0u), gui, 0u);
-      two = plausible(context) && LoadGuestU32(base, context + 4u) == 1u ? 1 : 0;
-    }
+    two = (CallGuestAt(ctx, base, saved, frame, refii::guest::Address(0x821ECA30u), 0u) & 0xFFu) != 0u ? 1 : 0;
   }
   // Local player two's shop (coop_hero_hooks.cpp) is theirs: their pad, their half.
   if (RefiiCoopShoppingPlayerTwo() != 0) {
@@ -10267,7 +10013,7 @@ void OnGuestTick(PPCContext& ctx, uint8_t* base) {
   // began it, so by the next tick the captured rows are whole. There is no end marker to use
   // instead — the in-game lists never call `UpdateAfterSpawning`.
   refii_bridge_menu_settle();
-  SampleMenuOwner(ctx, base);
+  StateMenuOwner(ctx, base);
 
   DrainOnGuestThread(ctx, base, /*ui_pass=*/false);
 
@@ -10306,21 +10052,6 @@ void OnGuestTick(PPCContext& ctx, uint8_t* base) {
   // After the drain, so a "New Game" that just ran is reflected in the next answer rather than
   // the one before it.
   SampleSavedGameCount(ctx, base);
-
-  // The subtitles setting, republished so the host's menu can mark the current choice.
-  // ON EDGES ONLY, never per tick: the guest's reader (`sub_82382558` -> the profile-settings
-  // machinery) wedges the tick thread if it collides with a load in progress. Sampled once when
-  // the menu screen appears and once after a subtitles action ran.
-  const uint32_t menu_screen = MainMenuScreen(base);
-  const bool entered_menu = menu_screen != 0 && g_last_menu_screen == 0;
-  g_last_menu_screen = menu_screen;
-
-  if (entered_menu || (g_sample_subtitles_after_drain && menu_screen != 0)) {
-    g_sample_subtitles_after_drain = false;
-    PPCContext subtitles_ctx = ctx;
-    __imp__rex_lhProfile_GetSubtitlesEnabled(subtitles_ctx, base);
-    refii_bridge_front_end_note_subtitles(static_cast<int32_t>(subtitles_ctx.r3.u32));
-  }
 }
 
 // `ReadGuestLhString` lives in core/guest_state.h — one implementation, shared with the
@@ -10376,9 +10107,8 @@ REX_EXTERN(rex_lhGuiManager_TickUpdate) {
 
   static std::atomic<uint32_t> gui_ticks{0};
   if ((gui_ticks.fetch_add(1, std::memory_order_relaxed) % 8u) == 0u) {
-    uint32_t owner = 0;
     uint32_t screen_id = 0;
-    if (refii::vfs::InGameScreenRoots(base, &owner, &screen_id)) {
+    if (refii::vfs::StatedInGameScreen(&screen_id)) {
       refii::vfs::SamplePauseTabs(ctx, base);
       refii::vfs::SampleLogbookAttractiveness(ctx, base, screen_id == 17u);
       switch (screen_id) {
@@ -10467,19 +10197,18 @@ REX_EXTERN(rex_lhGui_Frontend_SpawnButton) {
 // not markable — only front-end lists call `UpdateAfterSpawning` — so the capture publishes per
 // row rather than waiting for one.
 
-/// The screen whose population is starting, as the GUEST states it: `manager+4` off the
-/// in-game GUI. The FRONT END is a different GUI object, so `InGameScreenRoots` refuses it and
-/// the capture is keyed "no in-game screen" — which is what stops front-end rows being handed
-/// to an in-game template. See `refii_bridge_menu_spawn_begin_for`.
-static uint32_t PopulatingScreenId(uint8_t* base) {
+/// The screen whose population is starting, as the guest's screen setter states it. The front
+/// end has no in-game screen set, so its rows are keyed "no in-game screen" — which is what stops
+/// them being handed to an in-game template. See `refii_bridge_menu_spawn_begin_for`.
+static uint32_t PopulatingScreenId() {
   uint32_t screen_id = 0;
-  return refii::vfs::InGameScreenRoots(base, nullptr, &screen_id) ? screen_id : 0xFFFFFFFFu;
+  return refii::vfs::StatedInGameScreen(&screen_id) ? screen_id : 0xFFFFFFFFu;
 }
 
 REX_EXTERN(rex_lhGui_InGameMenu_DeleteAllSpawnedMenuItems) {
   REX_FUNC_PROLOGUE();
 
-  refii_bridge_menu_spawn_begin_for(PopulatingScreenId(base));
+  refii_bridge_menu_spawn_begin_for(PopulatingScreenId());
 
   __imp__rex_lhGui_InGameMenu_DeleteAllSpawnedMenuItems(ctx, base);
 }
@@ -10492,7 +10221,7 @@ REX_EXTERN(rex_lhGui_InGameMenu_DeleteAllSpawnedMenuItems) {
 #define REFII_MENU_BOUNDARY_HOOK(fn)                                            \
   REX_EXTERN(fn) {                                                             \
     REX_FUNC_PROLOGUE();                                                       \
-    refii_bridge_menu_spawn_begin_for(PopulatingScreenId(base));               \
+    refii_bridge_menu_spawn_begin_for(PopulatingScreenId());               \
     __imp__##fn(ctx, base);                                                    \
   }
 
@@ -10504,8 +10233,11 @@ REFII_MENU_BOUNDARY_HOOK(rex_lhGuiGiftGoldScreen_PopulateMenu)
 
 REX_EXTERN(rex_lhGui_FrontendRoot_PopulateMainMenu) {
   REX_FUNC_PROLOGUE();
-  refii_bridge_menu_spawn_begin_for(PopulatingScreenId(base));
+  refii_bridge_menu_spawn_begin_for(PopulatingScreenId());
+  const uint32_t menu = ctx.r3.u32;
+  refii::vfs::FrontEndMenuActivating();
   __imp__rex_lhGui_FrontendRoot_PopulateMainMenu(ctx, base);
+  refii::vfs::FrontEndMenuActivated(menu);
 }
 
 #undef REFII_MENU_BOUNDARY_HOOK

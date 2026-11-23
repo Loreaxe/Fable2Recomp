@@ -261,13 +261,43 @@ public static class Engine_UiLogbookPage
 		"Attractiveness.HomeBonusValue",
 	};
 
+	/// <summary>Another player's stats as the stats page's fill was given them: 124 counters and the name.</summary>
+	public sealed record OrbView(int[] Stats, string Name);
+
+	/// <summary>
+	/// The player the stats page was last filled for when not the hero, else null: the fill
+	/// `sub_829BAEB8` states it at every open of the book (logbook_stats_stated.cpp).
+	/// </summary>
+	public static OrbView? OtherPlayer { get; private set; }
+
+	private const int OrbCounters = 124;
+
+	/// <summary>`@Logbook.Stats`: 0 for the hero's own book; 1, the name and 124 counters for another player's.</summary>
+	public static void StatsFilled(Engine_UiModel.GuiNativeCall call)
+	{
+		if (call.Argument(0).Text != "1" || call.Arguments.Count != OrbCounters + 2)
+		{
+			OtherPlayer = null;
+			return;
+		}
+
+		var stats = new int[OrbCounters];
+		for (int i = 0; i < stats.Length; ++i)
+		{
+			int.TryParse(call.Argument(i + 2).Text, System.Globalization.NumberStyles.Integer,
+				System.Globalization.CultureInfo.InvariantCulture, out stats[i]);
+		}
+
+		OtherPlayer = new OrbView(stats, call.Argument(1).Text ?? string.Empty);
+	}
+
 	/// <summary>The detail values for the highlighted row, or blanks.</summary>
 	public static IReadOnlyDictionary<string, string> Values(
 		Engine_UiExpandableMenu.Item? row,
 		Refii.Host.HostBridge.HeroDerived hero,
 		List<Refii.Host.HostBridge.CompletedQuest> quests,
 		Refii.Text.Engine_BabelDatabase? strings,
-		Fable2Bridge.LogbookOrbView? orb = null)
+		OrbView? orb = null)
 	{
 		var values = new Dictionary<string, string>(10)
 		{

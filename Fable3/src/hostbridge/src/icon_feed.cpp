@@ -172,34 +172,6 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldSprites(uint32_t* words, uint32_
   return written;
 }
 
-/// The HUD-element icons the guest draws (the hold icon 35, the player markers 52/53, the button
-/// prompts 31..34 and 66..69), types and entities in stated order. `out_flags` bit0: the registry
-/// states icons — its enable byte R+52 is set once as the HUD is built (sub_824CD3F8 at 0x824CD474)
-/// and no icon is added without it (sub_82614F28 at 0x82614F74). The other bits Fable 2 fills are
-/// not this feed's here: R+55..R+57 are in each icon's stated `visible`; SetShouldDrawPlayerIcons
-/// (0x8254BD70) and SetCanShowHintWorldIcons (0x8254BF98) reach the host as GUI native calls; the
-/// hold fill R+60 is the guest's own HUD meter call (sub_82975CF8 at disc 0x825ECACC).
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldIcons(uint32_t* out_flags, uint32_t* out_types, uint32_t* out_entities,
-                                                      uint32_t max_icons) {
-  const IconSnapshot& snapshot = Snapshot();
-  if (out_flags != nullptr) {
-    *out_flags = snapshot.rows.empty() ? 0u : 1u;
-  }
-  uint32_t written = 0u;
-  for (const StatedIcon& icon : snapshot.rows) {
-    if (written >= max_icons) {
-      break;
-    }
-    if (!icon.Pooled() || !icon.Visible()) {
-      continue;
-    }
-    if (out_types != nullptr) out_types[written] = icon.words[1];
-    if (out_entities != nullptr) out_entities[written] = icon.words[4];
-    ++written;
-  }
-  return written;
-}
-
 /// The stated choice records, in the order they were added, each with its stated emotion icon.
 /// Words per choice: action, player uid words +8 and +12, entity, kind (+56), flags, ICON (0 while
 /// none is stated), 0. Flags: bit0 holdable, bit1 manual power, bit2 held (+62), bit3 the icon's

@@ -52,7 +52,7 @@ public sealed partial class Engine_UiSpellAssignSet
 	/// be the guest's presentation mirrored, so the two trays were two templates and nothing the
 	/// host adds to one (a mod's secondary pick, for one) reached the other. This copy is cloned
 	/// from the wheel's pattern book, stands where the book authored its element, and follows the
-	/// guest's blade widget (screen 14 + 200) through RefiiHostGetSpellBlade; the book's own element
+	/// guest's blade widget (screen 14 + 200) as its methods state it (`@Spell.Widget`); the book's own element
 	/// is hidden while it stands. The levers still go to the guest (DriveBlade), whose widget commits.
 	/// </summary>
 	private Engine_UiSpellAssign? _blade;

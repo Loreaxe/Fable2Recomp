@@ -52,6 +52,7 @@
 #include "core/guest_state.h"
 #include "core/payload_bridge_fable2.h"
 #include "gui/gui_told_statements.h"
+#include "hooks/frontend_stated.h"
 #include "hooks/ppc_externs.h"
 
 namespace {
@@ -229,6 +230,9 @@ void TellGotoSlideBegin() { ++t_inside_goto; }
 
 void TellGotoSlideEnd(uint8_t* base, uint32_t timeline, uint32_t element, uint32_t slide, bool stated) {
     --t_inside_goto;
+    if (stated && t_inside_goto == 0) {
+        FrontEndGotoSlide(slide);
+    }
     if (stated && Plausible(timeline)) {
         Queue(base, ToldStatement::Kind::kGotoSlide, timeline - kTimelineInPresentation, element, slide);
     }
@@ -264,11 +268,4 @@ REX_EXTERN(rex_lhGfxElements_EvaluateTracks) {
     ++t_inside_tracks;
     __imp__rex_lhGfxElements_EvaluateTracks(ctx, base);
     --t_inside_tracks;
-}
-
-// The front end's menu dispatch: TU1 0x826DFD58. Its Load Game cards and its dialogs are stated
-// at their own entries (gui_headless_presentation.cpp, StampSaveCard and OpenDialog).
-PPC_EXTERN_FUNC(__imp__rex_lhGui_FrontendRoot_MenuActionDispatch);
-REX_EXTERN(rex_lhGui_FrontendRoot_MenuActionDispatch) {
-    __imp__rex_lhGui_FrontendRoot_MenuActionDispatch(ctx, base);
 }

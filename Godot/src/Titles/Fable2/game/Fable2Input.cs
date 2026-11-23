@@ -67,7 +67,7 @@ public sealed class Fable2Input : GameTitleInput
 	/// <summary>Keys a pending Android tap to the guest's screens and modals and this title's host ownership — highlights and animation never invalidate a held input.</summary>
 	internal override GameInputButtonRoute ButtonRoute()
 	{
-		bool found = HostBridge.TryGetFrontEnd(out var screen, out uint state, out _, out _, out _, out _);
+		bool found = HostBridge.TryGetFrontEnd(out var screen, out uint state, out _, out _);
 		Engine_UiModel.PauseState? pause = HostBridge.GetPauseState();
 		uint flags = (PauseMenuSwallowsBack ? 1u : 0) | (FrontEndSwallowsBack ? 2u : 0) |
 			(ModalBoxOwnsInput ? 4u : 0) | (DisplayMessageBoxUp ? 8u : 0) |
@@ -251,17 +251,15 @@ public sealed class Fable2Input : GameTitleInput
 	/// input lock, 2/3/4 the gender card, 5 the load-game carousel, 6/7 a modal. 1 and 6/7 are
 	/// never masked: a modal parks the screen in substate 1 until an A press, and
 	/// `sub_826DEE40` answers the dialog itself in mode 6 (36 at 0x826df9c0, 37 at 0x826dfc98).
-	/// The vtable check is load-bearing: `dword_83496B08` has two writers through the same base
-	/// ctor, and the game's base-only object has no screen pointers at +180/+184/+188.
+	/// The screen and its mode are the guest's own statements (HostBridge.TryGetFrontEnd).
 	/// </summary>
 	private static bool MaskMenuInput
 	{
 		get
 		{
 			bool wouldMask =
-				HostBridge.FrontEndGuiIsUp &&
 				HostBridge.TryGetFrontEnd(out Engine_UiModel.FrontEndScreen screen, out uint state,
-					out _, out _, out _, out _) &&
+					out _, out _) &&
 				screen == Engine_UiModel.FrontEndScreen.MainMenu && HostDrawsOver(state);
 
 			// Never mask once a world is up, whatever the front-end decode says: masking exists
@@ -343,7 +341,7 @@ public sealed class Fable2Input : GameTitleInput
 	/// too. Fails open.</summary>
 	private static bool MaskPauseQueryInput =>
 		ModalBoxOwnsInput &&
-		(DisplayMessageBoxUp || HostBridge.GetDisplayBox() is not null ||
+		(DisplayMessageBoxUp || Engine_UiDisplayBoxes.Showing is not null ||
 			HostBridge.GetPauseState() is { ModalUp: true } ||
 			Refii.Ui.Engine_UiHostBoxes.Question is not null ||
 			Refii.Ui.Engine_UiHostBoxes.Notice is not null);

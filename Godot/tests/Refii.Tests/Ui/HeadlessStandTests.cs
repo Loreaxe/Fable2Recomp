@@ -14,13 +14,12 @@ namespace Refii.Tests.Ui;
 [TestSuite]
 public sealed class HeadlessStandTests
 {
-	/// <summary>A stated screen stands as a showing, contributing registry entry.</summary>
+	/// <summary>A stated screen stands as a showing registry entry.</summary>
 	[TestCase]
 	public void StatedEntryIsShowing()
 	{
 		Engine_UiModel.Presentation entry = Engine_UiStatedScreens.Entry(0x4C200000u, "shopscreen");
 		AssertThat(entry.IsShowing).IsTrue();
-		AssertThat(entry.ActiveElements).IsEqual(1u);
 		AssertThat(entry.Is("shopscreen.bgf")).IsTrue();
 	}
 
@@ -28,7 +27,17 @@ public sealed class HeadlessStandTests
 	[TestCase]
 	public void ParkedHeadlessPresentationIsNotShowing()
 	{
-		AssertThat(new Engine_UiModel.Presentation(1u, 1u, "a.bgf", 9u | 4u, 0u).IsShowing).IsFalse();
+		AssertThat(new Engine_UiModel.Presentation(1u, 1u, "a.bgf", 9u | 4u, -1).IsShowing).IsFalse();
+	}
+
+	/// <summary>A stated presentation carries no root; it shows unless one of its gates is parked.</summary>
+	[TestCase]
+	public void StatedPresentationShowsWithoutARoot()
+	{
+		AssertThat(new Engine_UiModel.Presentation(1u, 0u, "hud.bgf", 9u, -1).IsShowing).IsTrue();
+		AssertThat(new Engine_UiModel.Presentation(1u, 0u, "hud.bgf", 9u | 2u, 0).IsShowing).IsFalse();
+		// A tree read with no root is not showing: only a stated one stands without it.
+		AssertThat(new Engine_UiModel.Presentation(1u, 0u, "hud.bgf", 1u, -1).IsShowing).IsFalse();
 	}
 
 	/// <summary>The shop's slot names its presentation; a pause tab without its own slot takes the shared file's.</summary>

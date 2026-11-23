@@ -23,7 +23,7 @@ public static partial class HostBridge
 	/// ABI this binding expects; bump together with the native `RefiiHostBridgeAbiVersion`.
 	/// The check is exact and `GameSession` treats a mismatch as fatal before the guest initialises.
 	/// </summary>
-	public const int ExpectedAbiVersion = 248;
+	public const int ExpectedAbiVersion = 257;
 
 	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
 	private static extern uint RefiiHostGetSaveRoot(byte[] output, uint capacity);
@@ -1799,83 +1799,6 @@ public static partial class HostBridge
 	public static void SetVoicePlaybackOwned(bool owned) =>
 		RefiiHostSetVoicePlaybackOwned(owned ? 1 : 0);
 
-	/// <summary>
-	/// Every element's live attribute values (runtime setAttribute, not the authored .bgf), in
-	/// the element tree's depth-first walk order, one row per element, one column per id.
-	/// Ids are sdbm hashes of attribute names: <c>Engine_GameHash.Sdbm</c>, mirroring sub_82189140.
-	/// </summary>
-	/// <param name="presentation">
-	/// A presentation from <see cref="GetPresentations"/>, or 0 for the front end's active screen.
-	/// </param>
-	public static LiveAttribute[,]? GetUiAttributes(uint[] ids, uint presentation = 0) =>
-		GetUiAttributes(ids, presentation, null);
-
-	/// <summary>
-	/// <see cref="GetUiAttributes(uint[], uint)"/> written over <paramref name="reuse"/> when it is
-	/// the right shape, so a reader that polls and holds nothing past its read makes no garbage.
-	/// </summary>
-	public static LiveAttribute[,]? GetUiAttributes(uint[] ids, uint presentation, LiveAttribute[,]? reuse)
-	{
-		if (ids.Length == 0)
-		{
-			return null;
-		}
-
-		uint elements = RefiiHostGetUiAttributes(presentation, ids, (uint)ids.Length, null, 0);
-		if (elements == 0)
-		{
-			return null;
-		}
-
-		// Two identity columns then the value pairs: `2 + ids * 2` words an element. The walk writes
-		// every word of every row it counts, and only those rows are read back, so the buffer is kept.
-		int stride = 2 + (ids.Length * 2);
-		int needed = (int)elements * stride;
-		if (_uiAttributeWords is null || _uiAttributeWords.Length < needed)
-		{
-			_uiAttributeWords = new uint[Math.Max(needed, 4096)];
-		}
-
-		uint[] words = _uiAttributeWords;
-		uint written = RefiiHostGetUiAttributes(
-			presentation, ids, (uint)ids.Length, words, (uint)needed);
-
-		int rows = (int)Math.Min(written, elements);
-		LiveAttribute[,] table = reuse is not null && reuse.GetLength(0) == rows && reuse.GetLength(1) == ids.Length
-			? reuse
-			: new LiveAttribute[rows, ids.Length];
-		uint[] found = LastAttributeElements.Length == rows ? LastAttributeElements : new uint[rows];
-		uint[] hashes = LastAttributeNameHashes.Length == rows ? LastAttributeNameHashes : new uint[rows];
-		for (int row = 0; row < rows; ++row)
-		{
-			int at = row * stride;
-			found[row] = words[at];
-			hashes[row] = words[at + 1];
-			for (int column = 0; column < ids.Length; ++column)
-			{
-				int slot = at + 2 + (column * 2);
-				table[row, column] = new LiveAttribute(words[slot], words[slot + 1] != 0);
-			}
-		}
-
-		LastAttributeElements = found;
-		LastAttributeNameHashes = hashes;
-		return table;
-	}
-
-	/// <summary>
-	/// The element addresses and name hashes behind the last <see cref="GetUiAttributes"/> table,
-	/// row for row. The table is still indexed by ORDINAL, which is a join by position across two
-	/// separate walks; these let a caller prove that join rather than assume it. Refilled by the
-	/// next read: to be read at once, not held.
-	/// </summary>
-	public static uint[] LastAttributeElements { get; private set; } = System.Array.Empty<uint>();
-
-	public static uint[] LastAttributeNameHashes { get; private set; } = System.Array.Empty<uint>();
-
-	[System.ThreadStatic]
-	private static uint[]? _uiAttributeWords;
-
 	/// <summary>One live guest entity, in guest world space.</summary>
 	/// <summary>
 	/// One entity as the guest states it — including the PREVIOUS transform it interpolates from.
@@ -2469,48 +2392,54 @@ public static partial class HostBridge
 	private static ulong _pauseStateFrame = ulong.MaxValue;
 
 	/// <summary>
-	/// Selects a pause tab through the guest's own lever — a pure write its GUI tick polls,
-	/// after which the guest pushes the screen itself (`sub_826B89E0`).
+	/// Picks a pause tab: the guest's own tab push runs on its next tick (pump action
+	/// <c>PauseTab:n</c>).
 	/// </summary>
 	/// <remarks>
-	/// Tabs: 1 root, 2 map, 3 abilities, 4 items, 5 weapons, 6 clothing, 7 logbook, 8 options.
-	/// The bridge refuses outside the pause root or under a modal. The guest's push does not
+	/// Tabs: 2 map, 3 abilities, 4 items, 5 weapons, 6 clothing, 7 logbook, 8 options. Refused
+	/// off the pause root, under a box, or for the tab already shown. The guest's push does not
 	/// re-check the unlock flags, so a ghosted entry must never reach this call.
 	/// </remarks>
-	public static bool PauseTabSelect(uint tab) =>
-		TryGetAbiVersion() is not null && RefiiHostPauseTabSelect(tab) != 0;
-
-	public static MenuBoxState? GetMenuBox()
+	public static bool PauseTabSelect(uint tab)
 	{
-		if (TryGetAbiVersion() is null)
+		if (tab < 2u || tab > 8u || GetPauseState() is not { } pause ||
+			pause.ScreenId != 0u || pause.ModalId != 0u || pause.CurrentTab == tab)
 		{
-			return null;
+			return false;
 		}
 
-		uint count = RefiiHostGetMenuBox(out uint selected, out uint flags, out uint enabled);
-		return count == 0
-			? null
-			: new MenuBoxState((int)count, (int)selected, (flags & 1) != 0, (flags & 2) != 0, enabled, (flags & 4) != 0);
+		PostFrontEndAction("PauseTab:" + tab);
+		return true;
 	}
 
-	/// <summary>
-	/// The display box that is up and its class vtable, or null when none is open. See
-	/// <c>RefiiHostGetDisplayBox</c>.
-	/// </summary>
-	public static (uint Box, uint Vtable)? GetDisplayBox()
+	/// <summary>The words a title's own calls state by key (payload_bridge.h).</summary>
+	public enum StatedValue : uint
 	{
-		if (TryGetAbiVersion() is null)
-		{
-			return null;
-		}
-
-		uint box = RefiiHostGetDisplayBox(out uint vtable);
-
-		// Stated in TU1 terms, so the vtable constants in this assembly classify it whichever
-		// build is running.
-		vtable = GuestAddressToTu1(vtable);
-		return box == 0 ? null : (box, vtable);
+		AbilitiesAssignMode = 1,
+		FlowTopVtable = 2,
+		FlowDepth = 3,
+		LoadingFixedArt = 4,
+		LoadingTextOnly = 5,
+		LoadingQuitFade = 6,
+		OptionGamma = 7,
+		OptionSfx = 8,
+		OptionMusic = 9,
+		OptionSpeech = 10,
+		OptionSpeaker = 11,
+		OptionLevelsStated = 12,
+		FrontEnd = 13,
+		Rumble = 14,
+		PendingMelee = 15,
+		PendingRanged = 16,
+		ExperienceShown = 17,
+		FrontEndMode = 18,
 	}
+
+	/// <summary>The word the guest's own call last stated under <paramref name="key"/>; 0 until one is.</summary>
+	public static uint Stated(StatedValue key) =>
+		TryGetAbiVersion() is null ? 0u : RefiiHostStatedValue((uint)key);
+
+
 
 	/// <summary>All seven tab bits — what <see cref="PauseTabsAvailable"/> means by "everything".</summary>
 	public const uint AllPauseTabs = 0x1FCu;
@@ -3177,32 +3106,6 @@ public static partial class HostBridge
 	public static MoviePlayback MovieState() => (MoviePlayback)RefiiHostMovieState();
 
 	/// <summary>
-	/// The world-icon queue and its two gates — the channel property income travels on.
-	/// </summary>
-	/// <remarks>
-	/// `Enabled` is the guest's master gate (`WorldIconManager+48`), armed only when its HUD
-	/// load finds exactly 16 children under the registry builder's slot 7, `Layer.WorldIcons`
-	/// (`sub_828254D8`; headless, the child walk answers the file's — ExpandLocked); `IncomeIcons` is the hero's
-	/// `CECMoney.ShowIncomeIcon`, without which the income payout never labels its icon as
-	/// income. An always-empty queue means one of the two is dark.
-	/// </remarks>
-	public readonly record struct WorldIcons(
-		bool Enabled, bool IncomeIcons, int Queued, uint[] Types, uint[] Entities,
-		int Lit, uint Singles)
-	{
-		/// <summary>
-		/// How many icons the guest currently has on screen, through its own elements:
-		/// `sub_82825618` claims one of the 16 `WorldIcons` children the HUD load pooled and
-		/// `sub_82824D60` writes its projected screen position every frame, so a lit icon is
-		/// one the HUD mirror should already carry.
-		/// </summary>
-		public int Showing => Lit +
-			((Singles & 1) != 0 ? 1 : 0) +
-			((Singles & 2) != 0 ? 1 : 0) +
-			((Singles & 4) != 0 ? 1 : 0);
-	}
-
-	/// <summary>
 	/// One world-space icon the guest would have drawn through its renderer — property sign,
 	/// income, gift gold, opinion splash, quest marker, dog point. `Anchor` is in the guest's
 	/// world space; `Colour` carries the fade; `Scale` is the guest's own tween.
@@ -3291,20 +3194,6 @@ public static partial class HostBridge
 		return sprites;
 	}
 
-	public static WorldIcons? GetWorldIcons(int max = 16)
-	{
-		if (TryGetAbiVersion() is null)
-		{
-			return null;
-		}
-
-		var types = new uint[max];
-		var entities = new uint[max];
-		uint count = RefiiHostGetWorldIcons(out uint flags, types, entities, (uint)max);
-		return new WorldIcons((flags & 1) != 0, (flags & 2) != 0, (int)count, types, entities,
-			(int)((flags >> 8) & 0xFF), (flags >> 16) & 0x7);
-	}
-
 	/// <summary>
 	/// Where the guest wants the live movie drawn, in its own 2D screen space — the rect it
 	/// states right after every open and builds its own quad from. Null when no movie is live.
@@ -3354,60 +3243,48 @@ public static partial class HostBridge
 	}
 
 	/// <summary>
-	/// Reads the screen manager whole: the current screen and every presentation it owns.
-	/// Null when there is no screen manager, which is the case before the game starts.
+	/// The screen the guest's screen setter says is up and the screen each live presentation was
+	/// loaded for, as the guest states them. Null outside the game.
 	/// </summary>
 	/// <remarks>
-	/// Cached on the words: this is asked several times a frame (`OwnedScreenId`,
-	/// `PresentationFor`, the book set) and the map changes only when a screen is constructed.
-	/// The guest is still read every call; only the rebuild is skipped, and only when all 36
-	/// words match the ones the cached answer was built from.
+	/// Asked several times a frame; rebuilt only when the stated list's generation moves.
 	/// </remarks>
 	public static InGameScreens? GetInGameScreens()
 	{
-		uint[] words = _screenWords ??= new uint[36];
-		if (RefiiHostGetInGameScreen(words) == 0)
+		if (TryGetAbiVersion() is null || !IsInGame)
 		{
 			_screenCache = null;
-			_screenWordsSeen = null;
 			return null;
 		}
 
-		if (_screenWordsSeen is { } seen &&
-			System.MemoryExtensions.SequenceEqual<uint>(words, seen))
+		uint generation = PresentationsGeneration();
+		if (_screenCache is { } cached && generation == _screenGeneration)
 		{
-			return _screenCache;
+			return cached;
 		}
 
 		var owned = new System.Collections.Generic.Dictionary<uint, int>();
-		for (int id = 0; id < 30; ++id)
+		foreach (Presentation p in GetPresentations())
 		{
-			// A slot is null until that screen has been constructed, and most stay null for a
-			// whole session — only the screens the player actually opens are ever built.
-			uint presentation = words[4 + id];
-			if (presentation != 0)
+			if (p.Screen >= 0)
 			{
-				owned[presentation] = id;
+				owned[p.Address] = p.Screen;
 			}
 		}
 
-		if (words[35] != 0)
-		{
-			owned[words[35]] = (int)words[34];
-		}
-
-		var built = new InGameScreens((InGameScreen)words[3], owned);
-		_screenWordsSeen ??= new uint[36];
-		System.Array.Copy(words, _screenWordsSeen, words.Length);
+		uint stated = RefiiHostStatedScreen();
+		var built = new InGameScreens(
+			stated == NoStatedScreen ? InGameScreen.None : (InGameScreen)stated, owned);
+		_screenGeneration = generation;
 		_screenCache = built;
 		return built;
 	}
 
-	[System.ThreadStatic]
-	private static uint[]? _screenWords;
+	/// <summary>What <c>RefiiHostStatedScreen</c> answers when the guest says no screen is up.</summary>
+	private const uint NoStatedScreen = 0xFFFFFFFFu;
 
 	[System.ThreadStatic]
-	private static uint[]? _screenWordsSeen;
+	private static uint _screenGeneration;
 
 	[System.ThreadStatic]
 	private static InGameScreens? _screenCache;
@@ -3597,27 +3474,42 @@ public static partial class HostBridge
 
 	private static readonly uint[] CollectedKeysBuffer = new uint[512];
 
-	/// <summary>The front end's active screen presentation while the front end owns the GUI, 0 otherwise.</summary>
-	public static uint FrontEndPresentation()
+	/// <summary>
+	/// The live presentation the guest made from <paramref name="file"/> (a `.bgf` name without
+	/// its extension), the newest when it made several; 0 when none is live. From the stated list.
+	/// </summary>
+	public static uint LivePresentation(string file)
 	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
+		if (TryGetAbiVersion() is null)
 		{
 			return 0;
 		}
 
-		try
+		uint generation = PresentationsGeneration();
+		if (_liveByFile is null || generation != _liveByFileGeneration)
 		{
-			return RefiiHostFrontEndPresentation();
+			var built = new Dictionary<string, (uint Address, uint Serial)>(StringComparer.OrdinalIgnoreCase);
+			foreach (Presentation p in GetPresentations())
+			{
+				string name = System.IO.Path.GetFileNameWithoutExtension(p.Name.Replace('\\', '/'));
+				if (!built.TryGetValue(name, out var have) || p.Serial > have.Serial)
+				{
+					built[name] = (p.Address, p.Serial);
+				}
+			}
+
+			_liveByFile = built;
+			_liveByFileGeneration = generation;
 		}
-		catch (DllNotFoundException)
-		{
-			return 0;
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return 0;
-		}
+
+		return _liveByFile.TryGetValue(file, out var found) ? found.Address : 0u;
 	}
+
+	[ThreadStatic]
+	private static Dictionary<string, (uint Address, uint Serial)>? _liveByFile;
+
+	[ThreadStatic]
+	private static uint _liveByFileGeneration;
 
 	/// <summary>
 	/// Takes the texts the guest wrote into its presentations' elements (`SetText` /
@@ -6583,20 +6475,9 @@ public static partial class HostBridge
 	}
 
 	/// <summary>
-	/// The options screen's settings — pages 1 and 2.
-	///
-	/// `Breadcrumb` is the raw SIZE, a float, not an index: the row picks the last of
-	/// {0.0, 0.5, 1.0, 1.5, 2.0} that is less than or equal to it.
-	/// </summary>
-	public readonly record struct GameOptions(
-		bool Known, bool Subtitles, bool TutorialBoxes, int MultiplayerOrbs,
-		bool AutoJoinable, bool InvertCamera, float Breadcrumb);
-
-	/// <summary>
-	/// The options screen's SLIDER pages — 3 and 4. Separate from <see cref="GameOptions"/>
-	/// because the lifetime is: these five live on the options screen's two page controllers and
-	/// exist only while that screen is open, so `Known` false means the screen is not up. Every
-	/// value is 0..1, the slider's own clamp. `Speaker` is 0 TV, 1 hi-fi, 2 surround.
+	/// The option LEVELS — gamma, the three volumes and the speaker mode — as the title's own calls
+	/// state them; `Known` false until they have. Every level is 0..1. `Speaker` is 0 TV, 1 hi-fi,
+	/// 2 surround.
 	/// </summary>
 	public readonly record struct OptionSliders(
 		bool Known, float Gamma, float Sfx, float Music, float Speech, int Speaker);
@@ -6984,7 +6865,7 @@ public static partial class HostBridge
 		}
 	}
 
-	/// <summary>Reads the options screen's sliders. See <see cref="OptionSliders"/>.</summary>
+	/// <summary>The stated option levels. See <see cref="OptionSliders"/>.</summary>
 	public static OptionSliders GetOptionSliders()
 	{
 		if (TryGetAbiVersion() is null || !IsGuestUp)
@@ -7102,8 +6983,8 @@ public static partial class HostBridge
 	}
 
 	/// <summary>
-	/// The crime screen's arrest notice. Both strings are already localised — the guest's opener
-	/// composed them through Babel — so they are drawn verbatim, not resolved again.
+	/// The crime screen as its opener stated it: `Charge` is the charge text it was given
+	/// (localised), `Service` the community-service text key.
 	/// </summary>
 	public readonly record struct CrimeScreen(
 		bool Known, int Fine, bool CanPayFine, bool CanServe, string Charge, string Service);
@@ -7112,8 +6993,8 @@ public static partial class HostBridge
 	public readonly record struct CompletedQuest(uint Record, int Money, int Renown, string Conclusion);
 
 	/// <summary>
-	/// The guest's expression/job timing meter object (`*(*(GUI+32)+44)`), read for drawing —
-	/// the guest runs it and judges it. <see cref="Known"/> is false with no meter reachable.
+	/// The guest's expression/job timing meter, as its own methods state it (`@Hud.ExpressionMeter`)
+	/// — the guest runs it and judges it. <see cref="Known"/> is false until it is stated.
 	/// </summary>
 	public readonly record struct ExpressionMeter(
 		bool Known, bool On, int Mode, bool ArmedA, bool ArmedB, bool Latched,
@@ -7188,32 +7069,20 @@ public static partial class HostBridge
 
 
 
-	[ThreadStatic]
-	private static float[]? _expressionMeterValues;
+	private static ExpressionMeter _expressionMeter;
 
-	public static ExpressionMeter GetExpressionMeter()
-	{
-		float[] values = _expressionMeterValues ??= new float[11];
-		uint count;
-		try
-		{
-			count = RefiiHostGetExpressionMeter(values, (uint)values.Length);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
+	/// <summary>The meter as the title last stated it; unknown until it does.</summary>
+	public static ExpressionMeter GetExpressionMeter() => _expressionMeter;
 
-		if (count < 11u)
-		{
-			return default;
-		}
-
-		return new ExpressionMeter(
-			true, values[0] != 0f, (int)values[1], values[2] != 0f, values[3] != 0f,
-			values[4] != 0f, values[5], values[6], values[7] != 0f, values[8] != 0f,
-			values[9] != 0f, (int)values[10]);
-	}
+	/// <summary>A title states its timing meter: the eleven values in the record's order, or none
+	/// to say there is no meter.</summary>
+	public static void StateExpressionMeter(float[]? values) =>
+		_expressionMeter = values is { Length: >= 11 }
+			? new ExpressionMeter(
+				true, values[0] != 0f, (int)values[1], values[2] != 0f, values[3] != 0f,
+				values[4] != 0f, values[5], values[6], values[7] != 0f, values[8] != 0f,
+				values[9] != 0f, (int)values[10])
+			: default;
 
 	/// <summary>
 	/// A hard mod's published value by key (<c>combat.stamina</c>), or false when its hook has
@@ -7674,32 +7543,14 @@ public static partial class HostBridge
 	/// active stop still consumes an ordinal even though no row is ever spawned for it.
 	/// </summary>
 	/// <summary>
-	/// The inventory screen's mode — 1 Items, 3 Weapons, 4 Clothing, 0 when unknown.
+	/// The inventory screen's mode — 1 Items, 3 Weapons, 0 when unknown.
 	///
-	/// Screen 15 is one screen with three lists, chosen by a word at `screen+372` that
-	/// `sub_829B0A58` branches on. Without it the screen cannot be bound to a menu template by
-	/// its id alone: the weapons list would come up holding the item categories.
+	/// Screen 15 is one screen with two lists. Its enter shows the tab strip on the tab of the
+	/// list it builds (`sub_826B8348(strip, 4)` items, `5` weapons, in `sub_826D13D0`), and that
+	/// stated tab is the mode.
 	/// </summary>
-	public static uint GetInventoryScreenMode()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return 0u;
-		}
-
-		try
-		{
-			return RefiiHostGetInventoryScreenMode();
-		}
-		catch (System.DllNotFoundException)
-		{
-			return 0u;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return 0u;
-		}
-	}
+	public static uint GetInventoryScreenMode() =>
+		GetPauseState() is { } pause ? pause.CurrentTab switch { 4u => 1u, 5u => 3u, _ => 0u } : 0u;
 
 	/// <summary>
 	/// The upgrade-furniture screen's targeted piece (screen 26) — its component 68 as the page
@@ -7797,63 +7648,67 @@ public static partial class HostBridge
 		return new SpellAssignState(
 			words[0], assigned, offered,
 			words[11] == uint.MaxValue ? -1 : (int)words[11],
-			words[12] != 0, words[13] != 0);
+			GetSpellWheel(1).Known, GetSpellWheel(2).Known);
 	}
 
+	/// <summary>One spell assignment widget as its own methods stated it (`@Spell.Widget`).</summary>
+	private sealed record SpellWidget(int Player, bool Blade, bool Shown, Engine_UiModel.SpellWheelState State);
+
+	private static readonly Dictionary<uint, SpellWidget> _spellWidgets = new();
+
 	/// <summary>
-	/// The quick spell wheel's cursor as the guest's own widget holds it — see
-	/// RefiiHostGetSpellWheel. <see cref="Engine_UiModel.SpellWheelState.Known"/> is false while
-	/// the wheel is closed, when its tables are uninitialised heap.
+	/// A title states a spell assignment widget. <paramref name="words"/> is the widget's 53:
+	/// address, row, highest row, five counts, five cells, five lists of eight; null on a close.
+	/// A widget is shown from its "show" to its "close"; <paramref name="blade"/> is the show's
+	/// own mode argument, null on every other op.
+	/// </summary>
+	public static void StateSpellWidget(string op, uint widget, int player, bool? blade, uint[]? words)
+	{
+		if (op == "close" || words is null)
+		{
+			_spellWidgets.Remove(widget);
+			return;
+		}
+
+		_spellWidgets.TryGetValue(widget, out SpellWidget? before);
+		_spellWidgets[widget] = new SpellWidget(
+			player, blade ?? before?.Blade ?? false, op == "show" || (op == "move" && before is { Shown: true }),
+			DecodeSpellWidget(words));
+	}
+
+	/// <summary>Forgets every stated spell widget: the HUD and its screens were rebuilt.</summary>
+	public static void ForgetSpellWidgets() => _spellWidgets.Clear();
+
+	/// <summary>
+	/// The quick spell wheel's cursor for <paramref name="player"/> (1 or 2), as the widget's own
+	/// methods stated it. <see cref="Engine_UiModel.SpellWheelState.Known"/> is false while the
+	/// wheel is closed.
 	/// </summary>
 	public static Engine_UiModel.SpellWheelState GetSpellWheel(int player)
 	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
+		foreach (SpellWidget widget in _spellWidgets.Values)
 		{
-			return default;
-		}
-
-		uint[] words = _spellWheelWords ??= new uint[53];
-		try
-		{
-			if (RefiiHostGetSpellWheel((uint)player, words, (uint)words.Length) == 0)
+			if (widget.Shown && !widget.Blade && widget.Player == player)
 			{
-				return default;
+				return widget.State;
 			}
 		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
 
-		return DecodeSpellWidget(words);
+		return default;
 	}
 
-	/// <summary>
-	/// The abilities book's own spell blade (screen 14 + 200), read while the abilities screen
-	/// is up and its blade is open — RefiiHostGetSpellBlade. The same words as the wheel's, so the
-	/// one owned widget follows either.
-	/// </summary>
+	/// <summary>The abilities book's own spell blade, while it is shown.</summary>
 	public static Engine_UiModel.SpellWheelState GetSpellBlade()
 	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
+		foreach (SpellWidget widget in _spellWidgets.Values)
 		{
-			return default;
-		}
-
-		uint[] words = _spellWheelWords ??= new uint[53];
-		try
-		{
-			if (RefiiHostGetSpellBlade(words, (uint)words.Length) == 0)
+			if (widget.Shown && widget.Blade)
 			{
-				return default;
+				return widget.State;
 			}
 		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
 
-		return DecodeSpellWidget(words);
+		return default;
 	}
 
 	private static Engine_UiModel.SpellWheelState DecodeSpellWidget(uint[] words)
@@ -7876,8 +7731,6 @@ public static partial class HostBridge
 			words[0], (int)words[1], unchecked((int)words[2]), counts, cells, lists);
 	}
 
-	[System.ThreadStatic]
-	private static uint[]? _spellWheelWords;
 
 	/// <summary>
 	/// Puts a will on a d-pad slot, through the guest's own committing wrapper. Commit on
@@ -8119,85 +7972,50 @@ public static partial class HostBridge
 			: null;
 	}
 
-	/// <summary>
-	/// Whether the GUI the guest has up is its front end's: the title's bridge says which
-	/// construction it published, and only then do <see cref="TryGetFrontEnd"/>'s fields mean
-	/// anything.
-	/// </summary>
-	public static bool FrontEndGuiIsUp => RefiiHostFrontEndGuiIsUp() != 0;
-
-	[DllImport(Library)]
-	private static extern int RefiiHostFrontEndGuiIsUp();
-
-	/// <summary>The front end's ten words, read per thread: asked several times a frame.</summary>
-	[ThreadStatic]
-	private static uint[]? _frontEndScratch;
+	/// <summary>Whether the title's front-end GUI exists, as its own construction and destruction state it.</summary>
+	public static bool FrontEndGuiIsUp => (Stated(StatedValue.FrontEnd) & 1u) != 0u;
 
 	/// <summary>
-	/// The guest's live front-end state.
-	///
-	/// <paramref name="state"/> is the screen's own state int. On the title screen the
-	/// proven values are 9 legal sequence, 0 idle, 8 attract video, 10 start sequence,
-	/// 11 handing over to the menu, 12 dialog. <paramref name="canPressA"/> is the flag
-	/// the title's "CAN_PRESS_A" event sets — A is ignored until it is true.
+	/// The front end as the title's own calls state it (payload_bridge.h, stated value 13): the
+	/// active screen, that screen's mode, whether the title takes A, and the Load Game card the
+	/// guest's cursor is on. False, and every value zero, while the front-end GUI does not exist.
+	/// On Fable 2's title the modes are 9 legal sequence, 0 idle, 10 start sequence, 11 handing
+	/// over to the menu, 12 dialog; on its main menu 0 the list, 1 locked through a transition,
+	/// 2 to 4 the hero card, 5 the Load Game cards, 6 a warning, 7 leaving for the title.
 	/// </summary>
-	/// <summary>
-	/// The raw eight words behind <see cref="TryGetFrontEnd"/>: the GUI object, the ACTIVE
-	/// screen, which one it is, state, press-A-armed, cursor, scene slide, slide count.
-	/// <see cref="Refii.Ui.Engine_UiModel.FrontEndScreen.None"/> is not "no screen" — it is a
-	/// screen that is neither the title nor the menu, which is what the front end hands over to.
-	/// </summary>
-	public static uint[]? GetFrontEndRaw()
-	{
-		uint[] words = new uint[10];
-		return RefiiHostGetFrontEnd(words) != 0 ? words : null;
-	}
-
 	public static bool TryGetFrontEnd(
-		out FrontEndScreen screen, out uint state, out bool canPressA, out uint cursor,
-		out int sceneSlide, out int slideCount)
+		out FrontEndScreen screen, out uint state, out bool canPressA, out uint cursor)
 	{
-		uint[] words = _frontEndScratch ??= new uint[10];
-		int ok = RefiiHostGetFrontEnd(words);
-
-		screen = (FrontEndScreen)words[2];
-		state = words[3];
-		canPressA = words[4] != 0;
-		cursor = words[5];
-		sceneSlide = (int)words[6];
-		slideCount = (int)words[7];
-		return ok != 0;
-	}
-
-
-	/// <summary>Where the front end got to, for telling its failure modes apart.</summary>
-	public readonly record struct FrontEndInit(
-		uint LogoCell, uint ButtonCell, uint LogoReady, uint ButtonReady,
-		uint Presentation, bool Stamped)
-	{
-		/// <summary>
-		/// Whether the front end's Init ever ran. The constructor zeroes both cells and only
-		/// Init writes them, so two nulls is the one unambiguous reading here.
-		/// </summary>
-		public bool InitRan => LogoCell != 0u || ButtonCell != 0u;
-
-		/// <summary>
-		/// Whether `sub_82379170` will get past its gate. Both cells must report ready or the
-		/// whole front-end frame is discarded and the title can never tick.
-		/// </summary>
-		public bool TickGatePasses => LogoReady != 0u && ButtonReady != 0u;
-	}
-
-	/// <summary>The front end's init and gate state, or null when there is no front-end GUI.</summary>
-	public static FrontEndInit? TryGetFrontEndInit()
-	{
-		uint[] words = new uint[6];
-		if (RefiiHostGetFrontEndInit(words) == 0)
+		uint word = Stated(StatedValue.FrontEnd);
+		bool up = (word & 1u) != 0u;
+		screen = up ? (FrontEndScreen)((word >> 1) & 3u) : FrontEndScreen.None;
+		state = screen switch
 		{
-			return null;
-		}
+			FrontEndScreen.Title => (word >> 8) & 0xFFu,
+			FrontEndScreen.MainMenu => (word >> 16) & 0xFFu,
+			_ => 0u,
+		};
+		canPressA = up && (word & 8u) != 0u;
+		cursor = up ? word >> 24 : 0u;
+		return up;
+	}
 
-		return new FrontEndInit(words[0], words[1], words[2], words[3], words[4], words[5] != 0u);
+	/// <summary>
+	/// Whether the front end has a warning raised — from the title's OpenDialog until that
+	/// dialog's UNFREEZE (stated value 13, bits 4-5: the screen that raised it) — and whether its
+	/// owner is taking the answer yet: the title in mode 12, the main menu in mode 6.
+	/// </summary>
+	public static bool TryGetFrontEndDialog(out bool accepting)
+	{
+		uint word = Stated(StatedValue.FrontEnd);
+		FrontEndScreen owner = (word & 1u) != 0u ? (FrontEndScreen)((word >> 4) & 3u) : FrontEndScreen.None;
+		accepting = owner switch
+		{
+			FrontEndScreen.Title => ((word >> 8) & 0xFFu) == 12u,
+			FrontEndScreen.MainMenu => ((word >> 16) & 0xFFu) == 6u,
+			_ => false,
+		};
+		return owner != FrontEndScreen.None;
 	}
 
 	[System.ThreadStatic]
@@ -8207,9 +8025,29 @@ public static partial class HostBridge
 	private static byte[]? _presentationNames;
 
 	/// <summary>
+	/// A count that moves whenever <see cref="GetPresentations"/> would answer differently: a
+	/// presentation made or destroyed, or one of its gates written with another value.
+	/// </summary>
+	public static uint PresentationsGeneration()
+	{
+		if (TryGetAbiVersion() is null)
+		{
+			return 0;
+		}
+
+		try
+		{
+			return RefiiHostPresentationsGeneration();
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return 0;
+		}
+	}
+
+	/// <summary>
 	/// Every presentation the guest has live — the HUD, whichever menus are open, and the front
-	/// end — all from one registry. The front end's own "active screen" field sees only one
-	/// screen, and only before the game takes over.
+	/// end — as its own create and destroy state them, with the two gates as it last wrote them.
 	/// </summary>
 	public static List<Presentation> GetPresentations()
 	{
@@ -8219,8 +8057,8 @@ public static partial class HostBridge
 			return new List<Presentation>();
 		}
 
-		// Headroom: the guest mutates the registry while this reads, so the second call can find
-		// more than the probe. Stride 5 since ABI 38 — two words say whether it is on screen.
+		// Headroom: the guest makes presentations while this reads, so the second call can find
+		// more than the probe. Stride 5: address, creation serial, name offset, state, screen + 1.
 		int neededWords = (int)(count * 5 + 32);
 		int neededNames = (int)(count * 96 + 512);
 		if (_presentationWords is null || _presentationWords.Length < neededWords)
@@ -8254,16 +8092,11 @@ public static partial class HostBridge
 			}
 
 			live.Add(new Presentation(
-				words[i * 5], words[i * 5 + 1], name, words[i * 5 + 3], words[i * 5 + 4]));
+				words[i * 5], words[i * 5 + 1], name, words[i * 5 + 3], (int)words[i * 5 + 4] - 1));
 		}
 
 		return live;
 	}
-
-	/// <summary>The four-argument form, for callers that only want the screen state.</summary>
-	public static bool TryGetFrontEnd(
-		out FrontEndScreen screen, out uint state, out bool canPressA, out uint cursor) =>
-		TryGetFrontEnd(out screen, out state, out canPressA, out cursor, out _, out _);
 
 	/// <summary>Describes the current video frame's plane geometry.</summary>
 	public readonly record struct VideoPlanes(
@@ -8317,9 +8150,6 @@ public static partial class HostBridge
 		[Out] uint[] words, uint wordCapacity, [Out] float[] values, uint valueCapacity,
 		[Out] byte[] text, uint textCapacity, uint maxIcons);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetWorldIcons(
-		out uint flags, [Out] uint[] types, [Out] uint[] entities, uint maxIcons);
 
 	[DllImport(Library)]
 	private static extern int RefiiHostGetMovieRect(
@@ -8370,9 +8200,6 @@ public static partial class HostBridge
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetAnimWalkStats(uint[] outWords, uint capacity);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetUiAttributes(
-		uint presentation, uint[] ids, uint idCount, uint[]? outWords, uint outCapacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetFrontEndState();
@@ -8438,13 +8265,8 @@ public static partial class HostBridge
 	private static extern uint RefiiHostGetFxDoubleTrailRing(uint nodeOrHandle, float[] outPoints, uint maxPoints);
 
 	[DllImport(Library)]
-	private static extern uint RefiiHostGetSaveCards(out uint cursor, out uint baseSlot, [Out] byte[]? text, uint capacity);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetHudMeters([Out] uint[]? hashes, [Out] float[]? values, uint capacity);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetExpressionMeter([Out] float[] values, uint capacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetDrunkPlayers();
@@ -8479,11 +8301,7 @@ public static partial class HostBridge
 	[DllImport(Library)]
 	private static extern int RefiiHostGetSpellAssign([Out] uint[] outWords);
 
-	[DllImport(Library)]
-	private static extern int RefiiHostGetSpellWheel(uint player, [Out] uint[] outWords, uint capacity);
 
-	[DllImport(Library)]
-	private static extern int RefiiHostGetSpellBlade([Out] uint[] outWords, uint capacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetMenuRow(
@@ -8501,8 +8319,6 @@ public static partial class HostBridge
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetWornItems(uint[] outWords, uint wordCapacity);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetInventoryScreenMode();
 
 	[DllImport(Library)]
 	private static extern void RefiiHostMenuChunkCounters(
@@ -8655,12 +8471,6 @@ public static partial class HostBridge
 		out ulong seq, out uint addr, out ulong r3, [Out] byte[] outNote, uint noteCapacity);
 
 	[DllImport(Library)]
-	private static extern uint RefiiHostGetHudScriptMeters([Out] uint[]? hashes, [Out] float[]? ratios, uint capacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetHudScriptTexts([Out] uint[]? hashes, [Out] uint[]? textIds, uint capacity);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetTimeOfDay(
 		out float fraction, out int dayCount, out int frozen, out int moonPhase);
 
@@ -8725,18 +8535,11 @@ public static partial class HostBridge
 	private static extern int RefiiHostGetPauseState(
 		out uint screenId, out uint modalId, out uint modalMode, out uint currentTab);
 
-	[DllImport(Library)]
-	private static extern int RefiiHostPauseTabSelect(uint tab);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetMapMarkers(uint[] outHashes, float[] outValues, uint cap);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetDisplayBox(out uint vtable);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetMenuBox(
-		out uint selected, out uint flags, out uint enabledMask);
 
 	[DllImport(Library)]
 	private static extern void RefiiHostGetSceneStreams(uint[] outWords);
@@ -9101,14 +8904,17 @@ public static partial class HostBridge
 		out uint manager, out uint screen, out float fade, out uint requested, out uint done);
 
 	[DllImport(Library)]
-	private static extern int RefiiHostGetFrontEnd(uint[] outWords);
-
-	[DllImport(Library)]
-	private static extern int RefiiHostGetFrontEndInit(uint[] outWords);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetPresentations(
 		uint[]? outWords, uint wordCapacity, byte[]? outNames, uint nameCapacity);
+
+	[DllImport(Library)]
+	private static extern uint RefiiHostPresentationsGeneration();
+
+	[DllImport(Library)]
+	private static extern uint RefiiHostStatedScreen();
+
+	[DllImport(Library)]
+	private static extern uint RefiiHostStatedValue(uint key);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetScreenFade(
@@ -9230,9 +9036,6 @@ public static partial class HostBridge
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostTakeToldStatements(uint[] outWords, uint capacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostFrontEndPresentation();
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostTakeToldTexts(uint[] outWords, uint wordCapacity, ushort[] units, uint unitCapacity);
@@ -9392,53 +9195,11 @@ public static partial class HostBridge
 	// original logic; decompilation carried no comments, so an offset here is undocumented
 	// rather than self-evident.
 
-		public readonly record struct SaveCard(int Index, string Description);
-
-		public static List<SaveCard> GetSaveCards(out int cursor)
-		{
-			List<SaveCard> list = new List<SaveCard>();
-			cursor = 0;
-			if (!TryGetAbiVersion().HasValue || !IsGuestUp)
-			{
-				return list;
-			}
-			byte[] array = new byte[4096];
-			uint num;
-			try
-			{
-				num = RefiiHostGetSaveCards(out var cursor2, out var _, array, (uint)array.Length);
-				cursor = (int)cursor2;
-			}
-			catch (EntryPointNotFoundException)
-			{
-				return list;
-			}
-			int num2 = 0;
-			for (uint num3 = 0u; num3 < num; num3++)
-			{
-				if (num2 >= array.Length)
-				{
-					break;
-				}
-				int num4 = Array.IndexOf(array, (byte)0, num2);
-				if (num4 < 0)
-				{
-					break;
-				}
-				list.Add(new SaveCard((int)num3, Encoding.UTF8.GetString(array, num2, num4 - num2)));
-				num2 = num4 + 1;
-			}
-			return list;
-		}
-
 		[System.ThreadStatic]
 		private static uint[]? _hudMeterHashes;
 
 		[System.ThreadStatic]
 		private static float[]? _hudMeterValues;
-
-		[System.ThreadStatic]
-		private static uint[]? _hudScriptIds;
 
 		public static Dictionary<uint, float> GetHudMeters()
 		{
@@ -9531,101 +9292,6 @@ public static partial class HostBridge
 			for (uint i = 0u; i < num; i++)
 			{
 				dictionary[array[i]] = new Refii.Ui.Engine_UiSource.HudPulser(array2[i], !stated || modes[i] != 2u);
-			}
-		}
-
-		/// <summary>
-		/// The HUD values the shipped Lua sets — the other fifty meters, as 0..100 to match
-		/// <see cref="GetHudMeters"/>. Two routes feed one HUD: the C++ publishers cover about
-		/// twenty names, of which only `PlayerHealth` and `PlayerHealthMax` persist through
-		/// gameplay (edge-triggered on the value changing), while the rest of `hud.bgf` is driven
-		/// by name from Lua through `SetMeterRatioOverTime` into a store the element registry
-		/// never sees. Scaled here because the guest states a RATIO and the other route publishes
-		/// `ratio * 100`.
-		/// </summary>
-		public static Dictionary<uint, float> GetHudScriptMeters()
-		{
-			var values = new Dictionary<uint, float>();
-			FillHudScriptMeters(values);
-			return values;
-		}
-
-		/// <summary><see cref="GetHudScriptMeters"/> into a dictionary the caller reuses (cleared first).</summary>
-		public static void FillHudScriptMeters(Dictionary<uint, float> values)
-		{
-			values.Clear();
-			if (!TryGetAbiVersion().HasValue || !IsGuestUp)
-			{
-				return;
-			}
-
-			uint[] hashes = _hudMeterHashes ??= new uint[256];
-			float[] ratios = _hudMeterValues ??= new float[256];
-			uint found;
-			try
-			{
-				found = RefiiHostGetHudScriptMeters(hashes, ratios, (uint)hashes.Length);
-			}
-			catch (EntryPointNotFoundException)
-			{
-				return;
-			}
-
-			if (found > hashes.Length)
-			{
-				GD.PushWarning($"[host] the guest's HUD script store holds {found} meters, more " +
-					$"than the {hashes.Length} asked for — the tail was not read");
-				found = (uint)hashes.Length;
-			}
-
-			for (uint i = 0; i < found; ++i)
-			{
-				values[hashes[i]] = ratios[i] * 100f;
-			}
-		}
-
-		/// <summary>
-		/// The HUD texts the shipped Lua sets, as name hash to BABEL TEXT ID — an id, not a
-		/// string: `SetGUIText` caches the id it was handed. Keyed exactly as `book.babel` is.
-		/// </summary>
-		public static Dictionary<uint, uint> GetHudScriptTexts()
-		{
-			var values = new Dictionary<uint, uint>();
-			FillHudScriptTexts(values);
-			return values;
-		}
-
-		/// <summary><see cref="GetHudScriptTexts"/> into a dictionary the caller reuses (cleared first).</summary>
-		public static void FillHudScriptTexts(Dictionary<uint, uint> values)
-		{
-			values.Clear();
-			if (!TryGetAbiVersion().HasValue || !IsGuestUp)
-			{
-				return;
-			}
-
-			uint[] hashes = _hudMeterHashes ??= new uint[256];
-			uint[] ids = _hudScriptIds ??= new uint[256];
-			uint found;
-			try
-			{
-				found = RefiiHostGetHudScriptTexts(hashes, ids, (uint)hashes.Length);
-			}
-			catch (EntryPointNotFoundException)
-			{
-				return;
-			}
-
-			if (found > hashes.Length)
-			{
-				GD.PushWarning($"[host] the guest's HUD script store holds {found} texts, more " +
-					$"than the {hashes.Length} asked for — the tail was not read");
-				found = (uint)hashes.Length;
-			}
-
-			for (uint i = 0; i < found; ++i)
-			{
-				values[hashes[i]] = ids[i];
 			}
 		}
 
@@ -9788,8 +9454,6 @@ public static partial class HostBridge
 	private static extern uint RefiiHostGetAttachments(
 		[Out] uint[] outWords, uint maxRecords, [Out] byte[] outNames);
 
-		[DllImport("refii_hostbridge")]
-		private static extern int RefiiHostGetInGameScreen(uint[] outWords);
 
 
 

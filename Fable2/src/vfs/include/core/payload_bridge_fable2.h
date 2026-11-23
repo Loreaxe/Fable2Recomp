@@ -285,10 +285,8 @@ void refii_bridge_publish_hero_derived(const void* sampled);
 void refii_bridge_hero_derived_snapshot(void* out);
 /// The hero's inventory as the pump last walked it on the guest thread (SampleHeroInventory):
 /// four words per record {recordId, count, category, viewed}. A publish whose records differ
-/// from the last bumps the UI data generation; the snapshot call returns the record count and
-/// copies as many whole records as fit.
+/// from the last bumps the UI data generation.
 void refii_bridge_publish_hero_inventory(const uint32_t* words, uint32_t count);
-uint32_t refii_bridge_hero_inventory_snapshot(uint32_t* out, uint32_t word_capacity);
 /// The same walk with each record's ITEM INSTANCE: five words per record {recordId, count,
 /// category, viewed, item} — the item at `node+8`, the guest address the dye tables key on
 /// (kDyeStateWords, kItemDyeLayerWords). Publishing it also publishes the four-word snapshot
@@ -344,7 +342,6 @@ uint32_t refii_bridge_requested_quest_travel(void);
 void refii_bridge_publish_quest_travel(const void* travel);
 uint32_t refii_bridge_requested_shop_price(int32_t* sell);
 void refii_bridge_publish_shop_price(const void* price);
-void refii_bridge_publish_clothing_mannequin(uint32_t entity);
 
 // What the guest TELLS a presentation's elements (refii_bridge_told_*) is shared state: its
 // entries are in core/payload_bridge.h, its queues in src/runtime/src/core/told_statements.cpp.
@@ -422,6 +419,24 @@ uint32_t refii_bridge_player_two_hud(uint32_t* target, char* out, uint32_t capac
 // - nonzero while player two's d-pad fill runs (the shared tutorial calls are skipped); the
 //   payload's own (the pump sets it, coop_hero_hooks.cpp reads it).
 int32_t refii_bridge_dpad_query_two(void);
+
+// THE LOADING SCREEN'S TEXT (src/core/loading_text_state.cpp), as the screen's own calls state it
+// (hooks/loading_screen_stated.cpp):
+// - made: a constructor ran — its manager, whether it draws the banner, its level name and its
+//   text (UTF-8, either may be empty); tips are on in every constructor.
+// - gone: the screen's destructor.
+// - overlay: the manager's set-text call; taken when that manager made the stated screen.
+// - tip: the tag the screen's tip draw resolved, with the index and count it selected from.
+// - spinner: one spinner draw.
+// - read: six words (tip index, tip count, tip tag, spinner frame = draws less one, tips,
+//   banner) and the level name then the overlay as two NUL-terminated strings; 0 with no screen.
+void refii_bridge_loading_text_made(uint32_t manager, uint32_t screen, int32_t banner, const char* level,
+                                    const char* overlay);
+void refii_bridge_loading_text_gone(uint32_t screen);
+int32_t refii_bridge_loading_text_overlay(uint32_t manager, const char* text);
+void refii_bridge_loading_text_tip(uint32_t screen, uint32_t key, uint32_t index, uint32_t count);
+void refii_bridge_loading_text_spinner(uint32_t screen);
+int32_t refii_bridge_loading_text_read(uint32_t* out_words, char* text, uint32_t capacity);
 
 #ifdef __cplusplus
 }  // extern "C"

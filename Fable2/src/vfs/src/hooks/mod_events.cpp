@@ -380,6 +380,8 @@ void PumpLuaMask(PPCContext& ctx, uint8_t* base, float seconds) {
 bool g_lua_cancelled = false;
 
 namespace refii::vfs {
+// gui_stated_screens.cpp: brackets an exit, whose last unload states that no screen is up.
+void StatedScreenExiting(int32_t delta);
 void NoteLuaCancelled() { g_lua_cancelled = true; }
 }  // namespace refii::vfs
 
@@ -7584,20 +7586,23 @@ bool GuiActive(PPCContext& ctx, uint8_t* base) {
   return (work.r3.u32 & 0xFFu) != 0;
 }
 
-/// The screen the GUI manager states it shows: *(*(0x83496B08)+56)+4.
-int32_t CurrentScreen(uint8_t* base) {
-  const uint32_t gui = Load32(base, refii::guest::Address(0x83496B08u));
-  const uint32_t screens = gui >= 0x10000u && gui < 0xC0000000u ? Load32(base, gui + 56u) : 0u;
-  return screens >= 0x10000u && screens < 0xC0000000u ? static_cast<int32_t>(Load32(base, screens + 4u)) : -1;
+/// The in-game screen that is up as the screen setter stated it, TU1 numbering: 31 none, -1 while
+/// the in-game screen set is not up (the front end's GUI, or none).
+int32_t CurrentScreen() {
+  if (refii_bridge_stated_pause(nullptr, nullptr, nullptr) == 0u) {
+    return -1;
+  }
+  const uint32_t stated = refii_bridge_stated_screen_now();
+  return stated == 0xFFFFFFFFu ? 31 : static_cast<int32_t>(stated);
 }
 
-/// Whose menu it is now, 1 or 2. refii_mod_menu_player is the owner sampled at the tick's start
-/// (SampleMenuOwner: the guest's own `sub_8236E400`, which answers only while the GUI command is
-/// up); this also answers while a menu is being entered. In local co-op the pause screen's owner
-/// is its +4 (map[gui+68][0] by `sub_8236FFC0`; written by its vtable slot 8, `stw r4,4(r3)`
-/// `sub_82EC34C8`, which `sub_826A2C88` calls BEFORE SetScreen and EnterGuiMode — 1 from player
-/// two's opener `sub_829C1DB0`, 0 from player one's `sub_82403308`), or local player two's shop.
-int32_t MenuOwnerNow(PPCContext& ctx, uint8_t* base) {
+/// Whose menu it is now, 1 or 2. refii_mod_menu_player is the owner stated at the tick's start
+/// (StateMenuOwner: the guest's own `sub_8236E400` test, which answers only while the GUI command
+/// is up); this also answers while a menu is being entered. In local co-op the pause screen's
+/// owner is the player its setter stated (StatedPausePlayerTwo, gui_stated_screens.cpp:
+/// `sub_826A2C88` calls it BEFORE SetScreen and EnterGuiMode — 1 from player two's opener
+/// `sub_829C1DB0`, 0 from player one's `sub_82403308`), or local player two's shop.
+int32_t MenuOwnerNow(uint8_t* base) {
   if (refii_mod_menu_player(base) == 2) {
     return 2;
   }
@@ -7607,19 +7612,7 @@ int32_t MenuOwnerNow(PPCContext& ctx, uint8_t* base) {
   if (RefiiCoopShoppingPlayerTwo() != 0) {
     return 2;
   }
-  const uint32_t manager = Load32(base, refii::guest::Address(0x83496B08u));
-  const uint32_t gui = manager >= 0x10000u && manager < 0xC0000000u ? Load32(base, manager + 0x1Cu) : 0u;
-  if (gui < 0x10000u || gui >= 0xC0000000u) {
-    return 1;
-  }
-  PPCContext work = refii::mods::Frame(ctx);
-  work.r3.u64 = gui;
-  work.r4.u64 = 0u;
-  if (!CallGuest(work, base, refii::guest::Address(0x8236FFC0u))) {
-    return 1;
-  }
-  const uint32_t pause = work.r3.u32;
-  return pause >= 0x10000u && pause < 0xC0000000u && Load32(base, pause + 4u) == 1u ? 2 : 1;
+  return refii::vfs::StatedPausePlayerTwo() ? 2 : 1;
 }
 
 void RaiseMenuOpened(PPCContext& ctx, uint8_t* base) {
@@ -7628,7 +7621,7 @@ void RaiseMenuOpened(PPCContext& ctx, uint8_t* base) {
   e.ctx = &e_ctx;
   e.base = base;
   e.seen = true;
-  e.player = MenuOwnerNow(ctx, base);
+  e.player = MenuOwnerNow(base);
   Dispatch(e);
 }
 }  // namespace
@@ -7641,7 +7634,7 @@ void RaiseMenuOpened(PPCContext& ctx, uint8_t* base) {
 REX_EXTERN(rex_lhGuiWorldMap_FastTravel) {
   REX_FUNC_PROLOGUE();
   const int32_t previous = g_world_map_traveller;
-  g_world_map_traveller = MenuOwnerNow(ctx, base);
+  g_world_map_traveller = MenuOwnerNow(base);
   __imp__rex_lhGuiWorldMap_FastTravel(ctx, base);
   g_world_map_traveller = previous;
 }
@@ -7684,8 +7677,10 @@ REX_EXTERN(rex_lhGuiManager_ExitScreen) {
   const uint32_t manager = ctx.r3.u32;
   const bool closing = AnySubscriber(REFII_EVENT_MENU_CLOSED) && manager != 0 &&
                        Load32(base, manager + 40u) == 1u && GuiActive(ctx, base);
-  const int32_t player = closing ? MenuOwnerNow(ctx, base) : 0;
+  const int32_t player = closing ? MenuOwnerNow(base) : 0;
+  refii::vfs::StatedScreenExiting(1);
   __imp__rex_lhGuiManager_ExitScreen(ctx, base);
+  refii::vfs::StatedScreenExiting(-1);
   if (closing) {
     MenuClosedEvent e{};
     PPCContext e_ctx = ctx;
@@ -7708,8 +7703,10 @@ REX_EXTERN(rex_lhGuiManager_ExitGuiModeQuiet) {
   const uint32_t gate = refii::guest::Pick(38u, 37u);
   const bool closing = AnySubscriber(REFII_EVENT_MENU_CLOSED) && manager != 0 && Load8(base, manager + gate) != 0 &&
                        GuiActive(ctx, base);
-  const int32_t player = closing ? MenuOwnerNow(ctx, base) : 0;
+  const int32_t player = closing ? MenuOwnerNow(base) : 0;
+  refii::vfs::StatedScreenExiting(1);
   __imp__rex_lhGuiManager_ExitGuiModeQuiet(ctx, base);
+  refii::vfs::StatedScreenExiting(-1);
   if (closing) {
     MenuClosedEvent e{};
     PPCContext e_ctx = ctx;
@@ -7728,15 +7725,25 @@ REX_EXTERN(rex_lhGuiManager_ExitGuiModeQuiet) {
 REX_EXTERN(rex_lhGuiManager_SetScreen) {
   REX_FUNC_PROLOGUE();
   const int32_t screen = static_cast<int32_t>(ctx.r4.u32);
-  const bool changed = AnySubscriber(REFII_EVENT_MENU_SCREEN) && screen != CurrentScreen(base);
+  const bool changed = AnySubscriber(REFII_EVENT_MENU_SCREEN) &&
+                       static_cast<int32_t>(refii::guest::ScreenIdToTu1(static_cast<uint32_t>(screen))) != CurrentScreen();
   __imp__rex_lhGuiManager_SetScreen(ctx, base);
+  // The setter writes its argument as the screen that is up (`stw r28,4(r9)` 0x8236eb20, disc
+  // 0x82336d28), whatever it loaded.
+  const uint32_t stated = refii::guest::ScreenIdToTu1(static_cast<uint32_t>(screen));
+  refii_bridge_stated_screen(stated);
+  // The setter also drops the modal latch for every screen but the boxes' own (`if ( !v9 )`
+  // 0x8236e71c: 19 query, 4 adjuster, 5, 3 message, 9).
+  if (stated != 19u && stated != 4u && stated != 5u && stated != 3u && stated != 9u) {
+    refii_bridge_stated_modal(1u, 0u);
+  }
   if (changed) {
     MenuScreenEvent e{};
     PPCContext e_ctx = ctx;
     e.ctx = &e_ctx;
     e.base = base;
     e.screen = static_cast<int32_t>(refii::guest::ScreenIdToTu1(static_cast<uint32_t>(screen)));
-    e.player = MenuOwnerNow(ctx, base);
+    e.player = MenuOwnerNow(base);
     Dispatch(e);
   }
 }
@@ -7762,18 +7769,6 @@ int32_t ModeId(PPCContext& ctx, uint8_t* base, uint32_t command) {
   return refii::mods::CallVirtual(work, base, command, 1) ? static_cast<int32_t>(work.r3.u32) : 0;
 }
 
-/// The in-game GUI manager's screen id in TU1 numbering, -1 when the GUI object up is not the
-/// in-game one (`dword_83496B08` has two writers; the in-game vtable is 0x82001610, as the host's
-/// RefiiHostGetPauseState tests it).
-int32_t MenuScreenNow(uint8_t* base) {
-  const uint32_t gui = Load32(base, refii::guest::Address(0x83496B08u));
-  if (gui < 0x10000u || gui >= 0xC0000000u || Load32(base, gui) != refii::guest::Address(0x82001610u)) {
-    return -1;
-  }
-  const int32_t raw = CurrentScreen(base);
-  return raw >= 0 ? static_cast<int32_t>(refii::guest::ScreenIdToTu1(static_cast<uint32_t>(raw))) : -1;
-}
-
 void RaisePaused(PPCContext& ctx, uint8_t* base, uint32_t command, bool paused) {
   if (!AnySubscriber(REFII_EVENT_PAUSED)) {
     return;
@@ -7784,9 +7779,9 @@ void RaisePaused(PPCContext& ctx, uint8_t* base, uint32_t command, bool paused) 
   e.base = base;
   e.paused = paused;
   e.mode = ModeId(ctx, base, command);
-  e.screen = MenuScreenNow(base);
+  e.screen = CurrentScreen();
   // 31 is the id ExitScreen writes to the screen manager's +4 when it has left: no screen up.
-  e.player = e.mode == 1 && e.screen >= 0 && e.screen != 31 ? MenuOwnerNow(ctx, base) : 0;
+  e.player = e.mode == 1 && e.screen >= 0 && e.screen != 31 ? MenuOwnerNow(base) : 0;
   Dispatch(e);
 }
 }  // namespace

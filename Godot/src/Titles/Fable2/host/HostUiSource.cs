@@ -30,58 +30,10 @@ public sealed class HostUiSource : Fable2UiSource
 
 	public override uint MenuScreenId() => HostBridge.GetMenuScreenId();
 
-	public override Engine_UiModel.MenuBoxState? GetMenuBox() => HostBridge.GetMenuBox();
+	public override Engine_UiModel.MenuBoxState? GetMenuBox() => Engine_UiDisplayBoxes.MenuState();
 
-	/// <summary>
-	/// `F = *(*(*(0x83496AC0)+8)+0x50)` (0x8230FF44..0x8230FF64, gated on `byte_83496AC4`); the
-	/// main-menu root `*(F+0xB8)` (vt 0x820D0934) and the title `*(F+0xB4)` (vt 0x820D09C4).
-	/// Either sets `+57` when it raises the dialog (`sub_826E1C50`, `sub_826E3580`); the root takes
-	/// the answer in mode `+24 == 6` (set on DIALOG_ACTIVE, `sub_826E1040`), the title in mode 12.
-	/// </summary>
-	private static readonly (uint Offset, uint Vtable, uint Accepting)[] DialogOwners =
-		{ (0xB8u, 0x820D0934u, 6u), (0xB4u, 0x820D09C4u, 12u) };
-
-	public override FrontEndDialogState? GetFrontEndDialog()
-	{
-		// The pointer and its gate byte are read SEPARATELY. In TU1 the gate (`byte_83496AC4`)
-		// follows the pointer; without the title update it sits three bytes BEFORE it
-		// (`byte_83496925`, pointer at 0x83496928), so one two-word read is only right in TU1.
-		uint[] app = HostBridge.Peek(HostBridge.GuestAddress(0x83496AC0u), 1);
-		uint[] gate = HostBridge.Peek(HostBridge.GuestAddress(0x83496AC4u), 1);
-		if (app.Length != 1 || gate.Length != 1 || app[0] < 0x10000u || (gate[0] >> 24) == 0u)
-		{
-			return null;
-		}
-
-		uint[] shell = HostBridge.Peek(app[0] + 8u, 1);
-		uint[] front = shell.Length == 1 && shell[0] >= 0x10000u
-			? HostBridge.Peek(shell[0] + 0x50u, 1)
-			: System.Array.Empty<uint>();
-		if (front.Length != 1 || front[0] < 0x10000u)
-		{
-			return null;
-		}
-
-		foreach ((uint offset, uint vtable, uint accepting) in DialogOwners)
-		{
-			uint[] owner = HostBridge.Peek(front[0] + offset, 1);
-			if (owner.Length != 1 || owner[0] < 0x10000u)
-			{
-				continue;
-			}
-
-			// +0 vtable, +24 mode, +56..+59 holds the +57 flag.
-			uint[] words = HostBridge.Peek(owner[0], 15);
-			if (words.Length != 15 || HostBridge.GuestAddressToTu1(words[0]) != vtable || ((words[14] >> 16) & 0xFFu) == 0u)
-			{
-				continue;
-			}
-
-			return new FrontEndDialogState(owner[0], words[6] == accepting);
-		}
-
-		return null;
-	}
+	public override FrontEndDialogState? GetFrontEndDialog() =>
+		HostBridge.TryGetFrontEndDialog(out bool accepting) ? new FrontEndDialogState(accepting) : null;
 
 	/// <summary>
 	/// The screen the showing box stands on, by the guest's own mapping — the class's type (vtable
@@ -114,26 +66,21 @@ public sealed class HostUiSource : Fable2UiSource
 
 	public override Engine_UiModel.SpellWheelState GetSpellBlade() => HostBridge.GetSpellBlade();
 
-	public override Dictionary<uint, float> GetHudMeters() => HostBridge.GetHudMeters();
-
-	public override Dictionary<uint, Refii.Ui.Engine_UiSource.HudPulser> GetHudPulsers() => HostBridge.GetHudPulsers();
-
-	public override Dictionary<uint, string> GetHudTexts() => HostBridge.GetHudTexts();
-
-	public override Dictionary<uint, uint> GetHudScriptTexts() => HostBridge.GetHudScriptTexts();
-
-	public override Dictionary<uint, float> GetHudScriptMeters() =>
-		HostBridge.GetHudScriptMeters();
-
 	public override bool FillHud(Dictionary<uint, float> meters,
 		Dictionary<uint, Refii.Ui.Engine_UiSource.HudPulser> pulsers, Dictionary<uint, string> texts,
 		Dictionary<uint, float> scriptMeters, Dictionary<uint, uint> scriptTexts)
 	{
-		HostBridge.FillHudMeters(meters);
-		HostBridge.FillHudPulsers(pulsers);
-		HostBridge.FillHudTexts(texts);
-		HostBridge.FillHudScriptMeters(scriptMeters);
-		HostBridge.FillHudScriptTexts(scriptTexts);
+		// The meters and the texts are the registry writers' own statements (`@Gui.Meter`,
+		// `@Gui.Text`, gui_registry_hooks.cpp); nothing is read for them.
+		meters.Clear();
+		texts.Clear();
+		// The pulsers run here from the guest's own start and stop (`@Gui.Pulser`).
+		Engine_UiHudPulsers.Fill(pulsers, Refii.Entities.Engine_DrawnFrame.NowUsec);
+		// The script store's meters and texts reach the registry through the same writers: its
+		// setters (`sub_823C59E0`, `sub_823C5B00`) call SeekMeter and SetText, and the save loader
+		// re-issues every stored one through them (`sub_823C4A88` 0x823c5154, 0x823c5288).
+		scriptMeters.Clear();
+		scriptTexts.Clear();
 		return true;
 	}
 

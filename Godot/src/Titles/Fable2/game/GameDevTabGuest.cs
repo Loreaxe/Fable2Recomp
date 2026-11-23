@@ -57,8 +57,6 @@ public partial class GameDevTabGuest : GameDevTab
 		[0x820EBF1Cu] = "InfoParams card",
 	};
 
-	private static readonly uint[] FlowChain = { 0u, 12u, 128u, 4u, 4u };
-
 	public GameDevTabGuest()
 	{
 		AddChild(_state);
@@ -101,10 +99,10 @@ public partial class GameDevTabGuest : GameDevTab
 			text.Append($"screen {pause.ScreenId}   modal mode {pause.ModalMode} id {pause.ModalId}   tab {pause.CurrentTab}\n");
 		}
 
-		text.Append(HostBridge.GetDisplayBox() is { } box
-			? $"display box  {(BoxClasses.TryGetValue(box.Vtable, out string? name) ? name : $"vt {box.Vtable:X8}")} at {box.Box:X8}\n"
+		text.Append(Engine_UiDisplayBoxes.Showing is { } box
+			? $"display box  {(BoxClasses.TryGetValue(Engine_UiDisplayBoxes.VtableOf(box.Kind), out string? name) ? name : $"kind {box.Kind}")} at {box.Address:X8}\n"
 			: "display box  none\n");
-		text.Append(HostBridge.GetMenuBox() is { } menu
+		text.Append(Refii.Ui.Engine_UiSource.Current.GetMenuBox() is { } menu
 			? $"menu box     {menu.Count} option(s), selected {menu.Selected}\n"
 			: "menu box     none\n");
 		_state.Text = text.ToString();
@@ -129,33 +127,15 @@ public partial class GameDevTabGuest : GameDevTab
 		_counters.Show(rows);
 	}
 
-	/// <summary>The top of the game-flow stack — the chain `sub_82296368` walks.</summary>
+	/// <summary>The top of the game-flow stack, as its push and pop state it.</summary>
 	private static string TopFlowState()
 	{
-		uint at = HostBridge.GuestAddress(0x83496AB8u);
-		foreach (uint offset in FlowChain)
-		{
-			uint[] word = HostBridge.Peek(at + offset, 1);
-			if (word.Length != 1 || word[0] < 0x10000u)
-			{
-				return "-";
-			}
-
-			at = word[0];
-		}
-
-		uint[] node = HostBridge.Peek(at + 4u, 1);
-		if (node.Length != 1 || node[0] == at || node[0] < 0x10000u)
+		if (HostBridge.Stated(HostBridge.StatedValue.FlowDepth) == 0u)
 		{
 			return "empty";
 		}
 
-		uint[] state = HostBridge.Peek(node[0] + 8u, 1);
-		uint[] vtable = state.Length == 1 && state[0] >= 0x10000u
-			? HostBridge.Peek(state[0], 1)
-			: System.Array.Empty<uint>();
-		return vtable.Length != 1
-			? "-"
-			: FlowStates.TryGetValue(HostBridge.GuestAddressToTu1(vtable[0]), out string? name) ? name : $"vt {vtable[0]:X8}";
+		uint vtable = HostBridge.Stated(HostBridge.StatedValue.FlowTopVtable);
+		return FlowStates.TryGetValue(HostBridge.GuestAddressToTu1(vtable), out string? name) ? name : $"vt {vtable:X8}";
 	}
 }

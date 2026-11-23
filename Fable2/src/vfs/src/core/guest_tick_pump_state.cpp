@@ -211,16 +211,10 @@ uint32_t ResolveInGameLoadingScreen(uint8_t* base) {
   return 0;
 }
 
+/// DELIBERATE REPLACEMENT, with its writes: the take-down `sub_8235E5A0` makes inline at
+/// 0x8235E7C4 (disc `sub_8235ABA0` 0x8235ADD0), on the render side this build does not run.
 void FinishStuckInGameLoadingScreenFromHost(uint8_t* base) {
   if (base == nullptr) {
-    return;
-  }
-
-  static const bool enabled = [] {
-    const char* value = std::getenv("REFII_FINISH_INGAME_LOADSCREEN");
-    return value == nullptr || value[0] != '0';
-  }();
-  if (!enabled) {
     return;
   }
 
@@ -293,6 +287,7 @@ void FinishStuckInGameLoadingScreenFromHost(uint8_t* base) {
   WriteU32(base, screen + 172u, 0u);
   WriteU8(base, screen + 176u, 0u);
   WriteU8(base, screen + 177u, 1u);
+  refii_bridge_loading_screen_updated(screen, 0.0f, 0, 1);
 
   // The take-down `sub_8235E5A0` performs at 0x8235E7C4: clear requested, latch done, release
   // the game thread parked in `sub_82361458`'s WaitForSingleObjectEx(+180, INFINITE). Set
@@ -452,19 +447,6 @@ extern "C" void refii_bridge_publish_hero_inventory(const uint32_t* words, uint3
   }
 }
 
-extern "C" uint32_t refii_bridge_hero_inventory_snapshot(uint32_t* out, uint32_t word_capacity) {
-  std::lock_guard lock(g_inventory_mutex);
-  const uint32_t words = static_cast<uint32_t>(g_inventory.size());
-  if (out != nullptr && word_capacity != 0u) {
-    const uint32_t whole = word_capacity - (word_capacity % 4u);
-    const uint32_t n = std::min(words, whole);
-    if (n != 0u) {
-      std::memcpy(out, g_inventory.data(), n * sizeof(uint32_t));
-    }
-  }
-  return words / 4u;
-}
-
 extern "C" void refii_bridge_publish_hero_inventory_items(const uint32_t* words, uint32_t count) {
   std::vector<uint32_t> records;
   std::vector<uint32_t> items;
@@ -569,14 +551,6 @@ extern "C" void refii_bridge_publish_shop_price(const void* price) {
   std::lock_guard<std::mutex> lock(g_shop_price_mutex);
   g_shop_price = *static_cast<const ShopPrice*>(price);
 }
-
-std::atomic<uint32_t> g_clothing_mannequin{0};
-
-extern "C" void refii_bridge_publish_clothing_mannequin(uint32_t entity) {
-  g_clothing_mannequin.store(entity);
-}
-
-uint32_t ClothingMannequinSnapshot() { return g_clothing_mannequin.load(); }
 
 ShopPrice ShopPriceSnapshot() {
   std::lock_guard<std::mutex> lock(g_shop_price_mutex);
@@ -779,14 +753,21 @@ uint32_t QuestSnapshot(QuestEntry* out, uint32_t capacity) {
 
 extern "C" void refii_bridge_publish_family(const void* members, uint32_t count) {
   const FamilyMember* typed = static_cast<const FamilyMember*>(members);
-  std::lock_guard<std::mutex> lock(g_family_mutex);
-  g_family_count = count < kMaxFamilyMembers ? count : kMaxFamilyMembers;
-  if (typed == nullptr) {
-    g_family_count = 0;
-    return;
+  const uint32_t kept = typed == nullptr ? 0u : count < kMaxFamilyMembers ? count : kMaxFamilyMembers;
+  bool changed = false;
+  {
+    std::lock_guard<std::mutex> lock(g_family_mutex);
+    changed = kept != g_family_count ||
+              (kept != 0u && std::memcmp(g_family, typed, kept * sizeof(FamilyMember)) != 0);
+    g_family_count = kept;
+    for (uint32_t i = 0; i < kept; ++i) {
+      g_family[i] = typed[i];
+    }
   }
-  for (uint32_t i = 0; i < g_family_count; ++i) {
-    g_family[i] = typed[i];
+  // The world map's family list is built from this snapshot: a changed one moves the UI data
+  // generation, which is what the host's open list re-reads on.
+  if (changed) {
+    refii_bridge_ui_data_published();
   }
 }
 
@@ -951,7 +932,7 @@ namespace {
 std::atomic<int32_t> g_menu_owner_two{0};
 }  // namespace
 
-/// The payload's per-tick sample of the GUI's owner (guest_tick_pump.cpp SampleMenuOwner).
+/// The GUI's owner as the payload states it each tick (guest_tick_pump.cpp StateMenuOwner).
 void refii_bridge_set_menu_owner_two(int32_t two) {
   g_menu_owner_two.store(two != 0 ? 1 : 0, std::memory_order_relaxed);
 }

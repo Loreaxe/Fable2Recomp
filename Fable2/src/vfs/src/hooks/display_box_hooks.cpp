@@ -35,6 +35,11 @@ std::string ReadStatedWideLhString(uint8_t* base, uint32_t handle);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiNumericAdjuster_Render);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiGamerCard_SetName);
 
+namespace refii::vfs {
+// gui_stated_screens.cpp: a menu box opened, for the question that latches the modal on it.
+void StatedMenuBoxOpened();
+}  // namespace refii::vfs
+
 namespace {
 
 /// The open byte every handler gates on — `lbz r11, 0xC(r3)`; Open sets it at 0x823cec7c,
@@ -121,8 +126,13 @@ REX_EXTERN(rex_lhGuiManager_OpenModal) {
     const uint32_t id = ctx.r6.u32;
     const bool opens = refii::vfs::LoadGuestU32(base, owner + 40u) == 1u;
     const std::string said = opens ? refii::vfs::ReadStatedWideLhString(base, text) : std::string();
+    // The opener saves the screen that is up, sets the box's screen and puts the saved one back
+    // (0x8236fc90, disc 0x82337e8c): the screen stated before the call stands after it.
+    const uint32_t screen = refii_bridge_stated_screen_now();
     __imp__rex_lhGuiManager_OpenModal(ctx, base);
+    refii_bridge_stated_screen(screen);
     if (opens && refii::vfs::LoadGuestU32(base, owner + 40u) == kind) {
+        refii_bridge_stated_modal(kind, id);
         StateModal(kind, id, said);
     }
 }
@@ -143,8 +153,12 @@ REX_EXTERN(rex_lhGuiManager_OpenNumericAdjuster) {
     const int32_t flags = static_cast<int32_t>(ctx.r10.u32);
     const bool opens = refii::vfs::LoadGuestU32(base, owner + 40u) == 1u;
     const std::string said = opens ? refii::vfs::ReadStatedWideLhString(base, text) : std::string();
+    // As the modal opener: the saved screen is put back (0x8236fd64, disc 0x82337f5c).
+    const uint32_t screen = refii_bridge_stated_screen_now();
     __imp__rex_lhGuiManager_OpenNumericAdjuster(ctx, base);
+    refii_bridge_stated_screen(screen);
     if (opens && refii::vfs::LoadGuestU32(base, owner + 40u) == 5u) {
+        refii_bridge_stated_modal(5u, id);
         StateModal(5u, id, said, {value, minimum, maximum, step, flags},
                    refii::vfs::LoadGuestU32(base, owner + 0x40u));
     }
@@ -379,6 +393,54 @@ REX_EXTERN(rex_lhAcceptHoldBox_Close) {
     StateDisplay(base, "@DisplayBox.Close", box, kAcceptHoldKind);
 }
 
+// A BOX DESTROYED WHILE OPEN. The queues hold their boxes by counted pointer, whose deleter
+// (`sub_82529238`) runs the class's slot 0. The queue's tick releases its current box only once its
+// slot 5 answers 0, after a Close; the owner's teardown (`sub_82373458` 0x82373588 / 0x823735a0,
+// inlined on disc at `sub_82335218` 0x823353bc / 0x823353d4) releases both queues' current boxes
+// with no Close. Slot 0 is `sub_823CF618` for query, adjuster, intermission, acceptance and button
+// (disc `sub_828422C0`), `sub_823CFB70` for the quest box (disc `sub_823BE1B0`) and `sub_8299E400`
+// for the hold-to-accept card (disc `sub_82841B80`); each states `@DisplayBox.Close` for a box whose
+// open byte still stands.
+namespace {
+
+constexpr refii::guest::Addr kQueryBoxVtable{0x820AE688u};
+constexpr refii::guest::Addr kAdjusterBoxVtable{0x820AE6A8u};
+constexpr refii::guest::Addr kIntermissionBoxVtable{0x820EBFA8u};
+constexpr refii::guest::Addr kButtonBoxVtable{0x820028F4u};
+
+void StateDestroyedOpen(uint8_t* base, uint32_t box, uint32_t kind) {
+    if (refii::vfs::LoadGuestU8(base, box + kBoxOpen) != 0u) {
+        StateDisplay(base, "@DisplayBox.Close", box, kind);
+    }
+}
+
+}  // namespace
+
+REX_EXTERN(rex_lhInfoBox_Dtor) {
+    const uint32_t box = ctx.r3.u32;
+    const uint32_t vtable = refii::vfs::LoadGuestU32(base, box);
+    const uint32_t kind = vtable == static_cast<uint32_t>(kQueryBoxVtable)          ? kQueryKind
+                          : vtable == static_cast<uint32_t>(kAdjusterBoxVtable)     ? kAdjusterKind
+                          : vtable == static_cast<uint32_t>(kIntermissionBoxVtable) ? 5u
+                          : vtable == static_cast<uint32_t>(kAcceptanceBoxVtable)   ? 6u
+                          : vtable == static_cast<uint32_t>(kButtonBoxVtable)       ? 7u
+                                                                                    : 0xFFFFFFFFu;
+    if (kind != 0xFFFFFFFFu) {
+        StateDestroyedOpen(base, box, kind);
+    }
+    __imp__rex_lhInfoBox_Dtor(ctx, base);
+}
+
+REX_EXTERN(rex_lhQuestInfoBox_Dtor) {
+    StateDestroyedOpen(base, ctx.r3.u32, kQuestKind);
+    __imp__rex_lhQuestInfoBox_Dtor(ctx, base);
+}
+
+REX_EXTERN(rex_lhAcceptHoldBox_Dtor) {
+    StateDestroyedOpen(base, ctx.r3.u32, kAcceptHoldKind);
+    __imp__rex_lhAcceptHoldBox_Dtor(ctx, base);
+}
+
 // ---------------------------------------------------------------------------------------------
 // THE MENU BOX, the controller `*(guiOwner+56)` (a plain struct): +0 selected, +8 presentation,
 // +12 open, +13 cancelled, +14 cancelable, +20/+24 the option vector (8-byte `{item*, ref*}`; an
@@ -432,10 +494,30 @@ void StateMenuBoxOpen(uint8_t* base, uint32_t box) {
 
 }  // namespace
 
+// The menu box's cursor `sub_823DBB48(box, index)` (disc `sub_8240BD78`): `*box = index`, -1 for
+// none. Stated `@MenuBox.Select <box> <index>`.
+REX_EXTERN(rex_lhMenuBox_SetSelection) {
+    const uint32_t box = ctx.r3.u32;
+    const int32_t index = static_cast<int32_t>(ctx.r4.u32);
+    __imp__rex_lhMenuBox_SetSelection(ctx, base);
+    refii::vfs::GuiNativeCall call;
+    call.name = "@MenuBox.Select";
+    char hex[9];
+    std::snprintf(hex, sizeof hex, "%08X", box);
+    for (std::string value : {std::string(hex), std::to_string(index)}) {
+        refii::vfs::GuiNativeArgument argument;
+        argument.kind = refii::vfs::GuiNativeArgument::Kind::kString;
+        argument.text = std::move(value);
+        call.arguments.push_back(std::move(argument));
+    }
+    refii::vfs::PostGuiNativeCall(std::move(call));
+}
+
 REX_EXTERN(rex_lhMenuBox_Populate) {
     const uint32_t box = ctx.r3.u32;
     __imp__rex_lhMenuBox_Populate(ctx, base);
     if ((ctx.r3.u32 & 0xFFu) != 0u) {
+        refii::vfs::StatedMenuBoxOpened();
         StateMenuBoxOpen(base, box);
     }
 }

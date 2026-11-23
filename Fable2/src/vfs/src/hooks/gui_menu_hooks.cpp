@@ -11,6 +11,7 @@
 #include "vfs_hooks_private.h"
 #include "core/guest_state.h"
 #include "gui/gui_menu_chunks.h"
+#include "hooks/frontend_stated.h"
 #include "hooks/ppc_externs.h"
 #include "core/guest_build.h"
 #include "core/payload_bridge_fable2.h"
@@ -56,16 +57,11 @@ namespace {
 
 bool Plausible(uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; }
 
-/// The in-game screen the GUI manager names current: `*(*(GUI + 56) + 4)`, TU1 numbering — the
-/// id every reader below is asked under (`lhGuiPresentationSet_GetCurrent(*(GUI + 56))`).
-bool CurrentScreen(uint8_t* base, uint32_t* out_screen) {
-    const uint32_t gui = refii::vfs::LoadGuestU32(base, refii::guest::Address(0x83496B08u));
-    const uint32_t manager = Plausible(gui) ? refii::vfs::LoadGuestU32(base, gui + 56u) : 0u;
-    if (!Plausible(manager)) {
-        return false;
-    }
-    *out_screen = refii::guest::ScreenIdToTu1(refii::vfs::LoadGuestU32(base, manager + 4u));
-    return true;
+/// The in-game screen that is up, as the screen setter stated it (TU1 numbering, 31 for none) —
+/// the id every reader below is asked under.
+uint32_t CurrentScreen() {
+    const uint32_t stated = refii_bridge_stated_screen_now();
+    return stated == 0xFFFFFFFFu ? 31u : stated;
 }
 
 /// One guest call on a scratch frame carved below the caller's stack; every register restored.
@@ -146,14 +142,13 @@ DispatchedRow& Dispatched() {
     return row;
 }
 
-bool StatedRowForCurrentScreen(uint8_t* base, AnsweredRow* row) {
+bool StatedRowForCurrentScreen(AnsweredRow* row) {
     uint32_t stated_screen = 0;
     if (!refii_bridge_get_stated_highlight(&stated_screen, &row->event_type, &row->id, row->name,
                                            row->label, sizeof(row->name))) {
         return false;
     }
-    uint32_t current = 0;
-    if (!CurrentScreen(base, &current) || current != stated_screen) {
+    if (CurrentScreen() != stated_screen) {
         return false;
     }
 
@@ -205,9 +200,9 @@ PendingString2& String2Answer() {
 
 namespace refii::vfs {
 
-bool StatedHighlightName(uint8_t* base, std::string* name, int32_t* id) {
+bool StatedHighlightName(uint8_t* /*base*/, std::string* name, int32_t* id) {
     AnsweredRow row;
-    if (!StatedRowForCurrentScreen(base, &row)) {
+    if (!StatedRowForCurrentScreen(&row)) {
         return false;
     }
     *name = row.name;
@@ -244,52 +239,6 @@ void AnswerNextString2(std::string value) {
     pending.value = std::move(value);
 }
 
-/// THE ROW-ID MAP, read as its own lookup `sub_82880BC0` (disc `sub_827BE1E8`) reads it. Every
-/// list screen's Update passes `*(*(GUI+0x1C)+0x3C) + 4` (items 0x826D1748..0x826D1750, disc
-/// 0x8257D138..0x8257D140); the lookup takes the head at `+8` and its root at head `+4`, nodes
-/// `{+0 left, +4 parent, +8 right, +12 key, +16 the 16-byte item handle, +33 isnil}`. The key is
-/// the populate's ticket (`sub_82880AC8`: `++*a1` at 0x82880B00, returned at 0x82880BA8); the
-/// handle's first word is the item, whose `+4` is its record hash (as `sub_824F1C90` matches it).
-/// The lowest ticket wins a record several rows carry — the first row the populate made.
-uint32_t MenuTicketForRecord(uint8_t* base, uint32_t record) {
-    const uint32_t gui = LoadGuestU32(base, refii::guest::Address(0x83496B08u));
-    const uint32_t manager = Plausible(gui) ? LoadGuestU32(base, gui + 0x1Cu) : 0u;
-    const uint32_t helper = Plausible(manager) ? LoadGuestU32(base, manager + 0x3Cu) : 0u;
-    if (!Plausible(helper) || record == 0u) {
-        return 0u;
-    }
-    const uint32_t map = helper + 4u;
-    const uint32_t head = LoadGuestU32(base, map + 8u);
-    if (!Plausible(head)) {
-        return 0u;
-    }
-    const auto is_node = [&](uint32_t node) {
-        return Plausible(node) && node != head && LoadGuestU8(base, node + 33u) == 0u;
-    };
-
-    // In-order, so the first match is the lowest key.
-    uint32_t stack[64];
-    uint32_t depth = 0;
-    uint32_t node = LoadGuestU32(base, head + 4u);
-    for (uint32_t visited = 0; visited < 4096u;) {
-        while (is_node(node) && depth < 64u) {
-            stack[depth++] = node;
-            node = LoadGuestU32(base, node + 0u);
-        }
-        if (depth == 0u) {
-            break;
-        }
-        node = stack[--depth];
-        ++visited;
-        const uint32_t item = LoadGuestU32(base, node + 16u);
-        if (Plausible(item) && LoadGuestU32(base, item + 4u) == record) {
-            return LoadGuestU32(base, node + 12u);
-        }
-        node = LoadGuestU32(base, node + 8u);
-    }
-    return 0u;
-}
-
 }  // namespace refii::vfs
 
 /// THE HIGHLIGHTED ROW, ANSWERED NATIVELY. `sub_826C1B50(menuHelper, out)` (TU1, disc
@@ -308,9 +257,8 @@ REX_EXTERN(rex_lhGuiMenu_GetHighlightedItemData) {
     }
 
     AnsweredRow row;
-    const bool stated = StatedRowForCurrentScreen(base, &row);
-    uint32_t screen = 0xFFFFFFFFu;
-    CurrentScreen(base, &screen);
+    const bool stated = StatedRowForCurrentScreen(&row);
+    const uint32_t screen = CurrentScreen();
     if (!stated) {
         row = NoRow();
         if (screen == 14u) {
@@ -340,7 +288,7 @@ REX_EXTERN(rex_lhGuiMenu_GetHighlightedItemData) {
     // record (a dye slot, a None row) is answered as stated.
     uint32_t ticket = 0u;
     if (stated && KeysRowsByTicket(screen) && row.id != 0) {
-        ticket = refii::vfs::MenuTicketForRecord(base, static_cast<uint32_t>(row.id));
+        ticket = refii::vfs::MenuTicketForRecord(static_cast<uint32_t>(row.id));
         if (ticket != 0u) {
             row.id = static_cast<int32_t>(ticket);
         }
@@ -392,12 +340,11 @@ REX_EXTERN(rex_lhGuiMenu_GetHighlightedItemData) {
 REX_EXTERN(rex_lhGuiMenu_IsHighlightedItemAtRoot) {
     REX_FUNC_PROLOGUE();
 
-    uint32_t current = 0;
-    const bool known = CurrentScreen(base, &current);
-    const uint32_t depth = known ? refii_bridge_list_fold_depth(current) : 0u;
+    const uint32_t current = CurrentScreen();
+    const uint32_t depth = refii_bridge_list_fold_depth(current);
     REXLOG_INFO("Refii menu: IsHighlightedItemAtRoot on screen {} answered natively — fold depth "
                 "{}, at root {}",
-                known ? static_cast<int64_t>(current) : -1, depth, depth == 0u ? 1 : 0);
+                current, depth, depth == 0u ? 1 : 0);
     ctx.r3.u64 = depth == 0u ? 1u : 0u;
 }
 
@@ -414,6 +361,7 @@ REX_EXTERN(rex_lhGuiFrontEnd_IsHighlightedItemAtRoot) {
     REXLOG_INFO("Refii menu: front-end IsHighlightedItemAtRoot answered natively — fold depth {}, "
                 "at root {}",
                 depth, depth == 0u ? 1 : 0);
+    refii::vfs::FrontEndRootTestAnswered(depth == 0u);
     ctx.r3.u64 = depth == 0u ? 1u : 0u;
 }
 
@@ -488,18 +436,16 @@ const PresentationEventRoute kPresentationEvents[] = {
      __imp__rex_lhGuiHud_OnFinishedTransitioningToGame},
 };
 
-constexpr refii::guest::Addr kApplication{0x83496AC0u};
 constexpr refii::guest::Addr kGuiObject{0x83496B08u};
 constexpr refii::guest::Addr kFrontEndGuiVtable{0x820A924Cu};
-constexpr refii::guest::Addr kTitleScreenVtable{0x820D09C4u};
-constexpr refii::guest::Addr kRootScreenVtable{0x820D0934u};
 
-/// The callback's ctx, or 0 when its owner is not up. Front end `F = *(*(0x83496AC0 + 8) + 0x50)`
-/// (as the callbacks reach it, 0x826E13F0): title `*(F + 0xB4)`, root `*(F + 0xB8)` (0x8230FF70 /
-/// 0x8230FF98; disc 0x82303BAC), each checked by its vtable. The HUD callback `sub_823CA5F8`
-/// reads no argument — `r3` is first written at 0x823CA644 — and dereferences `*(GUI + 0x44)`
-/// (0x823CA608) and `*(GUI + 0x48)` (0x823CA644, `sub_82677940` reads `+12`) unchecked, so it
-/// needs the in-game GUI (not the front end's, vtable 0x820A924C) with both set.
+/// The callback's ctx, or 0 when its owner is not up. The front end's two are the `this` each
+/// registrar (vtable +20: title `sub_826E2C30`, root `sub_826DE740`) registers, the screens the
+/// front end activates — as their activates stated them (frontend_stated.cpp). The HUD callback
+/// `sub_823CA5F8` reads no argument — `r3` is first written at 0x823CA644 — and dereferences
+/// `*(GUI + 0x44)` (0x823CA608) and `*(GUI + 0x48)` (0x823CA644, `sub_82677940` reads `+12`)
+/// unchecked, so it is posted only while the in-game GUI (not the front end's, vtable 0x820A924C)
+/// holds both: a guard for the call, not a value.
 uint32_t EventOwnerObject(uint8_t* base, EventOwner owner) {
     if (owner == EventOwner::kHud) {
         const uint32_t gui = refii::vfs::LoadGuestU32(base, kGuiObject);
@@ -510,20 +456,7 @@ uint32_t EventOwnerObject(uint8_t* base, EventOwner owner) {
         }
         return gui;
     }
-
-    const uint32_t app = refii::vfs::LoadGuestU32(base, kApplication);
-    const uint32_t shell = Plausible(app) ? refii::vfs::LoadGuestU32(base, app + 8u) : 0u;
-    const uint32_t front = Plausible(shell) ? refii::vfs::LoadGuestU32(base, shell + 0x50u) : 0u;
-    if (!Plausible(front)) {
-        return 0u;
-    }
-    const bool title = owner == EventOwner::kTitle;
-    const uint32_t screen = refii::vfs::LoadGuestU32(base, front + (title ? 0xB4u : 0xB8u));
-    if (!Plausible(screen) ||
-        refii::vfs::LoadGuestU32(base, screen) != (title ? kTitleScreenVtable : kRootScreenVtable)) {
-        return 0u;
-    }
-    return screen;
+    return owner == EventOwner::kTitle ? refii::vfs::FrontEndTitleScreen() : refii::vfs::FrontEndMenuScreen();
 }
 
 /// Whether the host posts `id` to the callback `original` — the guest's own delivery of it is then
@@ -605,7 +538,9 @@ bool PostPresentationEvent(PPCContext& ctx, uint8_t* base, const std::string& sp
     ctx.r1.u32 = frame;
     ctx.r3.u32 = route->owner == EventOwner::kHud ? 0u : owner;
     ctx.r4.u32 = entry;
+    FrontEndEventBegin();
     route->callback(ctx, base);
+    FrontEndEventEnd(route->presentation, route->parent, route->event);
     ctx = saved;
 
     REXLOG_INFO("Refii presentation event: {} (0x{:08X}) on '{}' of {} posted to 0x{:08X}", event, id,
@@ -654,10 +589,18 @@ REX_EXTERN(rex_lhGui_FrontendRoot_HandleGuiEvent) {
     GuestDelivery(ctx, base, __imp__rex_lhGui_FrontendRoot_HandleGuiEvent, "the gender card");
 }
 
-/// `sub_826E0E58` (disc `sub_826C9280`) — `loadgame`: LOAD_CARD_ACTIVE → mode 5 (host-posted).
+/// `sub_826E0E58` (disc `sub_826C9280`) — `loadgame`: LOAD_CARD_ACTIVE → mode 5 (host-posted),
+/// UNFREEZE (`dword_8349B5B0`) → mode 0 (0x826e0ea0), which nothing shipped fires and the host
+/// does not post: a guest delivery of it is stated here.
 REX_EXTERN(rex_lhGuiFrontEndRoot_OnLoadCardEvent) {
     REX_FUNC_PROLOGUE();
+    const uint32_t entry = ctx.r4.u32;
+    const bool unfreeze =
+        Plausible(entry) && refii::vfs::LoadGuestU32(base, entry + 4u) ==
+                                refii::vfs::LoadGuestU32(base, refii::guest::Address(0x8349B5B0u));
+    if (unfreeze) refii::vfs::FrontEndEventBegin();
     GuestDelivery(ctx, base, __imp__rex_lhGuiFrontEndRoot_OnLoadCardEvent, "the load card");
+    if (unfreeze) refii::vfs::FrontEndEventEnd("frontendmainmenu", "loadgame", "UNFREEZE");
 }
 
 /// `sub_826E1040` (disc `sub_826C9460`) — the main menu's `dialog`: DIALOG_ACTIVE → mode 6,

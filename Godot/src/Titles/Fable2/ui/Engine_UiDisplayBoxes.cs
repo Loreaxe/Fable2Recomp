@@ -10,7 +10,7 @@ using MenuBox = Refii.Ui.Engine_UiStatedBoxes.MenuBox;
 /// queues. Every box on the owner's two queues is shown through its class's Open (vf1) and taken
 /// down through its Close (vf2); those are hooked (Fable2/src/vfs/src/hooks/display_box_hooks.cpp)
 /// and post <c>@DisplayBox.Open</c> / <c>.Close</c> (the MessageBox <c>@MessageBox.Open</c> /
-/// <c>.Close</c>) with the box's address, its identity, its body and its kind, then the class's
+/// <c>.Close</c>; a box destroyed while open states its Close from its destructor) with the box's address, its identity, its body and its kind, then the class's
 /// own fields. The owned surfaces and the box pages stand on these statements and answer the
 /// stated address.
 /// </summary>
@@ -44,11 +44,8 @@ public static class Engine_UiDisplayBoxes
 	public const int AcceptHold = 8;
 
 	/// <summary>
-	/// The TU1 vtable of each kind's class, for re-checking a stated box: Message 0x820AE668,
-	/// Query 0x820AE688, NumericAdjuster 0x820AE6A8, QuestInfoBox 0x820AE6C8, AcceptHold
-	/// 0x820EBF1C. Each of these Opens sets the open byte `+12` and its Close clears it
-	/// (0x823cf2e4 / 0x823cf38c, 0x823cf7e0 / 0x823cf880, 0x823cfff4 / 0x823d006c, 0x8299e620 /
-	/// 0x8299e748); 0 for a kind that is not re-checked.
+	/// The TU1 vtable of each kind's class: Message 0x820AE668, Query 0x820AE688, NumericAdjuster
+	/// 0x820AE6A8, QuestInfoBox 0x820AE6C8, AcceptHold 0x820EBF1C; 0 for the others.
 	/// </summary>
 	public static uint VtableOf(int kind) => kind switch
 	{
@@ -118,7 +115,7 @@ public static class Engine_UiDisplayBoxes
 		};
 	}
 
-	/// <summary>A class's Close stated the box down, or the box is no longer one: it goes.</summary>
+	/// <summary>A class's Close stated the box down, or its destructor a box still open: it goes.</summary>
 	public static bool Closed(uint address)
 	{
 		if (_open.RemoveAll(b => b.Address == address) == 0)
@@ -128,39 +125,6 @@ public static class Engine_UiDisplayBoxes
 
 		++Generation;
 		return true;
-	}
-
-	/// <summary>
-	/// Drops every stated box that the probe says is no longer an open box of its class — freed
-	/// without its Close being seen. The probe reads the ONE address the class stated (its vtable,
-	/// mapped to TU1, and its open byte `+12`), or null when it cannot. Kinds with no re-check
-	/// (<see cref="VtableOf"/> 0) are kept. Returns how many went.
-	/// </summary>
-	public static int Sweep(System.Func<uint, (uint Vtable, bool Open)?> probe)
-	{
-		int dropped = 0;
-		for (int i = _open.Count - 1; i >= 0; --i)
-		{
-			Box box = _open[i];
-			uint vtable = VtableOf(box.Kind);
-			if (vtable == 0u || probe(box.Address) is not { } seen)
-			{
-				continue;
-			}
-
-			if (seen.Vtable != vtable || !seen.Open)
-			{
-				_open.RemoveAt(i);
-				++dropped;
-			}
-		}
-
-		if (dropped != 0)
-		{
-			++Generation;
-		}
-
-		return dropped;
 	}
 
 	/// <summary>The menu box stated open, null once its close is stated.</summary>
@@ -188,6 +152,40 @@ public static class Engine_UiDisplayBoxes
 			Menu = menu with { GamerName = name };
 			++Generation;
 		}
+	}
+
+	/// <summary>The box's cursor write (`@MenuBox.Select`).</summary>
+	public static void MenuSelected(uint address, int index)
+	{
+		if (Menu is { } menu && menu.Address == address && menu.Selected != index)
+		{
+			Menu = menu with { Selected = index };
+			++Generation;
+		}
+	}
+
+	/// <summary>
+	/// The stated box in the shape the owned list reads: its rows' count and enabled bytes, the
+	/// cursor, cancelable and the player card. Null when none is open.
+	/// </summary>
+	public static Engine_UiModel.MenuBoxState? MenuState()
+	{
+		if (Menu is not { } menu || menu.Model.Options.Count == 0)
+		{
+			return null;
+		}
+
+		uint enabled = 0u;
+		for (int i = 0; i < menu.Model.Options.Count; ++i)
+		{
+			if (menu.Model.Options[i].Enabled)
+			{
+				enabled |= 1u << i;
+			}
+		}
+
+		return new Engine_UiModel.MenuBoxState(
+			menu.Model.Options.Count, menu.Selected, menu.Model.Cancelable, false, enabled, menu.Card);
 	}
 
 	/// <summary>The close stated the box down.</summary>

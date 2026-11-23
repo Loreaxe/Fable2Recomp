@@ -90,7 +90,7 @@ public static class Fable2FrontEndRoot
 	/// yet" from "none" — see <see cref="Engine_UiModel.SaveState"/>.
 	/// </summary>
 	public static void ApplyAvailability(Engine_FrontEndMenu menu,
-		Engine_UiModel.FrontEndModel model, Engine_UiModel.SaveState saves,
+		int languageCount, Engine_UiModel.SaveState saves,
 		System.Collections.Generic.IReadOnlyList<Engine_UiModel.Language>? languages = null)
 	{
 		foreach (Item item in menu.Roots)
@@ -99,7 +99,9 @@ public static class Fable2FrontEndRoot
 			{
 				// Held back until the pump has answered, rather than asserting no saves.
 				"Load Game" => saves.CanLoad,
-				"Language" => model.HasLanguageEntry,
+				// Spawned only above one installed language (`lwz r11, dword_83319934` /
+				// `cmplwi r11, 1` / `ble` past the spawn).
+				"Language" => languageCount > 1,
 				_ => item.Available,
 			};
 		}

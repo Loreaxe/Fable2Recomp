@@ -2048,7 +2048,6 @@ public static class Engine_UiGameTemplates
     "10": {
       "name": "query",
       "restFromFile": true,
-      "provider": "querycard",
       "ownsRevealedInput": true,
       "revealedBack": "screen:back",
       "presentation": "queryscreen",

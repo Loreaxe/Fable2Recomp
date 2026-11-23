@@ -387,40 +387,6 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetCurrentCulture(char* out, uint32_t ca
     return refii_bridge_culture_code_read(out, capacity);
 }
 
-/// The loading screen the guest has up, as it states it (Fable3/src/hooks/src/
-/// loading_screen_scene.cpp): the manager that made it, the screen, its cover opacity (ls+0xD0 as
-/// its update leaves it: rising as it comes up, falling after the close), the close requested
-/// (ls+0x19C, sub_823069C8) and finished (ls+0x19D, its update's teardown). The stop does not
-/// block, unlike Fable 2's. Returns 1 while a screen exists.
-REFII_HOST_ABI_EXPORT int RefiiHostGetLoadingScreen(uint32_t* out_manager, uint32_t* out_screen, float* out_fade,
-                                                   uint32_t* out_requested, uint32_t* out_done) {
-    return refii_bridge_loading_screen_read(out_manager, out_screen, out_fade, out_requested, out_done, nullptr,
-                                            nullptr, nullptr, 0u);
-}
-
-/// The art the guest chose for its loading screen, as its decision sub_82307A30 stated it (the
-/// CCharString it writes into ls+0x150 on every branch, e.g. `qc010_opening.tex` for the prologue,
-/// `qc0000_road_to_rule.tex` for a new game). The kind is the create's (ls+0x170), Fable 3's own
-/// numbering, not Fable 2's art enum: the name is the statement. Returns 1 when a name is held.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetLoadingScreenArt(uint32_t* out_type, uint32_t* out_body, char* name,
-                                                           uint32_t capacity) {
-    if (out_type != nullptr) *out_type = 0u;
-    if (out_body != nullptr) *out_body = 0u;
-    if (name != nullptr && capacity > 0u) name[0] = '\0';
-
-    uint32_t kind = 0u;
-    uint32_t body = 0u;
-    if (refii_bridge_loading_screen_read(nullptr, nullptr, nullptr, nullptr, nullptr, &kind, &body, name,
-                                         capacity) == 0) {
-        if (name != nullptr && capacity > 0u) name[0] = '\0';
-        return 0u;
-    }
-
-    if (out_type != nullptr) *out_type = kind;
-    if (out_body != nullptr) *out_body = body;
-    return name != nullptr && capacity > 0u && name[0] != '\0' ? 1u : 0u;
-}
-
 /// The camera the guest last rendered the world with, as its hook stated it
 /// (Fable3/src/hooks/src/view_feed.cpp): position, up, forward, horizontal FOV in radians, snap.
 REFII_HOST_ABI_EXPORT int RefiiHostGetCamera(float* out) {

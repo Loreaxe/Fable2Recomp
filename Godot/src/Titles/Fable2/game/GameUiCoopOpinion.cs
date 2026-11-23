@@ -28,11 +28,11 @@ public partial class GameUi
 	private readonly float[] _opinionAnswer = new float[5];
 
 	/// <summary>The joiner's half of the exchange, once a guest frame with the readout just published.</summary>
-	private void DriveJoinerOpinion(HostBridge.TargetedQuery query, Engine_HudValues values, double delta)
+	private void DriveJoinerOpinion(Engine_HudValues values, double delta)
 	{
 		bool joiner = CoopSession.PeerStanding && CoopSession.IsClient && !CoopSession.LocalCoop;
-		ulong uid = joiner && query.Known && query.Present && query.Entity != 0u
-			? HostBridge.GetEntityUid(query.Entity)
+		ulong uid = joiner && Engine_UiHudTargetedQuery.Present && Engine_UiHudTargetedQuery.Entity != 0u
+			? HostBridge.GetEntityUid(Engine_UiHudTargetedQuery.Entity)
 			: 0ul;
 		if (uid == 0ul)
 		{
@@ -54,7 +54,7 @@ public partial class GameUi
 			HostBridge.CoopSend(OpinionAskPrefix + uid.ToString(CultureInfo.InvariantCulture));
 		}
 
-		int axis = query.SlideSet - 1;
+		int axis = Engine_UiHudTargetedQuery.SlideSet - 1;
 		if (_opinionKnownFor != uid || axis is < 0 or > 4)
 		{
 			return;

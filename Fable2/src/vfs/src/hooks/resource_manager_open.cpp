@@ -205,7 +205,7 @@ REX_EXTERN(rex_lhGui_RunLuaString) {
     if (chunk.find("g_Menu:DeleteAllSpawnedMenuItems") != std::string::npos) {
       uint32_t screen_id = 0;
       refii_bridge_menu_spawn_begin_for(
-          refii::vfs::InGameScreenRoots(base, nullptr, &screen_id) ? screen_id : 0xFFFFFFFFu);
+          refii::vfs::StatedInGameScreen(&screen_id) ? screen_id : 0xFFFFFFFFu);
     }
 
     // `g_Menu:CountSpawnedItems()` — the real-estate populate `sub_82998300` (disc

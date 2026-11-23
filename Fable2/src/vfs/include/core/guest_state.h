@@ -101,6 +101,17 @@ std::string ReadGuestLhString(uint8_t* base, uint32_t handle);
 /// The same handle shape read as WIDE UTF-16 — the guest's display-text class. See the
 /// implementation for why reading one with the other returns an empty string rather than noise.
 std::string ReadGuestWideString(uint8_t* base, uint32_t handle);
+
+/// The GUI's preview figures as the preview scene files them (preview_figures_stated.cpp).
+/// SetPreviewFigureRole names the figure the calling thread's guest function is about to file
+/// ("clothing", "playerone", "henchman") and returns the role it replaces, to be put back on the
+/// way out. StatedPreviewFigure is the entity of the newest live figure filed under a role, 0 once
+/// destroyed (StatedClothingMannequin: the clothing screen's); StatedPreviewFigures lists every
+/// figure filed and not yet destroyed, with its role, and returns how many it wrote.
+const char* SetPreviewFigureRole(const char* role);
+uint32_t StatedPreviewFigure(const char* role);
+uint32_t StatedPreviewFigures(uint32_t* out_entities, const char** out_roles, uint32_t capacity);
+uint32_t StatedClothingMannequin();
 std::string FormatGuestObjectVTable(uint8_t* base,
                                     uint32_t object_guest,
                                     uint32_t slot_count);

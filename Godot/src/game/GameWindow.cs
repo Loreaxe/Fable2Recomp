@@ -605,79 +605,32 @@ public partial class GameWindow : Node
 	{
 		TraceLevelLoad();
 
-		if (HostBridge.TryGetAbiVersion() is null ||
-			!HostBridge.TryGetFrontEnd(out Engine_UiModel.FrontEndScreen screen,
-				out uint state, out bool canPressA, out uint cursor,
-				out int sceneSlide, out _))
+		if (HostBridge.TryGetAbiVersion() is null)
 		{
 			return;
 		}
 
-		// Called every frame: a widget changing state does not show up in the screen-level
-		// fields below, and FollowGuest is a no-op when the live slide table has not moved.
-		_ui?.FollowGuest(screen, sceneSlide);
+		bool up = HostBridge.TryGetFrontEnd(out Engine_UiModel.FrontEndScreen screen,
+			out uint state, out bool canPressA, out uint cursor);
 
-		var now = (screen, state, canPressA, cursor);
+		// Every frame, up or not: with the front end gone the screen is None and FollowGuest takes
+		// the built front end down.
+		_ui?.FollowGuest(screen);
+
+		var now = (up, screen, state, canPressA, cursor);
 		if (now == _lastFrontEnd)
 		{
 			return;
 		}
 
 		_lastFrontEnd = now;
-
-		// dword_83496B08 is written by two constructions through the same base (0x8237132C):
-		// the front-end GUI, and a base-only instance from Game_InitDatabases whose
-		// +180/+184/+188 are not screen pointers. The vtable is what tells them apart.
-		string where = string.Empty;
-		if (screen == Engine_UiModel.FrontEndScreen.None &&
-			HostBridge.GetFrontEndRaw() is { } words)
-		{
-			where = $" gui=0x{words[0]:X8} guiVtable=0x{words[9]:X8}" +
-				$" active=0x{words[1]:X8} activeVtable=0x{words[8]:X8}";
-
-			// Say which of the two it is, or every later reader has to know this trap.
-			where += HostBridge.FrontEndGuiIsUp
-				? " (front-end GUI, no screen active)"
-				: " (NOT the front-end GUI — the game has taken it over)";
-		}
-
-		// No slide: the root's +43/+42 of a headless presentation are never written.
-		GD.Print($"[guest-ui] {screen} state={state}" +
-			(screen == Engine_UiModel.FrontEndScreen.Title ? $" canPressA={canPressA}" : $" cursor={cursor}") +
-			where);
-
-		ReportFrontEndInit();
+		GD.Print(!up
+			? "[guest-ui] no front end"
+			: $"[guest-ui] {screen} state={state}" +
+				(screen == Engine_UiModel.FrontEndScreen.Title ? $" canPressA={canPressA}" : $" cursor={cursor}"));
 	}
 
-	/// <summary>
-	/// Says which of the front end's failure modes is in play, on change: never activated,
-	/// activated into a gated-off tick, or ticking with nothing to draw. `InitRan` and
-	/// `TickGatePasses` separate them; see <see cref="HostBridge.FrontEndInit"/> for the bases.
-	/// </summary>
-	private void ReportFrontEndInit()
-	{
-		if (HostBridge.TryGetFrontEndInit() is not { } init)
-		{
-			return;
-		}
-
-		var now = (init.InitRan, init.TickGatePasses, init.Presentation != 0u, init.Stamped);
-		if (now == _lastFrontEndInit)
-		{
-			return;
-		}
-
-		_lastFrontEndInit = now;
-		GD.Print($"[guest-ui] front end: Init {(init.InitRan ? "RAN" : "NEVER RAN")}, " +
-			$"tick gate {(init.TickGatePasses ? "passes" : "BLOCKS the whole front-end frame")} " +
-			$"(logo {init.LogoReady}, button {init.ButtonReady}), " +
-			$"presentation 0x{init.Presentation:X8}, " +
-			$"input stamp {(init.Stamped ? "written" : "never — this is the CONSTRUCTED state")}");
-	}
-
-	private (bool, bool, bool, bool) _lastFrontEndInit = (true, true, true, true);
-
-	private (Engine_UiModel.FrontEndScreen, uint, bool, uint) _lastFrontEnd;
+	private (bool, Engine_UiModel.FrontEndScreen, uint, bool, uint) _lastFrontEnd;
 
 	private GameWindowSettings _windowSettings;
 	private System.Action? _onRootSizeChanged;

@@ -184,7 +184,7 @@ public sealed class Engine_UiHostScreen
 	{
 		Engine_UiExpandableMenu.Item? row = _menu?.Highlighted;
 		_book!.HostValues = Engine_UiDetailPages.Values(
-			ScreenId, row, default, default, EmptyQuests, default, default, default, default, _book.Book?.Strings);
+			ScreenId, row, default, default, EmptyQuests, default, default, default, _book.Book?.Strings);
 		_book.HostTextures = Engine_UiDetailPages.Textures(ScreenId, row);
 		_book.HostActive = Engine_UiDetailPages.Active(ScreenId, row);
 

@@ -88,8 +88,7 @@ public sealed class PauseMenuActivationTests
         AssertThat(menu.Activate(out string? screen)).IsNull();
         AssertThat(menu.Warning).IsEqual(Fable2FrontEndRoot.NoProfileWarning);
         AssertThat(screen).IsNull();
-        var model = new Engine_UiModel.FrontEndModel(true, 0, 1, 0, false, true, 0, 0, true, 0, 0);
-        Fable2FrontEndRoot.ApplyAvailability(menu, model, new Engine_UiModel.SaveState(true, 1, 6));
+        Fable2FrontEndRoot.ApplyAvailability(menu, 1, new Engine_UiModel.SaveState(true, 1, 6));
         AssertThat(menu.Activate(out screen)).IsNull();
         AssertThat(menu.Warning).IsNull();
         AssertThat(screen).IsEqual(Fable2FrontEndRoot.HeroCardScreen);

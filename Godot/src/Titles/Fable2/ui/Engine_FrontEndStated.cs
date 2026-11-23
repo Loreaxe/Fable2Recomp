@@ -5,10 +5,11 @@ using System.Globalization;
 using Refii.Ui;
 
 /// <summary>
-/// What the front end's own entries STATE (gui_headless_presentation.cpp): the load fan's cards
-/// from StampSaveCard (TU1 `sub_826E1408`, disc `sub_826C9828`) and the dialog from OpenDialog
-/// (TU1 `sub_826E40E0`, disc `sub_826CB158`). Each statement carries a sequence, so a reader takes
-/// only what was stated after a point it names.
+/// What the front end's own entries STATE: the load fan's cards from StampSaveCard (TU1
+/// `sub_826E1408`, disc `sub_826C9828`) and the dialog from OpenDialog (TU1 `sub_826E40E0`, disc
+/// `sub_826CB158`) (gui_headless_presentation.cpp), and the enumerated saves from the card text
+/// builder (TU1 `sub_826E14F8`, disc `sub_826C9918`; frontend_stated.cpp). Each statement carries
+/// a sequence, so a reader takes only what was stated after a point it names.
 /// </summary>
 public sealed class Engine_FrontEndStated
 {
@@ -29,6 +30,14 @@ public sealed class Engine_FrontEndStated
 	public readonly record struct Dialog(
 		uint Owner, string Ok, string Body, bool AllowCancel, string CancelTag, uint Glyph, ulong Sequence);
 
+	/// <summary>
+	/// One enumerated save, in the guest's own order (the index `LoadSave` commits by):
+	/// <paramref name="File"/> the file name the builder handed its header reader (`sub_82447160`
+	/// r5), <paramref name="Text"/> the finished, localised card text it pushed (`sub_8243BE88`) —
+	/// display name, level and save context, or the guest's version / corrupt-save message.
+	/// </summary>
+	public readonly record struct Save(string File, string Text);
+
 	/// <summary>The last statement's sequence, 0 before any.</summary>
 	public ulong Sequence { get; private set; }
 
@@ -36,6 +45,36 @@ public sealed class Engine_FrontEndStated
 	public Dialog? LastDialog { get; private set; }
 
 	private readonly Dictionary<int, Card> _cards = new();
+	private readonly List<Save> _building = new();
+	private List<Save> _saves = new();
+	private ulong _savesSequence;
+
+	/// <summary>`@FrontEnd.SaveText`: save index, file name, card text. Index 0 starts a list.</summary>
+	public void SaveText(Engine_UiModel.GuiNativeCall call)
+	{
+		if (!int.TryParse(call.Argument(0).Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int save))
+		{
+			return;
+		}
+
+		if (save == 0)
+		{
+			_building.Clear();
+		}
+
+		_building.Add(new Save(call.Argument(1).Text ?? string.Empty, call.Argument(2).Text ?? string.Empty));
+	}
+
+	/// <summary>`@FrontEnd.SaveList`: the builder returned, having stated this many saves.</summary>
+	public void SaveList(Engine_UiModel.GuiNativeCall call)
+	{
+		_saves = new List<Save>(_building);
+		_building.Clear();
+		_savesSequence = ++Sequence;
+	}
+
+	/// <summary>The saves of the last list stated after <paramref name="since"/>; null until one is.</summary>
+	public List<Save>? SavesSince(ulong since) => _savesSequence > since ? _saves : null;
 
 	/// <summary>`@FrontEnd.SaveCard`: save index, card slot, texture hash (hex).</summary>
 	public void SaveCard(Engine_UiModel.GuiNativeCall call)

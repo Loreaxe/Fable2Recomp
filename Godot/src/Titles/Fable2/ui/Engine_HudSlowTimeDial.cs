@@ -12,8 +12,9 @@ using Refii.Ui;
 /// guest keeps it as a record in the hero's component 118 at +484 (two sprite segments, built
 /// by `sub_8260B708`, paced by `sub_8260BBA0`, turned by `sub_8260BCB8` on the 15 Hz tick and
 /// pushed as 2D sprites by `sub_8260BA60`), so the HUD rebuild has nothing to follow. Godot
-/// draws it here from that record — the guest's angles, alpha, rectangles and textures, not a
-/// clock of its own.
+/// draws it here from that draw's own statement of the record (`@SlowTime.Draw`,
+/// slow_time_dial_stated.cpp) — the guest's angles, alpha, rectangles and textures, not a clock
+/// of its own.
 ///
 /// The record, base `dial = comp118 + 484` (`sub_822B5150` reaches it from the hero):
 /// <code>

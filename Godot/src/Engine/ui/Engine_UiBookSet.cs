@@ -361,7 +361,7 @@ public sealed class Engine_UiBookSet
 		bool switching = FrontEndBookId != screenId || !book.Visible;
 		book.Position = Vector3.Zero;
 		book.Visible = true;
-		book.PresentationAddress = Refii.Host.HostBridge.FrontEndPresentation();
+		book.PresentationAddress = Refii.Host.HostBridge.LivePresentation(presentation);
 		FrontEndBookId = screenId;
 
 		if (switching || Refii.Core.Engine_GuestFrame.Changed || Refii.Core.Engine_GuestFrame.Frame == 0u)

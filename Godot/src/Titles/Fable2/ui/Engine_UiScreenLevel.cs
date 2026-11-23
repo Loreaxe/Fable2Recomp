@@ -275,8 +275,8 @@ public sealed class Engine_UiScreenLevel
 
 	/// <summary>
 	/// One 28/29 pair per row the cursor has still to move. A host page's record moves at once,
-	/// so the walk completes here; a guest page's cursor moves on its own frame and is read back
-	/// by the next <see cref="Engine_UiOptionsPending.Follow"/>, so the target is kept until then.
+	/// so the walk completes here; a guest page's cursor moves on its own frame and arrives
+	/// with the guest's statement, so the target is kept until then.
 	/// </summary>
 	private void Walk()
 	{

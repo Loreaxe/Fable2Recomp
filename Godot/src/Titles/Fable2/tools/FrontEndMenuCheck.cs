@@ -698,23 +698,12 @@ public partial class FrontEndMenuCheck : Engine_UiPresentationHost
 	}
 
 	/// <summary>
-	/// Feeds the model a synthetic <see cref="Engine_UiModel.FrontEndModel"/> rather than poking
-	/// <c>Item.Available</c>: <c>ApplyAvailability</c> is the only entry that both rules on the
-	/// guest's spawn conditions and rebuilds the visible list.
+	/// Feeds the model synthetic spawn conditions rather than poking <c>Item.Available</c>:
+	/// <c>ApplyAvailability</c> is the only entry that both rules on the guest's spawn conditions
+	/// and rebuilds the visible list.
 	/// </summary>
 	private void ApplyAvailability(Engine_FrontEndMenu menu) =>
-		Fable2FrontEndRoot.ApplyAvailability(menu, new Engine_UiModel.FrontEndModel(
-				SignedIn: _signedIn,
-				UserIndex: 0,
-				LanguageCount: _languageCount,
-				LanguageIndex: 0,
-				HasNewDownloadableContent: false,
-				MenuIsUp: true,
-				MenuState: 0,
-				TitleState: 0,
-				CanPressA: true,
-				LoadCardCursor: 0,
-				EnumeratedSaves: (uint)_saveCount),
+		Fable2FrontEndRoot.ApplyAvailability(menu, (int)_languageCount,
 			// Limit 6, which is what `sub_82378618` stores over `dword_83319620` before the menu
 			// can dispatch — not the 150 that sits in the image.
 			new Engine_UiModel.SaveState(_signedIn, _saveCount, Fable2FrontEndRoot.DefaultSaveLimit));

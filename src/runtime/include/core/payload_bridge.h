@@ -362,6 +362,39 @@ void refii_bridge_told_headless_presentation(uint32_t presentation, uint32_t ser
 void refii_bridge_told_headless_element(uint32_t presentation, uint32_t serial, uint32_t id,
                                         uint32_t parent_id, uint32_t name_hash);
 void refii_bridge_told_headless_gone(uint32_t presentation, uint32_t serial);
+// The guest's write through one of a presentation's two gates: `gate` 0 the scene draw, 1 the
+// per-frame update; `parked` non-zero when the guest switched it off. Ignored for a presentation
+// that is not on the live list.
+void refii_bridge_told_headless_parked(uint32_t presentation, uint32_t gate, uint32_t parked);
+// The screen id the guest loaded a live presentation for, in the title's own numbering.
+void refii_bridge_told_headless_screen(uint32_t presentation, uint32_t screen);
+// The screen the guest's screen setter says is up now, in the title's own numbering; 0xFFFFFFFF
+// (refii::vfs::kNoStatedScreen) when it says none is. `_now` reads the last one stated.
+void refii_bridge_stated_screen(uint32_t screen);
+uint32_t refii_bridge_stated_screen_now(void);
+// The rest of a title's screen-set state, as its own calls state it: whether the in-game screen
+// set exists at all, the modal latch and id its openers set (1 and 0 when no box is up), and the
+// tab its tab strip was last shown on. `_pause` reads them back and returns whether the set is up.
+void refii_bridge_stated_screens_up(uint32_t up);
+void refii_bridge_stated_modal(uint32_t mode, uint32_t id);
+void refii_bridge_stated_tab(uint32_t tab);
+uint32_t refii_bridge_stated_pause(uint32_t* modal_mode, uint32_t* modal_id, uint32_t* tab);
+// ONE WORD A TITLE'S OWN CALL STATED, by key (0..31); 0 until stated. The keys are the shell's
+// (Godot/src/host/HostBridge.cs StatedValue): 1 the abilities screen's assignment mode (0|1),
+// 2 the vtable of the game-flow command on top of the stack, 3 that stack's depth; the loading
+// screen's 4 fixed art, 5 text-only variant, 6 quit fade.
+// The option levels (Fable 2): 7 gamma, 8 sfx, 9 music, 10 speech as float bits, 11 the speaker
+// mode, 12 which of 7..11 are stated (bit 0 gamma .. bit 4 speaker).
+// The front end (Fable 2): 13, one word — bit 0 the front-end GUI exists, bits 1-2 its active
+// screen (0 none, 1 title, 2 main menu), bit 3 the title takes A, bits 4-5 the screen whose
+// warning is raised (0 none), bits 8-15 the title's mode,
+// 16-23 the main menu's, 24-31 the Load Game card.
+// The rumble switch (Fable 2): 14 — bit 1 the setter has run, bit 0 the switch it set.
+// The weapon switches the menu has pending (Fable 2): 15 the melee item, 16 the ranged item (record
+// ids, 0 none). The HUD experience counter (Fable 2): 17 — bit 0 shown for hero one, bit 1 hero two.
+// The front-end game-flow mode (Fable 2): 18 — 1 from its enter to its exit.
+void refii_bridge_stated_value(uint32_t key, uint32_t value);
+uint32_t refii_bridge_stated_value_now(uint32_t key);
 
 // THE VIEW A TITLE STATES (src/runtime/src/core/stated_view.cpp). A title whose hook sees the
 // camera the guest renders the world with states it here, every step; its host bridge reads it

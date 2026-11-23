@@ -29,10 +29,19 @@ public static class Engine_UiHudRegistryWrites
 	/// One meter writer's statement, `@Gui.Meter registry hash op a b c`, in its own terms (binding
 	/// +20 current, +24 rate in percent per second, +28 target, all clamped to 0..100):
 	/// `set` (`sub_823FE210`) and `scrub` (`sub_823FE3D0`) snap to <paramref name="a"/>; `seek`
-	/// (`sub_823FE2D0`) reaches <paramref name="a"/> over <paramref name="b"/> seconds; `run`
+	/// (`sub_823FE2D0`) reaches <paramref name="a"/> over <paramref name="b"/> clock units; `run`
 	/// (`sub_823FE068`) starts at <paramref name="a"/> and moves toward <paramref name="b"/> at
-	/// <paramref name="c"/>. Only the meter registry's names are meters.
+	/// <paramref name="c"/>; `freeze` (`sub_823FE4A0`) stops it where it stands. Only the meter
+	/// registry's names are meters.
 	/// </summary>
+	/// <summary>
+	/// Seconds per unit of the meter bindings' clock. The step moves a meter by rate × Δclock
+	/// (`sub_82265D20` 0x82265e50) and a seek's rate is distance over its duration argument
+	/// (`sub_823FE2D0` 0x823fe3a4); the health bar seeks over the INTEGER at its widget's +24
+	/// (`sub_825E92C8` 0x825e93c0), which a run states as 500. Milliseconds.
+	/// </summary>
+	public const float ClockUnit = 0.001f;
+
 	public static void StateMeter(Engine_HudValues values, int registry, uint hash, string op,
 		float a, float b, float c)
 	{
@@ -48,10 +57,13 @@ public static class Engine_UiHudRegistryWrites
 				values.StateMeter(hash, a, 0f);
 				break;
 			case "seek":
-				values.StateMeter(hash, a, b);
+				values.StateMeter(hash, a, b * ClockUnit);
 				break;
 			case "run":
-				values.StateMeterRun(hash, a, b, c);
+				values.StateMeterRun(hash, a, b, c / ClockUnit);
+				break;
+			case "freeze":
+				values.FreezeMeter(hash);
 				break;
 		}
 	}

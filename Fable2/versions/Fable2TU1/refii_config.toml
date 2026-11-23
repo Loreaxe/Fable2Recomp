@@ -852,7 +852,7 @@
 0x823B3A48 = { size = 0xC }
 0x823B3A58 = { size = 0xC }
 0x823B3A68 = { size = 0xC }
-0x823B3A78 = { size = 0xC }
+0x823B3A78 = { name = "rex_lhLua_SetRumbleEnabled", size = 0xC }
 0x823B3E60 = { size = 0x8C }
 0x823B3EF0 = { size = 0x8 }
 0x823B3EF8 = { size = 0x10 }
@@ -10932,6 +10932,9 @@
 0x82360968 = { name = "rex_lhLoadingScreen_DrawText" }
 0x82361128 = { name = "rex_lhLoadingScreenManager_IsActive" }
 0x82361200 = { name = "rex_lhLoadingScreenManager_Show" }
+0x82361388 = { name = "rex_lhLoadingScreenManager_ShowText" }
+0x82361188 = { name = "rex_lhLoadingScreenManager_SetText" }
+0x8235F2F8 = { name = "rex_lhLoadingScreen_ChooseArt" }
 0x82361AF8 = { name = "rex_lhLoadingScreenManager_Render" }
 0x82372500 = { name = "rex_lhGuiPresentation_RunLuaString" }
 0x82374728 = { name = "rex_CRemappingFileSystem_AddRemap" }
@@ -11338,10 +11341,10 @@
 0x822F2308 = { name = "rex_lhResourceName_CopyCtor" }
 0x82313400 = { name = "rex_lhBankDirectory_EntryAt" }
 0x82319928 = { name = "rex_lhFrontEndGame_CreateInGameState" }
-0x8235CA90 = { }
+0x8235CA90 = { name = "rex_lhLoadingScreen_Ctor" }
 0x8235CCB8 = { }
-0x8235CED8 = { }
-0x8235D0F8 = { }
+0x8235CED8 = { name = "rex_lhLoadingScreen_CtorText" }
+0x8235D0F8 = { name = "rex_lhLoadingScreen_Dtor" }
 0x8235D268 = { }
 0x8235F108 = { }
 0x8235FDC0 = { }
@@ -11488,6 +11491,21 @@
 0x823D0000 = { name = "rex_lhQuestInfoBox_Close" }
 0x8299E490 = { name = "rex_lhAcceptHoldBox_Open" }
 0x8299E708 = { name = "rex_lhAcceptHoldBox_Close" }
+# The display boxes' destructors (slot 0), for a box destroyed while open (display_box_hooks.cpp).
+0x823CF618 = { name = "rex_lhInfoBox_Dtor", size = 0x68 }
+0x823CFB70 = { name = "rex_lhQuestInfoBox_Dtor", size = 0x70 }
+0x8299E400 = { name = "rex_lhAcceptHoldBox_Dtor", size = 0x90 }
+# Time Control's dial: its draw and its close (slow_time_dial_stated.cpp).
+0x8260BA60 = { name = "rex_lhSlowTimeDial_Draw", size = 0x13C }
+0x8260B6A0 = { name = "rex_lhSlowTimeDial_Close", size = 0x68 }
+# The crime screen's opener, the logbook's stats view and the preview scene's figures
+# (crime_screen_stated.cpp, logbook_stats_stated.cpp, preview_figures_stated.cpp).
+0x823C4128 = { name = "rex_lhGuiCrimeScreen_Open" }
+0x823C48D8 = { name = "rex_lhGuiLogbookScreen_OpenOnPlayer" }
+0x829BAEB8 = { name = "rex_lhGuiLogbookStatsPage_Fill" }
+0x82436548 = { name = "rex_lhCoopScreen_Open" }
+0x826D81C8 = { name = "rex_lhGuiPreviewScene_FileRecord" }
+0x826D80C8 = { name = "rex_lhGuiPreviewScene_DestroyRecordEntity" }
 0x823DC400 = { name = "rex_lhMenuBox_Populate" }
 0x823CEDD8 = { name = "rex_lhDisplayMessageBox_HandleAction" }
 0x823CF3B0 = { name = "rex_lhDisplayQueryBox_HandleAction" }
@@ -11496,6 +11514,7 @@
 0x823D3F98 = { name = "rex_lhGuiQuestCompletionScreen_HandleAction" }
 0x823DBB48 = { name = "rex_lhMenuBox_SetSelection" }
 0x823DC2B0 = { name = "rex_lhMenuBox_Close" }
+0x823DBC70 = { name = "rex_lhMenuBox_HandleInput" }
 0x823DC720 = { name = "rex_lhMenuBox_Accept" }
 0x823DCBE0 = { name = "rex_lhGuiPresentationSet_GetCurrent" }
 0x823E0FF8 = { name = "rex_lhEntity_UseInventoryItem" }
@@ -11583,6 +11602,9 @@
 0x826B4358 = { name = "rex_lhGuiWillAssignWidget_Ctor" }
 0x826B4448 = { name = "rex_lhGuiWillAssignWidget_CanOpen" }
 0x826B5430 = { name = "rex_lhGuiWillAssignWidget_OnScreenAction" }
+0x826B5048 = { name = "rex_lhGuiWillAssignWidget_Open" }
+0x826B5608 = { name = "rex_lhGuiWillAssignWidget_Show" }
+0x826B5668 = { name = "rex_lhGuiWillAssignWidget_Close" }
 0x826B65F0 = { name = "rex_lhGuiScreen_OnMenuEventNavSoundsOnly" }
 0x826B6D98 = { name = "rex_lhGuiSelectionScreen_OnScreenAction" }
 0x826B7770 = { name = "rex_lhGuiDecorationScreen_OnScreenAction" }
@@ -11815,6 +11837,34 @@
 # (vtable +84) makes the elements the guest names on them.
 0x82BBA588 = { name = "rex_CGameface_CreatePresentation" }
 0x82BBA2C8 = { name = "rex_CGameface_Destructor" }
+0x82BB0860 = { name = "rex_CPresentation_SetUpdateParked", size = 0x8 }
+0x823DC9D8 = { name = "rex_lhGuiScreenSet_EnsureLoaded" }
+0x823DC888 = { name = "rex_lhGuiScreenSet_ShowRoot" }
+0x823DD028 = { name = "rex_lhGuiScreenSet_Unload" }
+0x827F16F8 = { name = "rex_lhHudRegistries_ResetBindings" }
+0x827F0E20 = { name = "rex_lhHudRegistries_Destroy" }
+0x827F0F00 = { name = "rex_lhHudRegistries_Build" }
+0x823FD410 = { name = "rex_lhHudTargeted_Publish" }
+0x821787D0 = { name = "rex_lhHudTopBox_Compose" }
+0x8230D4F0 = { name = "rex_lhHudTopBox_Front" }
+0x8230D130 = { name = "rex_lhHudTopBox_FrontChannel" }
+0x8230C7A8 = { name = "rex_lhHudTopBox_SetHidden" }
+0x823FCEB0 = { name = "rex_lhGuiRegistry_SetTextGroup" }
+0x823FE4A0 = { name = "rex_lhGuiRegistry_FreezeMeter" }
+0x828F09C0 = { name = "rex_lhGuiRegistry_StartPulser" }
+0x828F0A28 = { name = "rex_lhGuiRegistry_StopPulser" }
+0x826B8348 = { name = "rex_lhGuiTabStrip_Show" }
+0x822ACA60 = { name = "rex_lhHudExpressionMeter_Tick" }
+0x823D2120 = { name = "rex_lhHudExpressionMeter_ArmPip" }
+0x823D1D40 = { name = "rex_lhHudExpressionMeter_Judge" }
+0x823D1A48 = { name = "rex_lhHudExpressionMeter_Start" }
+0x823D1458 = { name = "rex_lhHudExpressionMeter_TurnOff" }
+0x826B89E0 = { name = "rex_lhGuiTabStrip_Push" }
+0x826C2480 = { name = "rex_lhGuiAbilitiesScreen_EnterAssign" }
+0x826C25C0 = { name = "rex_lhGuiAbilitiesScreen_ExitAssign" }
+0x826C7E90 = { name = "rex_lhGuiWorldMapScreen_AskStopTravel" }
+0x82BB0858 = { name = "rex_CPresentation_SetDrawParked", size = 0x8 }
+0x82EC34C8 = { name = "rex_lhFolded_StoreWordAt4", size = 0x8 }
 0x822BE860 = { name = "rex_CGameface_Update" }
 0x82BB5658 = { name = "rex_lhGuiAttributeService_ChildByName" }
 # A headless element answers the FILE's children (service vtable +92) and string attributes
@@ -11824,6 +11874,26 @@
 # The ranged aim cursor (r3 the aim, r4 its stick as two packed floats): the mouse's turn joins
 # the stick through the cursor's own gain (Fable2/src/vfs/src/hooks/mouse_look.cpp).
 0x8287B258 = { name = "rex_lhRangedAim_MoveCursor" }
+# Stated from their own calls: the shop opener's keeper (shop_keeper_stated.cpp), the item preview's
+# set and hide (preview_item_stated.cpp), the pending weapons' clear (pending_weapons_stated.cpp), the
+# experience counter's per-hero show setters and its decision (experience_counter_stated.cpp).
+0x823C4060 = { name = "rex_lhGuiShopScreen_Open" }
+0x828C3B30 = { name = "rex_lhGuiPreviewObject_Set" }
+0x828C3FD8 = { name = "rex_lhGuiPreviewObject_Hide" }
+0x8236CF28 = { name = "rex_lhGuiPendingWeapons_Clear" }
+0x825391E8 = { name = "rex_lhHudExperienceCounter_ShowHeroOne" }
+0x82539280 = { name = "rex_lhHudExperienceCounter_ShowHeroTwo" }
+0x82539F38 = { name = "rex_lhHudExperienceCounter_DecideShown" }
+# Stated from their own calls (menu_tickets_stated.cpp, gui_stated_screens.cpp, frontend_stated.cpp):
+# the list screens' row-ticket allocate (r3 registry, r4 item handle, ticket returned) and clear
+# (r3 registry); the abilities screen's enter (copies the pause root's player to its +4); the
+# profile's subtitles setter (r5 on); the front-end game-flow mode's enter and exit.
+0x82880AC8 = { name = "rex_lhGuiRowTickets_Allocate" }
+0x82880CE0 = { name = "rex_lhGuiRowTickets_Clear" }
+0x826C2118 = { name = "rex_lhGuiAbilitiesScreen_Enter" }
+0x82443820 = { name = "rex_lhProfile_SetSubtitlesEnabled" }
+0x82319340 = { name = "rex_lhFrontEndMode_Enter" }
+0x82319A40 = { name = "rex_lhFrontEndMode_Exit" }
 # B7 UI cut, world icons (Fable2/src/vfs/src/hooks/world_icon_hooks.cpp): the base Init (r3 icon, r4 descriptor)
 # and destructor, CWorldIcon3D SetType (r4 type) / SetText (r4 title, r5 amount), the base SetColour
 # (r4 four bytes) and the pooled icon's Update state every icon into the shared table.
@@ -11836,8 +11906,25 @@
 # B7 UI cut, the co-op save picker's opener (r3 the screen): its first card stated after it
 # (gui_headless_presentation.cpp, @CoopPicker.Open).
 0x8243B070 = { name = "rex_lhGuiCoopScreen_OpenSavePicker" }
+# The co-op screen's own writers of its accepted, closing and picker state, each stated after
+# the call (gui_headless_presentation.cpp, @Coop.* / @CoopPicker.*).
+0x824353E0 = { name = "rex_lhGuiCoopScreen_OnEnter" }
+0x8243AC48 = { name = "rex_lhGuiCoopScreen_SetAccepted" }
+0x8243A4D0 = { name = "rex_lhGuiCoopScreen_Finish" }
+0x8243B440 = { name = "rex_lhGuiCoopScreen_SetPickerShown" }
+0x82439738 = { name = "rex_lhGuiCoopScreen_SetPickerCursor" }
 # B7 UI cut: entries whose arguments state what the headless stamps and told texts used to catch.
 0x826E1408 = { name = "rex_lhGui_FrontendRoot_StampSaveCard" }
+# The front end's stated model (frontend_stated.cpp): the front-end GUI's constructor and scalar
+# destructor, its screen switch, the title's activate, the Load Game card move and the save texts.
+0x82378230 = { name = "rex_lhFrontEndGui_Ctor" }
+0x823783B8 = { name = "rex_lhFrontEndGui_ScalarDtor", size = 0x50 }
+0x82379488 = { name = "rex_lhFrontEndGui_SetActiveScreen" }
+0x826E30F0 = { name = "rex_lhGuiFrontEndTitle_Activate" }
+0x826E0BE0 = { name = "rex_lhGuiFrontEndRoot_SelectCard" }
+0x826E14F8 = { name = "rex_lhGuiFrontEndRoot_BuildSaveTexts" }
+0x82447160 = { name = "rex_lhSaveManager_ReadSaveHeader" }
+0x8243BE88 = { name = "rex_lhWideStringVector_PushBack" }
 0x826E40E0 = { name = "rex_lhGui_FrontendRoot_OpenDialog" }
 0x826AC5F0 = { name = "rex_lhGuiExpressionWheel_SetItem" }
 0x826B8BB0 = { name = "rex_lhGuiNumericAdjuster_Render" }
@@ -11850,6 +11937,20 @@
 0x82881FD0 = { name = "rex_lhGuiPickBox_Init" }
 0x828821D0 = { name = "rex_lhGuiPickBox_SetIndex" }
 0x829BCDF0 = { name = "rex_lhGuiLogbookScreen_FillExpression" }
+# The options screen, stated (gui_headless_presentation.cpp, options_levels_stated.cpp): the row
+# widget's base Init (r5 path) and SetSelected (r4 flag), the slider's SetValue (f1), the
+# profile's gamma getter (returns f1) and setter (f1), and the audio manager's four level setters.
+0x82882340 = { name = "rex_lhGuiWidget_Init" }
+0x82882440 = { name = "rex_lhGuiWidget_SetSelected" }
+0x82881E38 = { name = "rex_lhGuiSlider_SetValue" }
+0x82443680 = { name = "rex_lhProfile_GetGamma" }
+0x82443A08 = { name = "rex_lhProfile_SetGamma" }
+0x829FD678 = { name = "rex_lhAudio_SetSfxVolume" }
+0x829FD888 = { name = "rex_lhAudio_SetMusicVolume" }
+0x829FD710 = { name = "rex_lhAudio_SetSpeechVolume" }
+0x829FD920 = { name = "rex_lhAudio_SetSpeakerMode" }
+0x823CE950 = { name = "rex_lhScreenFade_Start" }
+0x822C1FC0 = { name = "rex_lhScreenFade_Advance" }
 
 # Co-op heroes (Fable2/src/hooks/src/coop_hero_hooks.cpp): each hook runs before its instruction and
 # skips one henchman test. Same offsets in both builds.
@@ -12478,3 +12579,10 @@ registers = ["r31", "r1"]
 name = "RefiiHeadlessInlineTexture"
 address = 0x8243B57C  # sub_8243B520, `lwz r11, 4(r31)`
 registers = ["r31", "r29"]
+
+# The pending weapon pick (pending_weapons_stated.cpp): r3 the class the writer computed, r31 the
+# item handle, at its `cmpwi cr6, r3, 1`.
+[[midasm_hook]]
+name = "RefiiPendingWeaponPicked"
+address = 0x826CA114  # sub_826CA098
+registers = ["r3", "r31"]

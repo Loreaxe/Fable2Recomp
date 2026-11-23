@@ -56,5 +56,8 @@ public class Engine_UiStatedBoxes
 	{
 		/// <summary>The player card's name as its build stated it, null until it does.</summary>
 		public string? GamerName { get; init; }
+
+		/// <summary>The row the box's cursor write last stated: 0 at the open, -1 for none.</summary>
+		public int Selected { get; init; }
 	}
 }

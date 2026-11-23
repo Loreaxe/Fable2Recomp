@@ -7,8 +7,8 @@ using Refii.Ui;
 
 /// <summary>
 /// The two HUD widgets the `GUI` natives drive and nothing else does: the golf swing meter
-/// and the minigame-completion tally. The expression meter is the guest's own object, read back
-/// through RefiiHostGetExpressionMeter and drawn by Engine_UiHudExpressionMeter.
+/// and the minigame-completion tally. The expression meter is the guest's own object, stated by
+/// its methods (`@Hud.ExpressionMeter`) and drawn by Engine_UiHudExpressionMeter.
 /// </summary>
 /// <remarks>
 /// The natives set targets; the widget runs a clock. `StartBarJobFill` states a RATE and the

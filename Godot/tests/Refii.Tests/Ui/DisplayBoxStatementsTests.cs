@@ -92,45 +92,6 @@ public class DisplayBoxStatementsTests
 		AssertThat(box.Adjuster!.Display).IsEqual("+10%");
 	}
 
-	/// <summary>A box freed with no Close is dropped by the re-check of its own address; a box of a
-	/// kind with no re-check is kept.</summary>
-	[TestCase]
-	public void TheSweepDropsABoxThatIsNoLongerOpen()
-	{
-		Engine_UiDisplayBoxes.Opened(Query, Engine_UiDisplayBoxes.Query, "a", "q", System.Array.Empty<string>());
-		Engine_UiDisplayBoxes.Opened(Adjuster, Engine_UiDisplayBoxes.Adjuster, "b", "n", new[] { "1", "0", "9", "1", "0" });
-		Engine_UiDisplayBoxes.Opened(0x4C004000u, Engine_UiDisplayBoxes.Acceptance, "c", "accept", System.Array.Empty<string>());
-
-		int dropped = Engine_UiDisplayBoxes.Sweep(address => address switch
-		{
-			Query => (Engine_UiDisplayBoxes.VtableOf(Engine_UiDisplayBoxes.Query), true),
-			Adjuster => (Engine_UiDisplayBoxes.VtableOf(Engine_UiDisplayBoxes.Adjuster), false),
-			_ => (0u, false),
-		});
-
-		AssertThat(dropped).IsEqual(1);
-		AssertThat(Engine_UiDisplayBoxes.Open.Count).IsEqual(2);
-		AssertThat(Engine_UiDisplayBoxes.ShowingOf(Engine_UiDisplayBoxes.Acceptance)).IsNotNull();
-	}
-
-	[TestCase]
-	public void TheSweepDropsABoxWhoseAddressNowHoldsAnotherClass()
-	{
-		Engine_UiDisplayBoxes.Opened(Query, Engine_UiDisplayBoxes.Query, "a", "q", System.Array.Empty<string>());
-
-		AssertThat(Engine_UiDisplayBoxes.Sweep(_ => (0x820AE668u, true))).IsEqual(1);
-		AssertThat(Engine_UiDisplayBoxes.Showing).IsNull();
-	}
-
-	[TestCase]
-	public void AFailedReadKeepsTheBox()
-	{
-		Engine_UiDisplayBoxes.Opened(Query, Engine_UiDisplayBoxes.Query, "a", "q", System.Array.Empty<string>());
-
-		AssertThat(Engine_UiDisplayBoxes.Sweep(_ => null)).IsEqual(0);
-		AssertThat(Engine_UiDisplayBoxes.Showing).IsNotNull();
-	}
-
 	/// <summary>The menu box's rows come as the populate states them: the tag prefixed `+` enabled
 	/// or `-` disabled; the close forgets the box.</summary>
 	[TestCase]

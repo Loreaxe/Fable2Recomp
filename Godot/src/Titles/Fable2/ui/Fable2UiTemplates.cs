@@ -391,7 +391,7 @@ public static class Fable2UiTemplates
 		}
 
 		// CONTROLS: the game's own Controls page folded with the game's rumble switch
-		// (Engine_UiVibrationOptions — the guest's byte, which shipped with no page behind it)
+		// (Engine_UiVibrationOptions — the guest's switch, which shipped with no page behind it)
 		// and the one host Controls page (Engine_UiControlsPage): glyph style and pack, the
 		// controller remap, every keyboard and mouse binding and every mod's actions. The guest's
 		// row keeps its name and event, so the fold's first child is the page it always was.
@@ -1151,8 +1151,8 @@ public static class Fable2UiTemplates
 			ChromeUnits = { "Foreground" },
 
 			// Godot owns the row list and its cursor; the chrome rides the guest's stated position
-			// for `ExpandableMenu`. The assignment blade reads the guest's C++ widget at
-			// screen14+200 (RefiiHostGetSpellBlade) and is drawn on the book's own clone.
+			// for `ExpandableMenu`. The assignment blade follows the guest's C++ widget at
+			// screen14+200 as its methods state it (`@Spell.Widget`) and is drawn on the book's own clone.
 			OwnedElsewhere = { "ExpandableMenu.Buttons", "MenuHighlight" },
 			PageRootUnit = "Pages", BackdropUnit = "background_red",
 
@@ -1807,8 +1807,8 @@ public static class Fable2UiTemplates
 			// (QueryName, QueryDesc, the likes and dislikes), the gift/divorce/marry toggles and
 			// eight meters by name, which the book reads by its file's bindings — the meters
 			// scrub their element's own timeline (Engine_UiOwnedBook.ScrubMeters). The one direct
-			// write, the rename prompt's slide, is the `querycard` provider's.
-			Provider = Fable2PageProviders.QueryCard,
+			// write, the rename prompt's slide, is the guest's told `GoToSlide` on
+			// `elements.buttons` (`sub_826CCFC0` 0x826cd184, disc 0x82583eac).
 			RestFromFile = true,
 		});
 

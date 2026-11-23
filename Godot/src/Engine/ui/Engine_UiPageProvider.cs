@@ -20,8 +20,6 @@ public readonly struct Engine_UiPageContext
 
 	public required Refii.Host.HostBridge.WorldMapRegion WorldMap { get; init; }
 
-	public required Refii.Host.HostBridge.GameOptions Options { get; init; }
-
 	public required Refii.Host.HostBridge.OptionSliders Sliders { get; init; }
 
 	public required Refii.Text.Engine_BabelDatabase? Strings { get; init; }
@@ -98,11 +96,8 @@ public interface Engine_UiPageProvider
 		Engine_UiPageProviders.NoTints;
 
 	/// <summary>
-	/// Whether this screen needs the guest's option sliders read this frame.
-	///
-	/// ASKING COSTS A TREE WALK. `GetOptionSliders` walks the guest's LIVE screen map from
-	/// Godot's thread, and on a screen that has no sliders it walks the whole thing to answer
-	/// "not present" — every frame. Only the screen that has them says so.
+	/// Whether this screen's pages draw the option levels (`HostBridge.GetOptionSliders`). Only
+	/// the screen that has them says so.
 	/// </summary>
 	bool NeedsOptionSliders => false;
 

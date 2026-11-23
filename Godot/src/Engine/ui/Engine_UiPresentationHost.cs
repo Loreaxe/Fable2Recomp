@@ -242,7 +242,7 @@ public partial class Engine_UiPresentationHost : Node3D
 	/// <summary>
 	/// Which scene-level slide to build, 1-based, or 0 for the preview heuristic. Front-end
 	/// screens are one page per slide (<see cref="Engine_BgfDocument.SetSceneSlide"/>). Takes
-	/// effect on the next <see cref="ShowByName(string,int)"/> — overrides resolve at build.
+	/// effect on the next <see cref="ShowByName(string)"/> — overrides resolve at build.
 	/// </summary>
 	public int SceneSlide { get; set; }
 
@@ -960,16 +960,6 @@ public partial class Engine_UiPresentationHost : Node3D
 		}
 
 		return Directory.Exists(AssetRoot) ? AssetRoot : string.Empty;
-	}
-
-	/// <summary>
-	/// Shows a screen by name, on a given scene slide. Returns false when the
-	/// presentation is not among the shipped set, or when loading has not finished.
-	/// </summary>
-	public bool ShowByName(string name, int sceneSlide)
-	{
-		SceneSlide = sceneSlide;
-		return ShowByName(name);
 	}
 
 	/// <summary>

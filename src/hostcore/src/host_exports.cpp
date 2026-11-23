@@ -59,6 +59,7 @@ void FlushLogging();
 }  // namespace rex
 #include <rex/system/kernel_state.h>
 
+#include "core/told_statements.h"
 #include "core/host_asset_reader.h"
 #include "core/precise_sleep.h"
 #include "core/payload_bridge.h"
@@ -713,7 +714,130 @@ extern "C" {
 /// 248 adds RefiiHostNoteEngineError and RefiiHostNoteEngineState — Godot's reported errors and
 ///     its own state line, kept for the crash record, which also gains the machine's free memory
 ///     and commit on Windows.
-REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 248; }
+/// 249 RefiiHostGetPresentations is the shell's, for every title: the presentations the guest's
+///     own create and destroy state are live, with the two gates as the guest last wrote them. No
+///     guest memory is read; the root word and the active count are 0. Adds
+///     RefiiHostPresentationsGeneration, which moves when that list changes, and
+///     RefiiHostStatedScreen, the screen the guest's setter last said is up. The list's fifth
+///     word is the screen id the guest loaded the presentation for, plus one. Removes
+///     RefiiHostGetInGameScreen, which read the screen manager out of guest memory, and (Fable 2)
+///     RefiiHostGetTargetedQuery: the readout's toggles and slide set are the registry writers'
+///     statements and its entity the publisher's (`@Hud.Targeted`); and RefiiHostGetTopBoxFront
+///     and RefiiHostGetTopBoxBody: the TopBox composer states its front record
+///     (`@Hud.TopBoxFront`, `@Hud.TopBoxHidden`) and its texts (`@Gui.TextGroup`). Removes
+///     RefiiHostGetMenuBox from the shell: a menu box is its populate, its cursor write and its
+///     close (`@MenuBox.Open`, `@MenuBox.Select`, `@MenuBox.Close`).
+/// 250 adds RefiiHostStatedValue, one word a title's own call stated, by key. Removes (Fable 2
+///     read them out of guest memory) RefiiHostGetAbilitiesMode: the abilities screen's enter and
+///     exit of spell assignment state it (key 1); RefiiHostGetInventoryScreenMode: the items
+///     screen's enter shows its tab strip on 4 (items) or 5 (weapons), the stated tab;
+///     RefiiHostGetUiAttributes; RefiiHostGetWorldIcons; and RefiiHostPauseTabSelect, which wrote
+///     the tab strip's request fields: the pump action `PauseTab:<n>` calls the guest's own push;
+///     and RefiiHostGetDisplayBox: a display box is its class's Open and Close.
+///     RefiiHostGetLoadingScreen and RefiiHostGetLoadingScreenArt are the shell's, answered for
+///     every title from the stated loading screen. Removes (Fable 2) RefiiHostGetLoadingScreenLayout:
+///     fixed art and the text-only variant are the screen constructors' arguments and the quit fade
+///     the art decision's (stated values 4, 5, 6).
+///     Removes RefiiHostGetExpressionMeter: the meter's own tick, arm, judge, start and off state
+///     its fields (`@Hud.ExpressionMeter`); and RefiiHostGetSpellWheel and RefiiHostGetSpellBlade:
+///     the widget's open, show, move and close state its cursor and lists (`@Spell.Widget`).
+/// 251 removes (Fable 2) RefiiHostGetOptionsPage: an options page's row cursor is its widgets'
+///     SetSelected (`@Widget.Select`), a pickbox's index its SetIndex (`@PickBox.Set`) and a
+///     slider's value its SetValue (`@Slider.Set`), each under the path the widget's Init was
+///     handed. Fable 2's RefiiHostGetOptionsSliders answers from the profile's gamma getter and
+///     setter and the audio manager's four level setters (stated values 7..12), not the screen.
+/// 252 removes (Fable 2) RefiiHostGetQueryCard, RefiiHostGetCrimeScreen,
+///     RefiiHostGetLogbookOrbView, RefiiHostGetClothingMannequin and RefiiHostGetCoopFigures: the
+///     villager card's rename prompt is the guest's told slide; the crime screen is its opener's
+///     arguments (`@CrimeScreen.Open`); another player's logbook is the stats fill's argument
+///     (`@Logbook.Stats`); the preview figures are the preview scene's filing and destroying of
+///     their records (`@Preview.Add` / `@Preview.Remove`).
+/// 253 removes RefiiHostFrontEndGuiIsUp, RefiiHostGetFrontEnd, RefiiHostGetFrontEndInit,
+///     RefiiHostFrontEndPresentation and RefiiHostGetSaveCards, and (Fable 2)
+///     RefiiHostGetFrontEndModel and RefiiHostGetSaveCardNames: the front end is stated value 13,
+///     kept from the front-end GUI's constructor and destructor, its screen switch, the screens'
+///     activates, the posted presentation events and the screens' input slots; the save list is
+///     the text builder's own pushes (`@FrontEnd.SaveList` / `@FrontEnd.SaveText`); the front-end
+///     presentation is the stated live list's entry of that file.
+/// 254 removes RefiiHostGetHudScriptMeters and RefiiHostGetHudScriptTexts (no caller: the script
+///     store's setters state every meter and text through the registry writers) and (Fable 2)
+///     RefiiHostGetHeroInventory, which RefiiHostGetHeroInventoryItems replaced; Fable 3 answers
+///     RefiiNetHostState and RefiiNetSetJoinable, which the shared NetBridge binds.
+/// 255 removes (Fable 2) RefiiHostGetUiPreviewObject and RefiiHostGetPendingWeapons: the previewed
+///     item is stated from the preview's set and hide (`@PreviewItem.*`), the pending weapons from
+///     the menu's pick and clear (stated values 15 and 16).
+/// 256 removes (Fable 2) RefiiHostGetOptions: the options list's captions are the pickboxes the
+///     screen's pages populate on its enter (`@PickBox.Set`).
+/// 257 removes (Fable 2) RefiiHostGetCoopScreen and RefiiHostGetCoopState's two accepted words: the
+///     co-op screen's enter, SetAccepted, finish and save picker state them (`@Coop.*`).
+REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 257; }
+
+/// The loading screen, as the title's own calls state it: made by its manager, the fade its tick
+/// leaves, the take-down requested and finished. Returns 1 while a screen exists.
+REFII_HOST_ABI_EXPORT int RefiiHostGetLoadingScreen(uint32_t* out_manager, uint32_t* out_screen, float* out_fade,
+                                                   uint32_t* out_requested, uint32_t* out_done) {
+    return refii_bridge_loading_screen_read(out_manager, out_screen, out_fade, out_requested, out_done, nullptr,
+                                            nullptr, nullptr, 0u);
+}
+
+/// The art the guest chose for its loading screen and the screen's kind, each in the title's own
+/// terms, as its art decision stated them. Returns 1 when a name is held.
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetLoadingScreenArt(uint32_t* out_type, uint32_t* out_body, char* name,
+                                                           uint32_t capacity) {
+    if (out_type != nullptr) *out_type = 0u;
+    if (out_body != nullptr) *out_body = 0u;
+    if (name != nullptr && capacity > 0u) name[0] = '\0';
+
+    uint32_t kind = 0u;
+    uint32_t body = 0u;
+    if (refii_bridge_loading_screen_read(nullptr, nullptr, nullptr, nullptr, nullptr, &kind, &body, name,
+                                         capacity) == 0) {
+        if (name != nullptr && capacity > 0u) name[0] = '\0';
+        return 0u;
+    }
+
+    if (out_type != nullptr) *out_type = kind;
+    if (out_body != nullptr) *out_body = body;
+    return name != nullptr && capacity > 0u && name[0] != '\0' ? 1u : 0u;
+}
+
+/// The word a title's own call last stated under `key` (payload_bridge.h lists the keys); 0 until
+/// one is.
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostStatedValue(uint32_t key) { return refii_bridge_stated_value_now(key); }
+
+/// The presentations the guest has live, five words each: address, its creation serial (a later
+/// one is larger), name offset, state, and the screen id the guest loaded it for plus one (0 for
+/// none). State bit 0 is set (live), bit 1 the
+/// update gate is parked, bit 2 the draw gate is parked, bit 3 is set (stated, not read from a
+/// tree). The names go NUL-separated into `names`. Returns how many there are, which may be more
+/// than fitted.
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetPresentations(uint32_t* words, uint32_t word_capacity, char* names,
+                                                         uint32_t name_capacity) {
+    constexpr uint32_t kMost = 256u;
+    uint32_t told[kMost * 5u] = {};
+    const uint32_t count = refii::vfs::ToldHeadlessList(told, kMost * 5u, names, name_capacity);
+    const uint32_t listed = count < kMost ? count : kMost;
+    for (uint32_t i = 0; i < listed; ++i) {
+        if (words == nullptr || i * 5u + 4u >= word_capacity) {
+            break;
+        }
+        const uint32_t gates = told[i * 5u + 3u];
+        words[i * 5u] = told[i * 5u];
+        words[i * 5u + 1u] = told[i * 5u + 1u];
+        words[i * 5u + 2u] = told[i * 5u + 2u];
+        words[i * 5u + 3u] = 9u | ((gates & 2u) != 0u ? 2u : 0u) | ((gates & 1u) != 0u ? 4u : 0u);
+        words[i * 5u + 4u] = told[i * 5u + 4u];
+    }
+    return count;
+}
+
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostPresentationsGeneration(void) {
+    return refii::vfs::ToldHeadlessGeneration();
+}
+
+/// The screen the guest's screen setter last said is up, in the title's numbering; 0xFFFFFFFF when
+/// it said none is.
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostStatedScreen(void) { return refii_bridge_stated_screen_now(); }
 
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetSaveRoot(char* output, uint32_t capacity) {
     auto* state = rex::system::kernel_state();

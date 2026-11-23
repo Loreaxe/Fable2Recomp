@@ -92,7 +92,7 @@ public partial class AndroidGameHost : Node3D
 
     /// <summary>The guest's front end as <see cref="FollowFrontEnd"/> read it: raw fields, the status object built only when written.</summary>
     private readonly record struct FrontEndSample(bool Found, Engine_UiModel.FrontEndScreen Screen, uint State, bool CanPressA,
-        uint Cursor, int Slide, int SlideCount, bool GuiUp, bool Reveal);
+        uint Cursor, bool GuiUp, bool Reveal);
 
     [DllImport("libc", CallingConvention = CallingConvention.Cdecl)]
     private static extern int setenv(string name, string value, int overwrite);
@@ -423,14 +423,14 @@ public partial class AndroidGameHost : Node3D
     {
         if (_ui == null) return;
         bool found = HostBridge.TryGetFrontEnd(out var screen, out uint state, out bool canPressA,
-            out uint cursor, out int slide, out int slideCount);
-        if (found) _ui.FollowGuest(screen, slide);
-        bool guiUp = HostBridge.FrontEndGuiIsUp;
+            out uint cursor);
+        _ui.FollowGuest(screen);
+        bool guiUp = found;
         bool reveal = InteractiveFrontEndPolicy.ShouldReveal(found, screen, guiUp, canPressA, _ui.HasInGameUi);
         if (reveal) _ui.Reveal();
         else if (!InteractiveFrontEndPolicy.StaysRevealed(_ui.IsRevealed, guiUp, _ui.HasInGameUi))
             _ui.Conceal("native guest has no visible interactive UI");
-        _frontEnd = new FrontEndSample(found, screen, state, canPressA, cursor, slide, slideCount, guiUp, reveal);
+        _frontEnd = new FrontEndSample(found, screen, state, canPressA, cursor, guiUp, reveal);
         if (_world == null) _phase = InteractiveFrontEndPolicy.Status(found, screen, guiUp, canPressA);
     }
 
@@ -584,7 +584,7 @@ public partial class AndroidGameHost : Node3D
     private object? DescribeFrontEnd() => _frontEnd is not { } f ? null : new
     {
         found = f.Found, screen = f.Screen.ToString(), state = f.State, can_press_a = f.CanPressA,
-        cursor = f.Cursor, scene_slide = f.Slide, slide_count = f.SlideCount, gui_up = f.GuiUp, should_reveal = f.Reveal
+        cursor = f.Cursor, gui_up = f.GuiUp, should_reveal = f.Reveal
     };
 
     /// <summary>The scene's diagnostics node, while it stands.</summary>

@@ -8,8 +8,8 @@ using Refii.Ui;
 using Refii.Titles.Fable2;
 
 /// <summary>
-/// The options page level. A GUEST page's cursor and values are the guest's, read back through
-/// <see cref="Engine_UiOptionsPending.Follow"/> and never stepped by the host; a HOST page's record
+/// The options page level. A GUEST page's cursor and values are the guest's, as its row widgets
+/// state them, and never stepped by the host; a HOST page's record
 /// is the host's. The pad's codes to a guest page are held through the page's quiet half second
 /// and each 28..31 goes out with its release. Pure model code — no Godot type is built.
 /// </summary>
@@ -46,20 +46,34 @@ public class OptionsPendingTests
 		public override int[] Read() => new[] { 0, 0 };
 	}
 
+	private const string Pages = "Foreground.Book.Pages.";
+
+	private static void ClearStated()
+	{
+		Engine_UiPickBoxes.Clear();
+		Engine_UiRowWidgets.Clear();
+	}
+
 	[TestCase]
-	public void GuestPageTakesItsCursorAndIndicesFromTheGuestAndTrackStepsNothing()
+	public void GuestPageTakesItsCursorAndIndicesFromTheGuestsStatementsAndTrackStepsNothing()
 	{
 		Engine_UiOptionsPending.Leave();
+		ClearStated();
 		try
 		{
 			Engine_UiOptionsPending.Enter("Game");
 			AssertThat(Engine_UiOptionsPending.Open).IsTrue();
-			AssertThat(Engine_UiOptionsPending.GuestPageIndex).IsEqual(0);
-			// Nothing stated yet: no caption is painted from a guess.
+			// Nothing stated yet: no caption is painted from a guess, and the cursor reads as row 0.
 			AssertThat(Engine_UiOptionsPending.IndexOf(0)).IsEqual(-1);
+			AssertThat(Engine_UiOptionsPending.Row).IsEqual(0);
 
-			Engine_UiOptionsPending.Follow(
-				new Fable2Bridge.GuestOptionsPage(true, 3, new[] { 1, 4, 0, 2, 1 }, new float[5]));
+			const string options = Pages + "Page1.Contents.Options.";
+			Engine_UiRowWidgets.StateSelected(options + "Subtitles_pickbox", true);
+			Engine_UiPickBoxes.State(options + "BreadcrumbSize_pickbox.grp.text", 4, "Very high");
+			Engine_UiPickBoxes.State(options + "MultiplayerOrbs_pickbox.grp.text", 2, "All");
+			// The row selector clears the old row's widget and sets the new one's.
+			Engine_UiRowWidgets.StateSelected(options + "Subtitles_pickbox", false);
+			Engine_UiRowWidgets.StateSelected(options + "MultiplayerOrbs_pickbox", true);
 			AssertThat(Engine_UiOptionsPending.Row).IsEqual(3);
 			AssertThat(Engine_UiOptionsPending.IndexOf(1)).IsEqual(4);
 			AssertThat(Engine_UiOptionsPending.IndexOf(3)).IsEqual(2);
@@ -73,29 +87,31 @@ public class OptionsPendingTests
 			AssertThat(Engine_UiOptionsPending.IndexOf(3)).IsEqual(2);
 			AssertThat(Engine_UiOptionsPending.Open).IsTrue();
 
-			// An unknown reading keeps the last; a cursor the page has not shown yet reads as row 0.
-			Engine_UiOptionsPending.Follow(Fable2Bridge.GuestOptionsPage.None);
-			AssertThat(Engine_UiOptionsPending.Row).IsEqual(3);
-			Engine_UiOptionsPending.Follow(
-				new Fable2Bridge.GuestOptionsPage(true, -1, new[] { 0, 0, 0, 0, 0 }, new float[5]));
+			// A re-populated page builds its widgets again: a new widget is unselected.
+			Engine_UiRowWidgets.StateInit(options + "MultiplayerOrbs_pickbox");
 			AssertThat(Engine_UiOptionsPending.Row).IsEqual(0);
 		}
 		finally
 		{
 			Engine_UiOptionsPending.Leave();
+			ClearStated();
 		}
 	}
 
 	[TestCase]
-	public void AudioPageTakesTheSliderWidgetsLiveValuesOverTheCommittedFields()
+	public void AudioPageTakesTheSliderWidgetsStatedValuesOverTheCommittedLevels()
 	{
 		Engine_UiOptionsPending.Leave();
+		ClearStated();
 		try
 		{
 			Engine_UiOptionsPending.Enter("Audio");
-			AssertThat(Engine_UiOptionsPending.GuestPageIndex).IsEqual(3);
-			Engine_UiOptionsPending.Follow(new Fable2Bridge.GuestOptionsPage(
-				true, 1, new[] { 7, 7, 7, 2 }, new[] { 0.25f, 0.5f, 0.75f, 0f }));
+			const string contents = Pages + "Page4.Contents.";
+			Engine_UiRowWidgets.StateValue(contents + "slider1", 0.25f);
+			Engine_UiRowWidgets.StateValue(contents + "slider2", 0.5f);
+			Engine_UiRowWidgets.StateValue(contents + "slider3", 0.75f);
+			Engine_UiPickBoxes.State(contents + "pickbox1.grp.text", 2, "Surround");
+			Engine_UiRowWidgets.StateSelected(contents + "slider2", true);
 			AssertThat(Engine_UiOptionsPending.Row).IsEqual(1);
 			AssertThat(Engine_UiOptionsPending.SliderValue(0)).IsEqual(0.25f);
 			AssertThat(Engine_UiOptionsPending.SliderValue(3)).IsNull();
@@ -112,6 +128,7 @@ public class OptionsPendingTests
 		finally
 		{
 			Engine_UiOptionsPending.Leave();
+			ClearStated();
 		}
 	}
 
@@ -140,7 +157,6 @@ public class OptionsPendingTests
 		try
 		{
 			Engine_UiOptionsPending.EnterHost(new TwoRowPage());
-			AssertThat(Engine_UiOptionsPending.GuestPageIndex).IsEqual(-1);
 			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Right);
 			AssertThat(Engine_UiOptionsPending.IndexOf(0)).IsEqual(1);
 			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Down);
