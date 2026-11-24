@@ -350,8 +350,8 @@ public sealed class Engine_UiMessageSurface : Engine_UiModalSurface<Engine_UiMes
 
 		if (_display != 0)
 		{
-			Engine_UiSource.Current.PostFrontEndAction(
-				$"BoxAction:{(int)Engine_UiSource.BoxAction.Dismiss}@{_display:X8}");
+			Engine_UiSource.Current.PostPlayerLever("BoxAction",
+				$"{(int)Engine_UiSource.BoxAction.Dismiss}@{_display:X8}");
 			GD.Print($"[game-ui] display message box {_display:X8} dismissed (code 36)");
 			return;
 		}
@@ -361,7 +361,7 @@ public sealed class Engine_UiMessageSurface : Engine_UiModalSurface<Engine_UiMes
 			return;
 		}
 
-		Engine_UiSource.Current.PostFrontEndAction($"QueryAnswer:{code}@{_modalId}");
+		Engine_UiSource.Current.PostPlayerLever("QueryAnswer", $"{code}@{_modalId}");
 		GD.Print($"[game-ui] message box {_modalId} dismissed (code {code})");
 	}
 }
@@ -595,7 +595,7 @@ public sealed class Engine_UiQuerySurface : Engine_UiModalSurface<Engine_UiQuery
 				Engine_UiSource.BoxAction code = input.Accept
 					? Engine_UiSource.BoxAction.Confirm
 					: Engine_UiSource.BoxAction.Cancel;
-				Engine_UiSource.Current.PostFrontEndAction($"BoxAction:{(int)code}@{box.Address:X8}");
+				Engine_UiSource.Current.PostPlayerLever("BoxAction", $"{(int)code}@{box.Address:X8}");
 				GD.Print($"[game-ui] display query 0x{box.Address:X8} {(input.Accept ? "CONFIRMED" : "cancelled")}");
 			}
 
@@ -609,17 +609,17 @@ public sealed class Engine_UiQuerySurface : Engine_UiModalSurface<Engine_UiQuery
 
 		if (input.Accept)
 		{
-			Engine_UiSource.Current.PostFrontEndAction($"QueryAnswer:{codes.Confirm}@{_modalId}");
+			Engine_UiSource.Current.PostPlayerLever("QueryAnswer", $"{codes.Confirm}@{_modalId}");
 			GD.Print($"[game-ui] query box {_modalId} CONFIRMED (code {codes.Confirm})");
 		}
 		else if (input.Back && codes.Cancel is { } cancel)
 		{
-			Engine_UiSource.Current.PostFrontEndAction($"QueryAnswer:{cancel}@{_modalId}");
+			Engine_UiSource.Current.PostPlayerLever("QueryAnswer", $"{cancel}@{_modalId}");
 			GD.Print($"[game-ui] query box {_modalId} cancelled (code {cancel})");
 		}
 		else if (input.Equip && codes.Alternate is { } alternate)
 		{
-			Engine_UiSource.Current.PostFrontEndAction($"QueryAnswer:{alternate}@{_modalId}");
+			Engine_UiSource.Current.PostPlayerLever("QueryAnswer", $"{alternate}@{_modalId}");
 			GD.Print($"[game-ui] query box {_modalId} answered the alternate (code {alternate})");
 		}
 	}
@@ -788,11 +788,11 @@ public sealed class Engine_UiNumericSurface : Engine_UiModalSurface<Engine_UiNum
 	{
 		if (_display is { } box)
 		{
-			Engine_UiSource.Current.PostFrontEndAction($"BoxAction:{code}@{box.Address:X8}");
+			Engine_UiSource.Current.PostPlayerLever("BoxAction", $"{code}@{box.Address:X8}");
 		}
 		else
 		{
-			Engine_UiSource.Current.PostFrontEndAction($"QueryAnswer:{code}@{_modalId}");
+			Engine_UiSource.Current.PostPlayerLever("QueryAnswer", $"{code}@{_modalId}");
 		}
 	}
 }
@@ -969,19 +969,19 @@ public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_
 
 		if (input.Accept)
 		{
-			Engine_UiSource.Current.PostFrontEndAction($"ReceiveItemsAction:{DoneCode}");
+			Engine_UiSource.Current.PostPlayerLever("ReceiveItemsAction", $"{DoneCode}");
 			GD.Print("[game-ui] received-item card DONE");
 		}
 		else if (input.Flip)
 		{
-			Engine_UiSource.Current.PostFrontEndAction($"ReceiveItemsAction:{FlipCode}");
+			Engine_UiSource.Current.PostPlayerLever("ReceiveItemsAction", $"{FlipCode}");
 			GD.Print("[game-ui] received-item card flipped");
 		}
 		else if (input.Equip)
 		{
 			// `sub_82537128` code 75: honoured only while `+80` (equippable) is set — it equips
 			// through `sub_8246FFF0` and then takes the same close path as 36.
-			Engine_UiSource.Current.PostFrontEndAction($"ReceiveItemsAction:{EquipCode}");
+			Engine_UiSource.Current.PostPlayerLever("ReceiveItemsAction", $"{EquipCode}");
 			GD.Print("[game-ui] received-item card EQUIP");
 		}
 	}

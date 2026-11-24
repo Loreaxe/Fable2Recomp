@@ -3,10 +3,13 @@
 // literals, all via `sub_82426470`). Presentation-element state (`sub_82426798`, `sub_82426260`,
 // `sub_82425DD0`, ...) does not pass through here.
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "vfs_hooks_private.h"
 #include "core/guest_state.h"
@@ -15,40 +18,7 @@
 #include "hooks/ppc_externs.h"
 #include "core/guest_build.h"
 #include "core/payload_bridge_fable2.h"
-
-// The attribute stagers. `r3` is dead on both: each resolves the "Parameters" element from
-// `dword_8349AF78` and overwrites r3 before use (`lwz r3, 0x38(r11)` at 0x826B9534 / 0x826B9468).
-PPC_EXTERN_FUNC(__imp__rex_lhGuiPresentation_SetStringParam);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiPresentation_SetFloatParam);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiPresentation_GetFloatParam);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiPresentation_GetStringParam);
-
-/// String stager — `r4` attribute name, `r5` value, `r6` presentation (0 = current).
-REX_EXTERN(rex_lhGuiPresentation_SetStringParam) {
-    REX_FUNC_PROLOGUE();
-
-    refii::vfs::StageMenuAttribute(
-        refii::vfs::ReadGuestLhString(base, ctx.r4.u32),
-        refii::vfs::ReadGuestLhString(base, ctx.r5.u32),
-        0.0f,
-        /*is_number=*/false);
-
-    __imp__rex_lhGuiPresentation_SetStringParam(ctx, base);
-}
-
-/// Float stager — `r4` attribute name, `f1` value (a double in the register, stored narrowed),
-/// `r6` presentation.
-REX_EXTERN(rex_lhGuiPresentation_SetFloatParam) {
-    REX_FUNC_PROLOGUE();
-
-    refii::vfs::StageMenuAttribute(
-        refii::vfs::ReadGuestLhString(base, ctx.r4.u32),
-        std::string(),
-        static_cast<float>(ctx.f1.f64),
-        /*is_number=*/true);
-
-    __imp__rex_lhGuiPresentation_SetFloatParam(ctx, base);
-}
+#include "core/headless_presentation.h"
 
 // The chunk runner `sub_82426470` is hooked in resource_manager_open.cpp.
 
@@ -170,34 +140,6 @@ bool StatedRowForCurrentScreen(AnsweredRow* row) {
 
 }  // namespace
 
-namespace {
-
-/// The one `Float1` read the runner answered ahead of: armed by `g_Menu:CountSpawnedItems()` on
-/// the guest thread, taken by that function's own `GetFloatParam` four calls later.
-struct PendingFloat1 {
-    bool armed = false;
-    double value = 0.0;
-};
-
-PendingFloat1& Float1Answer() {
-    static PendingFloat1 pending;
-    return pending;
-}
-
-/// The one `String2` read the runner answered ahead of: armed by `g_Menu:GetMenuItemDataByName()`
-/// on the guest thread, taken by its reader's string getter call two calls later.
-struct PendingString2 {
-    bool armed = false;
-    std::string value;
-};
-
-PendingString2& String2Answer() {
-    static PendingString2 pending;
-    return pending;
-}
-
-}  // namespace
-
 namespace refii::vfs {
 
 bool StatedHighlightName(uint8_t* /*base*/, std::string* name, int32_t* id) {
@@ -221,23 +163,6 @@ void SetDispatchedRow(const std::string& name, int32_t event_type, int32_t id) {
 }
 
 void ClearDispatchedRow() { Dispatched().active = false; }
-
-void AnswerNextFloat1(double value) {
-    PendingFloat1& pending = Float1Answer();
-    pending.armed = true;
-    pending.value = value;
-}
-
-void DisarmFloat1() {
-    Float1Answer().armed = false;
-    String2Answer().armed = false;
-}
-
-void AnswerNextString2(std::string value) {
-    PendingString2& pending = String2Answer();
-    pending.armed = true;
-    pending.value = std::move(value);
-}
 
 }  // namespace refii::vfs
 
@@ -365,127 +290,76 @@ REX_EXTERN(rex_lhGuiFrontEnd_IsHighlightedItemAtRoot) {
     ctx.r3.u64 = depth == 0u ? 1u : 0u;
 }
 
-// THE FRONT END'S PRESENTATION EVENTS, POSTED BY THE HOST.
+// THE PRESENTATION EVENTS, POSTED BY THE HOST TO THE CALLBACKS THE GUEST REGISTERED.
 //
-// The guest's front-end state machine advances on presentation events. Each is a behaviour
-// element whose script's `onDeactivate` runs `fireEvent("<EVENT>", getElement("parent",
-// self.element))` (`behaviorendlegal.lua` and its siblings) at the end of its time window; the
-// Lua `fireEvent` (`sub_82BBCC60`, disc `sub_82BB8790`) hashes the name with `sub_82189140`,
-// masks it (`clrlwi r4, r3, 1` at 0x82BBCDF4) and calls the presentation's vtable +24
-// (0x82BBCDF8, `sub_82BB0648`), which queues `{element, id}` on the presentation's event queue
-// (+324). `sub_82174F70` (disc `sub_82174D38`) drains it: the callback list registered for
-// (element, id) through vtable +108 (`sub_82BAFFB8` → `sub_82BB2320`, entries `{fn, ctx}`) is
-// run by `sub_82BB2920` (disc `sub_82BAC4E8`) as `fn(ctx, &entry)` — `lwz r3, 4(r30)`,
-// `mr r4, r27`, `bctrl` at 0x82BB2A54..0x82BB2A64.
+// The guest's front-end state machine and the HUD's transition advance on presentation events.
+// Each is a behaviour element whose script's `onDeactivate` runs `fireEvent("<EVENT>",
+// getElement("parent", self.element))` (`behaviorendlegal.lua` and its siblings); the Lua
+// `fireEvent` (`sub_82BBCC60`, disc `sub_82BB8790`) queued `{element, sub_82189140(name) &
+// 0x7FFFFFFF}` (`clrlwi r4, r3, 1` at 0x82BBCDF4) and the Update's drain (`sub_82174F70`, its one
+// caller 0x822AC9C0) ran each callback registered for (element, id) as `fn(ctx, &entry)`
+// (`sub_82BB2920` 0x82BB2A54..0x82BB2A64). Neither the Lua nor the Update runs, so the guest never
+// delivers one; the host does, timed by Godot's playback of the same file (Engine_UiBehaviourEvents
+// names which scripts it posts for).
 //
-// The host times the events from Godot's playback of the same file (Engine_UiBehaviourEvents) and
-// posts each here, to the callback and ctx the guest's registration names: the screen's vtable +20
-// (title `sub_826E2C30`, root `sub_826DE740`; disc `sub_826C5ED0`, `sub_826C6C60`) registers
-// `this` as ctx, the HUD's `sub_823CA428` (disc `sub_823FACE0`) registers the HUD object. Each
-// callback reads only `+4` of the entry, the id. The callbacks are hooked: a call that reaches
-// one from the guest's own queue is the presentation's timeline firing the same event, and is
-// swallowed for every event the host posts — one source per event, with presentations built or not.
+// THE REGISTRATIONS ARE THE GUEST'S. CPresentation vtable +108 (TU1 `sub_82BAFFB8`, disc
+// `sub_82BA9870`: r4 element, r5 id, r6 fn, r7 ctx into `sub_82BB2320(this + 380, ...)`) and +112
+// (TU1 `sub_82BB0018`, disc `sub_82BA98D0`, the same four into `sub_82BB2600`) are the host's: each
+// is stated to the core (refii::headless::NoteRegistration) and kept nowhere in the guest, the
+// stated presentation having no list at +380; +108's write of flag 0x80 on the element
+// (`vf+80(element, 0x80, 1)`, 0x82bb0000) lands in the handle's host flags. The registrars: the title's vtable
+// +20 `sub_826E2C30` (disc `sub_826C5ED0`) and the main menu's `sub_826DE740` (disc
+// `sub_826C6C60`) with ctx their screen, the HUD's `sub_823CA428` (disc `sub_823FACE0`) with ctx the
+// HUD. A post finds the registrations on the named presentation's root, or on its element of the
+// parent's name, for the event's id, and runs each (fn, ctx) once.
 
 namespace {
 
-enum class EventOwner { kTitle, kRoot, kHud };
-
-struct PresentationEventRoute {
-    const char* presentation;  // the file the behaviour ships in
-    const char* parent;        // the behaviour's parent element, "" for the root
-    const char* event;
-    EventOwner owner;
-    uint32_t id_tu1;           // the id interned at static init, `sub_82189140(name) & 0x7FFFFFFF`
-    PPCFunc* callback;         // the original, not the hook
-};
-
-/// Registrations, from the registrars' decompiles (TU1; disc ids by the same initialisers).
-/// `frontendstartupscreen.bgf`: BehaviorEndLegal, BehaviorEndStarted, BehaviorCanPressA under the
-/// root, BehaviorDialogActive and BehaviorUnFreeze under `dialog`. `frontendmainmenu.bgf`:
-/// BehaviorOutroFinished under the root, BehaviorBoy/Girl and BehaviorUnFreeze under
-/// `choosecard`, BehaviorLoadCard under `loadgame`, BehaviorDialogActive and BehaviorUnFreeze
-/// under `dialog`. `hud.bgf`: FinishedTransitioningToGame under the root. The registrations with
-/// no shipped emitter (`loadgame`'s LOAD_CARD_SELECTED and UNFREEZE) and the gender card's
-/// BOY/GIRL_SELECTED (the card choice's own statement, `StartNewGame`) are not routed.
-const PresentationEventRoute kPresentationEvents[] = {
-    {"frontendstartupscreen", "", "END_LEGAL", EventOwner::kTitle, 0x8349B644u,
-     __imp__rex_lhGuiFrontEndTitle_OnEndLegal},
-    {"frontendstartupscreen", "", "END_STARTED", EventOwner::kTitle, 0x8349B648u,
-     __imp__rex_lhGuiFrontEndTitle_OnEndStarted},
-    {"frontendstartupscreen", "", "CAN_PRESS_A", EventOwner::kTitle, 0x8349B64Cu,
-     __imp__rex_lhGuiFrontEndTitle_OnCanPressA},
-    {"frontendstartupscreen", "dialog", "DIALOG_ACTIVE", EventOwner::kTitle, 0x8349B65Cu,
-     __imp__rex_lhGuiFrontEndTitle_OnDialogEvent},
-    {"frontendstartupscreen", "dialog", "UNFREEZE", EventOwner::kTitle, 0x8349B660u,
-     __imp__rex_lhGuiFrontEndTitle_OnDialogEvent},
-    {"frontendmainmenu", "", "OUTRO_FINISHED", EventOwner::kRoot, 0x8349B594u,
-     __imp__rex_lhGuiFrontEndRoot_OnOutroFinished},
-    {"frontendmainmenu", "choosecard", "BOY_ACTIVE", EventOwner::kRoot, 0x8349B598u,
-     __imp__rex_lhGui_FrontendRoot_HandleGuiEvent},
-    {"frontendmainmenu", "choosecard", "GIRL_ACTIVE", EventOwner::kRoot, 0x8349B59Cu,
-     __imp__rex_lhGui_FrontendRoot_HandleGuiEvent},
-    {"frontendmainmenu", "choosecard", "UNFREEZE", EventOwner::kRoot, 0x8349B5B0u,
-     __imp__rex_lhGui_FrontendRoot_HandleGuiEvent},
-    {"frontendmainmenu", "loadgame", "LOAD_CARD_ACTIVE", EventOwner::kRoot, 0x8349B5A8u,
-     __imp__rex_lhGuiFrontEndRoot_OnLoadCardEvent},
-    {"frontendmainmenu", "dialog", "DIALOG_ACTIVE", EventOwner::kRoot, 0x8349B5B4u,
-     __imp__rex_lhGuiFrontEndRoot_OnDialogEvent},
-    {"frontendmainmenu", "dialog", "UNFREEZE", EventOwner::kRoot, 0x8349B5B0u,
-     __imp__rex_lhGuiFrontEndRoot_OnDialogEvent},
-    {"hud", "", "FINISHED_TRANSITIONING_TO_GAME", EventOwner::kHud, 0x83497B80u,
-     __imp__rex_lhGuiHud_OnFinishedTransitioningToGame},
-};
-
+/// The HUD's FINISHED_TRANSITIONING_TO_GAME callback (TU1 `sub_823CA5F8`, disc `sub_823FAEB0`)
+/// reads no argument and dereferences `*(GUI + 0x44)` (0x823CA608) and `*(GUI + 0x48)` (0x823CA644,
+/// `sub_82677940` reads `+12`) unchecked: it is run only while the in-game GUI (not the front
+/// end's, vtable 0x820A924C) holds both — a guard for the call, not a value.
+constexpr refii::guest::Addr kHudTransitionCallback{0x823CA5F8u};
 constexpr refii::guest::Addr kGuiObject{0x83496B08u};
 constexpr refii::guest::Addr kFrontEndGuiVtable{0x820A924Cu};
 
-/// The callback's ctx, or 0 when its owner is not up. The front end's two are the `this` each
-/// registrar (vtable +20: title `sub_826E2C30`, root `sub_826DE740`) registers, the screens the
-/// front end activates — as their activates stated them (frontend_stated.cpp). The HUD callback
-/// `sub_823CA5F8` reads no argument — `r3` is first written at 0x823CA644 — and dereferences
-/// `*(GUI + 0x44)` (0x823CA608) and `*(GUI + 0x48)` (0x823CA644, `sub_82677940` reads `+12`)
-/// unchecked, so it is posted only while the in-game GUI (not the front end's, vtable 0x820A924C)
-/// holds both: a guard for the call, not a value.
-uint32_t EventOwnerObject(uint8_t* base, EventOwner owner) {
-    if (owner == EventOwner::kHud) {
-        const uint32_t gui = refii::vfs::LoadGuestU32(base, kGuiObject);
-        if (!Plausible(gui) || refii::vfs::LoadGuestU32(base, gui) == kFrontEndGuiVtable ||
-            !Plausible(refii::vfs::LoadGuestU32(base, gui + 0x44u)) ||
-            !Plausible(refii::vfs::LoadGuestU32(base, gui + 0x48u))) {
-            return 0u;
-        }
-        return gui;
-    }
-    return owner == EventOwner::kTitle ? refii::vfs::FrontEndTitleScreen() : refii::vfs::FrontEndMenuScreen();
+bool HudHoldsItsScreens(uint8_t* base) {
+    const uint32_t gui = refii::vfs::LoadGuestU32(base, kGuiObject);
+    return Plausible(gui) && refii::vfs::LoadGuestU32(base, gui) != static_cast<uint32_t>(kFrontEndGuiVtable) &&
+           Plausible(refii::vfs::LoadGuestU32(base, gui + 0x44u)) &&
+           Plausible(refii::vfs::LoadGuestU32(base, gui + 0x48u));
 }
 
-/// Whether the host posts `id` to the callback `original` — the guest's own delivery of it is then
-/// swallowed. Compared against the interned ids, as the callbacks compare.
-bool HostPosts(uint8_t* base, PPCFunc* original, uint32_t id) {
-    for (const PresentationEventRoute& route : kPresentationEvents) {
-        if (route.callback == original &&
-            refii::vfs::LoadGuestU32(base, refii::guest::Address(route.id_tu1)) == id) {
-            return true;
-        }
+void StateRegistration(const PPCContext& ctx, bool add) {
+    static std::atomic<uint64_t> stated{0};
+    const refii::headless::Registration r{ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32};
+    refii::headless::NoteRegistration(ctx.r3.u32, r, add);
+    const uint64_t n = stated.fetch_add(1, std::memory_order_relaxed) + 1u;
+    if (n <= 64u || (n & (n - 1u)) == 0u) {
+        REXLOG_INFO("Refii presentation event: {} on presentation 0x{:08X} — element 0x{:08X}, id 0x{:08X}, "
+                    "fn 0x{:08X}, ctx 0x{:08X} (#{})",
+                    add ? "registered" : "unregistered", ctx.r3.u32, r.element, r.id, r.fn, r.ctx, n);
     }
-    return false;
-}
-
-/// One guest delivery reaching a hooked callback: swallowed when the host posts that event, else
-/// the original runs. `r4` is the queued entry; its `+4` is the id.
-void GuestDelivery(PPCContext& ctx, uint8_t* base, PPCFunc* original, const char* callback) {
-    const uint32_t entry = ctx.r4.u32;
-    const uint32_t id = Plausible(entry) ? refii::vfs::LoadGuestU32(base, entry + 4u) : 0u;
-    if (id != 0u && HostPosts(base, original, id)) {
-        REXLOG_INFO("Refii presentation event: the guest's own 0x{:08X} to {} swallowed — the host "
-                    "posts it from Godot's playback",
-                    id, callback);
-        return;
-    }
-    original(ctx, base);
 }
 
 }  // namespace
+
+namespace refii::vfs {
+void StatedRegistrationFlag(uint32_t element);  // gui_element_hooks.cpp
+}  // namespace refii::vfs
+
+REX_EXTERN(rex_CPresentation_RegisterEventCallback) {
+    REX_FUNC_PROLOGUE();
+    StateRegistration(ctx, true);
+    refii::vfs::StatedRegistrationFlag(ctx.r4.u32);
+    ctx.r3.u32 = 0u;
+}
+
+REX_EXTERN(rex_CPresentation_UnregisterEventCallback) {
+    REX_FUNC_PROLOGUE();
+    StateRegistration(ctx, false);
+    ctx.r3.u32 = 0u;
+}
 
 namespace refii::vfs {
 
@@ -501,31 +375,14 @@ bool PostPresentationEvent(PPCContext& ctx, uint8_t* base, const std::string& sp
     const std::string parent = spec.substr(first + 1u, second - first - 1u);
     const std::string event = spec.substr(second + 1u);
 
-    const PresentationEventRoute* route = nullptr;
-    for (const PresentationEventRoute& candidate : kPresentationEvents) {
-        if (presentation == candidate.presentation && parent == candidate.parent &&
-            event == candidate.event) {
-            route = &candidate;
-            break;
-        }
-    }
-    if (route == nullptr) {
-        REXLOG_INFO("Refii presentation event: {} on '{}' of {} has no registration the host posts "
-                    "to — dropped",
-                    event, parent, presentation);
-        return true;
-    }
-
-    const uint32_t id = LoadGuestU32(base, refii::guest::Address(route->id_tu1));
-    if (id == 0u) {
-        // Interned at static init; held rather than sent as 0, which matches nothing.
-        return false;
-    }
-
-    const uint32_t owner = EventOwnerObject(base, route->owner);
-    if (owner == 0u) {
-        REXLOG_INFO("Refii presentation event: {} on '{}' of {} with its screen not up — dropped",
-                    event, parent, presentation);
+    const uint32_t id = refii::headless::NameHash(event.c_str()) & 0x7FFFFFFFu;
+    const uint32_t parent_hash = parent.empty() ? 0u : refii::headless::NameHash(parent.c_str());
+    uint32_t live = 0u;
+    const std::vector<refii::headless::Registration> callbacks =
+        refii::headless::Registrations(presentation, parent_hash, id, &live);
+    if (callbacks.empty()) {
+        REXLOG_INFO("Refii presentation event: {} (0x{:08X}) on '{}' of {} — {} — dropped", event, id, parent,
+                    presentation, live == 0u ? "the presentation is not up" : "nothing registered for it");
         return true;
     }
 
@@ -533,160 +390,200 @@ bool PostPresentationEvent(PPCContext& ctx, uint8_t* base, const std::string& sp
     const PPCContext saved = ctx;
     const uint32_t frame = (saved.r1.u32 - 0x40u) & ~0xFu;
     const uint32_t entry = frame + 0x20u;
-    StoreGuestU32(base, entry + 0u, 0u);
-    StoreGuestU32(base, entry + 4u, id);
-    ctx.r1.u32 = frame;
-    ctx.r3.u32 = route->owner == EventOwner::kHud ? 0u : owner;
-    ctx.r4.u32 = entry;
-    FrontEndEventBegin();
-    route->callback(ctx, base);
-    FrontEndEventEnd(route->presentation, route->parent, route->event);
-    ctx = saved;
-
-    REXLOG_INFO("Refii presentation event: {} (0x{:08X}) on '{}' of {} posted to 0x{:08X}", event, id,
-                parent, presentation, owner);
+    for (const refii::headless::Registration& r : callbacks) {
+        if (r.fn == static_cast<uint32_t>(kHudTransitionCallback) && !HudHoldsItsScreens(base)) {
+            REXLOG_INFO("Refii presentation event: {} on '{}' of {} with the HUD's screens not held — dropped",
+                        event, parent, presentation);
+            continue;
+        }
+        PPCFunc* fn = FindGuestFunction(r.fn);
+        if (fn == nullptr) {
+            REXLOG_WARN("Refii presentation event: {} registered 0x{:08X}, not a recompiled entry — dropped",
+                        event, r.fn);
+            continue;
+        }
+        StoreGuestU32(base, entry + 0u, r.element);
+        StoreGuestU32(base, entry + 4u, id);
+        ctx.r1.u32 = frame;
+        ctx.r3.u32 = r.ctx;
+        ctx.r4.u32 = entry;
+        ctx.ctr.u32 = r.fn;
+        FrontEndEventBegin();
+        fn(ctx, base);
+        FrontEndEventEnd(presentation.c_str(), parent.c_str(), event.c_str());
+        ctx = saved;
+        REXLOG_INFO("Refii presentation event: {} (0x{:08X}) on '{}' of {} posted to 0x{:08X} (ctx 0x{:08X})",
+                    event, id, parent, presentation, r.fn, r.ctx);
+    }
     return true;
 }
 
 }  // namespace refii::vfs
 
-/// `sub_826E2DA0` (disc `sub_826C6040`) — END_LEGAL on the title's root: state 9 → 0.
-REX_EXTERN(rex_lhGuiFrontEndTitle_OnEndLegal) {
-    REX_FUNC_PROLOGUE();
-    GuestDelivery(ctx, base, __imp__rex_lhGuiFrontEndTitle_OnEndLegal, "the title's END_LEGAL");
-}
+// THE PARAMETERS, A HOST STORE. The presentation's "Parameters" element (Lua's `g_Param.element`)
+// is the mailbox the C++ and the UI scripts trade values through; each presentation's store holds
+// what the file's Parameters element authors (core/headless_presentation.h), and the six functions
+// that reach the element are answered from it — none reads guest memory or builds an element.
+// The writes are existence-checked as the shipped store is: the service's lookup (TU1
+// `sub_82BB52E0` → `sub_822848E0`) finds the attribute or the setter writes nothing
+// (`sub_82284798` 0x822847dc `if (result && ...)`). Ids are the name's hash in 27 bits
+// (`sub_82189140(name) & 0x7FFFFFF`, 0x826B9250 / disc 0x8259D408).
+//   SetStringParam  TU1 0x826B9510 / disc 0x8259D6C8  (r3 dead, r4 name, r5 value, r6 presentation or 0)
+//   SetFloatParam   TU1 0x826B9440 / disc 0x8259D5F8  (f1 value, r3 dead, r4 name, r6 presentation or 0)
+//   GetFloatParam   TU1 0x826B9210 / disc 0x8259D3C8  (r3 name, r4 presentation) → f1, 0 on a miss
+//   GetStringParam  TU1 0x826B92D0 / disc 0x8259D488  (r3 out, r5 name) off the CURRENT presentation
+//                   (`mr r5, r3` after GetCurrent, 0x826B92FC), "Default Error String" with none
+//   ReadStringParam TU1 0x826B9358 / disc 0x8259D510  (r3 out, r4 name, r5 presentation): the
+//                   attribute's text, "Default Error String" on a miss
+// `sub_826B9188` (disc `sub_8259D340`) forwards to GetFloatParam. A setter's presentation 0 is
+// the current one (`lhGuiPresentationSet_GetCurrent(*(GUI + 56))`, 0x826B9530); none, no write.
+// Every set is also staged for the menu-chunk record Godot reads (gui/gui_menu_chunks.h).
 
-/// `sub_826E2EB0` (disc `sub_826C6150`) — END_STARTED on the title's root: state 10 → 11.
-REX_EXTERN(rex_lhGuiFrontEndTitle_OnEndStarted) {
-    REX_FUNC_PROLOGUE();
-    GuestDelivery(ctx, base, __imp__rex_lhGuiFrontEndTitle_OnEndStarted, "the title's END_STARTED");
-}
+namespace {
 
-/// `sub_826E2E20` (disc `sub_826C60C0`) — CAN_PRESS_A on the title's root: `+80 = 1` (disc +72).
-REX_EXTERN(rex_lhGuiFrontEndTitle_OnCanPressA) {
-    REX_FUNC_PROLOGUE();
-    GuestDelivery(ctx, base, __imp__rex_lhGuiFrontEndTitle_OnCanPressA, "the title's CAN_PRESS_A");
-}
+constexpr refii::guest::Addr kPresentationSetGetCurrent{0x823DCBE0u};  // (set) -> presentation
+constexpr char kDefaultErrorString[] = "Default Error String";         // 0x826B932C / 0x826B93E8
+constexpr uint32_t kParamIdMask = 0x07FFFFFFu;
 
-/// `sub_826E3740` (disc `sub_826C69B0`) — the title's `dialog`: DIALOG_ACTIVE → state 12,
-/// UNFREEZE → state 0.
-REX_EXTERN(rex_lhGuiFrontEndTitle_OnDialogEvent) {
-    REX_FUNC_PROLOGUE();
-    GuestDelivery(ctx, base, __imp__rex_lhGuiFrontEndTitle_OnDialogEvent, "the title's dialog");
-}
+uint32_t ParamId(const std::string& name) { return refii::headless::NameHash(name.c_str()) & kParamIdMask; }
 
-/// `sub_826E13F0` (disc `sub_826C9810`) — OUTRO_FINISHED on the main menu's root: back to the title.
-REX_EXTERN(rex_lhGuiFrontEndRoot_OnOutroFinished) {
-    REX_FUNC_PROLOGUE();
-    GuestDelivery(ctx, base, __imp__rex_lhGuiFrontEndRoot_OnOutroFinished,
-                  "the main menu's OUTRO_FINISHED");
-}
-
-/// `sub_826E0D60` (disc `sub_826C9188`) — `choosecard`: BOY_ACTIVE → mode 3, GIRL_ACTIVE → 4,
-/// UNFREEZE → 0 (host-posted); BOY/GIRL_SELECTED commit through `sub_82379628` and pass through.
-REX_EXTERN(rex_lhGui_FrontendRoot_HandleGuiEvent) {
-    REX_FUNC_PROLOGUE();
-    GuestDelivery(ctx, base, __imp__rex_lhGui_FrontendRoot_HandleGuiEvent, "the gender card");
-}
-
-/// `sub_826E0E58` (disc `sub_826C9280`) — `loadgame`: LOAD_CARD_ACTIVE → mode 5 (host-posted),
-/// UNFREEZE (`dword_8349B5B0`) → mode 0 (0x826e0ea0), which nothing shipped fires and the host
-/// does not post: a guest delivery of it is stated here.
-REX_EXTERN(rex_lhGuiFrontEndRoot_OnLoadCardEvent) {
-    REX_FUNC_PROLOGUE();
-    const uint32_t entry = ctx.r4.u32;
-    const bool unfreeze =
-        Plausible(entry) && refii::vfs::LoadGuestU32(base, entry + 4u) ==
-                                refii::vfs::LoadGuestU32(base, refii::guest::Address(0x8349B5B0u));
-    if (unfreeze) refii::vfs::FrontEndEventBegin();
-    GuestDelivery(ctx, base, __imp__rex_lhGuiFrontEndRoot_OnLoadCardEvent, "the load card");
-    if (unfreeze) refii::vfs::FrontEndEventEnd("frontendmainmenu", "loadgame", "UNFREEZE");
-}
-
-/// `sub_826E1040` (disc `sub_826C9460`) — the main menu's `dialog`: DIALOG_ACTIVE → mode 6,
-/// UNFREEZE → the warning's answer.
-REX_EXTERN(rex_lhGuiFrontEndRoot_OnDialogEvent) {
-    REX_FUNC_PROLOGUE();
-    GuestDelivery(ctx, base, __imp__rex_lhGuiFrontEndRoot_OnDialogEvent, "the main menu's dialog");
-}
-
-/// `sub_823CA5F8` (disc `sub_823FAEB0`) — FINISHED_TRANSITIONING_TO_GAME on the HUD's root: opens
-/// the screen held for it (`sub_82677940(*(GUI + 0x48))`) unless `*(GUI + 0x44)` holds one.
-REX_EXTERN(rex_lhGuiHud_OnFinishedTransitioningToGame) {
-    REX_FUNC_PROLOGUE();
-    GuestDelivery(ctx, base, __imp__rex_lhGuiHud_OnFinishedTransitioningToGame,
-                  "the HUD's FINISHED_TRANSITIONING_TO_GAME");
-}
-
-/// THE FLOAT READ-BACK, answered for the Lua that no longer runs. `sub_826B9210(LHString** name,
-/// presentation)` (disc `sub_8259D3C8`) → f1 reads one float off the presentation's `Parameters`
-/// element; it dereferences r4 unchecked (`vtable+56` at 0x826B9234). Its readers, both builds
-/// (TU1 / disc): the event pumps' `EventQueueSize` — in game `sub_82370450` 0x823704D0 /
-/// `sub_82338648` 0x823386C8, the front end `lhFrontEnd_Update` 0x82379410 / 0x82379EB0, each
-/// pulling and dispatching an event when it is above 0 (0x823704EC, 0x82379428); `GUI:PullEvent`
-/// `sub_826C1810` / `sub_8259D7C0`, reached only behind those; `CountSpawnedItems` 0x82998F24 /
-/// 0x828ED834; `GetLastItemIndex` 0x826CE75C / 0x8240824C; the front end's dead
-/// `GetHighlightedMenuItemData` through `sub_826B9188` / `sub_8259D340`; and the three readers
-/// replaced whole above and below.
-///
-/// `EventQueueSize` is written only by `guieventqueue.lua` (`PushButtonEvent` / `PullEvent`),
-/// which is cut: the queue is empty, 0. Commits reach the screens' handlers from the host
-/// directly (`DispatchMenuEventDirect`, guest_tick_pump.cpp). `Float1` after `CountSpawnedItems`
-/// is the runner's answer. Any other name reads the element as before; a null presentation reads
-/// 0, the getter's own miss value (0x826B92C0), instead of faulting.
-REX_EXTERN(rex_lhGuiPresentation_GetFloatParam) {
-    REX_FUNC_PROLOGUE();
-
-    const std::string name = refii::vfs::ReadGuestLhString(base, ctx.r3.u32);
-    const uint32_t presentation = ctx.r4.u32;
-
-    if (name == "EventQueueSize") {
-        ctx.f1.f64 = 0.0;
-        return;
+/// The presentation the GUI is driving; 0 when it has none.
+uint32_t CurrentPresentation(PPCContext& ctx, uint8_t* base) {
+    const uint32_t gui = refii::vfs::LoadGuestU32(base, kGuiObject);
+    if (!Plausible(gui)) {
+        return 0u;
     }
-
-    PendingFloat1& pending = Float1Answer();
-    if (pending.armed && name == "Float1") {
-        pending.armed = false;
-        ctx.f1.f64 = pending.value;
-        return;
+    PPCFunc* fn = refii::vfs::FindGuestFunction(static_cast<uint32_t>(kPresentationSetGetCurrent));
+    if (fn == nullptr) {
+        return 0u;
     }
-
-    if (!Plausible(presentation)) {
-        ctx.f1.f64 = 0.0;
-        return;
-    }
-    __imp__rex_lhGuiPresentation_GetFloatParam(ctx, base);
+    PPCContext call = ctx;
+    call.r3.u32 = refii::vfs::LoadGuestU32(base, gui + 56u);
+    call.ctr.u32 = static_cast<uint32_t>(kPresentationSetGetCurrent);
+    fn(call, base);
+    return call.r3.u32;
 }
 
-/// THE STRING READ-BACK, answered for the Lua that no longer runs. `sub_826B92D0(out, _, name)`
-/// (disc `sub_8259D488`, both 0x88 bytes): r3 the out CCharString, r5 the attribute's name
-/// (`mr r30, r5` 0x826b92ec, handed on as r4 at 0x826b9320). With a current presentation it reads
-/// the attribute off `Parameters` (`sub_826B9358` 0x826b9324), else constructs "Default Error
-/// String" (0x826b9338); a headless `Parameters` carries no string attribute, so the read itself
-/// answers that too. Readers, both builds: `sub_823DF660` (disc `sub_8283F948`) reads `String2`
-/// at 0x823df7e4 (disc 0x8283facc) right after its `g_Menu:GetMenuItemDataByName()` (0x823df7ac),
-/// strips `<exclamation.img` from it and states it back as `RefreshButtonText`'s `String2`
-/// (0x823df8ec / 0x823df914) — the pause root's ghosting pass `sub_8298F648` is its one caller
-/// that asks (`li r6, 1` at 0x8298f968..0x8298fa2c); and `lhGuiMenu_GetHighlightedItemData`,
-/// replaced whole above. `String2` after `GetMenuItemDataByName` is the runner's answer, the
-/// named row's text tag; every other read runs the original.
-REX_EXTERN(rex_lhGuiPresentation_GetStringParam) {
-    REX_FUNC_PROLOGUE();
-
-    PendingString2& pending = String2Answer();
-    if (!pending.armed || refii::vfs::ReadGuestLhString(base, ctx.r5.u32) != "String2") {
-        __imp__rex_lhGuiPresentation_GetStringParam(ctx, base);
-        return;
+/// A miss is counted and said at milestones: the parameter the C++ or a script answer named is not
+/// one the presentation's file carries, so nothing landed — as in the shipped store.
+void NoteMiss(const char* what, uint32_t presentation, const std::string& name) {
+    static std::atomic<uint64_t> misses{0};
+    const uint64_t n = misses.fetch_add(1, std::memory_order_relaxed) + 1u;
+    if (n <= 16u || (n & (n - 1u)) == 0u) {
+        REXLOG_INFO("Refii parameters: {} '{}' on 0x{:08X} — the presentation's Parameters does not carry "
+                    "it (#{})",
+                    what, name, presentation, n);
     }
-    pending.armed = false;
+}
 
-    const uint32_t out = ctx.r3.u32;
+/// `text` constructed into the CCharString at `out` with the guest's own ctor, as the readers do.
+void AnswerString(PPCContext& ctx, uint8_t* base, uint32_t out, const std::string& text) {
     const PPCContext saved = ctx;
     const uint32_t frame = (saved.r1.u32 - 0x300u) & ~0xFu;
-    BuildString(ctx, base, frame, frame + 0x100u, out, pending.value.c_str());
+    BuildString(ctx, base, frame, frame + 0x100u, out, text.c_str());
     ctx = saved;
     ctx.r3.u32 = out;
+}
+
+/// ReadStringParam's answer for `name` on `presentation`.
+std::string StringParam(uint32_t presentation, const std::string& name) {
+    refii::headless::Param p;
+    if (refii::headless::ParamGet(presentation, ParamId(name), &p) && p.text) {
+        return p.string;
+    }
+    NoteMiss("string read", presentation, name);
+    return kDefaultErrorString;
+}
+
+}  // namespace
+
+namespace refii::vfs {
+
+void AnswerParamNumber(uint32_t presentation, const char* name, float value) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof bits);
+    if (!refii::headless::ParamSetNumber(presentation, ParamId(name), bits)) {
+        NoteMiss("script answer", presentation, name);
+    }
+}
+
+void AnswerParamText(uint32_t presentation, const char* name, const std::string& value) {
+    if (!refii::headless::ParamSetText(presentation, ParamId(name), value)) {
+        NoteMiss("script answer", presentation, name);
+    }
+}
+
+}  // namespace refii::vfs
+
+REX_EXTERN(rex_lhGuiPresentation_SetStringParam) {
+    REX_FUNC_PROLOGUE();
+    const std::string name = refii::vfs::ReadGuestLhString(base, ctx.r4.u32);
+    const std::string value = refii::vfs::ReadGuestLhString(base, ctx.r5.u32);
+    refii::vfs::StageMenuAttribute(name, value, 0.0f, /*is_number=*/false);
+    const uint32_t presentation = ctx.r6.u32 != 0u ? ctx.r6.u32 : CurrentPresentation(ctx, base);
+    if (presentation != 0u && !refii::headless::ParamSetText(presentation, ParamId(name), value)) {
+        NoteMiss("string write", presentation, name);
+    }
+}
+
+/// `f1` holds the value as a double; the store keeps it narrowed (`stfs` 0x826B94E4).
+REX_EXTERN(rex_lhGuiPresentation_SetFloatParam) {
+    REX_FUNC_PROLOGUE();
+    const std::string name = refii::vfs::ReadGuestLhString(base, ctx.r4.u32);
+    const float value = static_cast<float>(ctx.f1.f64);
+    refii::vfs::StageMenuAttribute(name, std::string(), value, /*is_number=*/true);
+    const uint32_t presentation = ctx.r6.u32 != 0u ? ctx.r6.u32 : CurrentPresentation(ctx, base);
+    if (presentation == 0u) {
+        return;
+    }
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof bits);
+    if (!refii::headless::ParamSetNumber(presentation, ParamId(name), bits)) {
+        NoteMiss("number write", presentation, name);
+    }
+}
+
+/// Readers, both builds (TU1 / disc): the event pumps' `EventQueueSize` — in game `sub_82370450`
+/// 0x823704D0 / `sub_82338648` 0x823386C8, the front end `lhFrontEnd_Update` 0x82379410 /
+/// 0x82379EB0, each pulling an event when it is above 0 (0x823704EC, 0x82379428); `GUI:PullEvent`
+/// `sub_826C1810` / `sub_8259D7C0` behind them; `CountSpawnedItems` 0x82998F24 / 0x828ED834 and
+/// `GetLastItemIndex` 0x826CE75C / 0x8240824C (`Float1`, the runner's answers); the front end's
+/// dead `GetHighlightedMenuItemData` through `sub_826B9188`. `EventQueueSize` is written only by
+/// `guieventqueue.lua` (`PushButtonEvent` / `PullEvent`), which is cut: the queue is empty, 0 —
+/// commits reach the handlers from the host (`DispatchMenuEventDirect`, guest_tick_pump.cpp).
+REX_EXTERN(rex_lhGuiPresentation_GetFloatParam) {
+    REX_FUNC_PROLOGUE();
+    const std::string name = refii::vfs::ReadGuestLhString(base, ctx.r3.u32);
+    const uint32_t presentation = ctx.r4.u32;
+    float value = 0.0f;
+    refii::headless::Param p;
+    if (name == "EventQueueSize") {
+        value = 0.0f;
+    } else if (refii::headless::ParamGet(presentation, ParamId(name), &p) && !p.text) {
+        std::memcpy(&value, &p.bits, sizeof value);
+    } else {
+        NoteMiss("number read", presentation, name);
+    }
+    ctx.f1.f64 = static_cast<double>(value);
+}
+
+/// Readers, both builds: `sub_823DF660` (disc `sub_8283F948`) reads `String2` at 0x823df7e4 (disc
+/// 0x8283facc) after its `g_Menu:GetMenuItemDataByName()` and states it back as
+/// `RefreshButtonText`'s `String2`; `lhGuiMenu_GetHighlightedItemData` is replaced whole.
+REX_EXTERN(rex_lhGuiPresentation_GetStringParam) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t out = ctx.r3.u32;
+    const std::string name = refii::vfs::ReadGuestLhString(base, ctx.r5.u32);
+    const uint32_t presentation = CurrentPresentation(ctx, base);
+    AnswerString(ctx, base, out, presentation != 0u ? StringParam(presentation, name) : kDefaultErrorString);
+}
+
+/// Its other caller is `GUI:PullEvent` (`sub_826C1810` 0x826c187c), behind an empty queue.
+REX_EXTERN(rex_lhGuiPresentation_ReadStringParam) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t out = ctx.r3.u32;
+    const std::string name = refii::vfs::ReadGuestLhString(base, ctx.r4.u32);
+    AnswerString(ctx, base, out, StringParam(ctx.r5.u32, name));
 }
 
 /// THE PRESENTATION'S LUA ENTRY, `sub_82372500(LHString*, presentation)` (disc `sub_82306718`).

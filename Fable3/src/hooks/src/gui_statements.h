@@ -151,12 +151,6 @@ uint32_t FilingElement();
 /// nothing named it.
 bool ElementName(uint32_t element, uint32_t& presentation, std::string& path);
 
-/// THE HEADLESS PRESENTATIONS (headless_presentation_hooks.cpp): after the attribute-string read
-/// sub_828760D0(out, element, pres, &name) answered "", the FILE's string attribute of a headless
-/// element constructed into `out` (the shared core's AnswerAttributeString); true when it answered.
-bool HeadlessAnswerAttributeString(PPCContext& ctx, uint8_t* base, uint32_t out, uint32_t element,
-                                   uint32_t presentation, uint32_t name);
-
 /// A presentation as a statement names it: `=<document>` once its load was seen (the .bgf's stem,
 /// lower-cased: `=hud`, `=interactionmode`), else its address in hex (ui_stated_hooks.cpp).
 std::string PresentationKey(uint32_t presentation);
@@ -203,6 +197,37 @@ uint32_t TopBoxName(const uint8_t* base);
 /// States the GUI screen id `*(*(GUI+0x38)+4)` as one of its writers left it
 /// (game_state_hooks.cpp): every writer that is not the screen set calls this as it returns.
 void StateGuiScreen(const uint8_t* base);
+
+/// The live headless presentation whose load named `document` (PresentationKey without its `=`), or 0.
+uint32_t PresentationOfDocument(const std::string& document);
+
+/// THE RUNTIME'S READERS ANSWERED FROM STATEMENTS (ui_reader_hooks.cpp).
+/// A slide the guest set through GuiElement_SetState (gui_element_hooks.cpp, after the setter ran):
+/// the path its path setter names the owner by, for the scroll gate.
+void NoteStatedSlide(uint32_t element, uint32_t presentation, int32_t slide);
+/// A `@Ui.State` posted for `path` (ui_stated_hooks.cpp StateState): the entry Godot counts too.
+void NoteStatedEntry(uint32_t presentation, const std::string& path);
+/// A presentation loaded into an empty slot: its stated slides and entries start afresh.
+void ForgetPresentationReaders(uint32_t presentation);
+/// The path setter (SetStateAt / RestartStateAt) running on this thread names the owner its
+/// GuiElement_SetState reaches.
+class StatedPathScope {
+ public:
+  StatedPathScope(uint32_t presentation, const std::string& path);
+  ~StatedPathScope();
+  StatedPathScope(const StatedPathScope&) = delete;
+  StatedPathScope& operator=(const StatedPathScope&) = delete;
+
+ private:
+  uint32_t presentation_ = 0;
+  std::string path_;
+  uint32_t outer_presentation_ = 0;
+  std::string outer_path_;
+};
+/// The guest-tick action prefix Godot states the readers' values under.
+inline constexpr char kUiReaderAction[] = "ui-";
+/// One posted action under kUiReaderAction: `ui-box:`, `ui-reached:` or `ui-live:`.
+void AnswerUiReaderAction(const char* action);
 
 /// A statement under a `@Family.Event` name with its arguments, in order.
 class Statement {

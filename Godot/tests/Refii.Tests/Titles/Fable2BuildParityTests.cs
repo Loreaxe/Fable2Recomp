@@ -54,6 +54,12 @@ public class Fable2BuildParityTests
 			"inlined into the disc epilogue sub_824F23A0; the disc states it via RefiiGuiImageInlined"),
 		("RefiiGuiImageInlined", false,
 			"the disc's counterpart of the TU1 rex_lhGuiRegistry_SetImage hook"),
+		("rex_lhGuiNextEpisodeScreen_Update", true,
+			"screen 13, the Next Episode advert: TU1 only — the disc has no TurnOnNextEpisode, NextEpisode.bgf or GUI_SCREEN_EPISODE_BUY_* string"),
+		("rex_lhGuiNextEpisodeScreen_HandleAction", true,
+			"screen 13, the Next Episode advert: TU1 only (see its Update)"),
+		("rex_lhGuiNextEpisodeScreen_Close", true,
+			"screen 13, the Next Episode advert: TU1 only (see its Update)"),
 	};
 
 	private static readonly string[] Native = { ".cpp", ".h", ".hpp", ".cc", ".c", ".inc" };

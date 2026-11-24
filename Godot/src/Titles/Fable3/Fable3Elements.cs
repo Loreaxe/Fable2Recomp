@@ -51,6 +51,12 @@ public static class Fable3Elements
 		/// </summary>
 		public ulong StatedStateStamp { get; set; }
 
+		/// <summary>
+		/// How many `@Ui.State` entries the path took since its document loaded: the entry the scroll
+		/// gate's `ui-reached:` names (ui_reader_hooks.cpp counts the same posts).
+		/// </summary>
+		public int Entries { get; set; }
+
 		/// <summary>The active flag as its setter was asked (`@Ui.Active`, sub_828196E0), null until it was.</summary>
 		public bool? StatedActive { get; set; }
 
@@ -67,6 +73,22 @@ public static class Fable3Elements
 		/// away (0x82819B44..0x82819B64).
 		/// </summary>
 		public float? StatedDrawnOpacity => StatedActive == false || Visible == false ? 0f : StatedOpacity;
+
+		/// <summary>The stamp of the latest opacity write (`@Ui.Opacity`, `@Ui.Visible`, a surface's outright opacity), 0 for none.</summary>
+		public ulong OpacityStamp { get; set; }
+
+		/// <summary>The stamp of the latest `@Ui.Active`, 0 for none.</summary>
+		public ulong ActiveStamp { get; set; }
+
+		/// <summary>
+		/// <see cref="StatedDrawnOpacity"/>'s parts with their stamps, for a playback to retire what a
+		/// later told slide entry wrote over (<see cref="Fable3HudStatements.OpacitySource"/>).
+		/// </summary>
+		public Fable3HudStatements.OpacitySource OpacitySource =>
+			new(Visible == false ? 0f : StatedOpacity, OpacityStamp, StatedActive == false, ActiveStamp);
+
+		/// <summary>Stamps an opacity write made by the statement now landing (its stamp is the next one).</summary>
+		public void MarkOpacity() => OpacityStamp = Generation + 1;
 
 		/// <summary>The stated text resolved (a literal, or the tag's text in the title's book), or null.</summary>
 		public string? StatedTextValue => Stated is { } stated ? Resolve(stated) : null;
@@ -269,8 +291,16 @@ public static class Fable3Elements
 		// headless_commit_hooks.cpp): (pres, elem, path, x, y, z, via).
 		Add("@Ui.Position", call => Apply(call, (element, value) =>
 			element.Position = (value.Number, call.Argument(4).Number, call.Argument(5).Number)));
-		Add("@Ui.Visible", call => Apply(call, (element, value) => element.Visible = value.Boolean));
-		Add("@Ui.State", call => Apply(call, (element, value) => Slide(element, (int)value.Number)));
+		Add("@Ui.Visible", call => Apply(call, (element, value) =>
+		{
+			element.Visible = value.Boolean;
+			element.MarkOpacity();
+		}));
+		Add("@Ui.State", call => Apply(call, (element, value) =>
+		{
+			Slide(element, (int)value.Number);
+			++element.Entries;
+		}));
 		// An outright opacity a writer's own call passes (`@Ui.Opacity`, ui_stated_hooks.cpp: the
 		// multiplier roots' shown 100 / hidden 0, sub_82950AF0 at 0x82950B40; the layer fade
 		// sub_82B14A50 at 0x82B14B28): it overrides the visibility toggle, as SetOpacity does.
@@ -279,8 +309,13 @@ public static class Fable3Elements
 			element.StatedOpacity = value.Number;
 			element.Opacity = value.Number;
 			element.Visible = null;
+			element.MarkOpacity();
 		}));
-		Add("@Ui.Active", call => Apply(call, (element, value) => element.StatedActive = value.Boolean));
+		Add("@Ui.Active", call => Apply(call, (element, value) =>
+		{
+			element.StatedActive = value.Boolean;
+			element.ActiveStamp = Generation + 1;
+		}));
 		// (pres, elem, path, r, g, b, a, via), 0..255 (ui_stated_hooks.cpp, sub_828190E8).
 		Add("@Ui.Colour", call => Apply(call, (element, red) => element.Colour = (
 			red.Number / 255f, call.Argument(4).Number / 255f, call.Argument(5).Number / 255f, call.Argument(6).Number / 255f)));

@@ -252,6 +252,8 @@ public sealed class Engine_UiSlidePlayback
 		_told = new bool?[count];
 		_activeAt = new ulong[count];
 		_writtenAt = new ulong[count * Channels];
+		_toldActiveAt = new ulong[count];
+		_toldWrittenAt = new ulong[count * Channels];
 		_slides = new int[count];
 		Reset();
 	}
@@ -296,14 +298,53 @@ public sealed class Engine_UiSlidePlayback
 
 	private readonly ulong[] _writtenAt;
 
+	/// <summary>
+	/// As <see cref="_activeAt"/> and <see cref="_writtenAt"/>, for TOLD entries only (the guest's own
+	/// slide call, whose GoTo applies the slide's entries in the call — Fable 3 TU3 0x82267224 /
+	/// 0x82267250 -> `sub_821CA6D8` -> the store 0x821CA7A4): the walk's and a go-next's entries are not
+	/// the guest's calls.
+	/// </summary>
+	private readonly ulong[] _toldActiveAt;
+
+	private readonly ulong[] _toldWrittenAt;
+
 	/// <summary>The sequence the entry being applied stands at (Enter).</summary>
 	private ulong _entering;
+
+	/// <summary>Whether the entry being applied is a told one (Enter).</summary>
+	private bool _enteringTold;
+
+	/// <summary>The statement sequence of the latest told entry that wrote the element's channel, 0 for none.</summary>
+	public ulong ToldEntryWrote(int ordinal, Channel channel) =>
+		ordinal >= 0 && ordinal < _closed.Length ? _toldWrittenAt[(ordinal * Channels) + (int)channel] : 0;
+
+	/// <summary>The statement sequence of the latest told entry that wrote the element's `active`, 0 for none.</summary>
+	public ulong ToldEntryActive(int ordinal) => ordinal >= 0 && ordinal < _closed.Length ? _toldActiveAt[ordinal] : 0;
 
 	/// <summary>This frame's track values, NaN where no track wrote (see <see cref="Engine_UiElementResolve.Animated"/>).</summary>
 	public float[] Values => _values;
 
 	/// <summary>Per element: outside its time window this frame.</summary>
 	public bool[] Closed => _closed;
+
+	/// <summary>
+	/// The clock of the component at or above <paramref name="ordinal"/> as the last
+	/// <see cref="Step"/> left it, with that component's Master slide end (the deserialiser's
+	/// timeline +36, which the scroll gate TU3 `sub_82878358` compares the time with); null when
+	/// no component owns it or its clock is not live.
+	/// </summary>
+	public (int Time, int MasterEnd)? OwnerClock(int ordinal)
+	{
+		if (ordinal < 0 || ordinal >= _clocks.Length)
+		{
+			return null;
+		}
+
+		int owner = _clocks[ordinal] is not null ? ordinal : _clockOf[ordinal];
+		return owner >= 0 && _clocks[owner] is { Live: true } clock
+			? (clock.Time, _master[owner]?.EndTime ?? 0)
+			: null;
+	}
 
 	/// <summary>
 	/// The presentation closed: every component leaves, every track returns to its file state,
@@ -323,6 +364,8 @@ public sealed class Engine_UiSlidePlayback
 		System.Array.Clear(_told);
 		System.Array.Clear(_activeAt);
 		System.Array.Clear(_writtenAt);
+		System.Array.Clear(_toldActiveAt);
+		System.Array.Clear(_toldWrittenAt);
 		foreach (Clock? clock in _clocks)
 		{
 			if (clock is not null)
@@ -436,7 +479,7 @@ public sealed class Engine_UiSlidePlayback
 			{
 				if (said.Sequence > clock.LiveSince && said.Sequence != clock.Told && said.Slide > 0)
 				{
-					Enter(i, clock, said.Slide, now, play: false, said.Sequence);
+					Enter(i, clock, said.Slide, now, play: false, said.Sequence, told: true);
 					clock.Told = said.Sequence;
 				}
 
@@ -549,9 +592,10 @@ public sealed class Engine_UiSlidePlayback
 	}
 
 	/// <summary>GotoSlide: the master's entries, then the slide's; time to 0; the record's mode.</summary>
-	private void Enter(int owner, Clock clock, int slide, long now, bool play, ulong sequence)
+	private void Enter(int owner, Clock clock, int slide, long now, bool play, ulong sequence, bool told = false)
 	{
 		_entering = sequence;
+		_enteringTold = told;
 		List<BgfSlide> slides = _owned[owner]!;
 		slide = System.Math.Clamp(slide, 1, slides.Count);
 		BgfSlide record = slides[slide - 1];
@@ -585,13 +629,22 @@ public sealed class Engine_UiSlidePlayback
 				// The entry writes the element's own active bit (`goToSlide`), over any told one.
 				_told[ordinal] = null;
 				_activeAt[ordinal] = System.Math.Max(_activeAt[ordinal], _entering);
+				if (_enteringTold)
+				{
+					_toldActiveAt[ordinal] = System.Math.Max(_toldActiveAt[ordinal], _entering);
+				}
+
 				foreach (BgfAttribute command in entry.Commands ?? System.Array.Empty<BgfAttribute>())
 				{
 					if (ChannelById.TryGetValue(command.Id, out Channel channel))
 					{
-						_values[(ordinal * Channels) + (int)channel] = float.NaN;
-						_writtenAt[(ordinal * Channels) + (int)channel] =
-							System.Math.Max(_writtenAt[(ordinal * Channels) + (int)channel], _entering);
+						int at = (ordinal * Channels) + (int)channel;
+						_values[at] = float.NaN;
+						_writtenAt[at] = System.Math.Max(_writtenAt[at], _entering);
+						if (_enteringTold)
+						{
+							_toldWrittenAt[at] = System.Math.Max(_toldWrittenAt[at], _entering);
+						}
 					}
 				}
 			}

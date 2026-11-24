@@ -90,6 +90,9 @@ public sealed partial class Fable3HudDocument
 
 	private int[] _slides = System.Array.Empty<int>();
 	private float?[] _opacity = System.Array.Empty<float?>();
+
+	/// <summary>Per ordinal: what its stated opacity is made of, for the told entries to retire (Fable3HudStatements.OpacitySource).</summary>
+	private Fable3HudStatements.OpacitySource?[] _opacitySources = System.Array.Empty<Fable3HudStatements.OpacitySource?>();
 	private string?[] _texts = System.Array.Empty<string?>();
 	private float?[] _times = System.Array.Empty<float?>();
 	private float?[]?[] _transforms = System.Array.Empty<float?[]?>();
@@ -142,6 +145,7 @@ public sealed partial class Fable3HudDocument
 		}
 
 		_bindings = Engine_UiBindings.Read(_screen.Document);
+		StateBoxExtents();
 		_wide = Engine_UiWidescreen.Read(_screen.Document);
 		var layout = Engine_HudLayout.FromBindings(_screen, _bindings, _wide, Groups);
 		if (_groupsOnly)
@@ -195,6 +199,7 @@ public sealed partial class Fable3HudDocument
 		int count = _screen.Nodes.Length;
 		_slides = new int[count];
 		_opacity = new float?[count];
+		_opacitySources = new Fable3HudStatements.OpacitySource?[count];
 		_texts = new string?[count];
 		_times = new float?[count];
 		_transforms = new float?[]?[count];
@@ -223,6 +228,7 @@ public sealed partial class Fable3HudDocument
 		_playback = new Engine_UiSlidePlayback(_screen);
 		_slideStamps = new ulong[count];
 		_played = false;
+		_live = null;
 
 		IndexScriptPositioned(_screen.Document);
 		_statements = new Fable3HudStatements(PathsOf(_screen), Bound, SlideOwners(_screen.Document), Named);
@@ -363,6 +369,7 @@ public sealed partial class Fable3HudDocument
 	private void Feed()
 	{
 		_gathered.Clear();
+		_inactivePaths.Clear();
 		foreach (KeyValuePair<(string Document, string Path), Fable3Elements.Element> entry in Fable3Elements.Of(Document))
 		{
 			// An element filed under a name the registry writers state is written by them: their
@@ -372,6 +379,11 @@ public sealed partial class Fable3HudDocument
 			if (IsRegistryStated(entry.Key.Path))
 			{
 				continue;
+			}
+
+			if (stated.StatedActive == false)
+			{
+				_inactivePaths.Add(entry.Key.Path);
 			}
 
 			// The slide under its own stamp: an entry is re-entered only by a newer slide write.
@@ -386,7 +398,8 @@ public sealed partial class Fable3HudDocument
 			{
 				_gathered.Add(new Fable3HudStatements.Statement(
 					entry.Key.Path, null, stated.StatedDrawnOpacity, stated.StatedTextValue, stated.Time,
-					stated.Stamp, stated.Position, stated.StatedTexture, Colour: stated.Colour));
+					stated.Stamp, stated.Position, stated.StatedTexture, Colour: stated.Colour,
+					Source: stated.StatedDrawnOpacity is null ? null : stated.OpacitySource));
 			}
 		}
 
@@ -394,7 +407,7 @@ public sealed partial class Fable3HudDocument
 		_gathered.AddRange(Fable3LuaContracts.StatementsFor(Document, SlideNamed));
 		_gathered.AddRange(Fable3ScreenFrames.StatementsFor(Document));
 		_statements!.Apply(_gathered, _slides, _opacity, _texts, _times, _transforms, _textures,
-			_playback is null ? null : _slideStamps, _colours);
+			_playback is null ? null : _slideStamps, _colours, _opacitySources);
 		ApplyModOverrides();
 		_meterTimes.Clear();
 		StatePlaced();
@@ -442,9 +455,12 @@ public sealed partial class Fable3HudDocument
 		if (_playback is not null)
 		{
 			Play(_playback);
+			RetireOverwrittenOpacity(_playback);
+			StateReached(_playback);
 		}
 
 		_resolve!.Apply(_slides, null, _opacity);
+		StateLiveEdges();
 		for (int i = 0; i < _active.Length; ++i)
 		{
 			// Drawn, by its slide and its parents', and not faded out — Fable 2's one answer.
@@ -461,6 +477,22 @@ public sealed partial class Fable3HudDocument
 		View.LiveTextures = _textures;
 		View.LiveColours = _colours;
 		View.ElementActive = _active;
+	}
+
+	/// <summary>
+	/// A stated opacity a later told slide entry wrote over is the slides' again, as the guest's GoTo
+	/// left it (Fable3HudStatements.OpacitySource).
+	/// </summary>
+	private void RetireOverwrittenOpacity(Engine_UiSlidePlayback playback)
+	{
+		for (int i = 0; i < _opacity.Length && i < _opacitySources.Length; ++i)
+		{
+			if (_opacity[i] is not null && _opacitySources[i] is { } source)
+			{
+				_opacity[i] = source.After(
+					playback.ToldEntryWrote(i, Engine_UiSlidePlayback.Channel.Opacity), playback.ToldEntryActive(i));
+			}
+		}
 	}
 
 	/// <summary>
@@ -490,6 +522,133 @@ public sealed partial class Fable3HudDocument
 		System.Array.Copy(playing, _slides, System.Math.Min(playing.Length, _slides.Length));
 		_resolve!.Animate(playback.Values, playback.Closed);
 		_played = true;
+	}
+
+	/// <summary>
+	/// THE BOXES' EXTENTS (CHUDExpandableBox vf+12, TU3 sub_8227AEB0): each BoxName box of the
+	/// document calibrates the range it is drawn between — its scale up the chain at its meters'
+	/// end and start (<see cref="Engine_UiTextBoxFit.Extents"/>). Godot draws that box, so Godot
+	/// states the range as the document stands (`ui-box:`, ui_reader_hooks.cpp), and the guest's
+	/// text layout wraps and pages by it.
+	/// </summary>
+	private void StateBoxExtents()
+	{
+		uint boxName = Refii.Core.Engine_GameHash.AttributeId(Engine_UiTextBoxFit.BoxNameAttribute);
+		Engine_BgfDocument document = _screen!.Document;
+		for (int i = 0; i < document.Elements.Length; ++i)
+		{
+			if (!document.Elements[i].TryGetAttribute(boxName, out BgfAttribute attribute) ||
+				attribute.Type != BgfValueType.String ||
+				document.GetString(attribute.AsStringIndex()) is not { Length: > 0 } name)
+			{
+				continue;
+			}
+
+			var meters = new List<int>(_bindings!.Elements(Engine_UiBindings.Kind.Meter, name + "X"));
+			meters.AddRange(_bindings.Elements(Engine_UiBindings.Kind.Meter, name + "Y"));
+			(float minX, float minY, float maxX, float maxY) = Engine_UiTextBoxFit.Extents(_screen, i, meters);
+			System.FormattableString line = $"ui-box:{Document}|{i}|{minX:R}|{minY:R}|{maxX:R}|{maxY:R}";
+			Refii.Host.HostBridge.PostFrontEndAction(line.ToString(System.Globalization.CultureInfo.InvariantCulture));
+			GD.Print($"[fable3-hud] box '{name}' [{i}] of '{Document}': extents min ({minX:R}, {minY:R}) max ({maxX:R}, {maxY:R}), " +
+				$"meters [{string.Join(", ", meters)}] — stated");
+		}
+	}
+
+	/// <summary>
+	/// Per path, the element and its `@Ui.State` entry count already stated as past its owner's Master
+	/// end — a load makes the path's element anew and its count starts again.
+	/// </summary>
+	private readonly Dictionary<string, (Fable3Elements.Element Element, int Entries)> _reached = new(System.StringComparer.Ordinal);
+
+	/// <summary>
+	/// THE SCROLL GATE'S CLOCK (TU3 sub_82878358): before each scroll step the guest asks whether the
+	/// list component's clock passed its Master end since its path setter last entered a slide (the
+	/// interaction list's 200 ms). This playback is that clock: a path-stated owner whose clock stands
+	/// at or past its Master end is stated once per entry (`ui-reached:`, ui_reader_hooks.cpp).
+	/// </summary>
+	private void StateReached(Engine_UiSlidePlayback playback)
+	{
+		foreach (KeyValuePair<(string Document, string Path), Fable3Elements.Element> entry in Fable3Elements.Of(Document))
+		{
+			int entries = entry.Value.Entries;
+			if (entries == 0 ||
+				(_reached.TryGetValue(entry.Key.Path, out (Fable3Elements.Element Element, int Entries) told) &&
+					ReferenceEquals(told.Element, entry.Value) && told.Entries == entries))
+			{
+				continue;
+			}
+
+			IReadOnlyList<int> ordinals = _statements!.Resolve(entry.Key.Path);
+			if (ordinals.Count == 0 || playback.OwnerClock(ordinals[0]) is not { } clock || clock.Time < clock.MasterEnd)
+			{
+				continue;
+			}
+
+			_reached[entry.Key.Path] = (entry.Value, entries);
+			System.FormattableString line = $"ui-reached:{Document}|{entry.Key.Path}|{entries}";
+			Refii.Host.HostBridge.PostFrontEndAction(line.ToString(System.Globalization.CultureInfo.InvariantCulture));
+		}
+	}
+
+	/// <summary>The paths whose last `@Ui.Active` is off, gathered by each <see cref="Feed"/>.</summary>
+	private readonly List<string> _inactivePaths = new();
+
+	/// <summary>Per element, whether it was live at the last feed; null before the first.</summary>
+	private bool[]? _live;
+
+	/// <summary>The edges stated since the document was made, for the log's cap.</summary>
+	private int _edges;
+
+	/// <summary>
+	/// THE RE-VISIBILITY EDGE (the presentation Update's walk, TU3 sub_821C9CF8 0x821C9E4C..0x821C9E90):
+	/// a timeline owner that becomes visible — drawn by its slides and its parents', its window open,
+	/// no stated active bit off on it or above it; opacity never counts — is sent to slide 1 by the
+	/// guest's own GoTo(owner, 1, 0). This playback is that walk: each component that comes live is
+	/// stated once (`ui-live:`, ui_reader_hooks.cpp), and the host's handle takes slide 1.
+	/// </summary>
+	private void StateLiveEdges()
+	{
+		Engine_BgfDocument document = _screen!.Document;
+		int count = System.Math.Min(_resolve!.Drawn.Length, document.Elements.Length);
+		var off = new bool[count];
+		foreach (string path in _inactivePaths)
+		{
+			foreach (int ordinal in _statements!.Resolve(path))
+			{
+				if (ordinal >= 0 && ordinal < count)
+				{
+					off[ordinal] = true;
+				}
+			}
+		}
+
+		var live = new bool[count];
+		for (int i = 0; i < count; ++i)
+		{
+			int parent = document.Elements[i].ParentOrdinal;
+			bool above = parent < 0 || parent >= i || live[parent];
+			live[i] = above && _resolve.Drawn[i] && !off[i];
+		}
+
+		bool[]? was = _live;
+		_live = live;
+		if (was is null || was.Length != count)
+		{
+			return;
+		}
+
+		for (int i = 0; i < count; ++i)
+		{
+			if (live[i] && !was[i] && document.Elements[i].IsComponent)
+			{
+				System.FormattableString line = $"ui-live:{Document}|{i}";
+				Refii.Host.HostBridge.PostFrontEndAction(line.ToString(System.Globalization.CultureInfo.InvariantCulture));
+				if (++_edges <= 64)
+				{
+					GD.Print($"[fable3-hud] '{Document}' [{i}] came live — stated ({_edges})");
+				}
+			}
+		}
 	}
 
 	/// <summary>Text names whose stated line and registry write were compared and differed, logged once each.</summary>

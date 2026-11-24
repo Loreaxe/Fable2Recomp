@@ -2288,7 +2288,7 @@ public static class ModApi
 		new ModApiHelper("int32_t refii_mod_item_count(base, entity, definition) / uint32_t refii_mod_add_item(ctx, base, entity, definition)", "an inventory, counted and added to through the game's own add"),
 		new ModApiHelper("int32_t refii_mod_add_items(ctx, base, entity, definition, count, uint32_t* out_last)", AddItemsMeaning + ". Guest tick"),
 		new ModApiHelper("int32_t refii_mod_run_game_lua(ctx, base, chunk)", "runs a Lua chunk in the game VM"),
-		new ModApiHelper("int32_t refii_mod_run_frontend_lua(ctx, base, chunk)", "runs a Lua chunk in the mods' front-end Lua (the title and the front end: the current Gameface presentation's own state, every mod's mod/frontend.lua run in it first); 0 when no presentation has one"),
+		new ModApiHelper("int32_t refii_mod_run_frontend_lua(ctx, base, chunk)", "runs a Lua chunk in the mods' front-end Lua (the title and the front end: the host's state for the current front-end presentation, every mod's mod/frontend.lua run in it first); 0 when no presentation is current"),
 		new ModApiHelper("int32_t refii_mod_game_lua_int(ctx, base, expr, lo, hi, int32_t* out)", "an integer Lua expression's value, by a search of assertions"),
 		new ModApiHelper("uint32_t refii_mod_lua_generation()", "steps on every Lua rebuild and save load"),
 		new ModApiHelper("int32_t refii_mod_save_set_int(ctx, base, key, value)", "RefiiModSave.<key> = value: persists with the save game"),

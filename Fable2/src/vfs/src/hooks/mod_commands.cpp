@@ -181,8 +181,8 @@
 //                        read again by the guest's own loader, its records mapped and every older
 //                        copy's values updated in place (gdb_hot_reload.cpp)
 //   gdb_revert PATH HASH...  rows a patch states no more, mapped back to PATH's base records
-//   frontend_lua CHUNK...  a chunk in the front end's mod Lua (mod_frontend_lua.cpp): the current
-//                        Gameface presentation's state, the mods' front-end chunk run in it first
+//   frontend_lua CHUNK...  a chunk in the front end's mod Lua (mod_frontend_lua.cpp): the host's
+//                        state for the current presentation, the mods' front-end chunk run in it first
 //   ability_clear · ability_declare … · ability_buy P NAME · ability_refund P NAME
 //                        the mod abilities' engine path (mod_abilities.cpp): the book declares each
 //                        ui/abilities.json record, A and Y post the purchase and the unlearn

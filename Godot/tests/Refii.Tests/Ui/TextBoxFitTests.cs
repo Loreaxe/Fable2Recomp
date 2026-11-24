@@ -173,6 +173,33 @@ public sealed class TextBoxFitTests
 	}
 
 	/// <summary>
+	/// FABLE 3'S BOX EXTENTS, as the expandable box's calibration (TU3 `sub_8227AEB0`) stores them:
+	/// the box's scale up its chain × 100 with its meters at 100 (max) and 0 (min) — the numbers the
+	/// guest's own reading off the track pass gave in the run that moved the reader to Godot.
+	/// </summary>
+	[TestCase]
+	public void FableThreesBoxExtentsAreTheCalibrations()
+	{
+		if (Hud("Fable3") is not { } screen)
+		{
+			Console.WriteLine("[text-box-fit] no Fable 3 bank beside the tree; the shipped box extents are not checked here");
+			return;
+		}
+
+		Engine_UiBindings bindings = Engine_UiBindings.Read(screen.Document);
+		(float, float, float, float) Of(string name)
+		{
+			var meters = new System.Collections.Generic.List<int>(bindings.Elements(Engine_UiBindings.Kind.Meter, name + "X"));
+			meters.AddRange(bindings.Elements(Engine_UiBindings.Kind.Meter, name + "Y"));
+			return Engine_UiTextBoxFit.Extents(screen, Engine_UiTextBoxFit.BoxElement(screen.Document, name), meters);
+		}
+
+		AssertThat(Of("TopBox")).IsEqual((156f, 38f, 861.9000244f, 110f));
+		AssertThat(Of("Subtitles")).IsEqual((124.5000153f, 30.0000019f, 747.0000610f, 150f));
+		AssertThat(Of("Corner")).IsEqual((117.7100067f, 30.0000019f, 367.3500061f, 198f));
+	}
+
+	/// <summary>
 	/// Whether a widescreen adapter states a `position.y` on the box's chain — the only adapter
 	/// write line 0 reads (its `scale.x` reaches pivot.x alone). Fable 2's TopBox carries one
 	/// (`TopBox` [1527], WidescreenXWidth 1.38, no y), and its TU never runs the adapter anyway

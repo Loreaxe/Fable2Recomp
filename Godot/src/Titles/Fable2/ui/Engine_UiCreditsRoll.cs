@@ -33,13 +33,13 @@ public sealed partial class Engine_UiCreditsRoll : Control
 
 	private const float Top = 360f;
 
-	private const float Pitch = 32f;
+	private const float Pitch = Engine_UiCreditsTiming.Pitch;
 
 	private const float Span = 768f;
 
-	private const float Speed = 30f;
+	private const float Speed = Engine_UiCreditsTiming.Speed;
 
-	private const int Slots = 24;
+	private const int Slots = Engine_UiCreditsTiming.Slots;
 
 	/// <summary>
 	/// The roll at <paramref name="seconds"/> since the screen opened: each slot's line and

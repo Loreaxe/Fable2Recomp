@@ -29,12 +29,21 @@ void FrontEndMenuActivated(uint32_t menu);
 uint32_t FrontEndTitleScreen();
 uint32_t FrontEndMenuScreen();
 
+/// The active one of the two (the title's while it is active, the main menu's while that is), 0
+/// when the front end is not up or neither is active. `activation` counts the screens made active
+/// across every front end (the construction's title, each switch): a new count is a new screen.
+uint32_t FrontEndActiveScreen(uint32_t* activation);
+
 /// The screen whose warning is raised, as OpenDialog's r3 stated it, until the dialog's
 /// UNFREEZE; 0 when none is. `title` is set when that screen is the title, else the main menu.
 uint32_t FrontEndDialogOwner(bool* title);
 
 /// Whether the front-end GUI exists (its constructor ran and its destructor has not).
 bool FrontEndUp();
+
+/// The main menu's stated mode (`screen+24`: 0 the list, 2-4 the gender card, 5 the load fan, 6 a
+/// warning), as the model above keeps it; 0 when the front end is not up.
+uint32_t FrontEndMenuMode();
 
 /// Around one presentation event reaching its callback, by the registration's names.
 void FrontEndEventBegin();

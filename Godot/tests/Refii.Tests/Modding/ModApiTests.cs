@@ -1378,7 +1378,6 @@ public class ModApiTests
         }
         string rows = File.ReadAllText(Path.Combine(root, "Fable2", "versions", "Fable2", "guest_addresses.inc"));
         AssertThat(rows.Contains("{0x8229DDF0u, 0x8229DB28u},", StringComparison.Ordinal)).IsTrue();  // the definition's field reader
-        AssertThat(rows.Contains("{0x8219CD00u, 0x8219CDA8u},", StringComparison.Ordinal)).IsTrue();  // Gameface's lua_pushlstring
         string bus = File.ReadAllText(Path.Combine(root, "Fable2", "src", "vfs", "src", "hooks", "mod_events.cpp"));
         AssertThat(bus.Contains("static_assert(kScriptableActionCount == 89", StringComparison.Ordinal)).IsTrue();
         AssertThat(bus.Contains("REX_EXTERN(rex_lhFrontEnd_SetStartGameTarget)", StringComparison.Ordinal)).IsTrue();

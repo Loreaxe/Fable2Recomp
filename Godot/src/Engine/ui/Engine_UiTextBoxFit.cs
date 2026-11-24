@@ -212,6 +212,76 @@ public static class Engine_UiTextBoxFit
 		return moved;
 	}
 
+	/// <summary>
+	/// THE BOX'S EXTENT RANGE, as an expandable box calibrates it (Fable 3 `CHUDExpandableBox`
+	/// vf+12, `sub_8227AEB0`): the box element's `scale` multiplied up its chain — every element
+	/// with `scale.x` gives (scale.x, scale.y) (`sub_82876768`, `sub_82876620`) — times 100 (the
+	/// splat at 0x8227AF70), with the box's meter components at time 1000 (both meters at 100,
+	/// 0x8227AF30 / 0x8227AF4C) for the maximum and at 0 for the minimum. The slides play as the
+	/// document plays them (<see cref="Engine_UiSlidePlayback"/>), every component on its slide 1.
+	/// </summary>
+	/// <param name="meters">The ordinals the box's X and Y meter names bind (MeterName `&lt;box&gt;X` / `&lt;box&gt;Y`).</param>
+	public static (float MinX, float MinY, float MaxX, float MaxY) Extents(
+		Engine_UiScreen screen, int box, System.Collections.Generic.IReadOnlyCollection<int> meters)
+	{
+		(float maxX, float maxY) = ChainScaleAt(screen, box, meters, MeterEndTime);
+		(float minX, float minY) = ChainScaleAt(screen, box, meters, 0);
+		return (minX, minY, maxX, maxY);
+	}
+
+	/// <summary>A meter at 100 stands its component at `100 × 10` (sub_82975A58, flt_820E99E0).</summary>
+	public const int MeterEndTime = 1000;
+
+	private static (float X, float Y) ChainScaleAt(
+		Engine_UiScreen screen, int box, System.Collections.Generic.IReadOnlyCollection<int> meters, int time)
+	{
+		Engine_BgfDocument document = screen.Document;
+		var playback = new Engine_UiSlidePlayback(screen);
+		var stated = new int[screen.Nodes.Length];
+		foreach (BgfSlide slide in document.Slides)
+		{
+			if (!slide.IsMaster && slide.OwnerElement >= 0 && slide.OwnerElement < stated.Length)
+			{
+				stated[slide.OwnerElement] = 1;
+			}
+		}
+
+		playback.Step(stated, null, 0L, null, now =>
+		{
+			foreach (int meter in meters)
+			{
+				playback.GoToTime(meter, time, now);
+			}
+		});
+		float[] values = playback.Values;
+		float x = 1f, y = 1f;
+		int steps = 0;
+		for (int at = box; at >= 0 && at < document.Elements.Length && steps < MaxChain; ++steps)
+		{
+			BgfElement element = document.Elements[at];
+			if (Read(element, ScaleX) is { } fileX)
+			{
+				float sx = Played(values, at, Engine_UiSlidePlayback.Channel.ScaleX) ?? fileX;
+				float sy = Played(values, at, Engine_UiSlidePlayback.Channel.ScaleY) ?? Read(element, ScaleY) ?? sx;
+				x *= sx;
+				y *= sy;
+			}
+
+			at = element.ParentOrdinal;
+		}
+
+		return (x * ExtentScale, y * ExtentScale);
+	}
+
+	/// <summary>The extent's scale to the box's units (flt_8206D228, splatted at 0x8227AF70).</summary>
+	public const float ExtentScale = 100f;
+
+	private static float? Played(float[] values, int ordinal, Engine_UiSlidePlayback.Channel channel)
+	{
+		int at = (ordinal * Engine_UiSlidePlayback.Channels) + (int)channel;
+		return at < values.Length && !float.IsNaN(values[at]) ? values[at] : null;
+	}
+
 	private static float? Read(BgfElement element, uint id) =>
 		!element.TryGetAttribute(id, out BgfAttribute attribute) ? null
 		: attribute.Type == BgfValueType.Float ? attribute.AsFloat()

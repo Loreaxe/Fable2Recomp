@@ -557,7 +557,7 @@ public sealed partial class Engine_UiSpellAssign : Node3D
 		}
 
 		_cell = wanted;
-		Engine_UiSource.Current.AssignSpell(Row_, choices[_cell]);
+		Engine_UiSource.Current.AssignSpell(Row_, choices[_cell], Engine_UiSource.Current.ActingPlayer);
 		SetLive(_state);
 		return true;
 	}
@@ -581,7 +581,7 @@ public sealed partial class Engine_UiSpellAssign : Node3D
 		{
 			if (_state.Offers(slot, will))
 			{
-				Engine_UiSource.Current.AssignSpell(slot, will);
+				Engine_UiSource.Current.AssignSpell(slot, will, Engine_UiSource.Current.ActingPlayer);
 				++copied;
 			}
 		}

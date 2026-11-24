@@ -767,7 +767,7 @@ bool GuestJoinedSession(const uint8_t* base) {
 
 extern "C" {
 
-/// THE GUEST'S STATEMENTS TO ITS PRESENTATIONS (hooks/gui_slide_hooks.cpp), oldest first: six
+/// THE GUEST'S STATEMENTS TO ITS PRESENTATIONS (hooks/gui_element_hooks.cpp), oldest first: six
 /// words each — kind (1 slide entry, 2 paused, 3 attribute, 4 active), presentation, root name
 /// hash, element ordinal, then the slide / paused / attribute id / on, and the attribute's value
 /// bits. Takes them; returns how many were written.
@@ -2922,7 +2922,8 @@ REFII_HOST_ABI_EXPORT void RefiiHostMenuChunkCounters(uint64_t* out_recorded, ui
 /// read here rather than posted.
 ///
 /// `limit` is `dword_83319620`. The image holds 150; `sub_82378618` — the front-end enter,
-/// vtable slot 0x820A9260 — unconditionally stores 6 over it before the menu can dispatch. So
+/// vtable slot 0x820A9260 — unconditionally stores 6 over it before the menu can dispatch, and
+/// our post-hook on it (frontend_stated.cpp) raises that to 10. So
 /// this is read live and is only meaningful once the front end has entered, which is the same
 /// moment the count below becomes meaningful.
 ///

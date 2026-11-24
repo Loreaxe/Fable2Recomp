@@ -14,8 +14,9 @@ using Refii.Ui;
 /// `LOAD_CARD_SELECTED`); nothing in the 587 shipped chunks enumerates a slot or lays a card
 /// out. The layout is in the FILE, read from the slide table.
 ///
-/// Six cards, hard-authored, matching `sub_82378618`'s save cap of 6 stored over
-/// `dword_83319620` on front-end entry.
+/// Six cards, hard-authored. The fan keeps every save the guest lists and shows five to a page
+/// (<see cref="Engine_FrontEndSavePages"/>), each page laid out by the guest's own rule for that many
+/// saves, so a first page of five is the original fan; LB/LT and RB/RT turn the page.
 ///
 /// Two tiers of slide:
 /// <list type="bullet">
@@ -166,7 +167,7 @@ public partial class Engine_FrontEndSaveCards : Node3D
 	public const string BackgroundName = "Background";
 
 	/// <summary>
-	/// How many cards the page ships, and the most this can draw. Six from both sides: the artist
+	/// How many cards the page ships, and the most one page can draw. Six from both sides: the artist
 	/// drew six components, and `sub_826E0BE0` at 0x826E0C20 rejects an index at or past
 	/// <c>min(count, 6)</c>:
 	///
@@ -175,8 +176,9 @@ public partial class Engine_FrontEndSaveCards : Node3D
 	/// if ( a2 &lt; 0 || a2 &gt;= ((((v4 &gt;&gt; 2) - 6) &gt;&gt; 31) &amp; ((v4 &gt;&gt; 2) - 6)) + 6 )
 	/// </code>
 	///
-	/// A seventh save could be enumerated and still not reached. Separate mechanism from
-	/// `sub_82378618`'s save limit of 6 — do not fold them into one constant.
+	/// So the guest's own cursor never reaches a seventh save; ours pages instead and commits by
+	/// index (`LoadSave:N`). Separate mechanism from the save limit — do not fold them into one
+	/// constant.
 	/// </summary>
 	public const int MaxCards = 6;
 
@@ -189,20 +191,39 @@ public partial class Engine_FrontEndSaveCards : Node3D
 	/// <summary>The look this draws text with. Without it the description is absent, not wrong.</summary>
 	public Engine_UiTheme? Theme { get; set; }
 
-	/// <summary>The saves currently on the fan, in the guest's own enumeration order.</summary>
+	/// <summary>The saves on the fan, every page's, in the guest's own enumeration order.</summary>
 	public IReadOnlyList<Save> Saves => _saves;
 
 	private readonly List<Save> _saves = new();
 
-	/// <summary>
-	/// The slot the first save is on, 1-based — the guest's own, which centres a short list: the
-	/// load fan's StampSaveCard r6 (`sub_826E1408`, r6 = index + root+0x4C), the co-op picker's
-	/// `+396`. Follows <see cref="SetSaves"/>.
-	/// </summary>
-	public int BaseSlot { get; private set; } = 1;
+	/// <summary>The page shown, 0-based: the cursor's.</summary>
+	public int Page => Engine_FrontEndSavePages.PageOf(Cursor);
 
-	/// <summary>The card slot a save is drawn on, 0-based into <see cref="Fan"/>.</summary>
-	private int SlotOf(int save) => BaseSlot - 1 + save;
+	/// <summary>How many pages the saves fill.</summary>
+	public int PageCount => Engine_FrontEndSavePages.PageCount(_saves.Count);
+
+	/// <summary>The first save on the page shown.</summary>
+	private int PageFirst => Engine_FrontEndSavePages.FirstOn(Page);
+
+	/// <summary>How many saves the page shown carries.</summary>
+	private int PageShown => Engine_FrontEndSavePages.CountOn(_saves.Count, Page);
+
+	/// <summary>
+	/// The card the page's first save is on, 1-based — the guest's own, which centres a short list:
+	/// on the first page the one the guest stated (the load fan's StampSaveCard r6, `sub_826E1408`
+	/// r6 = index + root+0x4C; the co-op picker's `+396`), on a later page its rule for that many
+	/// saves (<see cref="Engine_FrontEndSavePages.BaseSlot"/>).
+	/// </summary>
+	public int BaseSlot =>
+		Page == 0 && _statedBase >= 1 && _statedBase - 1 + PageShown <= MaxCards
+			? _statedBase
+			: Engine_FrontEndSavePages.BaseSlot(PageShown);
+
+	private int _statedBase = 1;
+
+	/// <summary>The card slot a save is drawn on, 0-based into <see cref="Fan"/>; -1 off this page.</summary>
+	private int SlotOf(int save) =>
+		save >= PageFirst && save < PageFirst + PageShown ? BaseSlot - 1 + (save - PageFirst) : -1;
 
 	/// <summary>
 	/// How far the arc slides along x so the <paramref name="count"/> cards drawn from slot
@@ -434,21 +455,20 @@ public partial class Engine_FrontEndSaveCards : Node3D
 	private const float StandInHeight = 520f;
 
 	/// <summary>
-	/// Puts a list of saves on the fan and selects the first. More than six is truncated rather
-	/// than refused, and <see cref="Describe"/> says so — the guest's write path returns 0 once
-	/// six exist, so a longer list means the caller's storage query disagrees with its cap.
-	/// <paramref name="baseSlot"/> is the guest's own first card (<see cref="BaseSlot"/>): the co-op
-	/// picker centres even a single save (`sub_8243B070`: one or two saves start at card 3).
+	/// Puts a list of saves on the fan, every one of them, and selects the first.
+	/// <paramref name="baseSlot"/> is the guest's own first card for its list (<see cref="BaseSlot"/>):
+	/// the co-op picker centres even a single save (`sub_8243B070`: one or two saves start at card 3).
 	/// </summary>
 	public void SetSaves(IReadOnlyList<Save> saves, int baseSlot)
 	{
 		_saves.Clear();
-		for (int i = 0; i < saves.Count && i < MaxCards; i++)
+		_marked.Clear();
+		for (int i = 0; i < saves.Count; i++)
 		{
 			_saves.Add(saves[i]);
 		}
 
-		BaseSlot = System.Math.Clamp(baseSlot, 1, MaxCards);
+		_statedBase = System.Math.Clamp(baseSlot, 1, MaxCards);
 		Cursor = 0;
 		_lockLeft = _lockRight = 0.0;
 		ApplyPortraits();
@@ -456,30 +476,132 @@ public partial class Engine_FrontEndSaveCards : Node3D
 	}
 
 	/// <summary>
-	/// Puts each save's portrait on the card it is drawn on. Only the albedo changes — the atlas
-	/// rectangle rides on `Uv1Scale`/`Uv1Offset` and a portrait is a whole texture. A save with
-	/// no portrait keeps the authored `loadingcardback`.
+	/// Puts each save of the page shown on its card's portrait. Only the albedo changes — the atlas
+	/// rectangle rides on `Uv1Scale`/`Uv1Offset` and a portrait is a whole texture. A save with no
+	/// portrait shows the card's authored `loadingcardback`, put back when a page turn leaves a card
+	/// to such a save.
 	/// </summary>
 	private void ApplyPortraits()
 	{
-		int first = BaseSlot - 1;
-		for (int i = 0; i < _saves.Count; i++)
+		for (int slot = 0; slot < MaxCards; slot++)
 		{
-			int slot = first + i;
-			if (slot < 0 || slot >= MaxCards || _cards[slot] is not { } card ||
-				_saves[i].Portrait is not { } portrait)
+			if (_cards[slot] is not { } card ||
+				Engine_UiTheme.FindByName(card, PortraitName) is not MeshInstance3D quad)
 			{
 				continue;
 			}
 
-			if (Engine_UiTheme.FindByName(card, PortraitName) is MeshInstance3D quad)
+			if (!_authoredPortraitTaken[slot])
 			{
-				// The clone owns its own material (`CloneFace` duplicates the node, the builder
-				// gives each quad its own), so this cannot leak onto the shipped card.
-				Engine_UiSceneBuilder.SetQuadTexture(quad, portrait);
+				Engine_UiSceneBuilder.QuadPaint paint = Engine_UiSceneBuilder.DescribeQuad(quad);
+				_authoredPortrait[slot] = paint.Texture;
+				_authoredTint[slot] = (paint.Tint, paint.TintAmount);
+				_authoredOpacity[slot] = paint.Opacity;
+				_authoredPortraitTaken[slot] = true;
+			}
+
+			int save = PageFirst + (slot - (BaseSlot - 1));
+			bool shown = save >= PageFirst && save < PageFirst + PageShown;
+			Texture2D? portrait = shown ? _saves[save].Portrait : null;
+
+			// The clone owns its own material (`CloneFace` duplicates the node, the builder gives
+			// each quad its own), so this cannot leak onto the shipped card.
+			Engine_UiSceneBuilder.SetQuadTexture(quad, portrait ?? _authoredPortrait[slot]);
+
+			bool dimmed = shown && save == DimmedSave;
+			(Color tint, float amount) = _authoredTint[slot];
+			Engine_UiSceneBuilder.SetQuadOpacity(quad, _authoredOpacity[slot] * (dimmed ? DimmedOpacity : 1f));
+			Engine_UiSceneBuilder.SetQuadTint(quad, dimmed ? DimmedTint : tint, amount);
+		}
+	}
+
+	private readonly Texture2D?[] _authoredPortrait = new Texture2D?[MaxCards];
+
+	private readonly (Color Tint, float Amount)[] _authoredTint = new (Color, float)[MaxCards];
+
+	private readonly float[] _authoredOpacity = new float[MaxCards];
+
+	private readonly bool[] _authoredPortraitTaken = new bool[MaxCards];
+
+	/// <summary>
+	/// The save whose card is stamped as the co-op picker stamps player one's own save, -1 for none.
+	/// The opener (TU1 `sub_8243B070`, disc `sub_8247C328`) passes `r6 = (own != save)` to the card
+	/// stamp (`xori r6` 0x8243b2b0, disc 0x8247c568), own = `sub_82439630` / disc `sub_8247A828`.
+	/// </summary>
+	public int DimmedSave
+	{
+		get => _dimmedSave;
+		set
+		{
+			if (_dimmedSave != value)
+			{
+				_dimmedSave = value;
+				ApplyPortraits();
 			}
 		}
 	}
+
+	private int _dimmedSave = -1;
+
+	/// <summary>
+	/// The stamp's `GuiElement_SetOpacity_p(screenshot, 30)` (TU1 `flt_820992A4` 0x8243b5d0, disc
+	/// `flt_82099304` 0x8247c888): the element's own 100 (coopscreen.bgf) made 30, so the quad's
+	/// accumulated opacity scales by 0.3.
+	/// </summary>
+	public const float DimmedOpacity = 0.30f;
+
+	/// <summary>
+	/// The stamp's colour `7F 7F FF FF` (TU1 `word_83319BA8` → `sub_82425C58` 0x8243b60c, disc
+	/// `word_83319AD8` → `sub_823F80F0` 0x8247c8c4), the quad's tint colour: its writer `sub_8286DFD0`
+	/// lays bytes (2, 1, 0, 3) into the record (0x8286e0e8..0x8286e184) as the quad's own file
+	/// reader packs an authored colour (0x8286e5d8..0x8286e5fc). The weight is the quad's own.
+	/// </summary>
+	public static readonly Color DimmedTint = new(1f, 0x7F / 255f, 0x7F / 255f);
+
+	/// <summary>
+	/// Turns to the next page (<paramref name="direction"/> &gt; 0) or the previous one, the cursor on
+	/// its first card or, paging back, its last. True when there was a page to turn to.
+	/// </summary>
+	public bool TurnPage(int direction)
+	{
+		int to = Engine_FrontEndSavePages.Turn(Cursor, direction, _saves.Count);
+		if (to < 0)
+		{
+			return false;
+		}
+
+		Cursor = to;
+		_lockLeft = _lockRight = 0.0;
+		PageChanged();
+		return true;
+	}
+
+	/// <summary>
+	/// The cards of the new page come up the way the page's own open slide brings them — from the
+	/// closed y (<see cref="ClosedY"/>) over <see cref="OpenMilliseconds"/>.
+	/// </summary>
+	private void PageChanged()
+	{
+		ApplyPortraits();
+		_pageRise = 0.0;
+		for (int i = 0; i < MaxCards; i++)
+		{
+			if (_groups[i] is { } group)
+			{
+				group.Position = Vector3.Zero;
+				group.Rotation = Vector3.Zero;
+			}
+		}
+
+		Refresh();
+		PageTurned?.Invoke();
+	}
+
+	/// <summary>Raised after a page turn, for the caller's indicator and report.</summary>
+	public event System.Action? PageTurned;
+
+	/// <summary>Seconds into the page's rise; at or past the open duration it is done.</summary>
+	private double _pageRise = double.MaxValue;
 
 	/// <summary>
 	/// One frame of the fan's left/right, returning true when the selection moved.
@@ -507,10 +629,16 @@ public partial class Engine_FrontEndSaveCards : Node3D
 			return false;
 		}
 
+		int page = Page;
 		if (Move(direction))
 		{
 			own = MoveLockout;
 			other = 0.0;
+			if (Page != page)
+			{
+				PageChanged();
+			}
+
 			return true;
 		}
 
@@ -554,7 +682,14 @@ public partial class Engine_FrontEndSaveCards : Node3D
 			return false;
 		}
 
+		int page = Page;
 		Cursor = save;
+		if (Page != page)
+		{
+			PageChanged();
+			return true;
+		}
+
 		Refresh();
 		return true;
 	}
@@ -569,10 +704,11 @@ public partial class Engine_FrontEndSaveCards : Node3D
 
 	private double _lockRight;
 
+	/// <summary>One card sideways; at a page's edge onto the neighbouring page (the default, 2026-11-24).</summary>
 	private bool Move(int direction)
 	{
-		int next = Cursor + direction;
-		if (next < 0 || next >= _saves.Count)
+		int next = Engine_FrontEndSavePages.Step(Cursor, direction, _saves.Count);
+		if (next < 0)
 		{
 			return false;
 		}
@@ -597,6 +733,7 @@ public partial class Engine_FrontEndSaveCards : Node3D
 	{
 		Cursor = 0;
 		_lockLeft = _lockRight = 0.0;
+		ApplyPortraits();
 		Refresh();
 	}
 
@@ -610,6 +747,7 @@ public partial class Engine_FrontEndSaveCards : Node3D
 		// Visibility is by SLOT, not by save index: with three saves the base slot is 2, so
 		// cards 2, 3 and 4 draw. Testing `i < _saves.Count` gives the left-aligned fan.
 		int first = BaseSlot - 1;
+		int shown = PageShown;
 		for (int i = 0; i < MaxCards; i++)
 		{
 			if (_cards[i] is not { } card)
@@ -617,7 +755,7 @@ public partial class Engine_FrontEndSaveCards : Node3D
 				continue;
 			}
 
-			card.Visible = i >= first && i < first + _saves.Count;
+			card.Visible = i >= first && i < first + shown;
 
 			if (_groups[i] is { } group)
 			{
@@ -627,6 +765,7 @@ public partial class Engine_FrontEndSaveCards : Node3D
 		}
 
 		SetDescription(_saves.Count == 0 ? string.Empty : _saves[Cursor].Description);
+		SetPageIndicator();
 		LayCards();
 
 		_elapsed = 0.0;
@@ -715,18 +854,14 @@ public partial class Engine_FrontEndSaveCards : Node3D
 		_laidOutPc = PcMode;
 
 		int first = BaseSlot - 1;
-		int count = Mathf.Max(1, _saves.Count);
+		int shown = PageShown;
+		int count = Mathf.Max(1, shown);
 
 		// The fan stands where the file puts its group, slid so the cards actually shown sit
 		// where the full six would: the shipped game leaves a short fan hanging off one side
 		// (five saves draw slots 1..5, so card 1 at x -335 stands alone on the left). The PC row
 		// is laid out about the page's own origin, so the authored offset applies to the fan alone.
-		if (_arc is not null)
-		{
-			_arc.Transform = _laidOutPc
-				? Transform3D.Identity
-				: ArcTransform.TranslatedLocal(new Vector3(ArcCentreOffset(first, _saves.Count), 0f, 0f));
-		}
+		LayArc();
 		float width = CardWidth();
 		float scale = width <= 0f
 			? CardScale
@@ -746,7 +881,7 @@ public partial class Engine_FrontEndSaveCards : Node3D
 			}
 
 			int k = i - first;
-			bool selected = _saves.Count > 0 && k == Cursor;
+			bool selected = _saves.Count > 0 && k == Cursor - PageFirst;
 			float s = scale * (selected ? SelectedGrowth : 1f);
 			_cardTo[i] = new Transform3D(
 				Basis.Identity.Scaled(new Vector3(s, s, 1f)),
@@ -768,6 +903,12 @@ public partial class Engine_FrontEndSaveCards : Node3D
 		if (_laidOutPc != PcMode && _cards[0] is not null)
 		{
 			Refresh();
+		}
+
+		if (_pageRise < OpenMilliseconds / 1000.0)
+		{
+			_pageRise += delta;
+			LayArc();
 		}
 
 		if (!_animating)
@@ -820,6 +961,201 @@ public partial class Engine_FrontEndSaveCards : Node3D
 				card.Transform = _cardFrom[i].InterpolateWith(_cardTo[i], t);
 			}
 		}
+	}
+
+	/// <summary>
+	/// The cards' parent: the authored group slid to centre the page's cards (the fan), or the page's
+	/// origin (the PC row); during a page turn lowered by what is left of the rise from
+	/// <see cref="ClosedY"/>, a plain clamped lerp as the engine's tracks are.
+	/// </summary>
+	private void LayArc()
+	{
+		if (_arc is null)
+		{
+			return;
+		}
+
+		double duration = OpenMilliseconds / 1000.0;
+		float rise = _pageRise >= duration ? 1f : (float)(_pageRise / duration);
+		var drop = new Vector3(0f, ClosedY * (1f - rise), 0f);
+		_arc.Transform = _laidOutPc
+			? Transform3D.Identity.Translated(drop)
+			: ArcTransform.TranslatedLocal(new Vector3(ArcCentreOffset(BaseSlot - 1, PageShown), 0f, 0f) + drop);
+	}
+
+	/// <summary>
+	/// The page indicator's text, Refii's own (<c>{0}</c> the page, <c>{1}</c> the pages), between
+	/// the game's own bumper glyphs, which the glyph proxies redraw for the pad style or the keys
+	/// bound (<see cref="Engine_UiKeyGlyphs.Wrap"/>). Set by the caller from its localised text.
+	/// </summary>
+	public string PageTemplate { get; set; } = "Page {0} / {1}";
+
+	/// <summary>A line above the description — the caller's (the replace pick's "Choose a save to
+	/// replace"); empty for none. A marked save shows <see cref="MarkText"/> there instead.</summary>
+	public string Heading
+	{
+		get => _heading;
+		set
+		{
+			if (_heading != value)
+			{
+				_heading = value;
+				SetPageIndicator();
+			}
+		}
+	}
+
+	private string _heading = string.Empty;
+
+	/// <summary>The heading line while a marked save is selected, in the game's gold.</summary>
+	public string MarkText { get; set; } = "Chosen";
+
+	private readonly HashSet<int> _marked = new();
+
+	/// <summary>Marks a save (the replace pick's chosen ones) — the heading says so while it is selected.</summary>
+	public void SetMarked(int save, bool marked)
+	{
+		if (marked ? _marked.Add(save) : _marked.Remove(save))
+		{
+			Refresh();
+		}
+	}
+
+	public void ClearMarks()
+	{
+		if (_marked.Count != 0)
+		{
+			_marked.Clear();
+			Refresh();
+		}
+	}
+
+	/// <summary>The indicator: a copy of the description's text element, under it.</summary>
+	private MeshInstance3D? _pageIndicator;
+
+	/// <summary>What the indicator last drew, so an unchanged page paints nothing.</summary>
+	private string _pageIndicatorShown = string.Empty;
+
+	/// <summary>The indicator line, empty with one page.</summary>
+	public string PageIndicatorText =>
+		Engine_FrontEndSavePages.Indicator(PageTemplate, Page, PageCount) is { Length: > 0 } said
+			? "<leftbutton.img> " + said + " <rightbutton.img>"
+			: string.Empty;
+
+	/// <summary>The heading line as drawn: the mark for a marked save, else <see cref="Heading"/>.</summary>
+	public string HeadingText =>
+		_saves.Count > 0 && _marked.Contains(Cursor) ? "<s4>" + MarkText + "</s4>" : _heading;
+
+	/// <summary>The heading: a copy of the description's text element, one line above it.</summary>
+	private MeshInstance3D? _headingNode;
+
+	private string _headingShown = string.Empty;
+
+	/// <summary>How far above the description's top the heading's top stands, in its units: one line.</summary>
+	private const float HeadingRise = 38f;
+
+	private void SetPageIndicator()
+	{
+		if (_description is not MeshInstance3D description || Theme is null)
+		{
+			return;
+		}
+
+		if (_pageIndicator is null)
+		{
+			_pageIndicator = (MeshInstance3D)description.Duplicate();
+			_pageIndicator.Name = "PageIndicator";
+			Vector2 box = description.HasMeta("text_box") ? (Vector2)description.GetMeta("text_box") : new Vector2(411f, 96f);
+			float scaleY = description.Transform.Basis.Y.Length();
+			_pageIndicator.Position = description.Position - new Vector3(0f, (box.Y + PageIndicatorGap) * scaleY, 0f);
+			AddChild(_pageIndicator);
+		}
+
+		if (_headingNode is null)
+		{
+			_headingNode = (MeshInstance3D)description.Duplicate();
+			_headingNode.Name = "Heading";
+			_headingNode.Position = description.Position + new Vector3(0f, HeadingRise * description.Transform.Basis.Y.Length(), 0f);
+			AddChild(_headingNode);
+		}
+
+		PaintLine(_pageIndicator, description, PageIndicatorText, ref _pageIndicatorShown);
+		PaintLine(_headingNode, description, HeadingText, ref _headingShown);
+	}
+
+	/// <summary>One line in the description's own font, size and colour, centred in its width.</summary>
+	private void PaintLine(MeshInstance3D node, MeshInstance3D description, string line, ref string shown)
+	{
+		node.Visible = line.Length != 0;
+		if (line == shown || Theme is null)
+		{
+			return;
+		}
+
+		shown = line;
+		Vector2 size = description.HasMeta("text_box") ? (Vector2)description.GetMeta("text_box") : Vector2.Zero;
+		Color colour = description.HasMeta("text_colour") ? (Color)description.GetMeta("text_colour") : Colors.White;
+		Theme.Paint(
+			node, line, description.HasMeta("text_size") ? (int)description.GetMeta("text_size") : 20,
+			new Color(colour.R, colour.G, colour.B, 1f),
+			horizontalAlign: 1, verticalAlign: 0, boxWidth: size.X, boxHeight: 0f, wrapMode: 0);
+	}
+
+	private const float PageIndicatorGap = 8f;
+
+	/// <summary>
+	/// The mouse's page turn on the fan this frame: the wheel's direction (its notches taken), else a
+	/// click on a page arrow (<paramref name="clickTaken"/> then true); 0 for none.
+	/// </summary>
+	public int PointerTurn(Vector2? pointer, bool click, out bool clickTaken)
+	{
+		clickTaken = false;
+		if (pointer is not { } at || !Visible)
+		{
+			return 0;
+		}
+
+		if (Engine_UiPointer.TakeWheel() is var wheel && wheel != 0)
+		{
+			return System.Math.Sign(wheel);
+		}
+
+		if (click && PageArrowAt(at) is var arrow && arrow != 0)
+		{
+			clickTaken = true;
+			return arrow;
+		}
+
+		return 0;
+	}
+
+	/// <summary>
+	/// The page arrow under a canvas point: -1 the previous page's glyph, +1 the next's, 0 for none.
+	/// The glyphs are the indicator's two inline icons, in reading order.
+	/// </summary>
+	public int PageArrowAt(Vector2 at)
+	{
+		if (_pageIndicator is not { Visible: true } indicator || !Visible)
+		{
+			return 0;
+		}
+
+		int seen = 0;
+		foreach (Node child in indicator.GetChildren())
+		{
+			if (child is not MeshInstance3D icon)
+			{
+				continue;
+			}
+
+			++seen;
+			if (Engine_UiPointer.CanvasBounds(icon) is { } bounds && bounds.Grow(8f).HasPoint(at))
+			{
+				return seen == 1 ? -1 : 1;
+			}
+		}
+
+		return 0;
 	}
 
 	/// <summary>
@@ -876,7 +1212,7 @@ public partial class Engine_FrontEndSaveCards : Node3D
 			}
 		}
 
-		return $"[save-cards] saves={_saves.Count} portraits={portraits}/{_saves.Count} cursor={Cursor} slot={slot + 1}/{BaseSlot} " +
+		return $"[save-cards] saves={_saves.Count} page={Page + 1}/{PageCount} portraits={portraits}/{_saves.Count} cursor={Cursor} slot={slot + 1}/{BaseSlot} " +
 			$"art={(HasShippedArt ? "shipped" : "STAND-IN")} " +
 			$"tint={(_background is null ? "none" : "shipped")} " +
 			$"text={(_description is null ? "NOT FOUND" : "shipped")} " +

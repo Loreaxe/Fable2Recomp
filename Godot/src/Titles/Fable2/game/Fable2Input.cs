@@ -39,6 +39,12 @@ public sealed class Fable2Input : GameTitleInput
 			PublishHolds(seen.Buttons);
 		}
 
+		// Player two's save picker on the co-op screen, off player two's own pad.
+		if (pad == CoopPickerPad)
+		{
+			PublishCoopPicker(pad, seen);
+		}
+
 		// Local player two's own expression wheel, off their own pad.
 		if (pad == PlayerTwoPad)
 		{
@@ -49,7 +55,8 @@ public sealed class Fable2Input : GameTitleInput
 		// opened it. Pad 0's is read before the mods withhold anything.
 		if (pad == HostMenuPad)
 		{
-			PublishMenu(pad, seen.Buttons, seen.LeftX, seen.LeftY, seen.RightX, seen.RightY);
+			PublishMenu(pad, seen.Buttons, seen.LeftX, seen.LeftY, seen.RightX, seen.RightY,
+				seen.LeftTrigger, seen.RightTrigger);
 		}
 
 		return published;
@@ -215,6 +222,19 @@ public sealed class Fable2Input : GameTitleInput
 			wheelBits |= ButtonA | ButtonB | ButtonX | ButtonY | LeftShoulder | RightShoulder;
 		}
 
+		// PLAYER TWO'S SAVE PICKER PAST THE GUEST'S SIX: what Engine_CoopSavePicker withholds of
+		// player two's left, right and A. The stick emits the same 30/31 the D-pad does, so its X is
+		// held back on the withheld side.
+		int leftX = state.LeftX;
+		if (pad == CoopPickerPad && CoopPickerWithheld != Engine_CoopSavePicker.Press.None)
+		{
+			wheelBits |= ((CoopPickerWithheld & Engine_CoopSavePicker.Press.Left) != 0 ? DpadLeft : 0u) |
+				((CoopPickerWithheld & Engine_CoopSavePicker.Press.Right) != 0 ? DpadRight : 0u) |
+				((CoopPickerWithheld & Engine_CoopSavePicker.Press.Accept) != 0 ? ButtonA : 0u);
+			leftX = (CoopPickerWithheld & Engine_CoopSavePicker.Press.Left) != 0 ? System.Math.Max(leftX, 0) : leftX;
+			leftX = (CoopPickerWithheld & Engine_CoopSavePicker.Press.Right) != 0 ? System.Math.Min(leftX, 0) : leftX;
+		}
+
 		uint maskBits = ~filter(uint.MaxValue) | wheelBits;
 		_heldAcrossUnmask[pad] |= _maskBits[pad] & ~maskBits & buttons;
 		_heldAcrossUnmask[pad] &= buttons;
@@ -228,7 +248,7 @@ public sealed class Fable2Input : GameTitleInput
 			// The stick is masked with the buttons: `sub_826E39C0` dead-zones the left stick
 			// against ±0.75 and emits the same codes the D-pad does — 28/29 for Y at
 			// 0x826E3C04/0x826E3C58, 30/31 for X at 0x826E3B50/0x826E3BAC.
-			menuMask ? 0 : state.LeftX, menuMask ? 0 : state.LeftY,
+			menuMask ? 0 : leftX, menuMask ? 0 : state.LeftY,
 			// The card takes the right stick — it turns the model on the front and scrolls the
 			// description on the back — so the camera does not swing under it. The left stick
 			// stays live: the card does not pause the game.
@@ -495,7 +515,8 @@ public sealed class Fable2Input : GameTitleInput
 	/// cannot drift. The stick folds into the direction on the shipped threshold —
 	/// `THUMBSTICK_RELEASE_THRESHOLD` 0.65, from `guistateandconstants.lua`.
 	/// </summary>
-	private static void PublishMenu(int pad, uint buttons, int leftX, int leftY, int rightX, int rightY)
+	private static void PublishMenu(int pad, uint buttons, int leftX, int leftY, int rightX, int rightY,
+		uint leftTrigger, uint rightTrigger)
 	{
 		// A NEW SOURCE HANDS THE MENU NO PRESS. When the menu changes hands, a button already down
 		// on the new pad is taken as held, not as a fresh edge.
@@ -508,6 +529,7 @@ public sealed class Fable2Input : GameTitleInput
 			_tabPrevWasDown = (buttons & LeftShoulder) != 0;
 			_tabNextWasDown = (buttons & RightShoulder) != 0;
 			_equipWasDown = (buttons & ButtonX) != 0;
+			_pageButtons.Hold((buttons & LeftShoulder) != 0, (buttons & RightShoulder) != 0, leftTrigger, rightTrigger);
 		}
 
 		// The deadzone is ours here: `page.lua` reads `GUI.State.RightThumbStickY` raw (page.dis
@@ -596,12 +618,69 @@ public sealed class Fable2Input : GameTitleInput
 		MenuTabPrevPressed = lb && !_tabPrevWasDown;
 		MenuTabNextPressed = rb && !_tabNextWasDown;
 		MenuEquipPressed = x && !_equipWasDown;
+		(MenuPageNextPressed, MenuPagePrevPressed) = _pageButtons.Feed(lb, rb, leftTrigger, rightTrigger);
 		_acceptWasDown = a;
 		_backWasDown = b;
 		_flipWasDown = y;
 		_tabPrevWasDown = lb;
 		_tabNextWasDown = rb;
 		_equipWasDown = x;
+	}
+
+	/// <summary>
+	/// The pad of the player whose co-op save picker is up — local player two's, or pad 0 on an
+	/// online joiner — while it is up, else −1. Set by <c>GameUi</c> every frame.
+	/// </summary>
+	public static int CoopPickerPad
+	{
+		get => _coopPickerPad;
+		set
+		{
+			if (value != _coopPickerPad)
+			{
+				_coopPickerSource = -1;
+			}
+
+			_coopPickerPad = value;
+		}
+	}
+
+	private static int _coopPickerPad = -1;
+
+	/// <summary>Player two's presses the guest must not see on its picker this frame. Set by <c>GameUi</c>.</summary>
+	public static Engine_CoopSavePicker.Press CoopPickerWithheld { get; set; }
+
+	private static Engine_CoopSavePicker.PadEdges _coopPickerEdges;
+	private static Engine_CoopSavePicker.Press _coopPickerPresses;
+	private static int _coopPickerSource = -1;
+
+	/// <summary>The picker's presses since the last take, and clears them.</summary>
+	public static Engine_CoopSavePicker.Press TakeCoopPickerPresses()
+	{
+		Engine_CoopSavePicker.Press presses = _coopPickerPresses;
+		_coopPickerPresses = Engine_CoopSavePicker.Press.None;
+		return presses;
+	}
+
+	/// <summary>
+	/// Edge-detects the picker's presses off its player's pad. A pad newly taken hands no press:
+	/// whatever is down then is taken as held.
+	/// </summary>
+	private static void PublishCoopPicker(int pad, PadState seen)
+	{
+		uint buttons = seen.Buttons;
+		Engine_CoopSavePicker.Press edges = _coopPickerEdges.Feed(
+			(buttons & DpadLeft) != 0, (buttons & DpadRight) != 0, (buttons & ButtonA) != 0,
+			(buttons & LeftShoulder) != 0, (buttons & RightShoulder) != 0, seen.LeftTrigger, seen.RightTrigger,
+			seen.LeftX);
+		if (pad != _coopPickerSource)
+		{
+			_coopPickerSource = pad;
+			_coopPickerPresses = Engine_CoopSavePicker.Press.None;
+			return;
+		}
+
+		_coopPickerPresses |= edges;
 	}
 
 	/// <summary>The pad the host menu read last frame — see <see cref="PublishMenu"/>.</summary>
@@ -738,6 +817,18 @@ public sealed class Fable2Input : GameTitleInput
 
 	private static bool _tabPrevWasDown;
 	private static bool _tabNextWasDown;
+
+	/// <summary>
+	/// True on the frame RB or RT (LB or LT) went down — the save fans' next (previous) page. The
+	/// keyboard reaches them through the bumpers' rebindable actions (<c>tab_next</c> PageDown / ],
+	/// <c>tab_prev</c> PageUp / [); the guest's main menu acts on none of the four in its fan
+	/// (`sub_826DEE40` handles codes 26..38 only).
+	/// </summary>
+	public static bool MenuPageNextPressed { get; private set; }
+
+	public static bool MenuPagePrevPressed { get; private set; }
+
+	private static Engine_FrontEndSavePages.PageButtons _pageButtons;
 
 	/// <summary>True on the frame Y went down — the received-item card's flip.</summary>
 	public static bool MenuFlipPressed { get; private set; }

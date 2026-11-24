@@ -35,6 +35,20 @@ set(REFII_HOOK_LIBRARIES
     ${REFII_VFS_LIBRARIES}
 )
 
+# The front end's Lua interpreter: included by mod_frontend_lua_vm.cpp, never compiled on its own,
+# and that one unit takes the vendored sources' warnings as they are (as the oracle's does).
+set_source_files_properties(${REFII_LUA_FRONTEND_VM_PARTS} PROPERTIES HEADER_FILE_ONLY TRUE)
+list(APPEND REFII_HOOK_SOURCES ${REFII_LUA_FRONTEND_VM_PARTS})
+foreach(_refii_vm_unit IN LISTS REFII_VFS_HOOK_SOURCES)
+    if(_refii_vm_unit MATCHES "/mod_frontend_lua_vm\\.cpp$")
+        if(MSVC)
+            set_source_files_properties(${_refii_vm_unit} PROPERTIES COMPILE_OPTIONS "/w")
+        else()
+            set_source_files_properties(${_refii_vm_unit} PROPERTIES COMPILE_OPTIONS "-w")
+        endif()
+    endif()
+endforeach()
+
 list(FILTER REFII_HOOK_SOURCES EXCLUDE REGEX "^$")
 
 if(REFII_HOOK_SOURCES)

@@ -5,7 +5,7 @@ namespace Refii.Ui;
 /// <summary>
 /// THE SLIDES THE GUEST TELLS ITS PRESENTATIONS, by element: every explicit `GotoSlide`
 /// (`sub_82BB5760`), play / pause (`sub_82BB5CB8`), attribute, `active`, text and texture write as
-/// gui_slide_hooks.cpp queues them (taken by <see cref="Take"/>; a headless presentation's keyed
+/// gui_element_hooks.cpp queues them (taken by <see cref="Take"/>; a headless presentation's keyed
 /// to its file through <see cref="Headless"/>) —
 /// native screen code, the GUI registries, Lua `goToSlide`, a file's Logic commands, the page
 /// arrows — keyed by presentation address and element ordinal. A book reads them through
@@ -269,6 +269,13 @@ public static class Engine_UiSlideStatements
 			for (int r = 0; r < records; ++r)
 			{
 				int at = r * 6;
+				if (Engine_UiStatementRecord.Recording)
+				{
+					Engine_UiStatementRecord.Note('S',
+						$"{TakeBuffer[at]} {Engine_UiStatementRecord.FileOf(TakeBuffer[at + 1], TakeBuffer[at + 2], TakeBuffer[at + 3])} " +
+						$"{TakeBuffer[at + 3] & 0x7FFFFFFFu} {TakeBuffer[at + 4]:X} {TakeBuffer[at + 5]:X}");
+				}
+
 				Apply(TakeBuffer[at], TakeBuffer[at + 1], TakeBuffer[at + 2], TakeBuffer[at + 3],
 					TakeBuffer[at + 4], TakeBuffer[at + 5]);
 			}
@@ -290,6 +297,13 @@ public static class Engine_UiSlideStatements
 				}
 
 				at += length;
+				if (Engine_UiStatementRecord.Recording)
+				{
+					Engine_UiStatementRecord.Note('T',
+						$"{Engine_UiStatementRecord.FileOf(TextWords[r * 4], TextWords[(r * 4) + 1], TextWords[(r * 4) + 2])} " +
+						$"{TextWords[(r * 4) + 2] & 0x7FFFFFFFu} '{new string(chars)}'");
+				}
+
 				ApplyText(TextWords[r * 4], TextWords[(r * 4) + 1], TextWords[(r * 4) + 2], new string(chars));
 			}
 		}

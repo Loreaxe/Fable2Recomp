@@ -101,7 +101,6 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/gui_natives.cpp
     ${REFII_VFS_ROOT}/src/hooks/display_box_hooks.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_registry_hooks.cpp
-    ${REFII_VFS_ROOT}/src/hooks/gui_slide_hooks.cpp
     ${REFII_VFS_ROOT}/src/hooks/reticule_hooks.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_menu_hooks.cpp
     # The pause minimap's markers and the inline texture stores, stated for Godot.
@@ -120,6 +119,8 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/crime_screen_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/frontend_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/logbook_stats_stated.cpp
+    # The ported screens (S7): handler slots replaced, keeping the guest's statements and game calls.
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stubs.cpp
     ${REFII_VFS_ROOT}/src/hooks/preview_figures_stated.cpp
     # The shopkeeper, the previewed item, the pending weapons and the experience counter's
     # visibility, stated from the calls that set them.
@@ -165,8 +166,10 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/particle_dress.cpp
     # Mod emitters' spin and mod mesh particles' rest orientation, read from the same dress table.
     ${REFII_VFS_ROOT}/src/hooks/particle_motion.cpp
-    # Mods' Lua on the title and the front end, in the current presentation's Gameface state.
+    # Mods' Lua on the title and the front end: a host Lua state per front-end presentation, and
+    # its interpreter (the vendored Lua 5.1.2 as the guest configures it, REFII_LUA_FRONTEND_VM_PARTS).
     ${REFII_VFS_ROOT}/src/hooks/mod_frontend_lua.cpp
+    ${REFII_VFS_ROOT}/src/hooks/mod_frontend_lua_vm.cpp
     ${REFII_VFS_ROOT}/src/hooks/spell_fx_lifetime.cpp
     ${REFII_VFS_ROOT}/src/hooks/target_highlight.cpp
     ${REFII_VFS_ROOT}/src/hooks/entity_appearance.cpp

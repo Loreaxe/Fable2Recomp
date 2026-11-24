@@ -38,6 +38,8 @@ PPC_EXTERN_FUNC(__imp__rex_lhGuiGamerCard_SetName);
 namespace refii::vfs {
 // gui_stated_screens.cpp: a menu box opened, for the question that latches the modal on it.
 void StatedMenuBoxOpened();
+// gui_stated_screens.cpp: brackets a box opener; the screen setter inside it states nothing.
+void StatedScreenBoxOpening(int32_t delta);
 }  // namespace refii::vfs
 
 namespace {
@@ -119,6 +121,13 @@ void StateModal(uint32_t kind, uint32_t id, const std::string& text,
 // `sub_82337C68`): it acts only while `gui28+40 == 1` (0x8236fa90), sets the mode and id, pushes
 // screen 19 (query) or 3 (message) and writes the text; it releases the text on the way out, so
 // the text is read before the call. Stated only when the box opened.
+//
+// THE SCREEN UP IS UNCHANGED ACROSS THE CALL. The opener saves the screen id (`lwz r26,4(r11)`
+// on `*(GUI+56)`, 0x8236fab4 / disc 0x82337cb0), calls the setter (`li r4,0x13` / `li r4,3`,
+// 0x8236fabc / 0x8236fb50; disc `li r4,0x12` 0x82337cb8, `li r4,3` 0x82337d4c), which files the
+// box's presentation beside the one up (`sub_823DC9D8`) and writes the id, then writes the saved
+// id back (`stw r26,4(r10)` 0x8236fc90 / disc 0x82337e8c). The box stands over the screen, which
+// stays up, so the setter's statement inside the call is held back.
 REX_EXTERN(rex_lhGuiManager_OpenModal) {
     const uint32_t owner = ctx.r3.u32;
     const uint32_t text = ctx.r4.u32;
@@ -126,11 +135,9 @@ REX_EXTERN(rex_lhGuiManager_OpenModal) {
     const uint32_t id = ctx.r6.u32;
     const bool opens = refii::vfs::LoadGuestU32(base, owner + 40u) == 1u;
     const std::string said = opens ? refii::vfs::ReadStatedWideLhString(base, text) : std::string();
-    // The opener saves the screen that is up, sets the box's screen and puts the saved one back
-    // (0x8236fc90, disc 0x82337e8c): the screen stated before the call stands after it.
-    const uint32_t screen = refii_bridge_stated_screen_now();
+    refii::vfs::StatedScreenBoxOpening(1);
     __imp__rex_lhGuiManager_OpenModal(ctx, base);
-    refii_bridge_stated_screen(screen);
+    refii::vfs::StatedScreenBoxOpening(-1);
     if (opens && refii::vfs::LoadGuestU32(base, owner + 40u) == kind) {
         refii_bridge_stated_modal(kind, id);
         StateModal(kind, id, said);
@@ -153,10 +160,11 @@ REX_EXTERN(rex_lhGuiManager_OpenNumericAdjuster) {
     const int32_t flags = static_cast<int32_t>(ctx.r10.u32);
     const bool opens = refii::vfs::LoadGuestU32(base, owner + 40u) == 1u;
     const std::string said = opens ? refii::vfs::ReadStatedWideLhString(base, text) : std::string();
-    // As the modal opener: the saved screen is put back (0x8236fd64, disc 0x82337f5c).
-    const uint32_t screen = refii_bridge_stated_screen_now();
+    // As the modal opener: the screen id saved before the setter (`lwz r21,4(r10)` 0x8236fcfc,
+    // disc 0x82337ef4) is written back (`stw r21,4(r5)` 0x8236fd64, disc 0x82337f5c).
+    refii::vfs::StatedScreenBoxOpening(1);
     __imp__rex_lhGuiManager_OpenNumericAdjuster(ctx, base);
-    refii_bridge_stated_screen(screen);
+    refii::vfs::StatedScreenBoxOpening(-1);
     if (opens && refii::vfs::LoadGuestU32(base, owner + 40u) == 5u) {
         refii_bridge_stated_modal(5u, id);
         StateModal(5u, id, said, {value, minimum, maximum, step, flags},

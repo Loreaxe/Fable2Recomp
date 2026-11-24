@@ -131,14 +131,8 @@
 0x82876288 = { name = "rex_GuiElement_SetPosition" }
 0x82876BF8 = { name = "rex_GuiElement_SetTexture" }
 # The presentation's slide funnel (slides = pres+0x238, component, slide, flag) every slide change
-# reaches; the Gameface Lua methods' presentation getter (L), getElement (L) and setAttribute (L);
-# and the presentation's command executor (pres, &command) — the queued Lua goTo* and the .bgf's
-# authored actions (gui_element_hooks.cpp).
+# reaches (gui_element_hooks.cpp).
 0x82267158 = { name = "rex_GuiSlides_GoTo" }
-0x82265E20 = { name = "rex_GamefaceLua_Presentation" }
-0x82C589E8 = { name = "rex_GamefaceLua_GetElement" }
-0x82C59170 = { name = "rex_GamefaceLua_SetAttribute" }
-0x82C695D0 = { name = "rex_GamefacePresentation_Execute" }
 # XamShowKeyboardUI's one guest thunk (`b XamShowKeyboardUI`), called by the rename at 0x82970ED0;
 # keyboard_ui.cpp leaves the request pending for the host to answer.
 0x831314B8 = { name = "rex_Xam_ShowKeyboardUI" }
@@ -684,21 +678,67 @@
 0x828773E8 = { name = "rex_GuiElement_SetFlagActive" }
 # HEADLESS PRESENTATIONS (Fable3/src/hooks/src/headless_presentation_hooks.cpp, the shared core
 # core/headless_presentation.h): CGameface's maker (K, path) — vtable 0x82002A80 +28, its one
-# caller the load at 0x825F286C — its destroy (K, pres; +32) and per-frame pass (K, render; +40);
-# the element service's (vtable 0x82006E58) child-by-name (svc, hash, parent; +84) and child walk
-# (svc, parent, out, all; +92), both vtable slots outside every IDA function, sized by their flow
-# (0x82C6EC30..0x82C6EC78 `blr`, 0x82C6EC88..0x82C6ED4C `b __restgprlr_28`); SetParameterString
+# caller the load at 0x825F286C — and its destroy (K, pres; +32); the element service's (vtable 0x82006E58)
+# child-by-name (svc, hash, parent; +84) and child walk (svc, parent, collector, all; +92), both vtable
+# slots outside every IDA function, sized by their flow (0x82C6EC30..0x82C6EC78 `blr`, 0x82C6EC88..0x82C6ED4C
+# `b __restgprlr_28`), answered for the handles (stated_element_hooks.cpp); SetParameterString
 # (name, value, pres) and the presentation chunk runner (script, pres).
 0x82C558F8 = { name = "rex_CGameface_CreatePresentation" }
 0x82C55C40 = { name = "rex_CGameface_DestroyPresentation" }
+# THE GAMEFACE IS THE HOST'S (headless_presentation_hooks.cpp, THE GAMEFACE): its ctor (block, input,
+# render engine), dtor (K), loader vf +16 (K, path, bool*), the gameplan slots vf +20 / +24 (`lwz
+# r3,0x248(r3); b`, outside every IDA function), the per-frame pass vf +40 (K, byte) and the scene
+# manager's reset / draw vf +44 / +48 (`lwz r3,0x20C(r3)` … `bctr`, outside every IDA function).
+0x82C553C8 = { name = "rex_CGameface_Construct" }
+0x82C55610 = { name = "rex_CGameface_Destructor" }
+0x82C556B8 = { name = "rex_CGameface_Load" }
+0x82C558A8 = { name = "rex_CGameface_GameplanLoad", size = 0x8 }
+0x82C558B0 = { name = "rex_CGameface_GameplanFind" }
 0x82279AC8 = { name = "rex_CGameface_Update" }
+0x82290818 = { name = "rex_CGameface_ResetScenes", size = 0x14 }
+0x82179260 = { name = "rex_CGameface_RenderScenes", size = 0x14 }
 0x82C6EC30 = { name = "rex_GfService_ChildByName", size = 0x4C }
 0x82C6EC88 = { name = "rex_GfService_CollectChildren", size = 0xC8 }
 0x82B74698 = { name = "rex_GuiPresentation_SetParameterString" }
 # SetParameterFloat (name, f1 value, pres): the mini-game bar's Float1..3 (0x8271607C / 0x827160AC /
-# 0x827160E8, 0x82714430, 0x82714EEC / 0x82714F28), stated for a headless presentation.
+# 0x827160E8, 0x82714430, 0x82714EEC / 0x82714F28) and the thumbstick stores; both setters answered from the host store, stated.
 0x82B745D0 = { name = "rex_GuiPresentation_SetParameterFloat" }
+# CPresentation vtable +4 Update (pres, clock), called by the screen activation at 0x825F2DD4: nothing
+# runs on a headless block; vtable +24 (pres, event, element, &a, &b, b1, b2): the event record,
+# written host-side (no drain); +108 / +112, the event callback register / unregister (pres, element,
+# id, fn, ctx): kept host-side (headless_presentation_hooks.cpp, THE EVENT REGISTRATIONS).
+0x8225D9F0 = { name = "rex_CPresentation_Update" }
+0x82C69988 = { name = "rex_CPresentation_QueueEvent" }
+0x82C69360 = { name = "rex_CPresentation_RegisterEventCallback" }
+0x82C693C0 = { name = "rex_CPresentation_UnregisterEventCallback" }
 0x82877A48 = { name = "rex_GuiPresentation_RunScript" }
+# THE STATED ELEMENTS (Fable3/src/hooks/src/stated_element_hooks.cpp): the element service's +12
+# GetAttribute, +16 GetAttributeRecord, +72 Store, +76 TestFlags (`lhz; and; addic; subfe; blr`,
+# outside every IDA function), +80 Flags and +88 Parent (`lwz r3,0xC(r4); blr`, outside every IDA
+# function); the slide manager's (vtable 0x82002AC0) +44 SetTime and +60 SetPaused; the attribute record
+# lookup (element, id) and the owner walk (service, element); CHUDParticle's per-frame update
+# (particle, &changed), which makes no guest particle.
+0x82C6E8E0 = { name = "rex_GfService_GetAttribute" }
+0x82C6E880 = { name = "rex_GfService_GetAttributeRecord" }
+0x821C9F98 = { name = "rex_GfService_SetElementAttribute" }
+0x821D1C78 = { name = "rex_GfService_TestFlags", size = 0x14 }
+0x821C9C38 = { name = "rex_GfService_SetElementFlags" }
+0x82C6EC80 = { name = "rex_GfService_Parent", size = 0x8 }
+0x82C6EFE8 = { name = "rex_GuiSlides_SetTime" }
+0x82195608 = { name = "rex_GuiSlides_SetPaused" }
+0x821C9F40 = { name = "rex_GuiElement_FindAttribute" }
+0x8227E390 = { name = "rex_GuiElement_OwnerOf" }
+0x82BCEEA0 = { name = "rex_HudParticle_Update" }
+# The readers of Gameface's per-frame runtime, answered from statements (Fable3/src/hooks/src/
+# ui_reader_hooks.cpp): CHUDExpandableBox vf+12 (box, f1 ms), the calibration whose extents Godot
+# states; GetCurrentSlide (elem, pres) from the slides the guest set; the world icons' fade timers
+# (the released slots and specials; record, visible) without the Hidden step Godot draws; the scroll
+# gate (elem, pres), the owner's Master end as Godot's playback states it.
+0x8227AEB0 = { name = "rex_HudExpandableBox_Tick" }
+0x8227E438 = { name = "rex_GuiElement_CurrentSlide" }
+0x821CAA98 = { name = "rex_WorldIcon_ReleasedTick" }
+0x82B873A0 = { name = "rex_WorldIcon_HiddenTick" }
+0x82878358 = { name = "rex_GuiElement_TimeReached" }
 # The HUD text boxes and the TopBox queue (Fable3/src/hooks/src/topbox_hooks.cpp): a box's lines
 # (R7, box hash, lines*, f1), the queue's post (M, channel, Msg*, broadcast, player), its
 # per-channel erase (channel, id), clear (M) and answer (M, answer).

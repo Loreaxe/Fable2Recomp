@@ -1297,8 +1297,16 @@ public partial class GameDebugServer : Node
 					};
 				}
 
-				// "@game <chunk>" runs in the GAME VM (game scripts, mods' Lua) instead of the GUI's.
+				// "@game <chunk>" runs in the GAME VM (game scripts, mods' Lua) instead of the GUI's;
+				// "@frontend <chunk>" in the mods' front-end Lua, as RefiiHost.frontend_lua posts it.
 				const string gamePrefix = "@game ";
+				const string frontendPrefix = "@frontend ";
+				if (chunk.StartsWith(frontendPrefix, System.StringComparison.Ordinal))
+				{
+					Refii.Host.HostBridge.PostModCommand(Refii.Mods.ModLua.FrontendCommand + chunk.Substring(frontendPrefix.Length));
+					return Ok(new Dictionary<string, object?> { ["posted"] = "frontend_lua" });
+				}
+
 				string action = chunk.StartsWith(gamePrefix, System.StringComparison.Ordinal)
 					? "debug-gamelua:" + chunk.Substring(gamePrefix.Length)
 					: "debug-lua:" + chunk;
@@ -1596,6 +1604,34 @@ public partial class GameDebugServer : Node
 			case "tracy":
 				return AnswerTracy(root);
 
+			case "uirecord":
+			{
+				// Every UI statement the host receives, to a file (Engine_UiStatementRecord):
+				// action start + path, stop, or status.
+				string action = Text(root, "action", "status");
+				if (action == "start")
+				{
+					string path = Text(root, "path", string.Empty);
+					if (path.Length == 0)
+					{
+						return Refused("uirecord start needs a path");
+					}
+
+					Refii.Ui.Engine_UiStatementRecord.Start(path);
+				}
+				else if (action == "stop")
+				{
+					Refii.Ui.Engine_UiStatementRecord.Stop();
+				}
+
+				return Ok(new Dictionary<string, object?>
+				{
+					["recording"] = Refii.Ui.Engine_UiStatementRecord.Recording,
+					["path"] = Refii.Ui.Engine_UiStatementRecord.Path,
+					["lines"] = Refii.Ui.Engine_UiStatementRecord.Lines,
+				});
+			}
+
 			case "mark":
 			{
 				string text = root.TryGetProperty("text", out JsonElement t)
@@ -1603,6 +1639,7 @@ public partial class GameDebugServer : Node
 					: string.Empty;
 				GD.Print($"[mark] {text}");
 				Refii.Host.HostBridge.TraceMessage($"mark: {text}");
+				Refii.Ui.Engine_UiStatementRecord.Note('M', text);
 				return Ok(new Dictionary<string, object?> { ["marked"] = text });
 			}
 
@@ -3879,7 +3916,7 @@ public partial class GameDebugServer : Node
 						"ping", "state", "rows", "frontend", "elements", "peek", "threads",
 						"objects", "perf", "exports", "cvars", "cvar-set", "vfs", "sockets",
 						"menu", "action", "call", "lua", "call-result", "poke", "heap", "heapcensus",
-						"probe", "guestlog", "mark", "metrics", "input-record", "input-replay",
+						"probe", "guestlog", "mark", "uirecord", "metrics", "input-record", "input-replay",
 						"wait", "log", "shot", "flicker", "press", "key", "mouse", "input", "gdb", "achievements",
 						"gpuprofile", "capture", "hang",
 					},

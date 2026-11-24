@@ -938,16 +938,9 @@ public static class Engine_SaveMigration
 					return null;
 				}
 
-				string aside = Path.Combine(Engine_SaveLayout.OlderSaves(profileDirectory, titleId), "Swapped out");
-				string asideName = FreeName(Path.Combine(aside, Engine_SaveLayout.SaveGameType),
-					Path.Combine(aside, Engine_SaveLayout.HeadersFolderName, Engine_SaveLayout.SaveGameType), outgoing);
-				Transfer(Path.Combine(slots, outgoing), Path.Combine(aside, Engine_SaveLayout.SaveGameType, asideName), owned: true, null);
-				string outgoingHeader = Path.Combine(headers, outgoing + ".header");
-				if (File.Exists(outgoingHeader))
+				if (SetAside(profileDirectory, titleId, outgoing, SwappedOutLabel, out error) is null)
 				{
-					string target = Path.Combine(aside, Engine_SaveLayout.HeadersFolderName, Engine_SaveLayout.SaveGameType, asideName + ".header");
-					Transfer(outgoingHeader, target, owned: true, null);
-					if (asideName != outgoing) RenameHeader(target, asideName);
+					return null;
 				}
 			}
 
@@ -961,6 +954,62 @@ public static class Engine_SaveMigration
 			}
 
 			return name;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			error = exception.Message;
+			return null;
+		}
+	}
+
+	/// <summary>Older saves' group for a save the launcher's Swap took out of the slots.</summary>
+	public const string SwappedOutLabel = "Swapped out";
+
+	/// <summary>Older saves' group for a save the game's New Game replaced at the save limit.</summary>
+	public const string OverwrittenLabel = "Overwritten";
+
+	/// <summary>
+	/// Moves one save out of the title's slots into <c>Older saves/&lt;label&gt;/</c>: its folder
+	/// (<c>00000001/&lt;name&gt;</c>) and its header (<c>Headers/00000001/&lt;name&gt;.header</c>), the
+	/// layout and files the original game and Xenia read, unchanged. Nothing is deleted: a name
+	/// already there takes the next free number (Hero003 -&gt; Hero004) with the header's file name
+	/// rewritten to match, and a move that could only copy leaves the original where it was and
+	/// fails. Returns the name it has there, or null with <paramref name="error"/>. The launcher's
+	/// Swap and the game's replace-a-save both come through here.
+	/// </summary>
+	public static string? SetAside(string profileDirectory, uint titleId, string name, string label, out string error)
+	{
+		error = string.Empty;
+		string slots = Engine_SaveLayout.SaveGames(profileDirectory, titleId);
+		string headers = Engine_SaveLayout.Headers(profileDirectory, titleId);
+		if (string.IsNullOrEmpty(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name is "." or ".." ||
+			!Directory.Exists(Path.Combine(slots, name)))
+		{
+			error = $"no save named '{name}' in the slots";
+			return null;
+		}
+
+		try
+		{
+			string aside = Path.Combine(Engine_SaveLayout.OlderSaves(profileDirectory, titleId), Engine_SaveLayout.SanitizeFolderName(label));
+			string asideSaves = Path.Combine(aside, Engine_SaveLayout.SaveGameType);
+			string asideHeaders = Path.Combine(aside, Engine_SaveLayout.HeadersFolderName, Engine_SaveLayout.SaveGameType);
+			string asideName = FreeName(asideSaves, asideHeaders, name);
+			if (!Transfer(Path.Combine(slots, name), Path.Combine(asideSaves, asideName), owned: true, null))
+			{
+				error = $"'{name}' could only be copied to {asideSaves}, not moved; the original is still in the slots";
+				return null;
+			}
+
+			string header = Path.Combine(headers, name + ".header");
+			if (File.Exists(header))
+			{
+				string target = Path.Combine(asideHeaders, asideName + ".header");
+				Transfer(header, target, owned: true, null);
+				if (asideName != name) RenameHeader(target, asideName);
+			}
+
+			return asideName;
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{

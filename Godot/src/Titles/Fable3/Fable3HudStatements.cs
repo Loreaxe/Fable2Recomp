@@ -42,11 +42,45 @@ public sealed class Fable3HudStatements
 	/// document binds under <paramref name="NameHash"/> in this kind's registry — or, with
 	/// <paramref name="EveryName"/>, on every element bound in it — rather than on a path.
 	/// </param>
+	/// <param name="Source">
+	/// What a stated <paramref name="Opacity"/> is made of, with its stamps: null where no later slide
+	/// entry can retire it (a registry writer's value).
+	/// </param>
 	public readonly record struct Statement(
 		string Path, int? State, float? Opacity, string? Text, float? Time, ulong Stamp,
 		(float X, float Y, float Z)? Position = null, string? Texture = null,
 		Refii.Ui.Engine_UiBindings.Kind? Kind = null, uint NameHash = 0u, bool EveryName = false,
-		uint TextureHash = 0u, (float R, float G, float B, float A)? Colour = null);
+		uint TextureHash = 0u, (float R, float G, float B, float A)? Colour = null, OpacitySource? Source = null);
+
+	/// <summary>
+	/// A stated drawn opacity's two parts: the opacity attribute's write (SetOpacity, the visibility
+	/// toggle — both through the store, `@Ui.Opacity` / `@Ui.Visible`) and the active flag asked off
+	/// (`@Ui.Active`), each with the stamp of the statement that made it.
+	/// </summary>
+	/// <remarks>
+	/// The guest's GoTo applies the entered slide's entries IN the call (TU3 `sub_82267158`: master
+	/// 0x82267224, slide 0x82267250 -> `sub_821CA6D8` 0x821CA960, each command through the store
+	/// 0x821CA7A4, each entry's active bit through flags 0x821CA760): a told slide entered after a
+	/// write overwrote it, and a write after the entry stands. BedMenu's Show halves `.Sex`
+	/// (0x82B8DBF8 -> 0x82B8E878) and then enters BedMenu's slide (0x82B8DC0C), whose entry sets `.Sex`
+	/// to 100: the 360 drew 100.
+	/// </remarks>
+	public readonly record struct OpacitySource(float? Write, ulong WriteStamp, bool ActiveOff, ulong ActiveStamp)
+	{
+		/// <summary>
+		/// The opacity that still stands over the slides given the sequence of the latest told entry
+		/// that wrote the element's opacity and its active bit: null where the entries rule.
+		/// </summary>
+		public float? After(ulong opacityEntered, ulong activeEntered)
+		{
+			if (ActiveOff && ActiveStamp > activeEntered)
+			{
+				return 0f;
+			}
+
+			return Write is { } write && WriteStamp > opacityEntered ? write : null;
+		}
+	}
 
 	/// <summary>The width of a transform row: position x, y, z then scale x, y, z.</summary>
 	public const int TransformWidth = 6;
@@ -158,9 +192,14 @@ public sealed class Fable3HudStatements
 	public void Apply(
 		IEnumerable<Statement> statements, int[] slides, float?[] opacity, string?[] texts, float?[] times,
 		float?[]?[]? transforms = null, uint[]? textures = null, ulong[]? slideStamps = null,
-		(float R, float G, float B, float A)?[]? colours = null)
+		(float R, float G, float B, float A)?[]? colours = null, OpacitySource?[]? sources = null)
 	{
 		System.Array.Clear(slides, 0, slides.Length);
+		if (sources is not null)
+		{
+			System.Array.Clear(sources, 0, sources.Length);
+		}
+
 		if (colours is not null)
 		{
 			System.Array.Clear(colours, 0, colours.Length);
@@ -209,7 +248,7 @@ public sealed class Fable3HudStatements
 				if (named.Count != 0)
 				{
 					++Mapped;
-					Land(statement, named, slides, opacity, texts, times, transforms, textures, slideStamps, colours);
+					Land(statement, named, slides, opacity, texts, times, transforms, textures, slideStamps, colours, sources);
 				}
 
 				continue;
@@ -224,14 +263,15 @@ public sealed class Fable3HudStatements
 			}
 
 			++Mapped;
-			Land(statement, ordinals, slides, opacity, texts, times, transforms, textures, slideStamps, colours);
+			Land(statement, ordinals, slides, opacity, texts, times, transforms, textures, slideStamps, colours, sources);
 		}
 	}
 
 	/// <summary>Writes each channel the statement states onto every ordinal it names.</summary>
 	private void Land(
 		Statement statement, IReadOnlyList<int> ordinals, int[] slides, float?[] opacity, string?[] texts, float?[] times,
-		float?[]?[]? transforms, uint[]? textures, ulong[]? slideStamps, (float R, float G, float B, float A)?[]? colours)
+		float?[]?[]? transforms, uint[]? textures, ulong[]? slideStamps, (float R, float G, float B, float A)?[]? colours,
+		OpacitySource?[]? sources)
 	{
 		foreach (int ordinal in ordinals)
 		{
@@ -252,6 +292,10 @@ public sealed class Fable3HudStatements
 			if (statement.Opacity is { } stated && ordinal < opacity.Length)
 			{
 				opacity[ordinal] = stated;
+				if (sources is not null && ordinal < sources.Length)
+				{
+					sources[ordinal] = statement.Source;
+				}
 			}
 
 			if (statement.Text is { } text && ordinal < texts.Length)

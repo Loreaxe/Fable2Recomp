@@ -424,9 +424,10 @@ public static class ModLua
 		""";
 
 	/// <summary>
-	/// A mod's Lua for the TITLE and the FRONT END, where there is no game VM: run in the current
-	/// Gameface presentation's own Lua state (Fable2/src/vfs/src/hooks/mod_frontend_lua.cpp), which is a
-	/// different Lua build with no world, no hero and no save. Its own entry point, as a client and
+	/// A mod's Lua for the TITLE and the FRONT END, where there is no game VM: run in the host's Lua
+	/// state for the current front-end presentation (Fable2/src/vfs/src/hooks/mod_frontend_lua.cpp:
+	/// the game's Lua 5.1 with float numbers, base, string, table and math), with no world, no hero
+	/// and no save. Its own entry point, as a client and
 	/// a server entry point are separate: init.lua patches the game's scripts, which do not exist
 	/// there. What works in it is <see cref="FrontendPreamble"/>'s list.
 	/// </summary>

@@ -11222,7 +11222,6 @@
 0x8257C9C8 = { name = "rex_lhGuiRegistry_SetSlide" }
 0x82845CB8 = { name = "rex_lhGuiRegistry_JumpSlide" }
 0x82BAFA98 = { name = "rex_lhGfxTimeline_SetPaused" }
-0x82284218 = { name = "rex_lhGfxElements_EvaluateTracks" }
 0x8259DB00 = { name = "rex_lhGuiMenu_GetHighlightedItemData" }
 0x8259DD48 = { name = "rex_lhGuiMenu_IsHighlightedItemAtRoot" }
 0x826C71C8 = { name = "rex_lhGuiFrontEnd_IsHighlightedItemAtRoot" }
@@ -11389,6 +11388,7 @@
 0x8240B2A0 = { name = "rex_lhGuiPauseMenu_IsTabAvailable", size = 0x3B0 }
 0x8259D3C8 = { name = "rex_lhGuiPresentation_GetFloatParam" }
 0x8259D488 = { name = "rex_lhGuiPresentation_GetStringParam" }
+0x8259D510 = { name = "rex_lhGuiPresentation_ReadStringParam" }
 0x8259D5F8 = { name = "rex_lhGuiPresentation_SetFloatParam" }
 0x8259D6C8 = { name = "rex_lhGuiPresentation_SetStringParam" }
 0x8259E610 = { name = "rex_lhGuiAbilitiesScreen_OnMenuEvent", size = 0x2F8 }
@@ -11414,6 +11414,17 @@
 0x82580BB8 = { name = "rex_lhGuiClothingScreen_OnScreenAction", size = 0x360 }
 0x825822B0 = { name = "rex_lhGuiLogbookScreen_OnMenuEvent" }
 0x82582380 = { name = "rex_lhGuiLogbookScreen_OnScreenAction", size = 0x28C }
+# The ported screens (S7, gui_screen_stubs.cpp): handler slots replaced in full. The logbook's
+# OnMenuEvent / OnScreenAction and the minigame / quest-completion HandleAction rows are above. The disc has no screen 13.
+0x82581A68 = { name = "rex_lhGuiLogbookScreen_OnEnter", size = 0x390 }
+0x82581DF8 = { name = "rex_lhGuiLogbookScreen_Update", size = 0x4B8 }
+0x82582610 = { name = "rex_lhGuiLogbookScreen_OnExit", size = 0x44 }
+0x825815A0 = { name = "rex_lhGuiPhotoScreen_Update", size = 0x40 }
+0x825815E0 = { name = "rex_lhGuiPhotoScreen_OnScreenAction", size = 0x64 }
+0x8259CFA0 = { name = "rex_lhGuiCreditsScreen_Update", size = 0x150 }
+0x8259D0F0 = { name = "rex_lhGuiCreditsScreen_OnMenuEvent", size = 0xA8 }
+0x8259D198 = { name = "rex_lhGuiCreditsScreen_OnScreenAction", size = 0xD4 }
+0x8258CAD8 = { name = "rex_lhGuiMinigameCompletedScreen_Update", size = 0x68 }
 0x82582C60 = { name = "rex_lhGuiOptionsScreen_OnMenuEvent", size = 0x1F0 }
 0x82582E50 = { name = "rex_lhGuiOptionsScreen_OnScreenAction", size = 0x2EC }
 0x826C72A8 = { name = "rex_lhGui_FrontendRoot_OnScreenAction", size = 0xEF8 }
@@ -11457,7 +11468,7 @@
 0x82174510 = { size = 0x20 }
 0x82174800 = { size = 0x40 }
 0x82174870 = { size = 0xD0 }
-0x821781C8 = { size = 0x14 }
+0x821781C8 = { name = "rex_CGameface_ResetScenes", size = 0x14 }
 0x8217BCB0 = { size = 0x18 }
 0x8217CDE0 = { size = 0x10 }
 0x8217DAB0 = { size = 0x28 }
@@ -11502,7 +11513,6 @@
 0x821D1438 = { size = 0x8 }
 0x821D1440 = { size = 0x10 }
 0x821D1798 = { size = 0x1C }
-0x821D2C58 = { size = 0x18 }
 0x821D4C20 = { size = 0x44 }
 0x821D51B8 = { size = 0x3C }
 0x821D8228 = { size = 0x14 }
@@ -11570,7 +11580,6 @@
 0x8227B030 = { size = 0x20 }
 0x8227B390 = { size = 0x2C }
 0x8227D6D8 = { size = 0x30 }
-0x82283EC8 = { size = 0x8 }
 0x82284200 = { size = 0x8 }
 0x82284208 = { size = 0xC }
 0x822869D0 = { size = 0x48 }
@@ -11618,7 +11627,7 @@
 0x822CD888 = { size = 0x8 }
 0x822CEEF8 = { size = 0x1C }
 0x822D0F10 = { size = 0x24 }
-0x822D13F8 = { size = 0x14 }
+0x822D13F8 = { name = "rex_CGameface_RenderScenes", size = 0x14 }
 0x822D34E8 = { size = 0x1C }
 0x822D3D78 = { size = 0x8 }
 0x822D3EA0 = { size = 0x1C }
@@ -12484,7 +12493,7 @@
 0x82BB1360 = { size = 0x34 }
 0x82BB3458 = { size = 0xC }
 0x82BB3468 = { size = 0x14 }
-0x82BB3E38 = { size = 0x8 }
+0x82BB3E38 = { name = "rex_CGameface_GameplanLoad", size = 0x8 }
 0x82BB4268 = { size = 0xC }
 0x82BB4278 = { size = 0x8 }
 0x82BB4280 = { size = 0x8 }
@@ -15182,12 +15191,17 @@
 # it with the first-episode DLC, and its one string GUI_SCREEN_EPISODIC_FIRST_EPISODE_ORB_DONATION_RECIPIENT
 # is not in this executable. The hook's import is weak (coop_ui_hooks.cpp).
 # Gameface presentations are built headless (Fable2/src/vfs/src/hooks/gui_headless_presentation.cpp):
-# the CGameface's create (vtable +28) answers an unloaded CPresentation that is never rendered,
-# and its per-frame pass (vtable +40) updates those as it updates its kernel's. The destroy
-# (vtable +32) is rex_lhItemManager_NotifyAndRemoveItem. The element service's child-by-name
-# (vtable +84) makes the elements the guest names on them.
+# the CGameface's create (vtable +28) answers a zeroed presentation block with no guest ctor, and
+# nothing updates it per frame: CPresentation's Update (vf +4) is a no-op. The destroy (vtable +32)
+# is rex_lhItemManager_NotifyAndRemoveItem. The element service and animation manager slots answer
+# the handles the guest names (gui_element_hooks.cpp, THE STATED ELEMENTS). The CGameface itself is
+# the host's (THE GAMEFACE): its ctor, dtor, loader (+16), gameplan slots (+20, +24), update (+40)
+# and scene-manager slots (+44 ResetScenes, +48 RenderScenes) are replaced.
 0x82BB3E88 = { name = "rex_CGameface_CreatePresentation" }
 0x82BB3BC8 = { name = "rex_CGameface_Destructor" }
+0x82BB39F8 = { name = "rex_CGameface_Construct" }
+0x82BB3C70 = { name = "rex_CGameface_Load" }
+0x82BB3E40 = { name = "rex_CGameface_GameplanFind" }
 0x823FE6F0 = { name = "rex_lhGuiScreenSet_EnsureLoaded" }
 0x823FE5A0 = { name = "rex_lhGuiScreenSet_ShowRoot" }
 0x823FED30 = { name = "rex_lhGuiScreenSet_Unload" }
@@ -15214,11 +15228,23 @@
 0x8259E570 = { name = "rex_lhGuiAbilitiesScreen_ExitAssign" }
 0x825A3DC0 = { name = "rex_lhGuiWorldMapScreen_AskStopTravel" }
 0x822BE580 = { name = "rex_CGameface_Update" }
+0x822AC668 = { name = "rex_CPresentation_Update" }
+0x82BA9870 = { name = "rex_CPresentation_RegisterEventCallback" }
+0x82BA98D0 = { name = "rex_CPresentation_UnregisterEventCallback" }
 0x82BACC90 = { name = "rex_lhGuiAttributeService_ChildByName", size = 0x4C }
-# A headless element answers the FILE's children (service vtable +92) and string attributes
-# (GuiElement_AttributeString_p) — gui_headless_presentation.cpp, ExpandLocked.
+# THE STATED ELEMENTS (see the TU1 config).
+0x82BAC918 = { name = "rex_lhGuiAttributeService_GetAttribute" }
+0x82BAC8A8 = { name = "rex_lhGuiAttributeService_GetAttributeRecord" }
+0x821D2C58 = { name = "rex_lhGuiAttributeService_TestFlags", size = 0x18 }
+0x82283EC8 = { name = "rex_lhGuiAttributeService_Parent", size = 0x8 }
+0x82BAF770 = { name = "rex_lhGuiAnimation_CurrentSlide" }
+0x822848B8 = { name = "rex_lhGuiAnimation_Advance" }
+0x82BAF940 = { name = "rex_lhGuiAnimation_SetTime" }
+0x82BA9F00 = { name = "rex_CPresentation_QueueEvent" }
+0x82284448 = { name = "rex_lhGuiElement_FindAttribute" }
+0x822844B0 = { name = "rex_lhGuiElement_ReadAttribute" }
+0x82283ED0 = { name = "rex_lhGuiElement_CompoundedOpacity" }
 0x82BACCE0 = { name = "rex_lhGuiAttributeService_CollectChildren", size = 0x7C }
-0x823F74D0 = { name = "rex_GuiElement_GetAttributeString", size = 0xD0 }
 # The ranged aim cursor (r3 the aim, r4 its stick as two packed floats): the mouse's turn joins
 # the stick through the cursor's own gain (Fable2/src/vfs/src/hooks/mouse_look.cpp).
 0x827B80B0 = { name = "rex_lhRangedAim_MoveCursor" }
@@ -15260,8 +15286,18 @@
 0x8247B6C8 = { name = "rex_lhGuiCoopScreen_Finish" }
 0x8247C6F8 = { name = "rex_lhGuiCoopScreen_SetPickerShown" }
 0x8247A930 = { name = "rex_lhGuiCoopScreen_SetPickerCursor" }
+# Player two's save picker past the sixth save (guest_tick_pump.cpp DispatchCoopPick, gui_headless_presentation.cpp):
+# the A path's commit (reads only +392) and close, and the save the cursor steps over (r3 the screen each).
+0x8247C1B0 = { name = "rex_lhGuiCoopScreen_CommitPickedSave" }
+0x8247C648 = { name = "rex_lhGuiCoopScreen_ClosePicker" }
+0x8247A828 = { name = "rex_lhGuiCoopScreen_OwnSaveIndex" }
 # B7 UI cut: entries whose arguments state what the headless stamps and told texts used to catch.
 0x826C9828 = { name = "rex_lhGui_FrontendRoot_StampSaveCard" }
+# Ten saves (guest_tick_pump.cpp StartNewGame, frontend_stated.cpp): the New Game guard's own count and
+# device-map erase (0x826C8580, 0x826C861C), and StampSaveCard's portrait derivation (0x826C9894).
+0x824E68C8 = { name = "rex_lhSaveManager_CountSavedGamesOnDevice" }
+0x824ED700 = { name = "rex_lhUserDeviceMap_Erase" }
+0x8283D088 = { name = "rex_lhSaveRecord_ScreenshotTexture" }
 # The front end's stated model (frontend_stated.cpp): the front-end GUI's constructor and scalar
 # destructor, its screen switch, the title's activate, the Load Game card move and the save texts.
 0x82378CD0 = { name = "rex_lhFrontEndGui_Ctor" }
@@ -15782,15 +15818,6 @@ name = "RefiiMirrorTextureMorphsForPlayerTwo"
 address = 0x8220ECF4
 jump_address = 0x8220ECF8
 
-# SetStringParam writes an attribute's string only when the Parameters element has that attribute
-# (gui_headless_presentation.cpp). Before `lwz r11,0(r28)` after the attribute lookup's bctrl:
-# r3 = found; true jumps to the epilogue past the string assign (`bl sub_82BA8850`).
-[[midasm_hook]]
-name = "RefiiPresentationAttributeAbsent"
-address = 0x8259D798
-registers = ["r3"]
-jump_address_on_true = 0x8259D7B8
-
 # A headless presentation's texts, stated at the writers' entries (gui_headless_presentation.cpp):
 # SetText r3 element, r4 presentation, r5 the text's handle; SetTextFromTag r3 element, r4 the tag.
 [[midasm_hook]]
@@ -15802,24 +15829,6 @@ registers = ["r3", "r4", "r5"]
 name = "RefiiHeadlessSetTextFromTag"
 address = 0x823F83D8
 registers = ["r3", "r4"]
-
-# The existence-checked setters' entries (see the TU1 config): SetPosition `sub_823F7678`
-# (position.x `dword_834BE204` checked at 0x823f76e4) and SetRotation `sub_823F7960` (rotation.x
-# `dword_834BE210` checked at 0x823f79c8): r3 element, r4 presentation, f1..f3.
-[[midasm_hook]]
-name = "RefiiHeadlessSetPosition"
-address = 0x823F7678
-registers = ["r3", "r4", "f1", "f2", "f3"]
-
-[[midasm_hook]]
-name = "RefiiHeadlessSetRotation"
-address = 0x823F7960
-registers = ["r3", "r4", "f1", "f2", "f3"]
-
-[[midasm_hook]]
-name = "RefiiHeadlessSetOpacity"
-address = 0x823F8510
-registers = ["r3", "r4", "f1"]
 
 # SetActive (r3 element, r4 presentation, r5 on), stated at its entry for a headless element.
 [[midasm_hook]]

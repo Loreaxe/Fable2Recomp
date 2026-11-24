@@ -3590,7 +3590,7 @@ public static partial class HostBridge
 	}
 
 	/// <summary>
-	/// Takes the statements the guest told its presentations' elements (hooks/gui_slide_hooks.cpp),
+	/// Takes the statements the guest told its presentations' elements (hooks/gui_element_hooks.cpp),
 	/// oldest first, six words each — kind (1 slide entry, 2 paused, 3 attribute, 4 active),
 	/// presentation, root name hash, ordinal, a, b. Returns how many records were written.
 	/// </summary>
@@ -5492,12 +5492,14 @@ public static partial class HostBridge
 	///
 	/// 36 select (the uniform <c>sub_826D58F0</c> "OnPressA"), 37 back, 39 the per-screen Y
 	/// action, 59 inspect, 72/73 tab prev/next, 28..31 the directions and 32..35 their releases.
-	/// The pump passes player index 1. A handler that reads the highlighted row reads the row
-	/// stated by <see cref="SetHighlightedRow"/>.
+	/// The press carries the acting player (<see cref="Refii.Ui.Engine_UiSource.ActingPlayer"/>), the
+	/// handler's r5. A handler that reads the highlighted row reads the row stated by
+	/// <see cref="SetHighlightedRow"/>.
 	/// </summary>
 	/// <remarks>B's root test (`IsHighlightedItemAtRoot`) is answered from <see cref="SetListFoldDepth"/>,
 	/// not carried with the press.</remarks>
-	public static uint ScreenAction(uint code) => PostFrontEndAction($"ScreenAction:{code}");
+	public static uint ScreenAction(uint code) =>
+		PostFrontEndAction(Refii.Ui.Engine_UiSource.PlayerLever("ScreenAction", Refii.Ui.Engine_UiSource.Current.ActingPlayer, $"{code}"));
 
 	/// <summary>
 	/// Commits a menu row BY IDENTITY, the way the shipped script does: `g_Menu:SelectMenuItem`

@@ -25,7 +25,12 @@ include_guard(GLOBAL)
 # shipped without theirs and the launcher's build failed on the player's machine with a header
 # the dev build had always found in the tree. The build-time gate
 # (refii_check_staged_includes.cmake) now fails the export on any such include.
+#
+# A SOURCE THE TARGET DOES NOT COMPILE (HEADER_FILE_ONLY, passed after `variable`) is staged and
+# left out of the list the same way: a .c another unit includes by path (the front end's Lua,
+# Fable2/src/hooks/CMakeLists.txt) must reach the player's build without being compiled twice.
 function(_refii_stage_source_list sources destination subdir source_root list_file variable)
+    set(_stage_only ${ARGN})
     file(REMOVE_RECURSE "${destination}/${subdir}")
     set(_staged "")
 
@@ -33,7 +38,7 @@ function(_refii_stage_source_list sources destination subdir source_root list_fi
         if(NOT IS_ABSOLUTE "${_source}")
             continue()
         endif()
-        if(_source MATCHES "\\.(h|hh|hpp|inl)$")
+        if(_source MATCHES "\\.(h|hh|hpp|inl)$" OR _source IN_LIST _stage_only)
             set(_compiled FALSE)
         elseif(_source MATCHES "\\.(cpp|cc|c)$")
             set(_compiled TRUE)
@@ -81,8 +86,18 @@ function(refii_stage_hook_sources target destination source_root)
         return()
     endif()
 
+    set(_stage_only "")
+    foreach(_source IN LISTS _sources)
+        if(IS_ABSOLUTE "${_source}" AND _source MATCHES "\\.(cpp|cc|c)$")
+            get_source_file_property(_header_only "${_source}" TARGET_DIRECTORY "${target}" HEADER_FILE_ONLY)
+            if(_header_only)
+                list(APPEND _stage_only "${_source}")
+            endif()
+        endif()
+    endforeach()
+
     _refii_stage_source_list("${_sources}" "${destination}" hooks "${source_root}"
-                             hook_sources.cmake REFII_HOOK_SOURCES)
+                             hook_sources.cmake REFII_HOOK_SOURCES ${_stage_only})
 endfunction()
 
 # The payload's shared sources (src/payload/src/core, REFII_PAYLOAD_CORE_SOURCES), compiled into

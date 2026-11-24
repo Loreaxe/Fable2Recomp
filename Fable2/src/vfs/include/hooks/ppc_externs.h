@@ -161,21 +161,27 @@ PPC_EXTERN_FUNC(__imp__rex_lhGuiRegistry_SeekMeter);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRegistry_RunMeter);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRegistry_ScrubMeter);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRegistry_SetText);
-// Every explicit slide statement and play/pause on a presentation — hooks/gui_slide_hooks.cpp.
+// The element service and the animation manager, answered for a handle — hooks/gui_element_hooks.cpp.
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAttributeService_GetAttribute);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAttributeService_GetAttributeRecord);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAttributeService_SetElementAttribute);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAttributeService_TestFlags);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAttributeService_SetElementFlags);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAttributeService_Parent);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAnimation_GotoSlide);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAnimation_CurrentSlide);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAnimation_Advance);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiAnimation_SetTime);
 PPC_EXTERN_FUNC(__imp__rex_lhGfxTimeline_SetPaused);
-PPC_EXTERN_FUNC(__imp__rex_lhGfxElements_EvaluateTracks);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_FindAttribute);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_ReadAttribute);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_CompoundedOpacity);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiManager_OpenNumericAdjuster);
 PPC_EXTERN_FUNC(__imp__rex_lhDisplayMessageBox_Close);
-// The presentation-event callbacks the host posts — hooks/gui_menu_hooks.cpp.
-PPC_EXTERN_FUNC(__imp__rex_lhGuiFrontEndTitle_OnEndLegal);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiFrontEndTitle_OnEndStarted);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiFrontEndTitle_OnCanPressA);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiFrontEndTitle_OnDialogEvent);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiFrontEndRoot_OnOutroFinished);
+// The gender card's event callback, run for the card's commit — hooks/guest_tick_pump.cpp.
 PPC_EXTERN_FUNC(__imp__rex_lhGui_FrontendRoot_HandleGuiEvent);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiFrontEndRoot_OnLoadCardEvent);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiFrontEndRoot_OnDialogEvent);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiHud_OnFinishedTransitioningToGame);
+// The presentation's event registrations, stated; its parameters, answered — hooks/gui_menu_hooks.cpp.
+PPC_EXTERN_FUNC(__imp__rex_lhGuiPresentation_ReadStringParam);
 // The front end's stated model — hooks/frontend_stated.cpp.
 PPC_EXTERN_FUNC(__imp__rex_lhFrontEndGui_Ctor);
 PPC_EXTERN_FUNC(__imp__rex_lhFrontEndGui_ScalarDtor);
@@ -399,10 +405,8 @@ PPC_EXTERN_FUNC(rex_stdListDword_InsertWithLengthCheck);
 PPC_EXTERN_FUNC(rex_lhGuiPresentation_GetRootElement);
 // Gameface presentations built headless (Fable2/src/vfs/src/hooks/gui_headless_presentation.cpp).
 PPC_EXTERN_FUNC(__imp__rex_lhGuiPresentation_GetRootElement);
-PPC_EXTERN_FUNC(__imp__rex_CGameface_Update);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiAttributeService_ChildByName);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiAttributeService_CollectChildren);
-PPC_EXTERN_FUNC(__imp__rex_GuiElement_GetAttributeString);
 PPC_EXTERN_FUNC(rex_lhGuiElement_GoToSlideAndRestart);
 PPC_EXTERN_FUNC(rex_lhRenderCommandStream_BeginCommand);
 PPC_EXTERN_FUNC(rex_lhRenderCommandStream_Reserve);
@@ -478,12 +482,11 @@ PPC_EXTERN_FUNC(__imp__rex_lhGameData_RunDlcLuaStartupScript);
 PPC_EXTERN_FUNC(__imp__rex_lhLua_RunScriptBuffer);
 PPC_EXTERN_FUNC(__imp__rex_lhVFSConfig_FindFileSystemFailingPredicate);
 PPC_EXTERN_FUNC(__imp__rex_CRemappingFileSystem_OpenFirstRemappedManifest);
-PPC_EXTERN_FUNC(__imp__rex_lhItemManager_NotifyAndRemoveItem);
-PPC_EXTERN_FUNC(__imp__rex_CGameface_Destructor);
 PPC_EXTERN_FUNC(__imp__rex_CPresentation_SetDrawParked);
 PPC_EXTERN_FUNC(__imp__rex_lhFolded_StoreWordAt4);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiAbilitiesScreen_Enter);
 PPC_EXTERN_FUNC(__imp__rex_CPresentation_SetUpdateParked);
+PPC_EXTERN_FUNC(__imp__rex_CPresentation_Update);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiScreenSet_EnsureLoaded);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiScreenSet_ShowRoot);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiScreenSet_Unload);

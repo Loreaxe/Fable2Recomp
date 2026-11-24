@@ -204,6 +204,9 @@ REX_EXTERN(rex_lhCoopScreen_SpawnPreviewMannequin) {
   refii::vfs::SetPreviewFigureRole(outer);
 
   if (Plausible(screen)) {
+    // A new figure, often at the old one's address: what was latched as dressed on that address
+    // belongs to the destroyed one.
+    RefiiCoopForgetBody(LoadGuestU32(base, screen + 276u));
     REXLOG_INFO("coop MANNEQUIN: sub_82438818 ran — screen+276(entity)=0x{:08X} ticket=0x{:08X}",
                 LoadGuestU32(base, screen + 276u), LoadGuestU32(base, screen + 284u));
   }

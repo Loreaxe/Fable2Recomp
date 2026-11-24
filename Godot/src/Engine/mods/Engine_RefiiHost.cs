@@ -1806,7 +1806,7 @@ public partial class RefiiHost : Node
 
 	/// <summary>
 	/// Runs a Lua chunk in the mods' FRONT-END Lua on the guest's next tick (frontend_lua): the title
-	/// and the front end, where there is no game VM — the current Gameface presentation's own state,
+	/// and the front end, where there is no game VM — the host's state for the current front-end presentation,
 	/// with every mod's mod/frontend.lua run in it first (Refii.Mods.ModLua.FrontendPreamble says
 	/// what Refii.* holds there). False when the line would not fit, and nothing runs then.
 	/// </summary>

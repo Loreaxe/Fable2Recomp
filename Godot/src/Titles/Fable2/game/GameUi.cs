@@ -221,6 +221,7 @@ public partial class GameUi : Node, IGameTitleUi
 		_saveCardView is { Visible: true } ||
 		_warningView is { Visible: true } ||
 		_newGameCommitPending ||
+		_replacing ||
 		OpenListBook is not null ||
 		_hostPageBook.IsOpen;
 
@@ -462,6 +463,7 @@ public partial class GameUi : Node, IGameTitleUi
 		_guiNatives.Register("@CoopPicker.Open", Engine_UiCoopStated.PickerOpen);
 		_guiNatives.Register("@CoopPicker.Shown", Engine_UiCoopStated.PickerShown);
 		_guiNatives.Register("@CoopPicker.Cursor", Engine_UiCoopStated.PickerCursor);
+		_guiNatives.Register("@CoopPicker.Portrait", Engine_UiCoopStated.PickerPortrait);
 		_guiNatives.Register("@CrimeScreen.Open", Engine_UiCrimePage.Open);
 		_guiNatives.Register("@Preview.Add", Engine_UiPreviewFigures.Add);
 		_guiNatives.Register("@Preview.Remove", Engine_UiPreviewFigures.Remove);
@@ -1584,15 +1586,15 @@ public partial class GameUi : Node, IGameTitleUi
 					Fable2Input.ScreenMenuOwnsInput = true;
 					if (Fable2Input.MenuBackPressed)
 					{
-						HostBridge.ScreenAction(Engine_UiScreenInput.Back);
+						PostScreenButton(declined.ScreenId, Engine_UiScreenInput.Back);
 					}
 					else if (Fable2Input.MenuTabPrevPressed)
 					{
-						HostBridge.ScreenAction(Engine_UiScreenInput.TabPrev);
+						PostScreenButton(declined.ScreenId, Engine_UiScreenInput.TabPrev);
 					}
 					else if (Fable2Input.MenuTabNextPressed)
 					{
-						HostBridge.ScreenAction(Engine_UiScreenInput.TabNext);
+						PostScreenButton(declined.ScreenId, Engine_UiScreenInput.TabNext);
 					}
 
 					return true;
@@ -2046,9 +2048,9 @@ public partial class GameUi : Node, IGameTitleUi
 		{
 			bool next = Fable2Input.MenuTabNextPressed;
 			uint code = next ? Engine_UiScreenInput.TabNext : Engine_UiScreenInput.TabPrev;
-			uint depth = HostBridge.ScreenAction(code);
+			uint depth = PostScreenButton(state.ScreenId, code);
 			GD.Print($"[game-ui] screen {state.ScreenId}: {(next ? "RB" : "LB")} forwarded as " +
-				$"ScreenAction({code}) — queue depth {depth}");
+				$"{Fable2PortedScreens.Lever(state.ScreenId, code, Engine_UiSource.Current.ActingPlayer) ?? $"ScreenAction({code})"} — queue depth {depth}");
 			return true;
 		}
 
@@ -2161,9 +2163,9 @@ public partial class GameUi : Node, IGameTitleUi
 			// never asked: `BeginDrain` swaps the whole queue out and `NoteRan` runs only after a
 			// dispatch returns, so an action that never returns leaves the queue at 0 and the
 			// next press starting again from 1.
-			uint depth = HostBridge.ScreenAction(Engine_UiScreenInput.Back);
+			uint depth = PostScreenButton(state.ScreenId, Engine_UiScreenInput.Back);
 			GD.Print($"[game-ui] screen {state.ScreenId}: B press forwarded as " +
-				$"ScreenAction({Engine_UiScreenInput.Back}) at fold depth {_statedFold.Depth} — " +
+				$"{Fable2PortedScreens.Lever(state.ScreenId, Engine_UiScreenInput.Back, 1) ?? $"ScreenAction({Engine_UiScreenInput.Back})"} at fold depth {_statedFold.Depth} — " +
 				$"queue depth {depth}");
 		}
 
@@ -2860,6 +2862,13 @@ public partial class GameUi : Node, IGameTitleUi
 	private static readonly System.Collections.Generic.HashSet<string> RefiiNoticeBoxes =
 		new() { Engine_UiCoopNotices.BoxName, ExitRefusedBox, Engine_UiNotices.ModBoxName };
 
+	/// <summary>A book button on an in-game screen: the spine lever on a ported screen
+	/// (<see cref="Fable2PortedScreens.Lever"/>), else the screen's own input.</summary>
+	private static uint PostScreenButton(uint screen, uint code) =>
+		Fable2PortedScreens.Lever(screen, code, Engine_UiSource.Current.ActingPlayer) is { } lever
+			? HostBridge.PostFrontEndAction(lever)
+			: HostBridge.ScreenAction(code);
+
 	/// <summary>The open pause and the screens it opened are player two's.</summary>
 	internal static bool PauseIsPlayerTwos() =>
 		CoopSession.IsClient || (CoopSession.LocalCoop && Fable2Bridge.GetMenuOwner() == 2);
@@ -3181,6 +3190,9 @@ public partial class GameUi : Node, IGameTitleUi
 
 	private readonly System.Collections.Generic.List<UiNode> _creditSlots = new();
 
+	/// <summary>`CreditsEnd` was posted for this roll.</summary>
+	private bool _creditsEndPosted;
+
 	/// <summary>Screen 29 was up last frame.</summary>
 	private bool _creditsWasUp;
 
@@ -3193,6 +3205,7 @@ public partial class GameUi : Node, IGameTitleUi
 	private void StartCreditsRoll(Engine_UiModel.GuiNativeCall call)
 	{
 		_creditsOpenedMs = Time.GetTicksMsec();
+		_creditsEndPosted = false;
 		_credits.Clear();
 		_creditSlots.Clear();
 		GD.Print("[game-ui] credits: GUI.ShowCreditsScreen states the roll's start");
@@ -3211,6 +3224,7 @@ public partial class GameUi : Node, IGameTitleUi
 		if (!up && _creditsWasUp)
 		{
 			_creditsOpenedMs = 0;
+			_creditsEndPosted = false;
 		}
 
 		_creditsWasUp = up;
@@ -3234,8 +3248,16 @@ public partial class GameUi : Node, IGameTitleUi
 				}
 			}
 
-			_creditLines.AddRange(Engine_UiCreditsRoll.Roll(
-				(Time.GetTicksMsec() - _creditsOpenedMs) / 1000.0, _credits, _creditSlots));
+			double seconds = (Time.GetTicksMsec() - _creditsOpenedMs) / 1000.0;
+			_creditLines.AddRange(Engine_UiCreditsRoll.Roll(seconds, _credits, _creditSlots));
+
+			// The roll's end is the screen's close: the ported update no longer quits it.
+			if (!_creditsEndPosted && _credits.Count > 0 && seconds >= Engine_UiCreditsTiming.EndSeconds(_credits.Count))
+			{
+				_creditsEndPosted = true;
+				HostBridge.PostFrontEndAction("CreditsEnd");
+				GD.Print($"[game-ui] credits: the roll ended at {seconds:F1} s ({_credits.Count} lines) — CreditsEnd");
+			}
 		}
 
 		if (_creditsRoll is null)
@@ -7577,6 +7599,7 @@ public partial class GameUi : Node, IGameTitleUi
 		Fable2Input.FrontEndSwallowsBack =
 			_menu is not null && _menuView is not null && IsRevealed &&
 			(_warningView is { Visible: true } || _cardView is { Visible: true } || _newGameCommitPending ||
+			(_replacing && _saveCardView is not { Visible: true }) ||
 			OpenListBook is not null || _hostPageBook.IsOpen ||
 			(_menuView.Visible && (_menuView.Menu?.CanCollapse == true || _menuView.OpenedDepth > 0)));
 
@@ -7608,6 +7631,12 @@ public partial class GameUi : Node, IGameTitleUi
 		// other input is dead while it stands. B clears it too, which is ours: the one-button
 		// form has nothing else to press, and a box that could only be dismissed by a key we
 		// might have mismapped is a deadlock.
+		// A box raised by the save-limit flow answers through its own handler (GameUi.SaveLimit.cs).
+		if (DriveAnsweredBox())
+		{
+			return;
+		}
+
 		if (_warningView is { Visible: true })
 		{
 			int warningClick = _warningView.Click();
@@ -7664,6 +7693,12 @@ public partial class GameUi : Node, IGameTitleUi
 		// consequence exactly: its cursor walked 0..5 and back while every A press re-dispatched
 		// "Load Game", because this class still believed the root list was up.
 		if (DriveLoadCarousel(delta))
+		{
+			return;
+		}
+
+		// "Replace a save" posted Load Game; the rows stay down until the guest's fan is up.
+		if (AwaitingReplaceFan())
 		{
 			return;
 		}
@@ -7812,7 +7847,12 @@ public partial class GameUi : Node, IGameTitleUi
 				AdoptWarning(warningTheme);
 			}
 
-			if (_warningView is not null)
+			if (_warningView is not null && limit)
+			{
+				// Three answers here, not the guest's two: see GameUi.SaveLimit.cs.
+				ShowSaveLimitBox(warning);
+			}
+			else if (_warningView is not null)
 			{
 				_warningView.Show(_presentation?.Theme, warning, button, twoButton: limit);
 
@@ -7902,14 +7942,14 @@ public partial class GameUi : Node, IGameTitleUi
 
 		// POPULATED ONCE PER OPENING. The guest states the list before the mode: the text builder
 		// (`sub_826E14F8`, 0x826E0448) pushes one text per file (Engine_FrontEndStated.SaveText),
-		// StampSaveCard runs for saves 0 .. min(count, 6) - 1 (Engine_FrontEndStated.Card), and
+		// StampSaveCard runs for saves 0 .. min(count, 6) - 1 (Engine_FrontEndStated.Card) and the
+		// dispatch hook states the rest the same way (frontend_stated.cpp StateLaterPortraits), and
 		// only then is the mode 5 (0x826E07E0). The statements ride the native-call queue, so the
 		// mode can be seen a frame before they are drained.
 		if (!_saveCardView.Visible)
 		{
 			if (_frontEndStated.SavesSince(_saveCardsClosedAt) is not { Count: > 0 } texts ||
-				_frontEndStated.CardsSince(_saveCardsClosedAt,
-					System.Math.Min(texts.Count, Engine_FrontEndSaveCards.MaxCards)) is not { } stated)
+				_frontEndStated.CardsSince(_saveCardsClosedAt, texts.Count) is not { } stated)
 			{
 				if (!_saveCardsUnstatedReported)
 				{
@@ -7936,7 +7976,14 @@ public partial class GameUi : Node, IGameTitleUi
 			}
 
 			_saveCardsOpenedAt = _frontEndStated.Sequence;
+			_saveCardView.PageTemplate = Said(PageText);
+			_saveCardView.MarkText = Said(ChosenText);
 			OpenSaveCards(saves, stated[0].Slot);
+			if (_replacing)
+			{
+				ShowReplaceHeading();
+			}
+
 			GD.Print($"[game-ui] the guest opened the load fan with {texts.Count} save(s) from card " +
 				$"{stated[0].Slot}, its cursor at {guestCursor} — {_saveCardView.Describe()}");
 		}
@@ -7957,9 +8004,13 @@ public partial class GameUi : Node, IGameTitleUi
 		}
 
 		// The mouse: pointing at a card lifts it, clicking a card loads it. A click on no card
-		// is taken here too, so it cannot fall through as A on whichever card is lifted.
+		// is taken here too, so it cannot fall through as A on whichever card is lifted. A click on
+		// a page arrow, or the wheel, turns the page (DrivePages).
 		bool fanClicked = false;
-		if (Engine_UiPointer.Canvas is { } fanAt)
+		Vector2? pointer = Engine_UiPointer.Canvas;
+		bool leftClick = pointer is not null && Engine_UiPointer.TakeLeft();
+		DrivePages(pointer, leftClick, out bool pageClick);
+		if (pointer is { } fanAt)
 		{
 			int pointed = _saveCardView.SaveAt(fanAt);
 			if (pointed >= 0 && Engine_UiPointer.Moved)
@@ -7967,11 +8018,22 @@ public partial class GameUi : Node, IGameTitleUi
 				_saveCardView.Select(pointed);
 			}
 
-			if (Engine_UiPointer.TakeLeft() && pointed >= 0)
+			if (leftClick && !pageClick && pointed >= 0)
 			{
 				_saveCardView.Select(pointed);
 				fanClicked = true;
 			}
+		}
+
+		// The replace pick: A (or a click) picks a card; nothing is loaded or exported.
+		if (_replacing)
+		{
+			if ((Fable2Input.MenuAcceptPressed || fanClicked) && _saveCardView.Activate() is var picked && picked >= 0)
+			{
+				PickForReplace(picked);
+			}
+
+			return true;
 		}
 
 		// X on a card: "Copy for Xbox / Xenia" — the save's guest files, vanilla-only, beside the
@@ -8053,6 +8115,7 @@ public partial class GameUi : Node, IGameTitleUi
 
 		_saveCardView.Visible = false;
 		_saveCardsClosedAt = _saveCardsOpenedAt;
+		EndReplace();
 
 		// Not over the gender card, and not over the running game. The menu comes back only if
 		// it is what the player would be looking at.

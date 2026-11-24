@@ -257,9 +257,9 @@ public class SaveMigrationTests
 		{
 			string own = Path.Combine(root, "own");
 			DateTime t0 = new(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
-			for (int i = 0; i < 8; i++)
+			for (int i = 0; i < 12; i++)
 			{
-				Save(Path.Combine(own, "E00AFA3420120108", "4D5307F1"), "Hero00" + i, "save " + i, t0.AddDays(i));
+				Save(Path.Combine(own, "E00AFA3420120108", "4D5307F1"), $"Hero{i:000}", "save " + i, t0.AddDays(i));
 			}
 
 			for (int i = 0; i < 7; i++)
@@ -269,16 +269,16 @@ public class SaveMigrationTests
 
 			string saves = Path.Combine(root, "saves");
 			Engine_SaveMigration.Report report = Engine_SaveMigration.Run(saves, new[] { Own(own, "own", Fable2) }, Now);
-			AssertThat(report.Saves[Fable2].Slotted).IsEqual(6);
+			AssertThat(report.Saves[Fable2].Slotted).IsEqual(10);
 			AssertThat(report.Saves[Fable2].Older).IsEqual(2);
 			AssertThat(report.Saves[Fable3].Slotted).IsEqual(5);
 			AssertThat(report.Saves[Fable3].Older).IsEqual(2);
 
 			string profile = Engine_SaveProfiles.ActiveDirectory(saves);
 			string slots = Path.Combine(profile, "Fable 2", "00000001");
-			// The newest six fill the slots: Hero002..Hero007; the two oldest wait in Older saves.
+			// The newest ten fill the slots: Hero002..Hero011; the two oldest wait in Older saves.
 			AssertThat(Directory.GetDirectories(slots).Select(Path.GetFileName).OrderBy(n => n).ToArray())
-				.IsEqual(new[] { "Hero002", "Hero003", "Hero004", "Hero005", "Hero006", "Hero007" });
+				.IsEqual(Enumerable.Range(2, 10).Select(i => $"Hero{i:000}").ToArray());
 			List<Engine_SaveMigration.OlderSave> older = Engine_SaveMigration.ListOlderSaves(profile, Fable2);
 			AssertThat(older.Select(save => save.Name).ToArray()).IsEqual(new[] { "Hero001", "Hero000" });
 			AssertThat(older[0].Label).IsEqual("own E00AFA3420120108");
@@ -351,6 +351,59 @@ public class SaveMigrationTests
 			AssertThat(Engine_SaveProfiles.IsProvisional(profile)).IsTrue();
 			AssertThat(Engine_SaveProfiles.Ensure(saves)).IsEqual(profile);
 			AssertThat(Engine_SaveProfiles.Load(saves).Profiles.Count).IsEqual(1);
+		}
+		finally
+		{
+			Directory.Delete(root, true);
+		}
+	}
+
+	/// <summary>
+	/// The game's replace-a-save and the launcher's Swap share one move: the save folder and its header
+	/// go whole to Older saves under the label, nothing is deleted, a name already there takes the next
+	/// free number with the header's file name rewritten, and an unknown save moves nothing.
+	/// </summary>
+	[TestCase]
+	public void SetAsideMovesTheSaveAndItsHeaderToOlderSavesWithoutDeleting()
+	{
+		string root = NewRoot();
+		try
+		{
+			string profile = Path.Combine(root, "profile");
+			string game = Path.Combine(profile, "Fable 2");
+			DateTime t0 = new(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+			Save(game, "Hero003", "three", t0);
+			Save(game, "Hero004", "four", t0.AddDays(1));
+			SortedDictionary<string, string> before = Snapshot(Path.Combine(game, "00000001", "Hero003"));
+
+			string? aside = Engine_SaveMigration.SetAside(profile, Fable2, "Hero003", Engine_SaveMigration.OverwrittenLabel, out string error);
+			AssertThat(aside).IsEqual("Hero003");
+			AssertThat(error).IsEqual(string.Empty);
+			string older = Path.Combine(game, "Older saves", "Overwritten");
+			AssertThat(Directory.Exists(Path.Combine(game, "00000001", "Hero003"))).IsFalse();
+			AssertThat(File.Exists(Path.Combine(game, "Headers", "00000001", "Hero003.header"))).IsFalse();
+			AssertThat(Snapshot(Path.Combine(older, "00000001", "Hero003"))).IsEqual(before);
+			AssertThat(HeaderName(Path.Combine(older, "Headers", "00000001", "Hero003.header"))).IsEqual("Hero003");
+			AssertThat(Directory.Exists(Path.Combine(game, "00000001", "Hero004"))).IsTrue();
+
+			// A second Hero003 set aside later keeps the first and takes the next free number.
+			Save(game, "Hero003", "three again", t0.AddDays(2));
+			aside = Engine_SaveMigration.SetAside(profile, Fable2, "Hero003", Engine_SaveMigration.OverwrittenLabel, out error);
+			AssertThat(aside).IsEqual("Hero004");
+			AssertThat(File.ReadAllText(Path.Combine(older, "00000001", "Hero003", "mainsave.bin"))).IsEqual("main three");
+			AssertThat(File.ReadAllText(Path.Combine(older, "00000001", "Hero004", "mainsave.bin"))).IsEqual("main three again");
+			AssertThat(HeaderName(Path.Combine(older, "Headers", "00000001", "Hero004.header"))).IsEqual("Hero004");
+
+			// Listed for the launcher's Swap under its label.
+			List<Engine_SaveMigration.OlderSave> listed = Engine_SaveMigration.ListOlderSaves(profile, Fable2);
+			AssertThat(listed.Count(save => save.Label == Engine_SaveMigration.OverwrittenLabel)).IsEqual(2);
+
+			// No such save: nothing moves.
+			SortedDictionary<string, string> all = Snapshot(game);
+			AssertThat(Engine_SaveMigration.SetAside(profile, Fable2, "Hero009", Engine_SaveMigration.OverwrittenLabel, out error)).IsNull();
+			AssertThat(error).Contains("Hero009");
+			AssertThat(Engine_SaveMigration.SetAside(profile, Fable2, "..", Engine_SaveMigration.OverwrittenLabel, out error)).IsNull();
+			AssertThat(Snapshot(game)).IsEqual(all);
 		}
 		finally
 		{

@@ -74,6 +74,11 @@ public sealed class Engine_UiGuiNatives
 		foreach (Engine_UiModel.GuiNativeCall call in calls)
 		{
 			++_seen;
+			if (Engine_UiStatementRecord.Recording)
+			{
+				Engine_UiStatementRecord.Note('G', call.Name + Describe(call));
+			}
+
 			if (_handlers.TryGetValue(call.Name, out Handler? handler))
 			{
 				NoteHandled(call);

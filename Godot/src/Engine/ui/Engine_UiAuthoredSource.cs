@@ -83,7 +83,7 @@ public sealed class Engine_UiAuthoredSource : Engine_UiSource
 		return (uint)Posted.Count;
 	}
 
-	public override uint ScreenAction(uint code) => PostFrontEndAction($"ScreenAction:{code}");
+	public override uint ScreenAction(uint code) => PostPlayerLever("ScreenAction", $"{code}");
 
 	public override uint MenuEvent(string name, int eventType, uint id) =>
 		PostFrontEndAction($"MenuEvent:{name}:{eventType}:{id}");

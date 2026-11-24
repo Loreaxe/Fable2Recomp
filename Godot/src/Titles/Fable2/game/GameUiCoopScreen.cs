@@ -56,6 +56,14 @@ public partial class GameUi
 	/// <summary>Player two's save picker was up last frame.</summary>
 	private bool _coopPickerWasOpen;
 
+	/// <summary>The save this owns player two's picker cursor on past the guest's six, else null.</summary>
+	private int? _coopPickerOwned;
+
+	/// <summary>The save the guest's cursor was sent to (`CoopPickCursor:N`) and has not stated yet, else -1.</summary>
+	private int _coopPickerSent = -1;
+
+	private ulong _coopPickerSentAt;
+
 	/// <summary>
 	/// A press and its release: the pointer holds a press 0.1 s, and the guest's own repeat filter
 	/// needs to see the release before the next press counts as one.
@@ -92,6 +100,7 @@ public partial class GameUi
 		}
 
 		_coopPickerWasOpen = pickerOpen;
+		DriveCoopPicker(pickerOpen ? _coopScreen : null);
 
 		if (book is not null && _coopPattern is null)
 		{
@@ -101,6 +110,109 @@ public partial class GameUi
 		DriveCoopSaveFan(book, delta);
 		DriveCoopModeRow(book);
 		PlayCoopPresses(delta);
+	}
+
+	/// <summary>
+	/// The pad of the player whose save picker this machine drives: local player two's, or pad 0
+	/// on an online joiner (whose player is player two); -1 on the online host.
+	/// </summary>
+	private static int CoopPickerPad =>
+		CoopSession.LocalCoop
+			? (Fable2Input.PlayerTwoPad is >= 1 and < GameInput.MaxControllers ? Fable2Input.PlayerTwoPad : -1)
+			: CoopDrivesRightPage ? 0 : -1;
+
+	/// <summary>Player two's picker as stated, with this side's hold on the cursor past the guest's six.</summary>
+	private Engine_CoopSavePicker.Picker CoopPicker(Engine_UiCoopStated.State state) =>
+		new(state.Saves.Count, _coopPickerSent >= 0 ? _coopPickerSent : state.PickerCursor, state.OwnSave,
+			state.ValidBits, _coopPickerOwned);
+
+	/// <summary>
+	/// PLAYER TWO'S SAVE PICKER PAST THE SIXTH SAVE (Engine_CoopSavePicker). On the guest's six the
+	/// guest keeps its cursor and A; past them this holds the cursor, withholds player two's left,
+	/// right and A from the guest, and commits through the guest's own commit (`CoopPickSave:N`,
+	/// guest_tick_pump.cpp DispatchCoopPick). The page buttons are the load fan's, on player two's pad.
+	/// </summary>
+	private void DriveCoopPicker(Engine_UiCoopStated.State? state)
+	{
+		int pad = state is null ? -1 : CoopPickerPad;
+		Fable2Input.CoopPickerPad = pad;
+		if (state is not { } picker || pad < 0)
+		{
+			Fable2Input.CoopPickerWithheld = Engine_CoopSavePicker.Press.None;
+			Fable2Input.TakeCoopPickerPresses();
+			_coopPickerOwned = null;
+			_coopPickerSent = -1;
+			return;
+		}
+
+		if (_coopPickerSent >= 0 &&
+			(picker.PickerCursor == _coopPickerSent || Time.GetTicksMsec() - _coopPickerSentAt > 1000UL))
+		{
+			_coopPickerSent = -1;
+		}
+
+		Engine_CoopSavePicker.Press presses = Fable2Input.TakeCoopPickerPresses();
+
+		// The mouse's page turn, as on the Load Game fan: the wheel, or a click on a page arrow.
+		if (_coopSaveCards is { Visible: true } fan)
+		{
+			int turn = fan.PointerTurn(Engine_UiPointer.Canvas, Engine_UiPointer.LeftPressed, out bool arrowClicked);
+			if (arrowClicked)
+			{
+				Engine_UiPointer.TakeLeft();
+			}
+
+			presses |= turn > 0 ? Engine_CoopSavePicker.Press.PageNext
+				: turn < 0 ? Engine_CoopSavePicker.Press.PagePrevious
+				: Engine_CoopSavePicker.Press.None;
+		}
+
+		foreach (Engine_CoopSavePicker.Press press in new[]
+		{
+			Engine_CoopSavePicker.Press.Left, Engine_CoopSavePicker.Press.Right,
+			Engine_CoopSavePicker.Press.PageNext, Engine_CoopSavePicker.Press.PagePrevious,
+			Engine_CoopSavePicker.Press.Accept,
+		})
+		{
+			if ((presses & press) != 0)
+			{
+				ApplyCoopPick(Engine_CoopSavePicker.Apply(CoopPicker(picker), press), press.ToString());
+			}
+		}
+
+		Fable2Input.CoopPickerWithheld = Engine_CoopSavePicker.Withheld(CoopPicker(picker));
+	}
+
+	/// <summary>An outcome of the picker's: the hold on the cursor, and what the guest is asked.</summary>
+	private void ApplyCoopPick(Engine_CoopSavePicker.Outcome outcome, string what)
+	{
+		if (!outcome.Taken)
+		{
+			return;
+		}
+
+		int? was = _coopPickerOwned;
+		_coopPickerOwned = outcome.Owned;
+		if (outcome.Commit >= 0)
+		{
+			HostBridge.PostFrontEndAction($"CoopPickSave:{outcome.Commit}");
+			GD.Print($"[game-ui] co-op picker: {what} commits save {outcome.Commit} for player two");
+		}
+		else if (outcome.GuestCursor >= 0)
+		{
+			_coopPickerSent = outcome.GuestCursor;
+			_coopPickerSentAt = Time.GetTicksMsec();
+			HostBridge.PostFrontEndAction($"CoopPickCursor:{outcome.GuestCursor}");
+			GD.Print($"[game-ui] co-op picker: {what} puts the guest's cursor on save {outcome.GuestCursor}");
+		}
+		else if (was != outcome.Owned)
+		{
+			GD.Print($"[game-ui] co-op picker: {what} — cursor on save {outcome.Owned?.ToString() ?? "(the guest's)"}");
+		}
+		else if (what == nameof(Engine_CoopSavePicker.Press.Accept))
+		{
+			GD.Print($"[game-ui] co-op picker: A on save {outcome.Owned} refused — its header did not parse");
+		}
 	}
 
 	private void PlayCoopPresses(double delta)
@@ -188,7 +300,7 @@ public partial class GameUi
 			FillCoopSaveFan(book, state);
 		}
 
-		_coopSaveCards.Select(state.PickerCursor);
+		_coopSaveCards.Select(CoopPicker(state).Cursor);
 		PointCoopSaveFan(state);
 	}
 
@@ -205,12 +317,15 @@ public partial class GameUi
 		int baseSlot = state.FirstCard;
 		var saves = new List<Engine_FrontEndSaveCards.Save>();
 		int portraits = 0;
-		for (int i = 0; i < state.Saves.Count && i < Engine_FrontEndSaveCards.MaxCards; ++i)
+		for (int i = 0; i < state.Saves.Count; ++i)
 		{
 			// Card k (1-based) shows save k − base: `sub_8243B520(screen, k, texture, …)` writes
-			// `loadgame.Group.Card{k}…screenshot`.
+			// `loadgame.Group.Card{k}…screenshot`. A save past the sixth card has the portrait the
+			// opener's derivation gives it (`@CoopPicker.Portrait`).
 			int card = baseSlot + i;
-			Texture2D? portrait = book.StatedTexture($"loadgame.Group.Card{card}.Group.screenshot");
+			Texture2D? portrait = card <= Engine_FrontEndSaveCards.MaxCards
+				? book.StatedTexture($"loadgame.Group.Card{card}.Group.screenshot")
+				: state.LaterPortraits.TryGetValue(i, out uint hash) && hash != 0u ? book.ResolveTexture?.Invoke(hash) : null;
 			portraits += portrait is null ? 0 : 1;
 			saves.Add(new Engine_FrontEndSaveCards.Save(state.Saves[i].Text, portrait));
 		}
@@ -221,11 +336,14 @@ public partial class GameUi
 		}
 
 		_coopSaveCardsPortraits = portraits;
+		_coopSaveCards.PageTemplate = Said(PageText);
 		_coopSaveCards.SetSaves(saves, baseSlot);
-		_coopSaveCards.Select(state.PickerCursor);
+		_coopSaveCards.DimmedSave = state.OwnSave;
+		_coopSaveCards.Select(CoopPicker(state).Cursor);
 		_coopSaveCards.Visible = true;
 		GD.Print($"[game-ui] co-op save fan: {saves.Count} save(s) from card {baseSlot}, " +
-			$"{portraits} portrait(s), cursor {state.PickerCursor} — {_coopSaveCards.Describe()}");
+			$"{portraits} portrait(s), cursor {CoopPicker(state).Cursor}, steps over {state.OwnSave} — " +
+			_coopSaveCards.Describe());
 	}
 
 	/// <summary>
@@ -247,8 +365,22 @@ public partial class GameUi
 			return;
 		}
 
-		int steps = pointed - state.PickerCursor;
-		if (steps != 0 && (clicked || Engine_UiPointer.Moved))
+		if (!clicked && !Engine_UiPointer.Moved)
+		{
+			return;
+		}
+
+		// Past the guest's six, or while this holds the cursor: the picker's own outcome.
+		Engine_CoopSavePicker.Outcome outcome = Engine_CoopSavePicker.Point(CoopPicker(state), pointed, clicked);
+		if (outcome.Taken)
+		{
+			ApplyCoopPick(outcome, clicked ? "click" : "point");
+			return;
+		}
+
+		// On the guest's six with the guest holding the cursor: its own presses walk it there.
+		int steps = Engine_CoopSavePicker.Presses(state.PickerCursor, pointed, state.Saves.Count, state.OwnSave);
+		if (steps != 0)
 		{
 			QueueCoopPresses(steps > 0 ? GameInput.PadRight : GameInput.PadLeft, System.Math.Abs(steps));
 		}

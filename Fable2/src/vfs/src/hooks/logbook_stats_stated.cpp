@@ -19,7 +19,9 @@
 
 #include "vfs_hooks_private.h"
 #include "core/guest_state.h"
+#include "core/payload_bridge_fable2.h"
 #include "core/gui_native_calls.h"
+#include "hooks/gui_screen_stubs.h"
 #include "hooks/ppc_externs.h"
 
 namespace {
@@ -37,9 +39,12 @@ void Add(refii::vfs::GuiNativeCall& call, std::string value) {
 
 }  // namespace
 
+// The opener's return target is the world map when it is the screen up (`*(PS+4) == 23`,
+// 0x823C4924; disc 0x16): stated for the ported logbook's B (gui_screen_stubs.cpp).
 REX_EXTERN(rex_lhGuiLogbookScreen_OpenOnPlayer) {
     REX_FUNC_PROLOGUE();
     g_other_players_stats.store(ctx.r4.u32);
+    refii::vfs::StateLogbookOpenedOnPlayer(refii_bridge_stated_screen_now() == 23u);
     __imp__rex_lhGuiLogbookScreen_OpenOnPlayer(ctx, base);
 }
 

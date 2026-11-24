@@ -41,6 +41,7 @@
 #include <rex/ppc.h>
 
 #include "box_answers.h"
+#include "gui_statements.h"
 #include "core/payload_bridge.h"
 #include "keyboard_ui.h"
 #include "mod_lua.h"
@@ -100,6 +101,12 @@ void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
     if (std::strncmp(name, refii::fable3::kBoxAnswerAction, sizeof(refii::fable3::kBoxAnswerAction) - 1u) == 0 ||
         std::strncmp(name, "menubox", 7u) == 0) {
       refii::fable3::AnswerBoxAction(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kUiReaderAction, sizeof(refii::fable3::kUiReaderAction) - 1u) == 0) {
+      std::vector<char> whole(needed + 1u, '\0');
+      refii_bridge_guest_tick_pump_taken_action(i, whole.data(), whole.size());
+      refii::fable3::AnswerUiReaderAction(whole.data());
       continue;
     }
     if (std::strncmp(name, refii::fable3::kOptionsAction, sizeof(refii::fable3::kOptionsAction) - 1u) == 0) {

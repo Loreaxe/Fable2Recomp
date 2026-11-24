@@ -144,6 +144,20 @@ public abstract class Engine_UiSource
 	public virtual uint PostFrontEndAction(string name) => 0;
 
 	/// <summary>
+	/// The player (1 or 2) whose pad drove the press a lever answers. The guest hands every screen,
+	/// modal and box handler this number as r5: its GUI input object's vf+16 (player one's
+	/// `sub_822A4E38`: 2 on an online joiner, else 1; local player two's `sub_828EDC88`: 2), read
+	/// at 0x82404A90 (modal router) and 0x82404AC4 (box chain). 1 where no co-op exists.
+	/// </summary>
+	public virtual int ActingPlayer => 1;
+
+	/// <summary>Posts `lever:&lt;player&gt;:rest` with <see cref="ActingPlayer"/>.</summary>
+	public uint PostPlayerLever(string lever, string rest) => PostFrontEndAction(PlayerLever(lever, ActingPlayer, rest));
+
+	/// <summary>`lever:&lt;player&gt;:rest` — the form of every lever that carries the acting player.</summary>
+	public static string PlayerLever(string lever, int player, string rest) => $"{lever}:{player}:{rest}";
+
+	/// <summary>
 	/// Answers the guest's menu box: 0 cancels, 1..N pick that option. Runs the guest's commit
 	/// on its thread — `sub_823DC720` (choose) / `sub_823DC2B0` (cancel) — which posts message
 	/// event type 34, ExtraData = option index (0 = dismissed).
@@ -181,8 +195,8 @@ public abstract class Engine_UiSource
 	/// </summary>
 	public uint DisplayBoxAction(BoxAction action) =>
 		DisplayBoxAddress() is var box && box != 0
-			? PostFrontEndAction($"BoxAction:{(int)action}@{box:X8}")
-			: PostFrontEndAction($"BoxAction:{(int)action}");
+			? PostPlayerLever("BoxAction", $"{(int)action}@{box:X8}")
+			: PostPlayerLever("BoxAction", $"{(int)action}");
 
 	/// <summary>One action code to the current in-game screen's own input method.</summary>
 	public virtual uint ScreenAction(uint code) => 0;

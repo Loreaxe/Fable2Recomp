@@ -247,20 +247,13 @@ bool StatedHighlightName(uint8_t* base, std::string* name, int32_t* id = nullptr
 void SetDispatchedRow(const std::string& name, int32_t event_type, int32_t id);
 void ClearDispatchedRow();
 
-/// Arms the answer to the next `Float1` read through `sub_826B9210` (the getter hook in
-/// hooks/gui_menu_hooks.cpp): the runner states it for `g_Menu:CountSpawnedItems()`, whose
-/// populate reads `Float1` right after, with no presentation's Lua involved, and for
-/// `g_Menu:GetLastItemIndex()`, whose spawn helper reads it the same way.
-void AnswerNextFloat1(double value);
-
-/// Drops an armed `Float1` answer — the runner's next chunk means its read has passed.
-void DisarmFloat1();
-
-/// Arms the answer to the next `String2` read through the string getter `sub_826B92D0` (disc
-/// `sub_8259D488`; hook in hooks/gui_menu_hooks.cpp): the runner states it for
-/// `g_Menu:GetMenuItemDataByName()`, whose one reader `sub_823DF660` reads `String2` right after
-/// (0x823df7e4). Dropped with the Float1 answer by the runner's next chunk.
-void AnswerNextString2(std::string value);
+/// A presentation parameter written as the cut UI script's `setAttribute(g_Param.element, name,
+/// value)` would have written it, into the host store the parameter getters answer from
+/// (hooks/gui_menu_hooks.cpp): the runner's answers to `g_Menu:CountSpawnedItems()` /
+/// `GetLastItemIndex()` (`Float1`) and `GetMenuItemDataByName()` (`String2`). Written only when
+/// `presentation`'s Parameters carries `name`, as the script's write would land.
+void AnswerParamNumber(uint32_t presentation, const char* name, float value);
+void AnswerParamText(uint32_t presentation, const char* name, const std::string& value);
 
 /// The guest's population ticket for the item `record` on the row registry every list screen
 /// shares, as its allocate and clear stated it (the lowest when several rows hold it), or 0 when

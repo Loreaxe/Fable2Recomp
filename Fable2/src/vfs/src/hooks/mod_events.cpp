@@ -382,6 +382,9 @@ bool g_lua_cancelled = false;
 namespace refii::vfs {
 // gui_stated_screens.cpp: brackets an exit, whose last unload states that no screen is up.
 void StatedScreenExiting(int32_t delta);
+// gui_stated_screens.cpp: true inside a box opener, which puts the screen it set back before it
+// returns (display_box_hooks.cpp).
+bool StatedScreenKeptByBox();
 void NoteLuaCancelled() { g_lua_cancelled = true; }
 }  // namespace refii::vfs
 
@@ -7729,9 +7732,12 @@ REX_EXTERN(rex_lhGuiManager_SetScreen) {
                        static_cast<int32_t>(refii::guest::ScreenIdToTu1(static_cast<uint32_t>(screen))) != CurrentScreen();
   __imp__rex_lhGuiManager_SetScreen(ctx, base);
   // The setter writes its argument as the screen that is up (`stw r28,4(r9)` 0x8236eb20, disc
-  // 0x82336d28), whatever it loaded.
+  // 0x82336d28), whatever it loaded — except inside a box opener, which writes the screen it
+  // saved back before returning, so the screen up across the call never changes.
   const uint32_t stated = refii::guest::ScreenIdToTu1(static_cast<uint32_t>(screen));
-  refii_bridge_stated_screen(stated);
+  if (!refii::vfs::StatedScreenKeptByBox()) {
+    refii_bridge_stated_screen(stated);
+  }
   // The setter also drops the modal latch for every screen but the boxes' own (`if ( !v9 )`
   // 0x8236e71c: 19 query, 4 adjuster, 5, 3 message, 9).
   if (stated != 19u && stated != 4u && stated != 5u && stated != 3u && stated != 9u) {

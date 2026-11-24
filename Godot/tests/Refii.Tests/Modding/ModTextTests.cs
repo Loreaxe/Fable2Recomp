@@ -236,7 +236,7 @@ public class ModTextTests
 
 		string Read(params string[] parts) => File.ReadAllText(Path.Combine(new[] { repo }.Concat(parts).ToArray()));
 		AssertThat(Read("Fable2", "src", "vfs", "src", "hooks", "mod_lua_natives.cpp").Contains("{\"_text\", &NativeText, 0}", StringComparison.Ordinal)).IsTrue();
-		AssertThat(Read("Fable2", "src", "vfs", "src", "hooks", "mod_frontend_lua.cpp").Contains("{\"__refii_text\", &NativeText, 0}", StringComparison.Ordinal)).IsTrue();
+		AssertThat(Read("Fable2", "src", "vfs", "src", "hooks", "mod_frontend_lua.cpp").Contains("{\"__refii_text\", &NativeText}", StringComparison.Ordinal)).IsTrue();
 		AssertThat((Read("Fable2", "src", "vfs", "include", "core", "refii_mod.h") + Read("src", "runtime", "include", "core", "refii_mod_requests.h"))
 			.Contains("extern \"C\" int32_t refii_mod_text(const char* text, char* out, uint32_t capacity);", StringComparison.Ordinal)).IsTrue();
 		AssertThat(Read("src", "runtime", "include", "core", "payload_bridge.h")

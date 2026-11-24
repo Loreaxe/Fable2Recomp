@@ -295,6 +295,7 @@ public static class Fable3UiStatements
 			element.Opacity = enabled ? 100f : 50f;
 			element.StatedOpacity = enabled ? 100f : 50f;
 			element.Visible = null;
+			element.MarkOpacity();
 		});
 		Fable3Elements.State(document, button + ".Title", element =>
 			element.Stated = new Fable3Elements.StatedText(label, null, null, "82961340"));
@@ -307,7 +308,11 @@ public static class Fable3UiStatements
 			});
 		}
 
-		Fable3Elements.State(document, button, element => element.Visible = true);
+		Fable3Elements.State(document, button, element =>
+		{
+			element.Visible = true;
+			element.MarkOpacity();
+		});
 		++Generation;
 	}
 

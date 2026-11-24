@@ -51,6 +51,23 @@ public partial class Engine_FrontEndWarning : Node3D
 	/// <summary>The Y-button glyph, which the two-button form swaps for `abyx.tex`.</summary>
 	public const string IconName = "icon_button_y";
 
+	/// <summary>The accept button's glyph.</summary>
+	public const string AcceptIconName = "icon_button_a";
+
+	/// <summary>
+	/// A third answer, Refii's: a copy of the accept button and its glyph, answered with Y and laid
+	/// out as one more row of the buttons' column (<see cref="Show"/>). The guest's dialog has two buttons; a
+	/// host question with three choices (New Game at the save limit) uses this one.
+	/// </summary>
+	public const string ThirdName = "third";
+
+	public const string ThirdIconName = "icon_button_third";
+
+	/// <summary>The third answer's button, and its column in the `abyx` atlas.</summary>
+	public const string ThirdButton = "Y";
+
+	private const int YColumn = 2;
+
 	/// <summary>
 	/// The glyph the one-button form stamps: `dword_8349B690` (disc `dword_8349B0E8`), the
 	/// resource hash of `art\gui\frames\blank.tex` (static init 0x83264F00..0x83264F24).
@@ -78,9 +95,14 @@ public partial class Engine_FrontEndWarning : Node3D
 			return 0;
 		}
 
-		if (On(ButtonName, at))
+		if (On(ButtonName, at) || On(AcceptIconName, at))
 		{
 			return 1;
+		}
+
+		if (HasThird && (On(ThirdName, at) || On(ThirdIconName, at)))
+		{
+			return 2;
 		}
 
 		return AllowCancel && (On(CancelName, at) || On(IconName, at)) ? -1 : 0;
@@ -116,6 +138,9 @@ public partial class Engine_FrontEndWarning : Node3D
 	/// </summary>
 	public bool AllowCancel { get; private set; }
 
+	/// <summary>Whether the third answer stands (<see cref="ThirdName"/>).</summary>
+	public bool HasThird { get; private set; }
+
 	/// <summary>What the last <see cref="Show"/> managed to set, for the log.</summary>
 	public string LastReport { get; private set; } = "not shown yet";
 
@@ -145,16 +170,54 @@ public partial class Engine_FrontEndWarning : Node3D
 			panel.AddChild(clone);
 			panel.HasShippedArt = true;
 
+			Node3D? third = Copy(Engine_UiTheme.FindByName(clone, ButtonName) as Node3D, ThirdName);
+			Node3D? thirdIcon = Copy(Engine_UiTheme.FindByName(clone, AcceptIconName) as Node3D, ThirdIconName);
+
 			// The same `paperbox` nine-slice the in-game boxes draw, sized to the body by the
 			// same rule; the buttons and their glyphs ride its bottom edge.
 			panel.Paper = Engine_UiPaperBox.For(panel, clone,
 				Engine_UiTheme.FindByName(clone, ButtonName) as Node3D,
-				Engine_UiTheme.FindByName(clone, "icon_button_a") as Node3D,
+				Engine_UiTheme.FindByName(clone, AcceptIconName) as Node3D,
 				Engine_UiTheme.FindByName(clone, CancelName) as Node3D,
-				Engine_UiTheme.FindByName(clone, IconName) as Node3D);
+				Engine_UiTheme.FindByName(clone, IconName) as Node3D,
+				third, thirdIcon);
 		}
 
 		return panel;
+	}
+
+	/// <summary>
+	/// A hidden sibling copy of <paramref name="source"/> under <paramref name="name"/>, its quads on
+	/// private materials so re-texturing the copy cannot reach the original.
+	/// </summary>
+	private static Node3D? Copy(Node3D? source, string name)
+	{
+		if (source?.GetParent() is not Node parent)
+		{
+			return null;
+		}
+
+		var copy = (Node3D)source.Duplicate();
+		copy.Name = name;
+		copy.Visible = false;
+		OwnMaterials(copy);
+		parent.AddChild(copy);
+		return copy;
+	}
+
+	private static void OwnMaterials(Node node)
+	{
+		if (node is MeshInstance3D { MaterialOverride: ShaderMaterial shared } mesh)
+		{
+			ShaderMaterial own = Refii.Models.Engine_MaterialCopy.Shallow(shared);
+			mesh.MaterialOverride = own;
+			Engine_UiSceneBuilder.MarkOwnedMaterial(mesh, own);
+		}
+
+		foreach (Node child in node.GetChildren())
+		{
+			OwnMaterials(child);
+		}
 	}
 
 	/// <summary>
@@ -198,9 +261,12 @@ public partial class Engine_FrontEndWarning : Node3D
 	/// Whether `icon_button_y` carries a glyph — the guest's stamp is `abyx.tex` or the blank
 	/// (<see cref="BlankGlyph"/>); null follows <paramref name="twoButton"/>.
 	/// </param>
+	/// <param name="thirdTag">
+	/// A third answer's label (Y), or null for the guest's own one- and two-button forms.
+	/// </param>
 	public void Show(
 		Engine_UiTheme? theme, string bodyTag, string buttonTag, bool twoButton,
-		string? cancelTag = null, bool? glyph = null)
+		string? cancelTag = null, bool? glyph = null, string? thirdTag = null)
 	{
 		Node3D? group = GetNodeOrNull<Node3D>("Group");
 
@@ -224,9 +290,75 @@ public partial class Engine_FrontEndWarning : Node3D
 		SetShown(group, CancelName, twoButton);
 		SetShown(group, IconName, glyph ?? twoButton);
 
+		HasThird = thirdTag is not null && group is not null &&
+			Engine_UiTheme.FindByName(group, ThirdName) is MeshInstance3D &&
+			Engine_UiTheme.FindByName(group, ThirdIconName) is Node3D;
+		if (HasThird)
+		{
+			SetText(theme, group, ThirdName, theme?.Resolve(thirdTag!) ?? thirdTag!);
+			Reglyph(Engine_UiTheme.FindByName(group!, ThirdIconName), Engine_UiKeyGlyphs.KeycapFor(ThirdButton));
+		}
+
+		SetShown(group, ThirdName, HasThird);
+		SetShown(group, ThirdIconName, HasThird);
+
 		AllowCancel = twoButton;
 		Visible = true;
-		LastReport = $"body {body}, button {button}, {(twoButton ? "two" : "one")}-button";
+		string row = HasThird ? ", " + LayRow(group!) : string.Empty;
+		LastReport = $"body {body}, button {button}, {(HasThird ? "three" : twoButton ? "two" : "one")}-button{row}";
+	}
+
+	/// <summary>
+	/// The dialog's glyphs are cells of the `abyx` atlas (columns A, B, Y, X), with the glyph the scene
+	/// builder lays over each for the keys (`keycap_tex`, <see cref="Engine_UiKeyGlyphs.KeycapFor"/>).
+	/// The copy of the A glyph is moved to the atlas's Y column and given the Y keycap.
+	/// </summary>
+	private static void Reglyph(Node? node, Texture2D glyph)
+	{
+		if (node is MeshInstance3D { MaterialOverride: ShaderMaterial material })
+		{
+			Vector2 offset = material.GetShaderParameter("uv1_offset").AsVector2();
+			int column = Mathf.Clamp(Mathf.FloorToInt((offset.X * 4f) + 0.01f), 0, 3);
+			material.SetShaderParameter("uv1_offset", new Vector2(offset.X + ((YColumn - column) * 0.25f), offset.Y));
+			material.SetShaderParameter("keycap_tex", glyph);
+			material.SetShaderParameter("has_keycap", true);
+		}
+
+		if (node is null)
+		{
+			return;
+		}
+
+		foreach (Node child in node.GetChildren())
+		{
+			Reglyph(child, glyph);
+		}
+	}
+
+	/// <summary>
+	/// Lays the third answer out as one more row of the dialog's button column: the file stacks
+	/// cancel one row above accept, each label right-aligned against its glyph, so the third stands one
+	/// such step above cancel, at cancel's x. The step is the authored one (cancel's place less
+	/// accept's), taken after the paper has placed both (<see cref="Engine_UiPaperBox.Layout"/>), which
+	/// lays the next box out from the authored places again.
+	/// </summary>
+	private static string LayRow(Node3D group)
+	{
+		if (Engine_UiTheme.FindByName(group, ButtonName) is not Node3D ok ||
+			Engine_UiTheme.FindByName(group, CancelName) is not Node3D cancel ||
+			Engine_UiTheme.FindByName(group, IconName) is not Node3D cancelIcon ||
+			Engine_UiTheme.FindByName(group, ThirdName) is not Node3D third ||
+			Engine_UiTheme.FindByName(group, ThirdIconName) is not Node3D thirdIcon ||
+			Engine_UiTheme.FindByName(group, AcceptIconName) is not Node3D okIcon)
+		{
+			return "rows NOT laid";
+		}
+
+		float stepY = cancel.Position.Y - ok.Position.Y;
+		float iconStepY = cancelIcon.Position.Y - okIcon.Position.Y;
+		third.Position = cancel.Position + new Vector3(0f, stepY, 0f);
+		thirdIcon.Position = cancelIcon.Position + new Vector3(0f, iconStepY, 0f);
+		return $"third row at {third.Position.Y:0} above cancel {cancel.Position.Y:0}, accept {ok.Position.Y:0}";
 	}
 
 	/// <summary>

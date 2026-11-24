@@ -84,15 +84,19 @@ public partial class GameUi
 
 		Engine_UiCommands.Register(Fable2UiVerbs.PauseOwned, Engine_UiHostScreens.Open);
 
-		// THE MINIGAME TALLY'S A: Godot's rows snap by the handler's own rule, and the press goes on
-		// to `lhGuiMinigameCompletedScreen_HandleAction` (code 6, TU1 0x823CDC08 / disc 0x8258CB40),
-		// whose rows snap with Godot's and which closes once none moved (0x823CDC98 / 0x8258CBD0):
-		// its close lifts the `handler+40` latch and exits the screen (`sub_823CDF10` / `sub_8258CE48`).
+		// THE MINIGAME TALLY'S A: the first press snaps Godot's count-ups (the handler's own rule,
+		// 0x823CDC34..0x823CDC44); a press with every row settled closes — code 6 to the ported
+		// `lhGuiMinigameCompletedScreen_HandleAction` (TU1 0x823CDC08 / disc 0x8258CB40), which runs
+		// the close `sub_823CDF10` / `sub_8258CE48` (the `handler+40` latch, ExitScreen).
 		Engine_UiCommands.Register(Fable2UiVerbs.MiniGameConfirm, (_, _) =>
 		{
 			bool snapped = _widgets.ConfirmMiniGame();
-			HostBridge.ScreenAction(Engine_UiScreenInput.Dismiss);
-			GD.Print($"[minigame] A: {(snapped ? "rows snapped" : "rows settled")}; the press goes to the tally's handler");
+			if (!snapped)
+			{
+				HostBridge.ScreenAction(Engine_UiScreenInput.Dismiss);
+			}
+
+			GD.Print($"[minigame] A: {(snapped ? "rows snapped" : "rows settled — the tally closes")}");
 			return Engine_UiCommandResult.Done;
 		});
 

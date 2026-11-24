@@ -158,11 +158,12 @@ public sealed class Engine_Title
 	public string SaveFolder => Name;
 
 	/// <summary>
-	/// How many saved games the title keeps. Fable 2: 6, stored over the image's 150 by the front end's
-	/// enter (0x82378D38 <c>li r10, 6</c>, 0x82378D3C <c>stw r10, dword_83319620</c>) and compared by the
-	/// save create (0x82445104..0x8244510C: <c>sub_824431E8</c>'s count <c>bge</c> the limit). Fable 3:
-	/// 5, the save create's own constant (0x822F4D50 <c>bl sub_822F2370</c>, 0x822F4D54
-	/// <c>cmpwi r3, 5</c>, 0x822F4D58 <c>bge</c> refuses).
+	/// How many saved games the title keeps. Fable 2: 10 — the game ships 6, stored over the image's 150
+	/// by the front end's enter (0x82378D38 <c>li r10, 6</c>, 0x82378D3C <c>stw r10, dword_83319620</c>)
+	/// and compared by the New Game guard (0x826E0148) and the save create (0x82445104..0x8244510C:
+	/// <c>sub_824431E8</c>'s count <c>bge</c> the limit); our post-hook on that enter stores 10, a rule
+	/// change the user asked for (frontend_stated.cpp). Fable 3: 5, the save create's own constant
+	/// (0x822F4D50 <c>bl sub_822F2370</c>, 0x822F4D54 <c>cmpwi r3, 5</c>, 0x822F4D58 <c>bge</c> refuses).
 	/// </summary>
 	public int SaveSlots { get; private init; } = 6;
 
@@ -212,6 +213,7 @@ public sealed class Engine_Title
 		"refii_hostbridge", "refii_vfs", "refii_lua")
 	{
 		PhoneHostLabels = Refii.AndroidRuntime.AndroidMenuWords.Fable2,
+		SaveSlots = 10,
 	};
 
 	/// <summary>Fable 3 in Return to Albion.</summary>

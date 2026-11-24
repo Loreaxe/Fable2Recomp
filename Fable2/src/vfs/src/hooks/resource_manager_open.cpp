@@ -162,10 +162,6 @@ REX_EXTERN(rex_lhResourceManager_OpenInternal) {
 REX_EXTERN(rex_lhGui_RunLuaString) {
   REX_FUNC_PROLOGUE();
 
-  // A Float1 answer is for the read that follows its own chunk; a reader that skipped its read
-  // (`sub_826CE230` reads only off the current presentation, 0x826ce754) leaves it for no one.
-  refii::vfs::DisarmFloat1();
-
   // r4 == 0 is a chunk the original discards outright (`beq cr6` at 0x82426488).
   const uint32_t presentation = ctx.r4.u32;
   if (presentation == 0) {
@@ -219,16 +215,26 @@ REX_EXTERN(rex_lhGui_RunLuaString) {
     // (`SetItemEmphasisByIndex`, 0x826d0be4). The script answers `NumberOfItems - 1`, the index
     // of the row just spawned; the answer is that row's place in this presentation's populate.
     if (chunk.find("g_Menu:GetLastItemIndex") != std::string::npos) {
-      refii::vfs::AnswerNextFloat1(
-          static_cast<double>(refii::vfs::MenuLastSpawnOrdinal(presentation)));
+      refii::vfs::AnswerParamNumber(
+          presentation, "Float1", static_cast<float>(refii::vfs::MenuLastSpawnOrdinal(presentation)));
     }
 
     // `g_Menu:GetMenuItemDataByName()` — `sub_823DF660` (disc `sub_8283F948`) runs it at
     // 0x823df7ac (disc 0x8283fa94) and reads `String2` at 0x823df7e4 (disc 0x8283facc): the named
-    // row's text tag, which the recorder answered from this presentation's populate.
+    // row's text tag, which the recorder answered from this presentation's populate; a name it has
+    // not got gets the script's own miss, "No Text Tag" (`expandablemenu.lua`).
     if (chunk.find("g_Menu:GetMenuItemDataByName") != std::string::npos) {
       std::string text_tag;
-      if (refii::vfs::MenuByNameTextTag(presentation, &text_tag)) {
+      if (!refii::vfs::MenuByNameTextTag(presentation, &text_tag)) {
+        static std::atomic<uint64_t> missed{0};
+        const uint64_t m = missed.fetch_add(1, std::memory_order_relaxed) + 1u;
+        if (m <= 16u || (m & (m - 1u)) == 0u) {
+          REXLOG_INFO("Refii menu: GetMenuItemDataByName on presentation 0x{:08X} names no row — "
+                      "String2 'No Text Tag' (#{})",
+                      presentation, m);
+        }
+        refii::vfs::AnswerParamText(presentation, "String2", "No Text Tag");
+      } else {
         static std::atomic<uint64_t> answered{0};
         const uint64_t a = answered.fetch_add(1, std::memory_order_relaxed) + 1u;
         if (a <= 16u || (a & (a - 1u)) == 0u) {
@@ -236,13 +242,13 @@ REX_EXTERN(rex_lhGui_RunLuaString) {
                       "natively — text tag '{}' (#{})",
                       presentation, text_tag, a);
         }
-        refii::vfs::AnswerNextString2(std::move(text_tag));
+        refii::vfs::AnswerParamText(presentation, "String2", text_tag);
       }
     }
 
     if (chunk.find("g_Menu:CountSpawnedItems") != std::string::npos) {
       const uint32_t rows = refii::vfs::MenuRootRows(presentation);
-      refii::vfs::AnswerNextFloat1(static_cast<double>(rows));
+      refii::vfs::AnswerParamNumber(presentation, "Float1", static_cast<float>(rows));
       REXLOG_INFO("Refii menu: CountSpawnedItems on presentation 0x{:08X} answered natively — "
                   "{} root row(s)",
                   presentation, rows);

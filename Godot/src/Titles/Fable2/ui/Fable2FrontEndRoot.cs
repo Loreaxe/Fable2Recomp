@@ -30,11 +30,11 @@ public static class Fable2FrontEndRoot
 	public const string HeroCardScreen = "HeroCard";
 
 	/// <summary>
-	/// The saved-game slot cap, for a caller with no guest to read it from. Six, not the 150 at
-	/// `dword_83319620`: `sub_82378618` (front-end enter, vtable slot 0x820A9260) stores 6 over
-	/// it unconditionally before the menu can dispatch.
+	/// The saved-game slot cap, for a caller with no guest to read it from: the title's
+	/// <see cref="Refii.Core.Engine_Title.SaveSlots"/>, 10 — the value our post-hook on `sub_82378618`
+	/// (front-end enter, vtable slot 0x820A9260) stores over the game's 6 at `dword_83319620`.
 	/// </summary>
-	public const int DefaultSaveLimit = 6;
+	public static int DefaultSaveLimit => Refii.Core.Engine_Title.Fable2.SaveSlots;
 
 	/// <summary>The guest's own text tag for a New Game with no profile signed in.</summary>
 	public const string NoProfileWarning = "GUI_NO_PROFILE_SELECTED_WARNING";

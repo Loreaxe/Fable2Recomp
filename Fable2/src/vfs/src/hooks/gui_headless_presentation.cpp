@@ -1,73 +1,72 @@
 // HEADLESS GAMEFACE PRESENTATIONS, Fable 2's hooks. The guest keeps its UI objects; it never
-// builds a .bgf scene. The work is the shared headless core's (core/headless_presentation.h,
-// src/payload/src/core/headless_presentation.cpp): these hooks are its shims, and Fable2Table()
-// is Fable 2's Gameface for it — every address TU1, converted to the running build.
+// builds a .bgf scene, and since the engine cut's S5 it never builds a CPresentation either. The
+// work is the shared headless core's (core/headless_presentation.h,
+// src/payload/src/core/headless_presentation.cpp, THE STATED ELEMENTS): these hooks are its shims,
+// and Fable2Table() is Fable 2's Gameface for it — every address TU1, converted to the running build.
 //
 // THE CREATE. `CGameface` vtable +28 (TU1 `sub_82BBA588`, disc `sub_82BB3E88`; vtable TU1
 // 0x82002F68, disc 0x82002F88) is the only maker of a presentation. Its callers are
 // lhGuiPresentation_LoadIfUnloaded (TU1 `sub_823DCB10` 0x823dcbb0, disc `sub_823FE828`) and the
 // CGameface's own loader (+16 `sub_82BBA370` 0x82bba47c). Shipped, it makes a CPresentation in the
-// kernel (`sub_82BEDBC0`: kernel alloc 876, ctor `sub_82BAFA28`, kernel list push), names it
-// (vf +72), gives it its Lua engine (0x82bba624..0x82bba718), deserialises the .bgf (CGameface+528
-// vf +12) and adds its scene to the renderer. The core makes, names and gives an engine to the same
-// CPresentation with the same calls (GiveEngine below is Fable 2's engine sequence) and does none
-// of the rest. The engine is the mods' front-end Lua state (mod_frontend_lua.cpp); no guest chunk
-// reaches it (the runner and `sub_82372500` are swallowed in gui_menu_hooks.cpp /
-// resource_manager_open.cpp).
+// kernel (`sub_82BEDBC0`: kernel alloc 876, ctor `sub_82BAFA28` with its eight sub-objects, kernel
+// list push), names it, gives it its Lua engine, deserialises the .bgf and adds its scene to the
+// renderer. The core does none of it: it makes a zeroed 876-byte block whose only words are the
+// CPresentation vtable (TU1 0x82006D48, disc 0x82006D68) at +0, the stand-in scene at +24, the
+// element service's vtable (TU1 0x820065C0, disc 0x820065E0) at +492 with the root's handle at +500
+// (service +8: vf +68 `lwz r3,8(r3)`, TU1 0x830F3910, which the root reads outside the facade call),
+// and the animation manager's vtable (TU1 0x820030A8, disc 0x820030C8) at +568. What the guest calls
+// through them is answered by the host (gui_element_hooks.cpp); the engine (+28) and the gameplan
+// (+32) stay 0, which every reader tests (`lhGui_RunLuaString` 0x824264b4, the deferred drain
+// `sub_821738A0` 0x82173998). The park bytes +0x368 / +0x369 are the guest's own vf +92 / +100
+// writes into the block.
 //
-// ELEMENTS ARE MADE AS THE GUEST NAMES THEM, AS THE FILE HAS THEM. Child-by-name, element service
-// vf +84 (TU1 `sub_82BB5658`, disc `sub_82BACC90`; r3 service, r4 name hash, r5 parent or 0), and
-// the child walk, vf +92 (TU1 `sub_82BB56A8`, disc `sub_82BACCE0`), make a headless parent's
-// children from the .bgf element table, laid out as the guest's deserialiser (TU1 `sub_82BC8038`,
-// disc `sub_82BC1968`) would have left them: the file's active bit as flag 0x2000 (the element
-// builders' `vf+80(e, 0x2000, file bit 0)`, `sub_82BB2E18` / `sub_82BB2F10`), 0x0001 on a component
-// (its own timeline; attributes at +68, else +32), 0x0002 on one with a start or end time, its
-// numeric attribute records in the store's word form, and a component's slide base and count
-// (`sub_82BB3778`) over the presentation's slide records at Mgr:Slides +8 (pres +628). So:
-//  - the attribute lookup (TU1 `sub_822848E0` / `sub_82284948`, disc `sub_82284448` /
-//    `sub_822844B0`) and everything through it answers the file's value until the guest writes it,
-//    and the store (`sub_82284798`, vf +72) writes into that record — the show/hide helper
-//    (`sub_82426260`, disc `sub_823F86F8`) reads the authored opacity at 0x82426294, GetPosition
-//    (0x824252E8, disc 0x823F7780) the authored or last-set position (the credits' scroll
-//    `sub_826B7D00` 0x826b7d60, the pause minimap's origin 0x826a22b0);
-//  - the active bit (vf +76) is the file's until SetActive / the flags writer changes it, and the
-//    presentation Update's tree walk (`sub_822849A0`, entered on root 0x2000 at 0x822ac9e0) runs
-//    over the tree as over a loaded one;
-//  - GotoSlide (`sub_82BB5760`) lands on a component (count +42, base +40) and GetState
-//    (`sub_82426D80`, through the timeline-owner walk `sub_82BB9AB0`) answers it. The slide
-//    records carry no actions: Godot plays the slides from the statements.
-// The root always owns its timeline: the owner walk has no null exit (0x82bb9af0..0x82bb9b48).
-// +4 (the render node) stays 0 on every element: the writers that take the node's record null-check
-// it, and the quad readers' joins that do not are answered with the core's inert quad record
-// (RefiiHeadlessQuadRecord). String attributes are answered at the attribute-string read.
+// THE ELEMENTS ARE HANDLES: zeroed guest blocks, one per file element the guest names (child-by-name,
+// the child walk), answered from the .bgf by address. +4 (the render node) is 0 on every handle as
+// it was on every headless element: the 41 readers outside the facade test it (`cmplwi; beq`), and
+// the quad readers' joins that do not are answered with the core's inert quad record
+// (RefiiHeadlessQuadRecord). A name the file has not got answers 0, as child-by-name does on a
+// loaded tree.
 //
-// THE SCENE, THE DESTROY, THE PER-FRAME PASS: see the core. `CGameface` vtable +32 (TU1
-// `sub_82BBA8D0`, disc `sub_82BB41D0`, named rex_lhItemManager_NotifyAndRemoveItem in the config),
-// vtable +40 (TU1 `sub_822BE860`, disc `sub_822BE580`). The scene's vtable is CScene's (TU1
-// 0x82003E38, disc 0x82003E58), called unchecked as vf +16 by `sub_823DCF98` 0x823dd010,
-// PopulateMainMenu 0x826e21b0, MenuActionDispatch 0x826e0ac8 / 0x826e0bd4 and the message-box fit
-// `sub_823CEFA8` 0x823cf1f4.
+// THE GAMEFACE. Since the engine cut's S6 the CGameface is the host's as well. Every GUI object
+// makes its own (`lhEngineInit` → TU1 `sub_826DA640`, disc `sub_8241AAB0`, for the in-game GUI and
+// the front end alike), held at GUI +16 only. Its ctor (TU1 `sub_82BBA0F8`, disc `sub_82BB39F8`;
+// one call each, 0x826da77c / 0x8241abec, into a `li r3,0x258` block) is replaced: the zeroed block,
+// the guest vtable (TU1 0x82002F68, disc 0x82002F88), a guest CTimer at +8 (`sub_82BC18C8` /
+// `sub_82BBB1C8`) and the input object at +0x208. The clock stays a guest object because vf +52 is
+// the linker-folded `addi r3,r3,8; blr` shared with Havok (TU1 0x82C5B970, disc 0x82D79B50); the
+// GUI's update, lhFrontEnd_Update, BindScrollingElement and RunInitScripts read it through that slot
+// (ms from vf +16, restart through vf +12 when negative). There is no scene manager (+0x20C),
+// deserializer (+0x210), data store (+0x214), gameplan (+0x248) or kernel list (+40). The input
+// object's +168 stays 0 — the ctor's last store (0x82bba26c `stw r31,0xA8(r11)`) is not made — and
+// its only reader, its vf +24 (TU1 `sub_82BBAD00` 0x82bbad0c, disc `sub_82BB4600`), returns on 0.
+// The callback word +588 stays 0: its writers are the ctor and vf +36, which nothing outside
+// Gameface calls. The slots that read a removed object are replaced: the dtor, +16, +20, +24, +32,
+// +40, +44, +48. Guest code still: +0 (`sub_82BBA278`, which frees the block), +4, +8, +12, +36,
+// +52, +56, +60.
+//
+// THE SCENE, THE DESTROY: see the core. `CGameface` vtable +32 (TU1 `sub_82BBA8D0`, disc
+// `sub_82BB41D0`, named rex_lhItemManager_NotifyAndRemoveItem in the config). The scene's vtable is
+// CScene's (TU1 0x82003E38, disc 0x82003E58), called unchecked as vf +16 by `sub_823DCF98`
+// 0x823dd010, PopulateMainMenu 0x826e21b0, MenuActionDispatch 0x826e0ac8 / 0x826e0bd4 and the
+// message-box fit `sub_823CEFA8` 0x823cf1f4.
+//
+// NO PER-FRAME PRESENTATION UPDATE. CPresentation vf +4 (TU1 `sub_822AC880`, disc `sub_822AC668`)
+// is a no-op, which also covers its one direct caller: the end of RunInitScripts (TU1
+// `sub_823DCF98` 0x823dcfec, disc `sub_823FECA0` 0x823fecf4), whose scene refresh and `+180 = 1`
+// (disc `+176`; 0x823dd018 / 0x823fed20) still run.
 //
 // THE ROOT'S TIME. The co-op screen (TU1 `sub_82436548`, disc `sub_82477768`) gates player two's
 // preview on the shared slot's root timeline time, `lwz r11,0x30(r3)` straight after
-// GetRootElement: >= 1000 at 0x82436930 and >= 500 at 0x82436988. GetRootElement writes the root's
-// +48 = clock − creation clock.
+// GetRootElement: >= 1000 at 0x82436930 and >= 500 at 0x82436988. GetRootElement writes the root
+// handle's +48 = clock − creation clock.
 //
-// EXISTENCE-CHECKED WRITES. SetPosition (TU1 `sub_824251E0`, disc `sub_823F7678`: r3 element, r4
-// presentation, f1..f3; position.x checked through service vf +12 at 0x8242524c, then x/y/z
-// `dword_834BE51C/520/524` through the store), SetRotation (TU1 `sub_824254C8`, disc
-// `sub_823F7960`: rotation.x `dword_834BE528` checked by `sub_82284948` at 0x82425530, then
-// x/y/z 528/52C/530) and SetOpacity (`GuiElement_SetOpacity_p` TU1 0x82426078, disc
-// `sub_823F8510`: opacity `dword_834BE518`) write only when the element carries the attribute. A
-// file element carries what the file authored, as a loaded one does, and the guest's own write and
-// its statement (the store's, gui_element_hooks.cpp) follow from that. A fileless element (no
-// table, or a name the file has not got) is given the attribute at the entry (RememberWrite), so
-// its write lands too; only when it has no room left is a position or rotation write stated here
-// from the arguments. SetOpacity's never is: the value it stores is the store's statement, and
-// with no room it stores nothing (RefiiHeadlessSetOpacity).
+// EXISTENCE-CHECKED WRITES. SetPosition (TU1 `sub_824251E0`), SetRotation (`sub_824254C8`) and
+// SetOpacity (`GuiElement_SetOpacity_p` 0x82426078) write only when the element carries the
+// attribute; a handle carries what the file authored (gui_element_hooks.cpp, service +12 and the
+// record lookup), so they write exactly where the loaded scene would have.
 //
 // THE FRONT END'S STATEMENTS. Its writers store a quad record's +512 inline (no setter) and only
-// through +4, so on a headless element they skip. The load fan's cards are stated at StampSaveCard
+// through +4, so on a handle they skip. The load fan's cards are stated at StampSaveCard
 // (`sub_826E1408` / disc `sub_826C9828`) as (save, card slot, texture), each save's screenshot
 // also as the element's texture where the stamp takes it (0x826e14b0 / disc 0x826c98d0, r30 the
 // hash); the dialog at OpenDialog (`sub_826E40E0` / disc `sub_826CB158`) as its texts, cancel and
@@ -75,12 +74,13 @@
 //
 // TEXTS. SetText (TU1 `sub_82425DD0`: r3 element, r4 presentation, r5 the text's handle) and
 // SetTextFromTag (`sub_82425F40`: r3 element, r4 the tag) store only through +4 and bail without
-// it. Each is stated at its entry (midasm) for a headless element: SetText's string as given;
+// it. Each is stated at its entry (midasm) for a handle: SetText's string as given;
 // SetTextFromTag's through the guest's own lookup `sub_8230E0E8` (Babel, TEXT_ fallback), as the
 // writer would have stored it (0x82425f78..0x82425fb8).
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -109,35 +109,19 @@ using refii::vfs::LoadGuestU16;
 using refii::vfs::LoadGuestU32;
 using refii::vfs::StoreGuestU32;
 
-// The kernel allocator and the presentation's ctor (`sub_82BEDBC0` 0x82bedbe8..0x82bedc14).
-constexpr refii::guest::Addr kKernelAllocator{0x82BAEE60u};  // returns the allocator
-constexpr refii::guest::Addr kKernelAlloc{0x82BAF660u};      // (allocator, size, class, file, line)
-constexpr refii::guest::Addr kKernelFree{0x82BAF7B0u};       // (allocator, ptr, size)
-constexpr refii::guest::Addr kPresentationCtor{0x82BAFA28u};  // (this, name, gameface)
-constexpr refii::guest::Addr kPresentationClassName{0x820FFF98u};  // "class CPresentation"
-constexpr refii::guest::Addr kKernelSourceName{0x820FFF30u};       // "...AKKernel.cpp"
-constexpr uint32_t kKernelSourceLine = 71u;                        // `li r7,0x47`
-constexpr uint32_t kPresentationSize = 876u;                       // `li r4,0x36C`
+// The three vtables the stated presentation block carries (THE CREATE).
+constexpr refii::guest::Addr kPresentationVtable{0x82006D48u};
+constexpr refii::guest::Addr kServiceVtable{0x820065C0u};
+constexpr refii::guest::Addr kAnimationVtable{0x820030A8u};
+constexpr uint32_t kPresentationSize = 876u;  // `li r4,0x36C` in `sub_82BEDBC0`
 
-// The create's engine steps, 0x82bba61c..0x82bba718 (disc 0x82bb3f1c..0x82bb4018).
-constexpr refii::guest::Addr kEngineFactory{0x83314AC0u};    // -> `sub_82BC4548`(pres)
-constexpr refii::guest::Addr kGameplanFactory{0x83314AC4u};  // -> `li r3,0`
-constexpr refii::guest::Addr kRegisterDataPort{0x82BC5DA8u};  // (gameface + 0x214, L)
-constexpr refii::guest::Addr kLuaSetField{0x82BCC600u};       // (L, index, char*)
-constexpr refii::guest::Addr kLuaPushClosure{0x8227B968u};    // (L, fn, 0)
-constexpr refii::guest::Addr kFireGameplanEvent{0x82BC5B50u};
-constexpr refii::guest::Addr kFireEventOnPresentation{0x82BC5C38u};
-constexpr refii::guest::Addr kNameAkGameplan{0x820FF2B8u};         // "AKGameplan"
-constexpr refii::guest::Addr kNameFireGameplanEvent{0x820FF2C4u};  // "fireGameplanEvent"
-constexpr refii::guest::Addr kNameFireEventOnPresentation{0x820FF2D8u};
-constexpr uint32_t kLuaGlobalsIndex = 0xFFFFD8EEu;  // -10002, `li r4,-0x2712`
-constexpr uint32_t kGamefaceDataPorts = 0x214u;     // `addi r3,r28,0x214`
-constexpr uint32_t kGamefaceGameplan = 0x248u;      // `lwz r9,0x248(r28)`, pushed as light userdata
-constexpr uint32_t kLuaTop = 8u;                    // lua_State +8
-constexpr uint32_t kLuaLightUserdata = 2u;          // `li r11,2`
-constexpr uint32_t kPresEngine = 28u;               // vf +16 `stw r4,0x1C(r3)`
-constexpr uint32_t kPresGameplan = 32u;             // `stw r3,0x20(r31)` 0x82bba718
-constexpr uint32_t kPresSlotSetEngine = 16u;
+// THE GAMEFACE: its vtable, the guest timer's ctor (vtable 0x82001998, QueryPerformanceFrequency,
+// start) and the block's size and fields.
+constexpr refii::guest::Addr kGamefaceVtable{0x82002F68u};
+constexpr refii::guest::Addr kTimerCtor{0x82BC18C8u};
+constexpr uint32_t kGamefaceSize = 0x258u;      // `li r3,0x258` in `sub_826DA640` (0x826da764)
+constexpr uint32_t kGamefaceInput = 0x208u;     // vf +60 `lwz r3,0x208(r3)`
+constexpr uint32_t kGamefaceSlotCreate = 28u;   // the loader's `lwz r10,0x1C(r11)` (0x82bba474)
 
 constexpr refii::guest::Addr kNameHash{0x82189140u};       // h = 65599*h + c, NUL folded
 constexpr refii::guest::Addr kParametersName{0x8349AF78u};  // CCharString "Parameters"
@@ -148,11 +132,8 @@ constexpr refii::guest::Addr kCharStringCopy{0x821F0240u};    // (out, CCharStri
 constexpr refii::guest::Addr kTextLookup{0x8230E0E8u};        // (out wide, CCharString*), frees the arg
 constexpr refii::guest::Addr kWideStringDtor{0x821C67F8u};    // (wide*)
 
-// CCharString's own steps: GetAttributeString's result (0x824250f8), its dtor, and the texture
-// setter's hash of a name (`sub_8286DDC0` 0x8286de1c..0x8286de3c: copy, lower case, hash, dtor).
-// The ctor hands r5 straight to its body (`sub_822078A0`, disc `sub_822079D8`): -1 measures the
-// text — every guest caller loads `li r5,-1` (0x824250f0).
-constexpr refii::guest::Addr kCharStringFromCStr{0x8222CED0u};  // (this, char*, length) -> this
+// CCharString's own steps: its dtor and the texture setter's hash of a name (`sub_8286DDC0`
+// 0x8286de1c..0x8286de3c: copy, lower case, hash, dtor).
 constexpr refii::guest::Addr kCharStringDtor{0x82214DD8u};      // (this)
 constexpr refii::guest::Addr kCharStringLower{0x821EEB38u};     // (out, CCharString*) -> out
 constexpr refii::guest::Addr kResourceNameHash{0x82C037F0u};    // (CCharString*) -> hash
@@ -163,15 +144,9 @@ constexpr uint32_t kAttributeIdMask = 0x07FFFFFFu;
 // The attribute ids' globals (static init 0x83294294 onward; the setters load them).
 constexpr refii::guest::Addr kAttrStartTime{0x834BE510u};  // the deserialiser's 0x0002 pair (0x82bc83ec)
 constexpr refii::guest::Addr kAttrEndTime{0x834BE514u};
-constexpr refii::guest::Addr kAttrOpacity{0x834BE518u};
-constexpr refii::guest::Addr kAttrPositionX{0x834BE51Cu};
-constexpr refii::guest::Addr kAttrPositionY{0x834BE520u};
-constexpr refii::guest::Addr kAttrPositionZ{0x834BE524u};
-constexpr refii::guest::Addr kAttrRotationX{0x834BE528u};
-constexpr refii::guest::Addr kAttrRotationY{0x834BE52Cu};
-constexpr refii::guest::Addr kAttrRotationZ{0x834BE530u};
 
 constexpr refii::guest::Addr kCardBlankTexture{0x8349B600u};
+constexpr refii::guest::Addr kCoopCardBlankTexture{0x83498118u};  // the co-op picker's blank card (0x8243b290)
 constexpr refii::guest::Addr kGlyphCancelTexture{0x8349B694u};
 constexpr refii::guest::Addr kGlyphOtherTexture{0x8349B690u};
 
@@ -212,28 +187,6 @@ uint32_t Slot(uint8_t* base, uint32_t object, uint32_t offset) {
     return LoadGuestU32(base, LoadGuestU32(base, object) + offset);
 }
 
-/// Fable 2's create engine steps 0x82bba61c..0x82bba718: the engine (vf +16), the data ports,
-/// the AKGameplan light userdata and its two closures, then the gameplan (+32).
-void GiveEngine(PPCContext& ctx, uint8_t* base, uint32_t gameface, uint32_t presentation) {
-    const uint32_t engine = Call(ctx, base, LoadGuestU32(base, kEngineFactory), presentation);
-    Call(ctx, base, Slot(base, presentation, kPresSlotSetEngine), presentation, engine);
-    if (Plausible(engine)) {
-        const uint32_t L = LoadGuestU32(base, engine + 4u);
-        Call(ctx, base, kRegisterDataPort, gameface + kGamefaceDataPorts, L);
-        const uint32_t top = LoadGuestU32(base, L + kLuaTop);
-        StoreGuestU32(base, top, LoadGuestU32(base, gameface + kGamefaceGameplan));
-        StoreGuestU32(base, top + 4u, kLuaLightUserdata);
-        StoreGuestU32(base, L + kLuaTop, top + 8u);
-        Call(ctx, base, kLuaSetField, L, kLuaGlobalsIndex, kNameAkGameplan);
-        Call(ctx, base, kLuaPushClosure, L, kFireGameplanEvent, 0u);
-        Call(ctx, base, kLuaSetField, L, kLuaGlobalsIndex, kNameFireGameplanEvent);
-        Call(ctx, base, kLuaPushClosure, L, kFireEventOnPresentation, 0u);
-        Call(ctx, base, kLuaSetField, L, kLuaGlobalsIndex, kNameFireEventOnPresentation);
-    }
-    StoreGuestU32(base, presentation + kPresGameplan,
-                  Call(ctx, base, LoadGuestU32(base, kGameplanFactory), presentation));
-}
-
 uint32_t GuestAlloc(PPCContext& ctx, uint8_t* base, uint32_t size) { return refii::vfs::CallLhMalloc(ctx, base, size); }
 
 void GuestFree(PPCContext& ctx, uint8_t* base, uint32_t address) { refii::vfs::CallLhFree(ctx, base, address); }
@@ -246,31 +199,15 @@ refii::headless::GamefaceTable BuildTable() {
     t.find = &Find;
     t.alloc = &GuestAlloc;
     t.free = &GuestFree;
-    t.give_engine = &GiveEngine;
-    t.kernel_allocator = kKernelAllocator;
-    t.kernel_alloc = kKernelAlloc;
-    t.kernel_free = kKernelFree;
-    t.presentation_ctor = kPresentationCtor;
-    t.presentation_class_name = kPresentationClassName;
-    t.kernel_source_name = kKernelSourceName;
-    t.kernel_source_line = kKernelSourceLine;
     t.presentation_size = kPresentationSize;
-    // CPresentation (ctor `sub_82BAFA28`; vtable TU1 0x82006D48, disc 0x82006D68).
+    t.presentation_vtable = kPresentationVtable;
+    t.service_vtable = kServiceVtable;
+    t.animation_vtable = kAnimationVtable;
     t.pres_scene = 24u;          // vf +8 sets, vf +12 gets
-    t.pres_engine = kPresEngine;
-    t.pres_gameplan = kPresGameplan;
     t.pres_service = 492u;       // vf +32 `addi r3,r3,0x1EC`
     t.pres_root = 500u;          // service +8
-    t.pres_param_records = 596u; // params (+592) +4
-    t.pres_param_count = 600u;   // params +8, slot 1 `lwz r3,8(r3)`
-    t.pres_param_size_a = 608u;  // params +16, the dtor's free size
-    t.pres_param_size_b = 612u;  // params +20
-    t.pres_slide_records = 628u; // Mgr:Slides (vf +40 `addi r3,r3,0x26C`) +8, read by vf +4 / +8
-    t.pres_slot_dtor = 0u;       // `sub_82BAFD90`(this, flags)
-    t.pres_slot_update = 4u;     // `sub_822AC880`(this, clock)
-    t.pres_slot_nullsub = 68u;   // nullsub_1, `blr`
-    t.pres_slot_set_name = 72u;  // `sub_82BB0790`(this, char*)
-    t.gameplan_slot_release = 12u;  // destroy's `(+32)->vf12` 0x82bba924
+    t.pres_animation = 568u;     // vf +36 `addi r3,r3,0x238`
+    t.pres_slot_nullsub = 68u;   // nullsub_1, `blr`: the stand-in scene's refresh
     // CGameface: the clock object (+8, vf +16 = ms), the presentation callback (+588, ctx +592).
     t.gameface_clock = 8u;
     t.clock_slot_ms = 16u;
@@ -285,8 +222,6 @@ refii::headless::GamefaceTable BuildTable() {
     t.name_hash = kNameHash;
     t.attribute_id_mask = kAttributeIdMask;
     t.parameters_name = kParametersName;
-    t.char_string_from_cstr = kCharStringFromCStr;
-    t.char_string_dtor = kCharStringDtor;
     t.attr_start_time = kAttrStartTime;
     t.attr_end_time = kAttrEndTime;
     t.quad_record_ctor = kQuadRecordCtor;
@@ -299,6 +234,16 @@ const refii::headless::GamefaceTable& Table() {
     static const refii::headless::GamefaceTable table = BuildTable();
     return table;
 }
+
+}  // namespace
+
+namespace refii::vfs {
+
+const refii::headless::GamefaceTable& Fable2Gameface() { return Table(); }
+
+}  // namespace refii::vfs
+
+namespace {
 
 /// A wide string handle's units (`rep = *handle`, `*rep` the units, `rep+4` the length — the
 /// layout a text record holds at +140).
@@ -321,11 +266,11 @@ std::vector<uint16_t> WideUnits(uint8_t* base, uint32_t handle) {
 }
 
 std::atomic<uint64_t> g_passes{0};
+std::atomic<uint64_t> g_unknown_destroys{0};
+std::atomic<uint64_t> g_gamefaces_destroyed{0};
 std::atomic<uint64_t> g_texts{0};
-std::atomic<uint64_t> g_absent_writes{0};
 std::atomic<uint64_t> g_inert_answers{0};
 std::atomic<uint64_t> g_textures_named{0};
-std::atomic<uint64_t> g_stated_writes{0};
 
 /// Inside the expression wheel's SetItem (rex_lhGuiExpressionWheel_SetItem), which states the item
 /// itself: its title's SetTextFromTag and its texture write are not told to the elements.
@@ -378,6 +323,7 @@ namespace refii::vfs {
 
 // gui_stated_screens.cpp: the screen id being filed on this thread, -1 for none.
 int32_t StatedScreenLoading();
+void StatedScreenPresentationMade();
 
 bool HeadlessElementKey(uint32_t element, uint32_t* presentation, uint32_t* serial, uint32_t* id) {
     return refii::headless::ElementKey(element, presentation, serial, id);
@@ -388,7 +334,13 @@ bool HeadlessElementKey(uint32_t element, uint32_t* presentation, uint32_t* seri
 /// CGameface vtable +28 — (r3 gameface, r4 path) → a headless presentation, or 0.
 REX_EXTERN(rex_CGameface_CreatePresentation) {
     REX_FUNC_PROLOGUE();
+    const auto started = std::chrono::steady_clock::now();
     const uint32_t made = refii::headless::Create(Table(), ctx, base, ctx.r3.u32, ctx.r4.u32);
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started);
+    if (made != 0u) {
+        refii::vfs::StatedScreenPresentationMade();
+        REXLOG_INFO("Refii presentation create: 0x{:08X} in {} us", made, us.count());
+    }
     // Made while the screen set files a screen (gui_stated_screens.cpp): that screen's.
     const int32_t screen = refii::vfs::StatedScreenLoading();
     if (made != 0u && screen >= 0) {
@@ -397,28 +349,114 @@ REX_EXTERN(rex_CGameface_CreatePresentation) {
     ctx.r3.u32 = made;
 }
 
-/// CGameface vtable +32 — (r3 gameface, r4 presentation).
+/// CGameface vtable +32 — (r3 gameface, r4 presentation). Keyed by the presentation: the release
+/// helper (TU1 `sub_82372360` 0x8237245c, disc `sub_82306578`) calls it on the CURRENT global GUI's
+/// gameface, which need not be the one that made it. A presentation the core does not hold answers
+/// 0 as well: the shipped body removes it from the scene manager (+0x20C vf +8, 0x82bba934) and the
+/// kernel list (+40, `sub_82BEDC90` 0x82bba948), and neither exists (THE GAMEFACE).
 REX_EXTERN(rex_lhItemManager_NotifyAndRemoveItem) {
     REX_FUNC_PROLOGUE();
-    if (!refii::headless::Destroy(Table(), ctx, base, ctx.r3.u32, ctx.r4.u32)) {
-        __imp__rex_lhItemManager_NotifyAndRemoveItem(ctx, base);
-        return;
+    const uint32_t presentation = ctx.r4.u32;
+    if (!refii::headless::Destroy(Table(), ctx, base, ctx.r3.u32, presentation)) {
+        const uint64_t n = ++g_unknown_destroys;
+        if (Milestone(n)) {
+            REXLOG_INFO("Refii gameface 0x{:08X}: destroy of 0x{:08X}, which is no live presentation (#{})",
+                        ctx.r3.u32, presentation, n);
+        }
     }
     ctx.r3.u32 = 0u;
 }
 
-/// CGameface's destructor (TU1 `sub_82BBA2C8`, disc `sub_82BB3BC8`), (r3 gameface) only: the plain
-/// destructor, without a delete flag. An in-game reload deletes the
-/// CGameface, and the guest only unloads some screens first: the HUD holder (`sub_823C9FB8`) just
-/// zeroes its pointer, leaving the presentation to the kernel list this destructor frees (+40).
+/// CGameface's destructor (TU1 `sub_82BBA2C8`, disc `sub_82BB3BC8`), (r3 gameface): called only by
+/// the deleting destructor (TU1 `sub_82BBA278` 0x82bba294, disc `sub_82BB3B78`), which then frees
+/// the block when the flag says so. An in-game reload deletes the CGameface (GUI Shutdown TU1
+/// `sub_82371D70` 0x82371e00, disc `sub_82305F88` 0x82306018) and the guest only unloads some
+/// screens first: the HUD holder (`sub_823C9FB8`) just zeroes its pointer, so what is left on this
+/// gameface is freed here. Reads only `this`: the GUI base dtor zeroes the GUI global (TU1
+/// 0x82371700) before its members dtor deletes the gameface.
 REX_EXTERN(rex_CGameface_Destructor) {
     REX_FUNC_PROLOGUE();
     const uint32_t gameface = ctx.r3.u32;
+    REXLOG_INFO("Refii gameface 0x{:08X} destroyed: callback +588 = 0x{:08X}, ctx +592 = 0x{:08X}", gameface,
+                LoadGuestU32(base, gameface + Table().gameface_callback),
+                LoadGuestU32(base, gameface + Table().gameface_callback_ctx));
+    ++g_gamefaces_destroyed;
     refii::headless::DestroyRemaining(Table(), ctx, base, gameface);
     refii_bridge_stated_screen(0xFFFFFFFFu);  // no Gameface, no screen up
     refii_bridge_stated_screens_up(0u);
     ctx.r3.u32 = gameface;
-    __imp__rex_CGameface_Destructor(ctx, base);
+}
+
+/// CGameface's ctor (TU1 `sub_82BBA0F8`, disc `sub_82BB39F8`): r3 the block, r4 the input object, r5
+/// the render engine (held only by the scene manager, SM +52). See THE GAMEFACE.
+REX_EXTERN(rex_CGameface_Construct) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t gameface = ctx.r3.u32;
+    const uint32_t input = ctx.r4.u32;
+    const auto started = std::chrono::steady_clock::now();
+    std::memset(base + gameface, 0, kGamefaceSize);
+    StoreGuestU32(base, gameface, kGamefaceVtable);
+    Call(ctx, base, kTimerCtor, gameface + Table().gameface_clock);
+    StoreGuestU32(base, gameface + kGamefaceInput, input);
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started);
+    REXLOG_INFO("Refii gameface 0x{:08X} made (input 0x{:08X}) in {} us", gameface, input, us.count());
+    ctx.r3.u32 = gameface;
+}
+
+/// CGameface vtable +16, the loader (TU1 `sub_82BBA370`, disc `sub_82BB3C70`): (r3 gameface, r4 the
+/// path, r5 bool* is-bgf). The path's extension is what follows its last '.' (`sub_82BB0A40`),
+/// compared byte for byte (`sub_82BAF288`): "bgf" is this gameface's create (vf +28, 0x82bba47c)
+/// with `*r5 = 1` and the create's answer; "bgp" is the gameplan's load (0x82bba504 on +0x248) with
+/// `*r5 = 0` and 0; anything else is 0 with `*r5` untouched. There is no gameplan, so "bgp" loads
+/// nothing.
+REX_EXTERN(rex_CGameface_Load) {
+    REX_FUNC_PROLOGUE();
+    const uint32_t gameface = ctx.r3.u32;
+    const uint32_t path = ctx.r4.u32;
+    const uint32_t is_bgf = ctx.r5.u32;
+    std::string name;
+    for (uint32_t i = 0; path != 0u && i < 260u && base[path + i] != 0u; ++i) {
+        name.push_back(static_cast<char>(base[path + i]));
+    }
+    const size_t dot = name.rfind('.');
+    const std::string extension = dot == std::string::npos ? std::string() : name.substr(dot + 1u);
+    uint32_t made = 0;
+    if (extension == "bgf") {
+        made = Call(ctx, base, Slot(base, gameface, kGamefaceSlotCreate), gameface, path);
+        refii::vfs::StoreGuestU8(base, is_bgf, 1u);
+    } else if (extension == "bgp") {
+        refii::vfs::StoreGuestU8(base, is_bgf, 0u);
+        REXLOG_WARN("Refii gameface 0x{:08X}: gameplan '{}' asked for; there is no gameplan", gameface, name);
+    }
+    ctx.r3.u32 = made;
+}
+
+/// CGameface vtable +20 (TU1 `sub_82BBA538`, disc 0x82BB3E38: `lwz r3,0x248(r3); b` the gameplan's
+/// load) and +24 (TU1 `sub_82BBA540`, disc `sub_82BB3E40`: a name's hash looked up in gameplan
+/// +0x68). There is no gameplan: both answer 0.
+REX_EXTERN(rex_CGameface_GameplanLoad) {
+    REX_FUNC_PROLOGUE();
+    ctx.r3.u32 = 0u;
+}
+
+REX_EXTERN(rex_CGameface_GameplanFind) {
+    REX_FUNC_PROLOGUE();
+    ctx.r3.u32 = 0u;
+}
+
+/// CGameface vtable +44 (TU1 `sub_82178400`, disc `sub_821781C8`): `lwz r3,0x20C(r3)` and a tail call
+/// of the scene manager's vf +12, each scene's render-list reset. Called by the GUI's Update (TU1
+/// 0x82287168) and lhFrontEnd_Update (0x823793c8), neither using the result. There is no scene
+/// manager: a no-op.
+REX_EXTERN(rex_CGameface_ResetScenes) {
+    REX_FUNC_PROLOGUE();
+}
+
+/// CGameface vtable +48 (TU1 `sub_822D0C78`, disc `sub_822D13F8`): the scene manager's vf +16, each
+/// scene's draw. Called by lhFrontEnd_Update (TU1 0x823793dc), GUI vf +12 (0x82296574) and
+/// `sub_8219CE50` (0x8219cf30), none using the result. A no-op.
+REX_EXTERN(rex_CGameface_RenderScenes) {
+    REX_FUNC_PROLOGUE();
 }
 
 /// CPresentation vf +92 (TU1 `sub_82BB0858`, disc `sub_82BAA110`): `stb r4,0x368(r3); blr`, the
@@ -438,60 +476,19 @@ REX_EXTERN(rex_CPresentation_SetUpdateParked) {
     __imp__rex_CPresentation_SetUpdateParked(ctx, base);
 }
 
-/// Element service vf +84 — (r3 service, r4 name hash, r5 parent or 0). The original answers;
-/// a headless presentation makes the element it lacks.
-REX_EXTERN(rex_lhGuiAttributeService_ChildByName) {
-    REX_FUNC_PROLOGUE();
-    const uint32_t service = ctx.r3.u32;
-    const uint32_t hash = ctx.r4.u32;
-    const uint32_t parent = ctx.r5.u32;
-    __imp__rex_lhGuiAttributeService_ChildByName(ctx, base);
-    if (ctx.r3.u32 != 0u) {
-        return;
-    }
-    const uint32_t element = refii::headless::MakeNamed(Table(), ctx, base, service, hash, parent);
-    if (element != 0u) {
-        ctx.r3.u32 = element;
-    }
-}
-
-/// Element service vf +92 — (r3 service, r4 parent, r5 the out array, r6 every child or only those
-/// vf +4 passes): a headless parent's file children are made first.
-REX_EXTERN(rex_lhGuiAttributeService_CollectChildren) {
-    REX_FUNC_PROLOGUE();
-    refii::headless::ExpandBeforeWalk(Table(), ctx, base, ctx.r3.u32, ctx.r4.u32);
-    __imp__rex_lhGuiAttributeService_CollectChildren(ctx, base);
-}
-
-/// GuiElement_AttributeString_p (TU1 `sub_82425038`, disc `sub_823F74D0`) — (r3 the out
-/// CCharString, r4 element, r5 presentation, r6 the attribute's name as a CCharString): the
-/// string attribute whose id is the name's hash in 27 bits, "" when the element has none. A
-/// headless element carries no string attribute, so its answer is the FILE's, constructed by the
-/// guest's own CCharString ctor in place of the empty one — how every typed registry's file
-/// (`GuiRegistry_File` 0x82846148, vf +12 the attribute: MeterName, TextName, SlideToggleName, …)
-/// binds a headless HUD element to its name.
-REX_EXTERN(rex_GuiElement_GetAttributeString) {
-    REX_FUNC_PROLOGUE();
-    const uint32_t out = ctx.r3.u32;
-    const uint32_t element = ctx.r4.u32;
-    const uint32_t presentation = ctx.r5.u32;
-    const uint32_t name = ctx.r6.u32;
-    __imp__rex_GuiElement_GetAttributeString(ctx, base);
-    if (refii::headless::AnswerAttributeString(Table(), ctx, base, out, element, presentation, name)) {
-        ctx.r3.u32 = out;
-    }
-}
-
 namespace {
 
 /// THE HUD REGISTRIES' NAMES, counted. The GUI's typed registries (`*(*(GUI+32)+32)` +28..+32,
 /// `sub_827F0F00`) each hold a map at +4 whose size is +12; the filer (`sub_827F1880`) makes a
 /// name per bound element, a screen's unfile (`sub_827F1A48`) erases the names its elements
 /// carry, and every writer and read-back (`sub_822A9C60`) answers nothing for a name the map does
-/// not hold. Logged when any count changes, so a run says when names leave and how many.
+/// not hold. Logged when any count changes and on the first census after a gameface is destroyed
+/// (an in-game reload builds a new GUI), so a run says when names leave and how many.
 void CensusHudRegistries(uint8_t* base) {
     static std::mutex m;
     static std::vector<uint32_t> said;
+    static uint64_t said_epoch = 0;
+    const uint64_t epoch = g_gamefaces_destroyed.load();
     const uint32_t gui = LoadGuestU32(base, refii::guest::Address(0x83496B08u));
     const uint32_t hud = Plausible(gui) ? LoadGuestU32(base, gui + 32u) : 0u;
     const uint32_t set = Plausible(hud) ? LoadGuestU32(base, hud + 32u) : 0u;
@@ -511,13 +508,14 @@ void CensusHudRegistries(uint8_t* base) {
     std::string was;
     {
         std::lock_guard<std::mutex> lock(m);
-        if (counts == said) {
+        if (counts == said && epoch == said_epoch) {
             return;
         }
         for (const uint32_t n : said) {
             was += std::to_string(n) + ' ';
         }
         said = counts;
+        said_epoch = epoch;
     }
     std::string now;
     for (const uint32_t n : counts) {
@@ -526,28 +524,81 @@ void CensusHudRegistries(uint8_t* base) {
     REXLOG_INFO("Refii HUD registries 0x{:08X}: names per registry [ {}] (was [ {}])", set, now, was);
 }
 
+/// THE ENGINE'S PER-FRAME COST: the gameface pass (vf +40, rex_CGameface_Update), the hook's whole
+/// body per call, logged as median / p95 / mean every kCostWindow calls. The payload has no Tracy
+/// (Fable2/src/hooks/CMakeLists.txt), so it is timed here.
+constexpr size_t kCostWindow = 300u;
+
+struct EngineCost {
+    std::vector<uint32_t> pass_ns;
+    size_t presentations = 0;
+};
+
+uint32_t Percentile(std::vector<uint32_t>& v, size_t percent) {
+    const size_t at = std::min(v.size() - 1u, (v.size() * percent) / 100u);
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(at), v.end());
+    return v[at];
+}
+
+void NoteEngineCost(uint64_t pass_ns, size_t presentations) {
+    static std::mutex m;
+    static EngineCost cost;
+    EngineCost full;
+    {
+        std::lock_guard<std::mutex> lock(m);
+        cost.pass_ns.push_back(static_cast<uint32_t>(std::min<uint64_t>(pass_ns, 0xFFFFFFFFu)));
+        cost.presentations = std::max(cost.presentations, presentations);
+        if (cost.pass_ns.size() < kCostWindow) {
+            return;
+        }
+        full = std::move(cost);
+        cost = EngineCost{};
+    }
+    uint64_t sum = 0;
+    for (const uint32_t x : full.pass_ns) {
+        sum += x;
+    }
+    const double mean_us = static_cast<double>(sum) / static_cast<double>(full.pass_ns.size()) / 1000.0;
+    const double median_us = Percentile(full.pass_ns, 50u) / 1000.0;
+    const double p95_us = Percentile(full.pass_ns, 95u) / 1000.0;
+    REXLOG_INFO("Refii engine cost over {} gameface passes (<= {} presentation(s)): pass median {:.3f} us p95 {:.3f} "
+                "us mean {:.3f} us",
+                full.pass_ns.size(), full.presentations, median_us, p95_us, mean_us);
+}
+
 }  // namespace
 
-/// CGameface vtable +40 — the per-frame pass; then this gameface's headless presentations'
-/// Update(pres, clock), as the pass's own loop (0x822be8e8..0x822be930).
+/// CGameface vtable +40 (TU1 `sub_822BE860`, disc `sub_822BE580`), (r3 gameface, r4 input flag) —
+/// the per-frame pass, called by the in-game GUI's tick (TU1 `sub_821A1140` 0x821a11d0) and on the
+/// front-end GUI (`sub_82319BE8` 0x82319e74, through `*(*(APP+8)+0x50)+0x10`); neither uses the
+/// result. Shipped, it copies input through the scene manager into the kernel list's focus
+/// (`sub_822CFF68`), ticks the gameplan (`sub_822CFD08`) and calls vf +4 on each kernel-list entry:
+/// none of the three exists (THE GAMEFACE), so the pass is the HUD census only.
 REX_EXTERN(rex_CGameface_Update) {
     REX_FUNC_PROLOGUE();
     const uint32_t gameface = ctx.r3.u32;
-    __imp__rex_CGameface_Update(ctx, base);
-    int32_t clock = 0;
-    const size_t updated = refii::headless::UpdateAll(Table(), ctx, base, gameface, &clock);
-    if (updated == 0u) {
-        return;
+    const auto started = std::chrono::steady_clock::now();
+    const size_t live = refii::headless::CountOn(gameface);
+    if (live != 0u) {
+        const uint64_t passes = ++g_passes;
+        if ((passes % 30u) == 0u) {
+            CensusHudRegistries(base);
+        }
+        if (Milestone(passes) && passes < 4096u) {
+            REXLOG_INFO("Refii headless presentation: gameface 0x{:08X} pass #{} with {} headless presentation(s)",
+                        gameface, passes, live);
+        }
     }
-    const uint64_t passes = ++g_passes;
-    if ((passes % 30u) == 0u) {
-        CensusHudRegistries(base);
-    }
-    if (Milestone(passes) && passes < 4096u) {
-        REXLOG_INFO("Refii headless presentation: gameface 0x{:08X} pass #{} updated {} headless presentation(s) "
-                    "at clock {} ms",
-                    gameface, passes, updated, clock);
-    }
+    NoteEngineCost(static_cast<uint64_t>(
+                       std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started)
+                           .count()),
+                   live);
+}
+
+/// CPresentation vf +4, the per-frame Update (TU1 `sub_822AC880`, disc `sub_822AC668`): replaced,
+/// a no-op (see NO PER-FRAME PRESENTATION UPDATE).
+REX_EXTERN(rex_CPresentation_Update) {
+    REX_FUNC_PROLOGUE();
 }
 
 /// lhGuiPresentation_GetRootElement (TU1 `sub_82426518`, disc `sub_823F89B0`): a headless root
@@ -556,22 +607,6 @@ REX_EXTERN(rex_lhGuiPresentation_GetRootElement) {
     REX_FUNC_PROLOGUE();
     __imp__rex_lhGuiPresentation_GetRootElement(ctx, base);
     refii::headless::NoteRootRead(Table(), ctx, base, ctx.r3.u32);
-}
-
-// SetStringParam (TU1 `sub_826B9510`, disc `sub_8259D6C8`) assigns the string at the attribute
-// lookup's out word (`lwz r3,0x54(r1)`, `bl sub_82BAEF98` 0x826b95fc) whether or not the lookup
-// (service vf +12, `sub_82BB52E0`) found the attribute — it writes that word only when it does.
-// Before `lwz r11,0(r28)` (0x826b95e0, disc 0x8259d798), r3 = found: true jumps to the epilogue
-// (0x826b9600, disc 0x8259d7b8). A headless element carries no string attribute.
-bool RefiiPresentationAttributeAbsent(PPCRegister& r3) {
-    if ((r3.u32 & 0xFFu) != 0u) {
-        return false;
-    }
-    const uint64_t n = ++g_absent_writes;
-    if (Milestone(n)) {
-        REXLOG_INFO("Refii headless presentation: SetStringParam onto an absent attribute skipped (#{})", n);
-    }
-    return true;
 }
 
 // SetText's entry (TU1 0x82425DD0, disc 0x823F8268): r3 element, r4 presentation, r5 the text's
@@ -633,86 +668,6 @@ void RefiiHeadlessQuadRecord(PPCRegister& r) {
     if (Milestone(n) && n < 4096u) {
         REXLOG_INFO("Refii headless presentation: a quad reader took the inert record (#{})", n);
     }
-}
-
-namespace {
-
-/// One attribute write stated for a headless element from a setter's arguments (only when the
-/// element had no room to carry it — see EXISTENCE-CHECKED WRITES).
-void StateAttribute(uint8_t* base, uint32_t element, uint32_t attribute_global, float value) {
-    uint32_t bits = 0;
-    std::memcpy(&bits, &value, sizeof bits);
-    if (refii::headless::TellAttribute(element, LoadGuestU32(base, attribute_global), bits)) {
-        const uint64_t n = ++g_stated_writes;
-        if (Milestone(n)) {
-            REXLOG_INFO("Refii headless presentation: element 0x{:08X} had no room for attribute 0x{:07X}; the "
-                        "write is stated from the setter's arguments (#{})",
-                        element, LoadGuestU32(base, attribute_global), n);
-        }
-    }
-}
-
-/// An existence-checked setter's entry: a fileless headless element is given the attributes the
-/// setter names, so its own write lands and the store states it (kNoRoom when it has no room).
-refii::headless::Memory Remember(uint8_t* base, uint32_t element, const refii::guest::Addr (&globals)[3],
-                                 const float (&values)[3], size_t count) {
-    uint32_t ids[3] = {};
-    for (size_t i = 0; i < count; ++i) {
-        ids[i] = LoadGuestU32(base, globals[i]) & kAttributeIdMask;
-    }
-    return refii::headless::RememberWrite(base, element, ids, values, count);
-}
-
-/// Remember, and with no room the write is stated here from the setter's arguments.
-void RememberOrState(uint32_t element, const refii::guest::Addr (&globals)[3], const float (&values)[3],
-                     size_t count) {
-    uint8_t* base = RefiiGuestBase();
-    if (base == nullptr || !Plausible(element)) {
-        return;
-    }
-    if (Remember(base, element, globals, values, count) != refii::headless::Memory::kNoRoom) {
-        return;
-    }
-    for (size_t i = 0; i < count; ++i) {
-        StateAttribute(base, element, globals[i], values[i]);
-    }
-}
-
-}  // namespace
-
-// SetPosition's entry (TU1 0x824251E0, disc 0x823F7678): r3 element, r4 presentation, f1..f3.
-void RefiiHeadlessSetPosition(PPCRegister& r3, PPCRegister& r4, PPCRegister& f1, PPCRegister& f2, PPCRegister& f3) {
-    if (r4.u32 == 0u) {
-        return;
-    }
-    static const refii::guest::Addr kIds[3] = {kAttrPositionX, kAttrPositionY, kAttrPositionZ};
-    const float values[3] = {static_cast<float>(f1.f64), static_cast<float>(f2.f64), static_cast<float>(f3.f64)};
-    RememberOrState(r3.u32, kIds, values, 3u);
-}
-
-// SetRotation's entry (TU1 0x824254C8, disc 0x823F7960): r3 element, r4 presentation, f1..f3.
-void RefiiHeadlessSetRotation(PPCRegister& r3, PPCRegister& r4, PPCRegister& f1, PPCRegister& f2, PPCRegister& f3) {
-    if (r4.u32 == 0u) {
-        return;
-    }
-    static const refii::guest::Addr kIds[3] = {kAttrRotationX, kAttrRotationY, kAttrRotationZ};
-    const float values[3] = {static_cast<float>(f1.f64), static_cast<float>(f2.f64), static_cast<float>(f3.f64)};
-    RememberOrState(r3.u32, kIds, values, 3u);
-}
-
-// SetOpacity's entry (TU1 0x82426078, disc 0x823F8510): r3 element, r4 presentation, f1. Nothing is
-// stated here: the value SetOpacity stores — f1, x1024 (0x824260FC / 0x823F8594) when the current
-// opacity is below 0.09765625 — reaches the host through the store it calls, SetElementAttribute
-// (vf +0x48 at 0x82426120 / 0x823F85B8). With no room the element holds no opacity, the current read
-// (0x824260D0 / 0x823F8568) fails and the setter returns at 0x824260DC / 0x823F8574: it stores nothing.
-void RefiiHeadlessSetOpacity(PPCRegister& r3, PPCRegister& r4, PPCRegister& f1) {
-    uint8_t* base = RefiiGuestBase();
-    if (r4.u32 == 0u || base == nullptr || !Plausible(r3.u32)) {
-        return;
-    }
-    static const refii::guest::Addr kIds[3] = {kAttrOpacity, kAttrOpacity, kAttrOpacity};
-    const float values[3] = {static_cast<float>(f1.f64), 0.0f, 0.0f};
-    Remember(base, r3.u32, kIds, values, 1u);
 }
 
 // SetActive (TU1 `sub_82284210`, disc `sub_82283D80`): r3 element, r4 presentation, r5 the bool.
@@ -843,10 +798,23 @@ REX_EXTERN(rex_lhGui_FrontendRoot_StampSaveCard) {
 // 0x8247c56c / 0x8247c58c — each portrait stated by RefiiHeadlessInlineTexture). It sets the cursor
 // (+392, 0x8243b318 / disc 0x8247c5d0) and shows the picker (`sub_8243B440(screen, 1)` 0x8243b370,
 // disc 0x8247c628). Stated after the call as `@CoopPicker.Open` (screen, first card, saves, cursor, a bit
-// per save whose header parsed — `*(+452) + 40i + 24`, A is refused on the others at 0x82438db4 —
-// then each card's text as `sub_8243B678` built it into +436): the opener's own products, taken when
-// it returned; nothing is stated when its gate turned it away.
+// per save whose header parsed — `*(+452) + 24` at stride 40 / disc 36 (0x8243b2bc `addi r27,r27,0x28`,
+// disc 0x8247c574 `addi r27,r27,0x24`); TU1 refuses A on the others at 0x82438db4 — the save the
+// cursor steps over, then each card's text as `sub_8243B678` built it into +436): the opener's own
+// products, taken when it returned; nothing is stated when its gate turned it away.
+//
+// The save the cursor steps over is the opener's own `sub_82439630` / disc `sub_8247A828` (r25 at
+// 0x8243b234 / disc 0x8247c4ec, -1 for none): with player two on player one's profile (+292 == +288),
+// the index of the save player one is playing; left and right loop past it (0x82438e04 / 0x82438e78,
+// disc 0x8247a004) and its card is stamped dimmed (`xori r6` 0x8243b2b0 / disc 0x8247c568).
+//
+// THE PORTRAITS PAST THE SIXTH SAVE, by the opener's own derivation for cards 1..6 (0x8243b26c..
+// 0x8243b294, disc 0x8247c524..0x8247c54c): a loadable record (+24) gets `sub_824714E8(&hash,
+// record + 16)` / disc `sub_8283D088`, else the blank `dword_83498118` / disc `dword_8349803C`. Stated as
+// `@CoopPicker.Portrait` (screen, save, texture hash) for saves 6 .. count - 1, which no card carries.
 PPC_EXTERN_FUNC(__imp__rex_lhGuiCoopScreen_OpenSavePicker);
+PPC_EXTERN_FUNC(rex_lhGuiCoopScreen_OwnSaveIndex);
+PPC_EXTERN_FUNC(rex_lhSaveRecord_ScreenshotTexture);
 REX_EXTERN(rex_lhGuiCoopScreen_OpenSavePicker) {
     REX_FUNC_PROLOGUE();
     const uint32_t screen = ctx.r3.u32;
@@ -861,10 +829,17 @@ REX_EXTERN(rex_lhGuiCoopScreen_OpenSavePicker) {
     }
     const uint32_t cursor = LoadGuestU32(base, screen + 392u);
     const uint32_t headers = LoadGuestU32(base, screen + 452u);
+    const uint32_t stride = refii::guest::SaveRecordStride();
     uint32_t valid = 0u;
     for (uint32_t i = 0; i < saves && i < 32u && Plausible(headers); ++i) {
-        if (base[headers + (40u * i) + 24u] != 0u) valid |= 1u << i;
+        if (base[headers + (stride * i) + 24u] != 0u) valid |= 1u << i;
     }
+    const uint32_t frame = (ctx.r1.u32 - 0x40u) & ~0xFu;
+    PPCContext own = ctx;
+    own.r1.u32 = frame;
+    own.r3.u32 = screen;
+    rex_lhGuiCoopScreen_OwnSaveIndex(own, base);
+    const int32_t own_save = static_cast<int32_t>(own.r3.u32);
     const uint32_t texts = LoadGuestU32(base, screen + 436u);
     const uint32_t texts_end = LoadGuestU32(base, screen + 440u);
     const uint32_t described = Plausible(texts) && texts_end >= texts ? (texts_end - texts) / 4u : 0u;
@@ -882,12 +857,31 @@ REX_EXTERN(rex_lhGuiCoopScreen_OpenSavePicker) {
     add(std::to_string(saves));
     add(std::to_string(cursor));
     add(std::to_string(valid));
+    add(std::to_string(own_save));
     for (uint32_t i = 0; i < saves && i < 32u; ++i) {
         add(i < described ? Utf8(WideUnits(base, texts + (i * 4u))) : std::string());
     }
     refii::vfs::PostGuiNativeCall(std::move(call));
-    REXLOG_INFO("Refii co-op picker: opened by 0x{:08X}, {} save(s) from card {}, cursor {}", screen, saves,
-                first, cursor);
+
+    constexpr uint32_t kCards = 6u;
+    const uint32_t blank = LoadGuestU32(base, kCoopCardBlankTexture);
+    for (uint32_t i = kCards; i < saves && i < 32u && Plausible(headers); ++i) {
+        const uint32_t record = headers + (stride * i);
+        uint32_t texture = blank;
+        if (base[record + 24u] != 0u) {
+            PPCContext call_portrait = ctx;
+            const uint32_t out = frame + 0x20u;
+            StoreGuestU32(base, out, 0u);
+            call_portrait.r1.u32 = frame;
+            call_portrait.r3.u32 = out;
+            call_portrait.r4.u32 = record + 16u;
+            rex_lhSaveRecord_ScreenshotTexture(call_portrait, base);
+            texture = LoadGuestU32(base, out);
+        }
+        PostFrontEnd("@CoopPicker.Portrait", {Hex(screen), std::to_string(i), Hex(texture)});
+    }
+    REXLOG_INFO("Refii co-op picker: opened by 0x{:08X}, {} save(s) from card {}, cursor {}, steps over {}, "
+                "valid 0x{:X}", screen, saves, first, cursor, own_save, valid);
 }
 
 // THE FRONT END'S DIALOG. OpenDialog (TU1 `sub_826E40E0`, disc `sub_826CB158`) is vtable slot

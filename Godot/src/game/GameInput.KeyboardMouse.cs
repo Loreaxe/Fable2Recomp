@@ -178,8 +178,8 @@ public partial class GameInput
 		new("item_down", "F2,Down", "Item slot down / menu down (D-pad down).") { Press = KeyPress.DpadDown },
 		new("item_left", "F3,Left", "Item slot left / menu left (D-pad left).") { Press = KeyPress.DpadLeft },
 		new("item_right", "F4,Right", "Item slot right / menu right (D-pad right).") { Press = KeyPress.DpadRight },
-		new("tab_prev", "PageUp,BracketLeft", "Previous tab in a menu (left bumper).") { Press = KeyPress.LeftShoulder },
-		new("tab_next", "PageDown,BracketRight", "Next tab in a menu (right bumper).") { Press = KeyPress.RightShoulder },
+		new("tab_prev", "PageUp,BracketLeft", "Previous tab or page in a menu (left bumper).") { Press = KeyPress.LeftShoulder },
+		new("tab_next", "PageDown,BracketRight", "Next tab or page in a menu (right bumper).") { Press = KeyPress.RightShoulder },
 	};
 
 	/// <summary>The attack button's mode — Fable III's 1, 2 and 3.</summary>

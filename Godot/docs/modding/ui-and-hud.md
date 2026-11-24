@@ -728,8 +728,8 @@ never a silent truncation.
 ## Lua on the title screen
 
 There is no game on the title — no hero, no save, no world, no game VM — so a mod's Lua for the
-front end is its own file, `mod/frontend.lua`, run in the current front-end presentation's own Lua
-state the first time a front-end chunk needs it (a row's `Mod:lua:` call, a box's answer, a
+front end is its own file, `mod/frontend.lua`, run in a Lua state of its own for the current
+front-end presentation (the game's Lua 5.1 with float numbers: base, string, table and math) the first time a front-end chunk needs it (a row's `Mod:lua:` call, a box's answer, a
 `start_game`); another presentation starts fresh. `Refii.frontend` is true there. A row on the
 title is a patch on `frontend-root`:
 

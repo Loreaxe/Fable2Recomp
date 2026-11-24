@@ -16,6 +16,7 @@
 // (`*(set + 4) = 31` at 0x8236f01c, after the loop reaches 30). The last id's unload inside an exit
 // is that statement.
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 
 #include "vfs_hooks_private.h"
@@ -29,7 +30,9 @@ constexpr uint32_t kNoScreen = 0xFFFFFFFFu;
 constexpr uint32_t kLastScreenTu1 = 29u;
 
 thread_local int32_t t_loading = -1;
+thread_local uint32_t t_loads_made = 0;
 thread_local int32_t t_exiting = 0;
+thread_local int32_t t_box_opening = 0;
 thread_local int32_t t_asking_stop_travel = 0;
 thread_local bool t_menu_box_opened = false;
 
@@ -69,7 +72,13 @@ namespace refii::vfs {
 
 int32_t StatedScreenLoading() { return t_loading; }
 
+void StatedScreenPresentationMade() { ++t_loads_made; }
+
 void StatedScreenExiting(int32_t delta) { t_exiting += delta; }
+
+void StatedScreenBoxOpening(int32_t delta) { t_box_opening += delta; }
+
+bool StatedScreenKeptByBox() { return t_box_opening > 0; }
 
 void StatedMenuBoxOpened() {
     if (t_asking_stop_travel > 0) t_menu_box_opened = true;
@@ -85,7 +94,14 @@ REX_EXTERN(rex_lhGuiScreenSet_EnsureLoaded) {
     REX_FUNC_PROLOGUE();
     const int32_t outer = t_loading;
     t_loading = static_cast<int32_t>(refii::guest::ScreenIdToTu1(ctx.r4.u32));
+    const uint32_t made_before = t_loads_made;
+    const auto started = std::chrono::steady_clock::now();
     __imp__rex_lhGuiScreenSet_EnsureLoaded(ctx, base);
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started);
+    if (t_loads_made != made_before) {
+        REXLOG_INFO("Refii screen load: screen {} loaded in {} us ({} presentation(s) made)", t_loading,
+                    us.count(), t_loads_made - made_before);
+    }
     t_loading = outer;
 }
 

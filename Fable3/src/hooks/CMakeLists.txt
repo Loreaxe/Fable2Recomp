@@ -28,10 +28,14 @@ set(REFIII_HOOK_SOURCES
     # document, the interaction mode's panels, buttons and list — for Godot to draw headless.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_stated_hooks.cpp
     # Headless Gameface presentations through the shared core (core/headless_presentation.h):
-    # the maker, destroy and per-frame pass, child-by-name and the child walk, the parameter
-    # setter and the chunk runner; Fable 3's Gameface table beside it.
+    # the maker and destroy, the presentation's own slots, the parameter setters and the chunk
+    # runner; Fable 3's Gameface table beside it.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/headless_presentation_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/headless_table.h
+    # The readers of the presentations' per-frame runtime, answered from statements.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_reader_hooks.cpp
+    # The element service, slide manager and direct readers answered for the elements' handles.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/stated_element_hooks.cpp
     # The HUD text boxes' lines and the TopBox queue's post, removal, clear and answer.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/topbox_hooks.cpp
     # The HUD root, save menu, Options query, HUD widgets and box screens by the values they carry.

@@ -72,7 +72,9 @@
 // caller is the main menu's build (0x826e27a0 / 0x826cac60). The setter `sub_82443820(profiles,
 // user, on)` / `sub_824E6E18` is called by that reader and the SubtitlesOn / SubtitlesOff arms of
 // the menu dispatch (0x826e0a48, 0x826e0b58 / 0x826c8e70, 0x826c8f80). Each states the setting.
+#include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <initializer_list>
 #include <mutex>
 #include <string>
@@ -113,6 +115,9 @@ struct Model {
 
 std::mutex g_lock;
 Model g_model;
+/// Counts the screens made active (the construction's title, then each switch to the title or the
+/// main menu); never reset, so a front end made again does not repeat an earlier count.
+uint32_t g_activation = 0u;
 uint32_t g_published = 0u;
 
 // One guest call in flight on this thread and what it has done so far. A nested call that states
@@ -221,6 +226,7 @@ void FrontEndMenuActivated(uint32_t menu) {
     if (t_switching > 0) {
         g_model.screen = kScreenMenu;
         t_switch_named = true;
+        ++g_activation;
     }
     Publish("the main menu activated");
 }
@@ -297,6 +303,18 @@ uint32_t FrontEndMenuScreen() {
     return g_model.menu_screen;
 }
 
+uint32_t FrontEndActiveScreen(uint32_t* activation) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (activation != nullptr) {
+        *activation = g_activation;
+    }
+    if (!g_model.up) {
+        return 0u;
+    }
+    return g_model.screen == kScreenTitle ? g_model.title_screen
+                                          : (g_model.screen == kScreenMenu ? g_model.menu_screen : 0u);
+}
+
 uint32_t FrontEndDialogOwner(bool* title) {
     std::lock_guard<std::mutex> lock(g_lock);
     if (title != nullptr) *title = g_model.dialog == kScreenTitle;
@@ -306,6 +324,11 @@ uint32_t FrontEndDialogOwner(bool* title) {
 bool FrontEndUp() {
     std::lock_guard<std::mutex> lock(g_lock);
     return g_model.up;
+}
+
+uint32_t FrontEndMenuMode() {
+    std::lock_guard<std::mutex> lock(g_lock);
+    return g_model.up && g_model.screen == kScreenMenu ? g_model.menu : 0u;
 }
 
 }  // namespace refii::vfs
@@ -318,6 +341,7 @@ REX_EXTERN(rex_lhFrontEndGui_Ctor) {
     g_model.gui = ctx.r3.u32;
     g_model.up = true;
     g_model.screen = kScreenTitle;
+    ++g_activation;
     Publish("constructed");
 }
 
@@ -365,6 +389,7 @@ REX_EXTERN(rex_lhGuiFrontEndTitle_Activate) {
     if (t_switching > 0) {
         g_model.screen = kScreenTitle;
         t_switch_named = true;
+        ++g_activation;
     }
     Publish("the title activated");
 }
@@ -440,12 +465,82 @@ REX_EXTERN(rex_lhGui_FrontendRoot_OnScreenAction) {
     Publish("the main menu took an action");
 }
 
+PPC_EXTERN_FUNC(rex_lhSaveRecord_ScreenshotTexture);
+
+namespace {
+
+using refii::vfs::LoadGuestU32;
+using refii::vfs::StoreGuestU32;
+
+// The New Game limit this build keeps — see rex_lhFrontEnd_Enter below.
+constexpr uint32_t kSaveLimit = 10u;
+
+std::string Hex(uint32_t value) {
+    char hex[9];
+    std::snprintf(hex, sizeof hex, "%08X", value);
+    return hex;
+}
+
+// THE PORTRAITS PAST THE SIXTH SAVE. The Load Game branch stamps saves 0 .. min(count, 6) - 1
+// only (TU1 0x826e0720..0x826e0748, disc 0x826c8b50); the rest get what StampSaveCard would have
+// derived for them, with its own call: a loadable record (`+24`, 0x826e1448 / disc 0x826c9868) gets
+// `sub_824714E8(&hash, record + 16)` / `sub_8283D088` (0x826e1474 / 0x826c9894), else — or for a
+// zero hash (0x826e1480) — the blank `dword_8349B600` / disc `dword_8349B080`. Stated as
+// `@FrontEnd.SaveCard` (index, slot 0: no authored card carries it, texture hash).
+void StateLaterPortraits(PPCContext& ctx, uint8_t* base, uint32_t menu) {
+    constexpr uint32_t kStamped = 6u;
+    const uint32_t begin = LoadGuestU32(base, menu + refii::guest::FrontEndMenuField(84u));
+    const uint32_t end = LoadGuestU32(base, menu + refii::guest::FrontEndMenuField(88u));
+    const uint32_t records = LoadGuestU32(base, menu + refii::guest::FrontEndMenuField(148u));
+    if (begin == 0u || end <= begin || records == 0u) {
+        return;
+    }
+    const uint32_t count = std::min<uint32_t>((end - begin) / 4u, 150u);
+    const uint32_t blank = LoadGuestU32(base, refii::guest::Address(0x8349B600u));
+    for (uint32_t index = kStamped; index < count; ++index) {
+        const uint32_t record = records + (index * refii::guest::SaveRecordStride());
+        uint32_t texture = 0u;
+        if (base[record + 24u] != 0u) {
+            PPCContext call = ctx;
+            const uint32_t frame = (ctx.r1.u32 - 0x40u) & ~0xFu;
+            const uint32_t out = frame + 0x20u;
+            StoreGuestU32(base, out, 0u);
+            call.r1.u32 = frame;
+            call.r3.u32 = out;
+            call.r4.u32 = record + 16u;
+            rex_lhSaveRecord_ScreenshotTexture(call, base);
+            texture = LoadGuestU32(base, out);
+        }
+        Post("@FrontEnd.SaveCard", {std::to_string(index), "0", Hex(texture != 0u ? texture : blank)});
+    }
+    if (count > kStamped) {
+        REXLOG_INFO("Refii front end: portraits of saves {}..{} stated past the stamped six", kStamped, count - 1u);
+    }
+}
+
+}  // namespace
+
+// THE SAVE LIMIT, RAISED TO 10. `lhFrontEnd_Enter` (TU1 `sub_82378618`, disc `sub_823790B8`) is the
+// limit's only writer — `li r10, 6` / `stw r10, dword_83319620` at 0x82378D38 / 0x82378D3C (disc
+// 0x823797D8 / 0x823797DC, `dword_833194D8`) — and its two readers, the New Game guard (0x826E0148)
+// and the container create (0x82445104), compare against it. A deliberate rule change the user
+// asked for (2026-11-24), not a guest fact: the enumeration takes 150 and names run Hero000..149.
+REX_EXTERN(rex_lhFrontEnd_Enter) {
+    REX_FUNC_PROLOGUE();
+    __imp__rex_lhFrontEnd_Enter(ctx, base);
+    StoreGuestU32(base, refii::guest::Address(0x83319620u), kSaveLimit);
+}
+
 REX_EXTERN(rex_lhGui_FrontendRoot_MenuActionDispatch) {
     REX_FUNC_PROLOGUE();
     const std::string name = refii::vfs::ReadGuestLhString(base, ctx.r4.u32);
+    const uint32_t menu = ctx.r3.u32;
     Enter();
     __imp__rex_lhGui_FrontendRoot_MenuActionDispatch(ctx, base);
     const Frame frame = Leave();
+    if (name == "Load Game" && frame.stamps != 0u) {
+        StateLaterPortraits(ctx, base, menu);
+    }
     std::lock_guard<std::mutex> lock(g_lock);
     if (name == "Load Game" && frame.stamps != 0u) {
         g_model.menu = 5u;

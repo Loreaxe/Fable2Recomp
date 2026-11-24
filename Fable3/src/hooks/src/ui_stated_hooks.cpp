@@ -81,6 +81,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 
+#include "core/headless_presentation.h"
 #include "gui_statements.h"
 #include "../../vfs/include/fable3_guest_build.h"
 
@@ -202,6 +203,16 @@ std::string DocumentName(const std::string& file) {
 
 namespace refii::fable3 {
 
+uint32_t PresentationOfDocument(const std::string& document) {
+  std::lock_guard<std::mutex> lock(g_documents_mutex);
+  for (const auto& [presentation, name] : g_documents) {
+    if (name == document && refii::headless::IsHeadless(presentation)) {
+      return presentation;
+    }
+  }
+  return 0u;
+}
+
 std::string PresentationKey(uint32_t presentation) {
   if (presentation != 0u) {
     std::lock_guard<std::mutex> lock(g_documents_mutex);
@@ -250,6 +261,7 @@ void StateVisible(uint32_t presentation, uint32_t element, const std::string& pa
 // setter sub_82878198 also puts its timeline back to 0 (`vt[9]()->vt[15](tl, elem, 0)` at
 // 0x828781E8). Godot's playback re-enters on each one (Fable3HudDocument.Play).
 void StateState(uint32_t presentation, uint32_t element, const std::string& path, int32_t slide, const char* via) {
+  NoteStatedEntry(presentation, path);
   Post("@Ui.State", presentation, element, path, Number(static_cast<float>(slide)), via);
 }
 
@@ -301,6 +313,7 @@ REX_EXTERN(rex_GuiPresentation_Load) {
     std::lock_guard<std::mutex> lock(g_documents_mutex);
     g_documents[presentation] = DocumentName(file);
   }
+  ForgetPresentationReaders(presentation);
   g_list_last.store(-1);
   Statement("@Presentation.Load").Add(Text(Hex(presentation))).Add(Text(file)).Post();
 }
@@ -554,6 +567,9 @@ REX_EXTERN(rex_GuiElement_SetStateAt) {
     const std::string path = ReadCharString(base, ctx.r3.u32);
     if (!path.empty()) {
       StateState(ctx.r4.u32, 0u, path, static_cast<int32_t>(ctx.r5.u32), "8281A428");
+      StatedPathScope scope(ctx.r4.u32, path);
+      __imp__rex_GuiElement_SetStateAt(ctx, base);
+      return;
     }
   }
   __imp__rex_GuiElement_SetStateAt(ctx, base);
@@ -565,6 +581,9 @@ REX_EXTERN(rex_GuiElement_RestartStateAt) {
     const std::string path = ReadCharString(base, ctx.r3.u32);
     if (!path.empty()) {
       StateState(ctx.r4.u32, 0u, path, static_cast<int32_t>(ctx.r5.u32), "8281A500");
+      StatedPathScope scope(ctx.r4.u32, path);
+      __imp__rex_GuiElement_RestartStateAt(ctx, base);
+      return;
     }
   }
   __imp__rex_GuiElement_RestartStateAt(ctx, base);

@@ -46,6 +46,22 @@ set(REFII_LUA_HOOK_PARTS
 )
 set_source_files_properties(${REFII_LUA_HOOK_PARTS} PROPERTIES HEADER_FILE_ONLY TRUE)
 
+# THE FRONT END'S MOD LUA (Fable2/src/vfs/src/hooks/mod_frontend_lua_vm.cpp) includes these by
+# path, inside a namespace, as the oracle below does: the hooks target carries them uncompiled
+# (HEADER_FILE_ONLY) so the payload staging ships them for the player's build.
+set(REFII_LUA_FRONTEND_VM_C_SOURCES
+    lapi.c lcode.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c lmem.c lobject.c lopcodes.c
+    lparser.c lstate.c lstring.c ltable.c ltm.c lundump.c lvm.c lzio.c
+    lauxlib.c lbaselib.c lmathlib.c lstrlib.c ltablib.c
+)
+list(TRANSFORM REFII_LUA_FRONTEND_VM_C_SOURCES PREPEND "${REFII_LUA_ROOT}/thirdparty/lua512/src/")
+file(GLOB REFII_LUA_FRONTEND_VM_HEADERS "${REFII_LUA_ROOT}/thirdparty/lua512/src/*.h")
+set(REFII_LUA_FRONTEND_VM_PARTS
+    ${REFII_LUA_FRONTEND_VM_C_SOURCES}
+    ${REFII_LUA_FRONTEND_VM_HEADERS}
+    ${REFII_LUA_ROOT}/src/tools/luadec/luac32_luaconf.h
+)
+
 set(REFII_LUADEC_SOURCES
     ${REFII_LUA_ROOT}/src/tools/luadec/luadec_chunk.cpp
     ${REFII_LUA_ROOT}/src/tools/luadec/luadec.cpp
@@ -207,6 +223,11 @@ endif()
 
 set(REFII_LUA_HOOK_SOURCES
     ${REFII_LUA_HOOK_SOURCES}
+    PARENT_SCOPE
+)
+
+set(REFII_LUA_FRONTEND_VM_PARTS
+    ${REFII_LUA_FRONTEND_VM_PARTS}
     PARENT_SCOPE
 )
 

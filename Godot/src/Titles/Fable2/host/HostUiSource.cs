@@ -17,6 +17,9 @@ public sealed class HostUiSource : Fable2UiSource
 
 	public override bool IsLive => true;
 
+	public override int ActingPlayer =>
+		Fable2ActingPlayer.Of(CoopSession.IsClient, CoopSession.LocalCoop, Fable2Input.MenuOwner);
+
 	public override List<Engine_UiModel.Presentation> GetPresentations() =>
 		HostBridge.GetPresentations();
 
