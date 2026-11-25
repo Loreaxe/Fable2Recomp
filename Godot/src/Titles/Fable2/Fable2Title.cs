@@ -71,6 +71,11 @@ public sealed class Fable2Title : Engine_TitleGame
 
 	public override System.Collections.Generic.IReadOnlyList<string> DebugOps => Fable2Debug.Ops;
 
+	/// <summary>The row pressed as a player's A on the Godot list that holds it (GameUi.RequestRow) — the
+	/// ported screens' OnMenuEvent stubs answer nothing a posted event says.</summary>
+	public override System.Collections.Generic.Dictionary<string, object?>? DebugMenuEvent(string name, int type, uint id) =>
+		GameUi.RequestRow(name, type, id);
+
 	public override bool? GuestVibrationEnabled => Engine_UiVibrationOptions.GuestEnabled();
 
 	public override bool LocalCoop => CoopSession.LocalCoop;

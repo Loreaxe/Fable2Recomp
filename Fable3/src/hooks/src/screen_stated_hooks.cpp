@@ -464,6 +464,18 @@ void StateScreenShown(const uint8_t* base, uint32_t box, const char* kind) {
   }
 }
 
+/// hud.bgf loaded into an empty slot (the GUI rebuilt by sub_822D9C80 after the main-game shutdown
+/// sub_8234D188): the new root's first write is stated, whatever the old root held.
+void ForgetHudRoot() {
+  g_hud_root.store(0);
+}
+
+/// The save menu freed with its screen manager (display_box_hooks.cpp rex_ScreenManager_Destroy):
+/// the next menu's first row write is stated.
+void ForgetSaveMenu() {
+  g_save_row.store(0);
+}
+
 }  // namespace refii::fable3
 
 /// THE BED'S OPENER sub_82623738(queue, a2, a3, offered, group, cycle) keeps r6/r7/r8 in r27/r26/r25

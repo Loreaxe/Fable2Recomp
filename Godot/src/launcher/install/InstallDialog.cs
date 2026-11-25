@@ -409,7 +409,7 @@ public partial class InstallDialog : Control
 			return false;
 		}
 
-		if (!TitleUpdate.TryLoad(updatePath, out TitleUpdate update, out error))
+		if (!TitleUpdate.TryLoad(updatePath, title, out TitleUpdate update, out error))
 		{
 			return false;
 		}

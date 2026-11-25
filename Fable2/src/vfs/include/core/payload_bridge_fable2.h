@@ -407,6 +407,8 @@ void refii_bridge_opinion_two_forget(uint32_t component);
 void refii_bridge_hero_slot_lend(uint32_t real_holder);
 void refii_bridge_hero_slot_return(void);
 uint32_t refii_bridge_hero_one_holder(const uint8_t* base, uint32_t players);
+// Hero one's real holder while the calling thread has the slot lent, else 0.
+uint32_t refii_bridge_hero_slot_lent_here(void);
 
 // PLAYER TWO'S SPLIT-SCREEN HUD (src/core/coop_hud_two.cpp): their targeted title and d-pad
 // icons, from the guest's own builders called for hero two (hooks/guest_tick_pump.cpp).

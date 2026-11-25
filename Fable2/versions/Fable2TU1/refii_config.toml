@@ -37,7 +37,7 @@
 0x82176078 = { size = 0x14 }
 0x82176240 = { size = 0x8 }
 0x82176248 = { name = "rex_lhHeightfieldManager_ResetGrid", size = 0x78 }
-0x821762C0 = { name = "rex_lhCamera_Update", size = 0x218 }
+0x821762C0 = { name = "rex_lhGameFlow_Tick", size = 0x218 }
 0x8217B080 = { name = "rex_wcslen", size = 0x24 }
 0x8217BBC0 = { size = 0x17C }
 0x8217BD40 = { size = 0x174 }
@@ -10979,6 +10979,7 @@
 0x823D4C48 = { name = "rex_CGameModePause_ctor" }
 0x82318718 = { name = "rex_GameFlow_QueueCommand" }
 0x82318800 = { name = "rex_GameFlow_PopCommand" }
+0x82275F68 = { name = "rex_lhWorld_SimTick" }
 0x82459280 = { name = "rex_lhLuaScriptSystem_LoadStartupScripts" }
 0x8245A610 = { name = "rex_lhLuaScriptSystem_RunCameraScripts" }
 0x826F57E8 = { name = "rex_CECAbilities_PerformRequest" }
@@ -11001,8 +11002,11 @@
 0x825C5220 = { name = "rex_CECHitReceiver_OnHit" }
 0x823A4E98 = { name = "rex_CECCreature_Die" }
 0x824CE7F8 = { name = "rex_CECHealth_OnHeroDeath" }
-0x82537F38 = { name = "rex_CGUIReceiveItems_SetItem" }
-0x82538268 = { name = "rex_CGUIReceiveItems_SetPeerItem" }
+# The received-item card (S7, gui_screen_stub_receive_items.cpp): its draw states the card, its
+# OnEnter / Update / OnScreenAction are replaced in full, its OnLeave is wrapped.
+0x82538910 = { name = "rex_CGUIReceiveItems_DrawCard" }
+0x82536E68 = { name = "rex_lhGuiReceiveItemsScreen_OnEnter" }
+0x82536FB8 = { name = "rex_lhGuiReceiveItemsScreen_Update" }
 0x82536F70 = { name = "rex_CGUIReceiveItems_OnLeave" }
 0x824CAA08 = { name = "rex_CECHealth_OnHit" }
 0x824CBC68 = { name = "rex_CECHealth_Modify" }
@@ -11588,6 +11592,11 @@
 0x825B9F60 = { name = "rex_lhPodVector_FreeStorage" }
 0x825F81E0 = { name = "rex_lhFx_SpawnFromDefProperty" }
 0x826A26E8 = { name = "rex_lhGuiPauseRootScreen_OnMenuEvent" }
+0x826A19E0 = { name = "rex_lhGuiPauseRootScreen_OnEnter" }
+0x826A23F8 = { name = "rex_lhGuiPauseRootScreen_Update" }
+0x826A2808 = { name = "rex_lhGuiPauseRootScreen_OnScreenAction" }
+0x826A2950 = { name = "rex_lhGuiPauseRootScreen_OnModalAnswer" }
+0x826A2A60 = { name = "rex_lhGuiPauseRootScreen_OnExit" }
 0x826A92D8 = { name = "rex_lhGuiCrimeScreen_OnMenuEvent" }
 0x826A96B8 = { name = "rex_lhGuiCrimeScreen_OnScreenAction" }
 0x826AA060 = { name = "rex_lhGuiExpressionWheel_SetCursorFromStick" }
@@ -11636,8 +11645,8 @@
 0x826D5120 = { name = "rex_lhGuiClothingScreen_OnScreenAction" }
 0x826D9620 = { name = "rex_lhGuiLogbookScreen_OnMenuEvent" }
 0x826D96F0 = { name = "rex_lhGuiLogbookScreen_OnScreenAction" }
-# The ported screens (S7, gui_screen_stubs.cpp): handler slots replaced in full. The logbook's
-# OnMenuEvent / OnScreenAction and the minigame / quest-completion HandleAction rows are above.
+# The ported screens (S7, gui_screen_stub_*.cpp): handler slots replaced in full. The logbook's
+# and abilities' OnMenuEvent / OnScreenAction and the minigame / quest-completion HandleAction rows are above.
 0x826D8DD8 = { name = "rex_lhGuiLogbookScreen_OnEnter" }
 0x826D9168 = { name = "rex_lhGuiLogbookScreen_Update" }
 0x826D9980 = { name = "rex_lhGuiLogbookScreen_OnExit" }
@@ -11652,6 +11661,13 @@
 0x823D05A8 = { name = "rex_lhGuiNextEpisodeScreen_Close" }
 0x826DA038 = { name = "rex_lhGuiOptionsScreen_OnMenuEvent" }
 0x826DA228 = { name = "rex_lhGuiOptionsScreen_OnScreenAction" }
+0x826D9D40 = { name = "rex_lhGuiOptionsScreen_OnEnter" }
+0x826D9EB8 = { name = "rex_lhGuiOptionsScreen_Update" }
+0x826D9EF0 = { name = "rex_lhGuiOptionsScreen_OnExit" }
+0x826C2118 = { name = "rex_lhGuiAbilitiesScreen_OnEnter" }
+0x826C23A8 = { name = "rex_lhGuiAbilitiesScreen_Update" }
+0x826C2B58 = { name = "rex_lhGuiAbilitiesScreen_OnModalAnswer" }
+0x826C2308 = { name = "rex_lhGuiAbilitiesScreen_OnExit" }
 0x826DEE40 = { name = "rex_lhGui_FrontendRoot_OnScreenAction" }
 0x826E1F70 = { name = "rex_lhGui_FrontendRoot_PopulateMainMenu" }
 0x826E2F18 = { name = "rex_lhGui_FrontendTitle_OnScreenAction" }
@@ -11726,6 +11742,7 @@
 0x82844F80 = { name = "rex_CECTargetingPlayer_ClearTarget" }
 0x82786F58 = { name = "rex_CECOpinionReaction_OnDeed" }
 0x82261750 = { name = "rex_CECOpinionReaction_Update" }
+0x821EE348 = { name = "rex_lhHero_HenchmanDefersToHeroOne" }
 0x824742D0 = { name = "rex_CECVillager_SpeechReaction" }
 0x8247CBB0 = { name = "rex_CECVillager_ChooseTopic" }
 0x823DD6B0 = { name = "rex_lhWorldIcons_Request" }
@@ -11922,11 +11939,10 @@
 0x82539F38 = { name = "rex_lhHudExperienceCounter_DecideShown" }
 # Stated from their own calls (menu_tickets_stated.cpp, gui_stated_screens.cpp, frontend_stated.cpp):
 # the list screens' row-ticket allocate (r3 registry, r4 item handle, ticket returned) and clear
-# (r3 registry); the abilities screen's enter (copies the pause root's player to its +4); the
+# (r3 registry); the
 # profile's subtitles setter (r5 on); the front-end game-flow mode's enter and exit.
 0x82880AC8 = { name = "rex_lhGuiRowTickets_Allocate" }
 0x82880CE0 = { name = "rex_lhGuiRowTickets_Clear" }
-0x826C2118 = { name = "rex_lhGuiAbilitiesScreen_Enter" }
 0x82443820 = { name = "rex_lhProfile_SetSubtitlesEnabled" }
 0x82319340 = { name = "rex_lhFrontEndMode_Enter" }
 0x82319A40 = { name = "rex_lhFrontEndMode_Exit" }
@@ -12585,14 +12601,9 @@ address = 0x826A3FD8  # sub_826A3FD8 entry
 registers = ["r4", "r5"]
 return_on_true = true
 
-# The inline texture stores on a headless element (gui_pause_hooks.cpp): the pause map image (r31,
-# hash at sp+0x58), each co-op save card's portrait (r31, hash at *r29). The legend rows'
-# icons are SetMapKey's argument.
-[[midasm_hook]]
-name = "RefiiPauseMapTexture"
-address = 0x826A21C4  # sub_826A19E0, `lwz r11, 4(r31)`
-registers = ["r31", "r1"]
-
+# The inline texture store on a headless element (gui_pause_hooks.cpp): each co-op save card's
+# portrait (r31, hash at *r29). The pause map image is stated by the ported pause OnEnter
+# (gui_screen_stub_pause_root.cpp); the legend rows' icons are SetMapKey's argument.
 [[midasm_hook]]
 name = "RefiiHeadlessInlineTexture"
 address = 0x8243B57C  # sub_8243B520, `lwz r11, 4(r31)`

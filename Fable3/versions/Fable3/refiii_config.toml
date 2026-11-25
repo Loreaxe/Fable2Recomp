@@ -109,6 +109,9 @@
 0x825F9FC0 = { name = "rex_MenuBox_SetEnabled" }
 0x825F9F38 = { name = "rex_MenuBox_Highlight" }
 0x825FA850 = { name = "rex_MenuBox_Accept" }
+# The screen manager SM = *(GUI+0x1C)'s destructor (save menu +0x38, menu box +0x34, box manager +0x30),
+# from the GUI shutdown sub_8232C3E0 (0x8232C450); TU3 sub_82334A48.
+0x8232D740 = { name = "rex_ScreenManager_Destroy" }
 0x82B13220 = { name = "rex_GuiInput_MenuAction" }
 # The options (Fable3/src/hooks/src/options_hooks.cpp): the audio appliers — sfx, voice, music
 # (A, f1) and the speaker mode (A, mode) — the Options screen's gamma applier (screen), the

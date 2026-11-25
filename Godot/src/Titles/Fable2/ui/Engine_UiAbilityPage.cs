@@ -216,7 +216,8 @@ public static class Engine_UiAbilityPage
 		int[]? levels,
 		float[]? wallet,
 		float[]? spellDamage,
-		Refii.Text.Engine_BabelDatabase? strings)
+		Refii.Text.Engine_BabelDatabase? strings,
+		bool discardOpen = false)
 	{
 		var values = new Dictionary<string, string>(9)
 		{
@@ -304,17 +305,21 @@ public static class Engine_UiAbilityPage
 		values[Page2Description] = Description(strings, ability, level, nextRecord, maxed);
 		values[Page1TotalXp] = TotalXp(strings, ability.Type, wallet);
 
-		// The price is the next level's, so a maxed ability has none and takes the plain label.
-		// `Unlearn` refunds off the level already held — half, rounded toward zero (`srawi` +
-		// `addze` at `0x826c38c8`).
+		// Learn: `%1` = level + 1, `%2` = `AbilityExperienceCost(level + 1)` (0x826C3304), the plain tag
+		// when maxed (0x826C373C). Discard, whenever the guest's gate passes for the row, maxed or not
+		// (0x826C3870; Engine_AbilityDiscardGates), the plain tag at 50 otherwise (Opacities):
+		// `%1` = the level held, `%2` = `AbilityExperienceCost(level held) / 2` (0x826C38C4 `bl`,
+		// 0x826C38C8 `srawi r10,r3,1`, 0x826C38D4 `addze`; disc 0x8259F864..0x8259F874).
 		int cost = 0;
-		bool priced = !maxed && Engine_AbilityRecords.TryCost(ability.BaseRecord, level, out cost);
+		bool priced = !maxed && Engine_AbilityRecords.TryExperienceCost(ability.BaseRecord, level + 1, out cost);
 		values[LearnLabel] = Button(
 			strings, priced ? LearnWithParametersTag : LearnTag,
 			level + 1, priced ? cost : 0, priced);
+		int held = 0;
+		bool refunds = discardOpen && Engine_AbilityRecords.TryExperienceCost(ability.BaseRecord, level, out held);
 		values[UnlearnLabel] = Button(
-			strings, level > 0 ? DiscardWithParametersTag : DiscardTag,
-			level, priced ? cost / 2 : 0, level > 0 && priced);
+			strings, refunds ? DiscardWithParametersTag : DiscardTag,
+			level, refunds ? DiscardRefund(held) : 0, refunds);
 
 		// `%1` is the next level's cost; a maxed ability has none and the line goes.
 		values[AbilityCost] = priced
@@ -576,6 +581,37 @@ public static class Engine_UiAbilityPage
 		string sign = Babel(strings, TimesSignTag);
 		return sign.Length == 0 ? number : $"{sign} {number}";
 	}
+
+	/// <summary>The Discard prompt's two elements, as the page fill names them (`.Contents.Buttons.Buttons.Unlearn.Unlearn`
+	/// / `….y_button`, built at 0x8325FCE0 / 0x8325FD20).</summary>
+	private static readonly string[] DiscardElements =
+		{ UnlearnLabel, "Contents.Buttons.Buttons.Unlearn.y_button" };
+
+	/// <summary>
+	/// The Discard prompt's opacity for an ability row: 1 with the guest's gate open, 0.5 shut — the page
+	/// fill's `sub_8246B8E8(…, 100.0)` at 0x826C395C / 0x826C396C and `50.0` at 0x826C39C0 / 0x826C39D0
+	/// (disc 0x8259F8FC.. / 0x8259F960..). No claim off one of the fourteen.
+	/// </summary>
+	public static IReadOnlyDictionary<string, float> DiscardOpacities(Engine_UiExpandableMenu.Item? row, bool open)
+	{
+		if (row is null || IsCategory(row) || string.IsNullOrEmpty(row.Name) ||
+			Engine_UiModAbilities.TryGet(row.Name, out _) || !Engine_AbilityRecords.TryGet(row.Name, out _))
+		{
+			return Engine_UiPageProviders.NoOpacities;
+		}
+
+		float opacity = open ? 1f : 0.5f;
+		var claims = new Dictionary<string, float>(DiscardElements.Length);
+		foreach (string element in DiscardElements)
+		{
+			claims[element] = opacity;
+		}
+
+		return claims;
+	}
+
+	/// <summary>The discard text's refund: half the held level's cost, toward zero (`srawi` + `addze`, 0x826C38C8).</summary>
+	public static int DiscardRefund(int heldLevelCost) => heldLevelCost / 2;
 
 	/// <summary>
 	/// A button label with its `%1` (level) and `%2` (cost) filled in. Both tokens are replaced

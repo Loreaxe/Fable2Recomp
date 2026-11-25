@@ -55,14 +55,24 @@ extern "C" void refii_bridge_opinion_two_store(uint32_t component, const uint8_t
 namespace {
 std::atomic<uint32_t> g_lend_sequence{0};
 std::atomic<uint32_t> g_lend_holder{0};
+/// The slot is lent by this thread (lends are the guest tick thread's and do not nest).
+thread_local bool t_lent_here = false;
 }  // namespace
 
 extern "C" void refii_bridge_hero_slot_lend(uint32_t real_holder) {
   g_lend_holder.store(real_holder, std::memory_order_seq_cst);
   g_lend_sequence.fetch_add(1u, std::memory_order_seq_cst);
+  t_lent_here = true;
 }
 
-extern "C" void refii_bridge_hero_slot_return(void) { g_lend_sequence.fetch_add(1u, std::memory_order_seq_cst); }
+extern "C" void refii_bridge_hero_slot_return(void) {
+  t_lent_here = false;
+  g_lend_sequence.fetch_add(1u, std::memory_order_seq_cst);
+}
+
+extern "C" uint32_t refii_bridge_hero_slot_lent_here(void) {
+  return t_lent_here ? g_lend_holder.load(std::memory_order_seq_cst) : 0u;
+}
 
 extern "C" uint32_t refii_bridge_hero_one_holder(const uint8_t* base, uint32_t players) {
   const uint32_t before = g_lend_sequence.load(std::memory_order_seq_cst);

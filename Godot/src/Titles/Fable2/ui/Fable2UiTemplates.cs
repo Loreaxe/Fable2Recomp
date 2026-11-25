@@ -431,6 +431,28 @@ public static class Fable2UiTemplates
 			};
 		}
 
+		// THE FOUR GUEST PAGES open as Godot's page level: the ported options handler takes no page
+		// input, so each page row names its page (Engine_UiOptionsPending) — Game 70, Controls 71,
+		// Video 72, Audio 73, the event types the handler's '$' arm turned into a page (`data - 70`,
+		// TU1 0x826DA404).
+		if (options is not null)
+		{
+			void NamePages(System.Collections.Generic.List<Engine_UiMenuEntry> entries)
+			{
+				foreach (Engine_UiMenuEntry entry in entries)
+				{
+					if (entry.EventType is >= 70 and <= 73 && Engine_UiOptionsPending.IsGuestPage(entry.Name))
+					{
+						entry.Command = Fable2UiVerbs.OptionsPageAction + entry.Name;
+					}
+
+					NamePages(entry.Children);
+				}
+			}
+
+			NamePages(options.Entries);
+		}
+
 		if (menus.TryGetValue("LogbookMenu", out Engine_UiMenuTemplate? logbook))
 		{
 			foreach (Engine_UiMenuEntry entry in logbook.Entries)
@@ -1405,7 +1427,7 @@ public static class Fable2UiTemplates
 
 		AddScreen(screens, new Engine_UiScreenTemplate
 		{
-			ScreenId = 18, Name = "options", OwnsList = true, CommitsByHighlight = true,
+			ScreenId = 18, Name = "options", OwnsList = true,
 			// Four pages; the stack is authored on the leaf already.
 			Pages = { "Foreground.Book.Pages.Page1", "Foreground.Book.Pages.Page2", "Foreground.Book.Pages.Page3", "Foreground.Book.Pages.Page4" },
 			Provider = Fable2PageProviders.Options,
@@ -1419,8 +1441,6 @@ public static class Fable2UiTemplates
 			PageRootUnit = "Pages", BackdropUnit = "background_purple",
 			// The stack is authored at x 405 — off the leaf — like the logbook's.
 			PageStackAt = Vector3.Zero,
-			PageElement = "Foreground.ExpandableMenu",
-			PageSlide = 2,
 		});
 
 		// The CRIME panel — three pages of one multi-line text field each: fine plus charge

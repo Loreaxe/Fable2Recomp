@@ -76,7 +76,7 @@ public sealed class Fable2Input : GameTitleInput
 	{
 		bool found = HostBridge.TryGetFrontEnd(out var screen, out uint state, out _, out _);
 		Engine_UiModel.PauseState? pause = HostBridge.GetPauseState();
-		uint flags = (PauseMenuSwallowsBack ? 1u : 0) | (FrontEndSwallowsBack ? 2u : 0) |
+		uint flags = (FrontEndSwallowsBack ? 2u : 0) |
 			(ModalBoxOwnsInput ? 4u : 0) | (DisplayMessageBoxUp ? 8u : 0) |
 			(ReceiveItemsOwnsInput ? 16u : 0) | (MenuBoxOwnsInput ? 32u : 0) |
 			(ScreenMenuOwnsInput ? 64u : 0) | (FrontEndDrive.ListUp ? 128u : 0) |
@@ -164,6 +164,9 @@ public sealed class Fable2Input : GameTitleInput
 	/// guest until released. See <see cref="SetMasked"/>.</summary>
 	private static readonly uint[] _heldAcrossUnmask = new uint[MaxControllers];
 
+	/// <summary>Per pad: Start was down last frame — its press edge posts `Start:`.</summary>
+	private static readonly bool[] _startWasDown = new bool[MaxControllers];
+
 	private Published SetMasked(int pad, bool connected, PadState state)
 	{
 		uint buttons = state.Buttons;
@@ -235,6 +238,30 @@ public sealed class Fable2Input : GameTitleInput
 			leftX = (CoopPickerWithheld & Engine_CoopSavePicker.Press.Right) != 0 ? System.Math.Min(leftX, 0) : leftX;
 		}
 
+		// START IS A LEVER IN GAME: the guest's only consumer is the GUI input's raw pass, which
+		// hands it to `sub_82371B10(G, player, 0)` (`CGUIInput_vf6`, 0x82403D50) — open the book,
+		// close it from any pause screen, or the lite pause box. Godot posts `Start:<player>` on the
+		// press and the guest never sees the button. A pad with no player keeps its Start (the
+		// local co-op drop-in), and so does the front end.
+		int startPlayer = HostBridge.IsInGame && !masked ? ModPlayer(pad) : 0;
+		if (startPlayer != 0)
+		{
+			bool startDown = (filter(buttons) & ~wheelBits & ~_heldAcrossUnmask[pad] & Start) != 0;
+			if (startDown && !_startWasDown[pad])
+			{
+				string lever = Fable2PortedScreens.Start(Fable2ActingPlayer.OfPad(CoopSession.IsClient, startPlayer));
+				HostBridge.PostFrontEndAction(lever);
+				GD.Print($"[input] pad {pad} Start posted '{lever}'");
+			}
+
+			_startWasDown[pad] = startDown;
+			wheelBits |= Start;
+		}
+		else
+		{
+			_startWasDown[pad] = (buttons & Start) != 0;
+		}
+
 		uint maskBits = ~filter(uint.MaxValue) | wheelBits;
 		_heldAcrossUnmask[pad] |= _maskBits[pad] & ~maskBits & buttons;
 		_heldAcrossUnmask[pad] &= buttons;
@@ -303,10 +330,6 @@ public sealed class Fable2Input : GameTitleInput
 	}
 
 	private static bool _reportedInGameMask;
-
-	/// <summary>Set while the owned pause menu has a group expanded: B then collapses the
-	/// group instead of reaching the guest, whose own B on the pause root resumes the game.</summary>
-	public static bool PauseMenuSwallowsBack { get; set; }
 
 	/// <summary>
 	/// Set while the owned front end answers B itself — a folder open in the list, the gender
@@ -436,12 +459,6 @@ public sealed class Fable2Input : GameTitleInput
 		HostBridge.GetPauseState() is { RootActive: true };
 
 	/// <summary>
-	/// The buttons with the pause menu's navigation taken out: the guest's pause list is still
-	/// populated and `expandablemenuinput.lua` still binds A. LB/RB stay through — the guest's
-	/// own tab switch is the lever our tab entries write. B is conditional, see
-	/// <see cref="PauseMenuSwallowsBack"/>.
-	/// </summary>
-	/// <summary>
 	/// The buttons a standing list's ROW ACTIONS bind this frame (GameUi.DriveRowActionsOn),
 	/// withheld from the guest. Re-derived every frame: reset before the drives, set by the one
 	/// that stands a list with row actions.
@@ -452,16 +469,14 @@ public sealed class Fable2Input : GameTitleInput
 
 	public const uint PadButtonY = ButtonY;
 
-	private static uint WithoutPauseInput(uint buttons)
-	{
-		uint filtered = buttons & ~(DpadUp | DpadDown | DpadLeft | DpadRight | ButtonA | RowActionHolds);
-		if (PauseMenuSwallowsBack)
-		{
-			filtered &= ~ButtonB;
-		}
-
-		return filtered;
-	}
+	/// <summary>
+	/// The buttons with the pause book's vocabulary taken out: the root is ported (S7,
+	/// gui_screen_stub_pause_root.cpp), so its list, B (`PauseClose:`) and LB/RB (`PauseCycle:`) are Godot's
+	/// levers and the guest's input slot for them no longer runs.
+	/// </summary>
+	private static uint WithoutPauseInput(uint buttons) =>
+		buttons & ~(DpadUp | DpadDown | DpadLeft | DpadRight | ButtonA | ButtonB | LeftShoulder | RightShoulder |
+			RowActionHolds);
 
 	/// <summary>
 	/// `screen+24` while the menu LIST is the thing on screen — see <see cref="MaskMenuInput"/>.

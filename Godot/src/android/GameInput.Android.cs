@@ -62,12 +62,12 @@ public partial class GameInput
 	public object DescribeControllerInput()
 	{
 		var devices = new System.Collections.Generic.List<object>();
-		foreach (int id in Input.GetConnectedJoypads())
+		foreach (int id in Engine_Joypads.Connected())
 		{
 			if (devices.Count >= 8) break;
 			devices.Add(new
 			{
-				id, name = Input.GetJoyName(id), guid = Input.GetJoyGuid(id), known = Input.IsJoyKnown(id),
+				id, name = Engine_Joypads.Name(id), guid = Engine_Joypads.Guid(id), known = Engine_Joypads.Known(id),
 				selected_guest_pad = System.Array.IndexOf(_padDevice, id), buttons = JoypadButtons(id),
 				left_x = Input.GetJoyAxis(id, JoyAxis.LeftX), left_y = Input.GetJoyAxis(id, JoyAxis.LeftY),
 				right_x = Input.GetJoyAxis(id, JoyAxis.RightX), right_y = Input.GetJoyAxis(id, JoyAxis.RightY),

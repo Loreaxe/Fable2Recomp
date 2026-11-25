@@ -19,10 +19,10 @@
 //
 // THE INLINE TEXTURE STORES. Three writers set a quad record's texture (`+0x200`, with the dirty
 // byte `+0x224`) only through the element's `+4` node, which a headless element does not have, so
-// they skip. Two are stated where they have the element and the hash:
-//   the pause map image (`sub_826A19E0` 0x826A21C4, disc `sub_8240DD98` 0x8240E57C): r31 the
-//     element, the hash at sp+0x58 (`stw r3, 0x110+var_B8(r1)` 0x826a1d94 / 0x8240e14c after
-//     `rex_lhResourceName_ComputeHash`, refined by `sub_826A4388` through its address);
+// they skip. Two are stated where the element and the hash are known:
+//   the pause map image (the inline store 0x826A21EC in `sub_826A19E0`, disc `sub_8240DD98`): the
+//     ported OnEnter (gui_screen_stub_pause_root.cpp) hands the element and the key it hashed and
+//     `sub_826A4388` refined (StatePauseMapTexture);
 //   each co-op save card's portrait (`sub_8243B520` 0x8243B57C, disc `sub_8247C7D8` 0x8247C834):
 //     r31 the card's screenshot element, the hash at *r29 (0x8243b5ac / 0x8247c864).
 // The third, each legend row's icon, is its call's argument: SetMapKey (`sub_826A3AC8`, disc
@@ -38,6 +38,7 @@
 #include "core/guest_state.h"
 #include "core/payload_bridge_fable2.h"
 #include "gui/gui_told_statements.h"
+#include "hooks/gui_screen_stubs.h"
 
 extern "C" uint8_t* RefiiGuestBase(void);
 
@@ -120,11 +121,8 @@ void RefiiHeadlessInlineTexture(PPCRegister& element, PPCRegister& hash_at) {
     TellStoredTexture(base, element.u32, refii::vfs::LoadGuestU32(base, hash_at.u32));
 }
 
-// The pause map image: the element, and the hash in the enter's frame at sp+0x58.
-void RefiiPauseMapTexture(PPCRegister& element, PPCRegister& r1) {
-    uint8_t* base = RefiiGuestBase();
-    if (base == nullptr || !Plausible(r1.u32)) {
-        return;
-    }
-    TellStoredTexture(base, element.u32, refii::vfs::LoadGuestU32(base, r1.u32 + 0x58u));
-}
+// The pause map image: the element and the key the ported OnEnter (gui_screen_stub_pause_root.cpp) hashed and
+// `sub_826A4388` refined.
+namespace refii::vfs {
+void StatePauseMapTexture(uint8_t* base, uint32_t element, uint32_t hash) { TellStoredTexture(base, element, hash); }
+}  // namespace refii::vfs

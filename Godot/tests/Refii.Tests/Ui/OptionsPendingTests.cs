@@ -8,23 +8,52 @@ using Refii.Ui;
 using Refii.Titles.Fable2;
 
 /// <summary>
-/// The options page level. A GUEST page's cursor and values are the guest's, as its row widgets
-/// state them, and never stepped by the host; a HOST page's record
-/// is the host's. The pad's codes to a guest page are held through the page's quiet half second
-/// and each 28..31 goes out with its release. Pure model code — no Godot type is built.
+/// The options page level: Godot's record, seeded from what the guest's page readers state, stepped
+/// with the guest widgets' arithmetic, and committed as `Options:` levers that run the guest's
+/// setters. Pure model code — no Godot type is built.
 /// </summary>
 [TestSuite]
 public class OptionsPendingTests
 {
-	/// <summary>Records what the level posts to the guest.</summary>
+	/// <summary>Records what the page posts to the guest.</summary>
 	private sealed class RecordingSource : Engine_UiSource
 	{
 		public readonly List<uint> Codes = new();
+
+		public readonly List<string> Levers = new();
 
 		public override uint ScreenAction(uint code)
 		{
 			Codes.Add(code);
 			return 1;
+		}
+
+		public override uint PostFrontEndAction(string name)
+		{
+			Levers.Add(name);
+			return 1;
+		}
+	}
+
+	private static readonly HostBridge.OptionSliders Committed = new(true, 0.55f, 1f, 1f, 0.9f, 2);
+
+	/// <summary>Runs <paramref name="body"/> with a recording source and a clean record.</summary>
+	private static void WithSource(System.Action<RecordingSource> body)
+	{
+		Engine_UiSource before = Engine_UiSource.Current;
+		var source = new RecordingSource();
+		Engine_UiSource.Current = source;
+		Engine_UiOptionsPending.Leave();
+		ClearStated();
+		try
+		{
+			body(source);
+		}
+		finally
+		{
+			Engine_UiSource.Current = before;
+			Engine_UiOptionsPending.Leave();
+			ClearStated();
 		}
 	}
 
@@ -55,99 +84,160 @@ public class OptionsPendingTests
 	}
 
 	[TestCase]
-	public void GuestPageTakesItsCursorAndIndicesFromTheGuestsStatementsAndTrackStepsNothing()
+	public void GamePageSeedsFromTheStatedIndicesAndCommitsEveryRow()
 	{
-		Engine_UiOptionsPending.Leave();
-		ClearStated();
-		try
+		WithSource(source =>
 		{
-			Engine_UiOptionsPending.Enter("Game");
-			AssertThat(Engine_UiOptionsPending.Open).IsTrue();
-			// Nothing stated yet: no caption is painted from a guess, and the cursor reads as row 0.
-			AssertThat(Engine_UiOptionsPending.IndexOf(0)).IsEqual(-1);
-			AssertThat(Engine_UiOptionsPending.Row).IsEqual(0);
-
 			const string options = Pages + "Page1.Contents.Options.";
-			Engine_UiRowWidgets.StateSelected(options + "Subtitles_pickbox", true);
+			Engine_UiPickBoxes.State(options + "Subtitles_pickbox.grp.text", 0, "Off");
 			Engine_UiPickBoxes.State(options + "BreadcrumbSize_pickbox.grp.text", 4, "Very high");
+			Engine_UiPickBoxes.State(options + "TutorialBoxes_pickbox.grp.text", 1, "On");
 			Engine_UiPickBoxes.State(options + "MultiplayerOrbs_pickbox.grp.text", 2, "All");
-			// The row selector clears the old row's widget and sets the new one's.
-			Engine_UiRowWidgets.StateSelected(options + "Subtitles_pickbox", false);
-			Engine_UiRowWidgets.StateSelected(options + "MultiplayerOrbs_pickbox", true);
-			AssertThat(Engine_UiOptionsPending.Row).IsEqual(3);
+			Engine_UiPickBoxes.State(options + "Auto_joinable_pickbox.grp.text", 1, "On");
+
+			AssertThat(Engine_UiOptionsPending.Enter("Game", Committed)).IsTrue();
 			AssertThat(Engine_UiOptionsPending.IndexOf(1)).IsEqual(4);
-			AssertThat(Engine_UiOptionsPending.IndexOf(3)).IsEqual(2);
 			AssertThat(Engine_UiOptionsPending.SliderValue(0)).IsNull();
 
-			// The guest's record is the only one; a code sent to it moves nothing here.
-			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Left);
+			// The breadcrumb row does not wrap; the orbs row does. Nothing is posted until A.
 			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Down);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Right);
+			AssertThat(Engine_UiOptionsPending.IndexOf(1)).IsEqual(4);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Down);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Down);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Right);
+			AssertThat(Engine_UiOptionsPending.IndexOf(3)).IsEqual(0);
+			for (int i = 0; i < 4; ++i)
+			{
+				Engine_UiOptionsPending.Track(Engine_UiScreenInput.Down);
+			}
+
+			AssertThat(Engine_UiOptionsPending.Row).IsEqual(4);
+			AssertThat(source.Levers).IsEmpty();
+
 			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Select);
-			AssertThat(Engine_UiOptionsPending.Row).IsEqual(3);
-			AssertThat(Engine_UiOptionsPending.IndexOf(3)).IsEqual(2);
-			AssertThat(Engine_UiOptionsPending.Open).IsTrue();
-
-			// A re-populated page builds its widgets again: a new widget is unselected.
-			Engine_UiRowWidgets.StateInit(options + "MultiplayerOrbs_pickbox");
-			AssertThat(Engine_UiOptionsPending.Row).IsEqual(0);
-		}
-		finally
-		{
-			Engine_UiOptionsPending.Leave();
-			ClearStated();
-		}
-	}
-
-	[TestCase]
-	public void AudioPageTakesTheSliderWidgetsStatedValuesOverTheCommittedLevels()
-	{
-		Engine_UiOptionsPending.Leave();
-		ClearStated();
-		try
-		{
-			Engine_UiOptionsPending.Enter("Audio");
-			const string contents = Pages + "Page4.Contents.";
-			Engine_UiRowWidgets.StateValue(contents + "slider1", 0.25f);
-			Engine_UiRowWidgets.StateValue(contents + "slider2", 0.5f);
-			Engine_UiRowWidgets.StateValue(contents + "slider3", 0.75f);
-			Engine_UiPickBoxes.State(contents + "pickbox1.grp.text", 2, "Surround");
-			Engine_UiRowWidgets.StateSelected(contents + "slider2", true);
-			AssertThat(Engine_UiOptionsPending.Row).IsEqual(1);
-			AssertThat(Engine_UiOptionsPending.SliderValue(0)).IsEqual(0.25f);
-			AssertThat(Engine_UiOptionsPending.SliderValue(3)).IsNull();
-			AssertThat(Engine_UiOptionsPending.IndexOf(0)).IsEqual(-1);
-			AssertThat(Engine_UiOptionsPending.IndexOf(3)).IsEqual(2);
-
-			var committed = new HostBridge.OptionSliders(true, 0.4f, 1f, 1f, 1f, 0);
-			HostBridge.OptionSliders live = Engine_UiOptionsPending.Pending(committed);
-			AssertThat(live.Sfx).IsEqual(0.25f);
-			AssertThat(live.Music).IsEqual(0.5f);
-			AssertThat(live.Speech).IsEqual(0.75f);
-			AssertThat(live.Gamma).IsEqual(0.4f);
-		}
-		finally
-		{
-			Engine_UiOptionsPending.Leave();
-			ClearStated();
-		}
-	}
-
-	[TestCase]
-	public void AnEmptyPageNameIsRefused()
-	{
-		Engine_UiOptionsPending.Leave();
-		try
-		{
-			Engine_UiOptionsPending.Enter(string.Empty);
+			AssertThat(source.Levers).ContainsExactly(
+				"Options:1:subtitles:0", "Options:1:breadcrumbs:4", "Options:1:tutorials:1",
+				"Options:1:orbs:0", "Options:1:autojoin:1");
 			AssertThat(Engine_UiOptionsPending.Open).IsFalse();
-			Engine_UiOptionsPending.Enter("Game");
-			Engine_UiOptionsPending.Enter(string.Empty);
-			AssertThat(Engine_UiOptionsPending.Page).IsEqual("Game");
-		}
-		finally
+		});
+	}
+
+	[TestCase]
+	public void PlayerTwosGamePageIsTheSubtitleRowAlone()
+	{
+		WithSource(source =>
 		{
-			Engine_UiOptionsPending.Leave();
-		}
+			Engine_UiPickBoxes.State(Pages + "Page1.Contents.Options.Subtitles_pickbox.grp.text", 1, "On");
+			Engine_UiOptionsPending.Enter("Game", Committed, playerTwo: true);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Down);
+			AssertThat(Engine_UiOptionsPending.Row).IsEqual(0);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Right);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Select);
+			AssertThat(source.Levers).ContainsExactly("Options:1:subtitles:0");
+		});
+	}
+
+	[TestCase]
+	public void AudioPageAppliesLiveCommitsTheProfileAndLeavesLevelsOnCancel()
+	{
+		WithSource(source =>
+		{
+			const string contents = Pages + "Page4.Contents.";
+			Engine_UiRowWidgets.StateValue(contents + "slider1", 1f);
+			Engine_UiRowWidgets.StateValue(contents + "slider2", 0.5f);
+			Engine_UiRowWidgets.StateValue(contents + "slider3", 0.9f);
+			Engine_UiPickBoxes.State(contents + "pickbox1.grp.text", 2, "Surround");
+
+			Engine_UiOptionsPending.Enter("Audio", Committed);
+			AssertThat(Engine_UiOptionsPending.SliderValue(1)).IsEqual(0.5f);
+
+			// The slider clamps at 1: no step, no lever.
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Right);
+			AssertThat(source.Levers).IsEmpty();
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Left);
+			AssertThat(source.Levers).ContainsExactly("Options:1:sfx:0.95");
+
+			// The speaker row wraps 2 -> 0 and applies at once.
+			for (int i = 0; i < 3; ++i)
+			{
+				Engine_UiOptionsPending.Track(Engine_UiScreenInput.Down);
+			}
+
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Right);
+			AssertThat(Engine_UiOptionsPending.IndexOf(3)).IsEqual(0);
+			AssertThat(Engine_UiOptionsPending.Pending(Committed).Speaker).IsEqual(0);
+			AssertThat(source.Levers[^1]).IsEqual("Options:1:speaker:0");
+
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Select);
+			AssertThat(source.Levers[^1]).IsEqual("Options:1:audio:0.95:0.5:0.9:0");
+
+			// B posts nothing: the live levels stay where the last step put them (0x829C16FC).
+			Engine_UiOptionsPending.Enter("Audio", Committed);
+			int posted = source.Levers.Count;
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Back);
+			AssertThat(source.Levers.Count).IsEqual(posted);
+			AssertThat(Engine_UiOptionsPending.Open).IsFalse();
+		});
+	}
+
+	[TestCase]
+	public void VideoPagePreviewsGammaAndPutsItBackOnCancel()
+	{
+		WithSource(source =>
+		{
+			Engine_UiOptionsPending.Enter("Video", Committed);
+			AssertThat(Engine_UiOptionsPending.SliderValue(0)).IsEqual(0.55f);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Right);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Right);
+			AssertThat(source.Levers).ContainsExactly("Options:1:gammalive:0.6", "Options:1:gammalive:0.65");
+			AssertThat(Engine_UiOptionsPending.Pending(Committed).Gamma).IsEqualApprox(0.65f, 1e-5f);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Back);
+			AssertThat(source.Levers[^1]).IsEqual("Options:1:gammalive:0.55");
+
+			Engine_UiOptionsPending.Enter("Video", Committed);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Left);
+			Engine_UiOptionsPending.Track(Engine_UiScreenInput.Select);
+			AssertThat(source.Levers[^1]).IsEqual("Options:1:gamma:0.5");
+		});
+	}
+
+	[TestCase]
+	public void AnUnknownPageNameIsRefused()
+	{
+		WithSource(_ =>
+		{
+			AssertThat(Engine_UiOptionsPending.Enter(string.Empty, Committed)).IsFalse();
+			AssertThat(Engine_UiOptionsPending.Open).IsFalse();
+			AssertThat(Engine_UiOptionsPending.Enter("Mods", Committed)).IsFalse();
+			AssertThat(Engine_UiOptionsPending.Enter("Controls", Committed)).IsTrue();
+			AssertThat(Engine_UiOptionsPending.Page).IsEqual("Controls");
+		});
+	}
+
+	[TestCase]
+	public void TheListWidgetsStepWrapsOnlyWhereTheWidgetWraps()
+	{
+		AssertThat(Engine_UiOptionsPending.StepIndex(0, -1, 3, true)).IsEqual(2);
+		AssertThat(Engine_UiOptionsPending.StepIndex(2, 1, 3, true)).IsEqual(0);
+		AssertThat(Engine_UiOptionsPending.StepIndex(0, -1, 5, false)).IsEqual(0);
+		AssertThat(Engine_UiOptionsPending.StepIndex(4, 1, 5, false)).IsEqual(4);
+		AssertThat(Engine_UiOptionsPending.StepIndex(1, 1, 5, false)).IsEqual(2);
+	}
+
+	[TestCase]
+	public void ThePadStepsTheRecordAtOnceAndSendsNoScreenCode()
+	{
+		WithSource(source =>
+		{
+			Engine_UiOptionsPending.Enter("Game", Committed);
+			var level = new Engine_UiScreenLevel();
+			level.Drive(new Engine_UiSurfaceInput { Direction = 1, Delta = 0.1 });
+			AssertThat(Engine_UiOptionsPending.Row).IsEqual(1);
+			level.Drive(new Engine_UiSurfaceInput { Back = true, Delta = 0.1 });
+			AssertThat(Engine_UiOptionsPending.Open).IsFalse();
+			AssertThat(source.Codes).IsEmpty();
+		});
 	}
 
 	[TestCase]
@@ -168,41 +258,6 @@ public class OptionsPendingTests
 		}
 		finally
 		{
-			Engine_UiOptionsPending.Leave();
-		}
-	}
-
-	[TestCase]
-	public void PadCodesAreHeldThroughTheQuietWindowThenSentWithTheirReleases()
-	{
-		Engine_UiSource before = Engine_UiSource.Current;
-		var source = new RecordingSource();
-		Engine_UiSource.Current = source;
-		Engine_UiOptionsPending.Leave();
-		try
-		{
-			Engine_UiOptionsPending.Enter("Game");
-			var level = new Engine_UiScreenLevel();
-
-			// Down at 0.1 s and A at 0.2 s: both inside the guest's half second, neither posted.
-			level.Drive(new Engine_UiSurfaceInput { Direction = 1, Delta = 0.1 });
-			level.Drive(new Engine_UiSurfaceInput { Accept = true, Delta = 0.1 });
-			AssertThat(source.Codes).IsEmpty();
-
-			// The window ends: the held codes go out in order, the press with its release.
-			level.Drive(new Engine_UiSurfaceInput { Delta = 0.5 });
-			AssertThat(source.Codes).ContainsExactly(
-				Engine_UiScreenInput.Down, Engine_UiScreenInput.DownReleased, Engine_UiScreenInput.Select);
-
-			// Past the window a tap is posted at once, still paired with its release.
-			source.Codes.Clear();
-			level.Drive(new Engine_UiSurfaceInput { Horizontal = -1, Delta = 0.1 });
-			AssertThat(source.Codes).ContainsExactly(
-				Engine_UiScreenInput.Left, Engine_UiScreenInput.LeftReleased);
-		}
-		finally
-		{
-			Engine_UiSource.Current = before;
 			Engine_UiOptionsPending.Leave();
 		}
 	}

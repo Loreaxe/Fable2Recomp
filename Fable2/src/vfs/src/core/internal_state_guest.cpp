@@ -12,6 +12,7 @@
 #endif
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include "core/guest_build.h"
 
 namespace refii::vfs {
@@ -1212,6 +1213,40 @@ std::string ReadGuestLhString(uint8_t* base, uint32_t handle) {
   }
 
   return FormatGuestAsciiBytes(base, characters, 256u);
+}
+
+std::string ReadStatedLhBytes(uint8_t* base, uint32_t handle) {
+  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
+
+  uint32_t inner = 0;
+  if (base == nullptr || !plausible(handle) || !TryLoadGuestU32(base, handle, &inner) ||
+      !plausible(inner)) {
+    return std::string();
+  }
+
+  uint32_t characters = 0;
+  if (!TryLoadGuestU32(base, inner, &characters) || !plausible(characters)) {
+    return std::string();
+  }
+
+  char raw[256];
+  const size_t readable = TryCopyGuestBytes(base, characters, raw, sizeof(raw));
+  return std::string(raw, strnlen(raw, readable));
+}
+
+std::string Latin1ToUtf8(const std::string& bytes) {
+  std::string text;
+  text.reserve(bytes.size());
+  for (const char ch : bytes) {
+    const unsigned char value = static_cast<unsigned char>(ch);
+    if (value < 0x80u) {
+      text.push_back(ch);
+    } else {
+      text.push_back(static_cast<char>(0xC0u | (value >> 6)));
+      text.push_back(static_cast<char>(0x80u | (value & 0x3Fu)));
+    }
+  }
+  return text;
 }
 
 std::string ReadGuestWideString(uint8_t* base, uint32_t handle) {

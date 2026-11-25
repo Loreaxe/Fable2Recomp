@@ -507,15 +507,22 @@ public static class Fable3BoxScreenModel
 	/// `@SaveMenu.Row`). The open sub_8296C5D0 slides `SaveMenu.Foreground.Text.Save` and
 	/// `.SaveAndQuit` 1 when saving is allowed, 2 when not (0x8296C76C..0x8296C790) — those two rows
 	/// are ghosted without it — and starts the row `+12` on 1, or 3 when not allowed
-	/// (0x8296C6F4 / 0x8296C700); sub_8296CB08 highlights the row's `.Layout`: 1 Save, 2 SaveAndQuit,
-	/// 4 CharacterManagement, else Quit (0x8296CB30..0x8296CC24). Input sub_8296C918: up/down
-	/// (29/30 and the stick) move, 72 runs the row (sub_8296CDB0), 73 closes (sub_8296C858).
+	/// (0x8296C6F4 / 0x8296C700); sub_8296CB08 (TU3 sub_829B5350) sends the selected row's `.Layout` to
+	/// slide 2 and the other three to slide 1: 1 Save, 2 SaveAndQuit, 4 CharacterManagement, else Quit
+	/// (TU3 0x829B5374..0x829B53A4, the four SetStates 0x829B53E8 / 0x829B5414 / 0x829B5440 /
+	/// 0x829B546C). THE ROWS STAND IN THE GUEST'S ORDER: up is `row - 1` clamped to 1..4 and only while
+	/// saving is allowed (TU3 sub_829B5480: `lbz r11,1(r31)` 0x829B54E0, `addi r11,r11,-1` 0x829B54F8),
+	/// down `row + 1` clamped (sub_829B5540: `addi r11,r11,1` 0x829B55AC), each behind 0.3 s
+	/// (flt_8206CBF4) — so Quit (3) is below Save and Quit and Character Management (4) is last, and
+	/// the page's index is the row less one. 72 runs the row (sub_8296CDB0), 73 closes (sub_8296C858).
 	/// NO DOCUMENT SHIPS FOR IT: the open asks for presentation type 11 (`li r4,0xB` 0x8296C71C →
 	/// sub_825C79A0), sub_82B3EC40 names it `SaveMenu.bgf` (0x82B3EE9C..0x82B3EEAC), and that file is
 	/// in no bank on the disc; the loader stores a presentation only when the open succeeds
 	/// (sub_825C7A90: `LHSFS__CLegacyFile_vf10` 0x825C7AE8, `beq` 0x825C7AF4, store 0x825C7B30), and
-	/// every write above is skipped while the slot is null (0x8296C734, 0x8296CB68, 0x8296C87C). So
-	/// there are no authored captions or frame: the element names stand in for the captions.
+	/// every write above is skipped while the slot is null (0x8296C734, 0x8296CB68, 0x8296C87C;
+	/// TU3 `beq` 0x829B53B0). No build ships it (the disc's and the PC build's guiscripts.bnk, TU3's
+	/// tu1.bnk): the 360 draws no save menu and no lit row. So there are no authored captions,
+	/// frame or highlight: the element names stand in for the captions.
 	/// </summary>
 	private static Fable3ScreenPage SaveMenuPage(Fable3ScreenState screen, System.Func<string, string> resolve)
 	{
@@ -523,11 +530,11 @@ public static class Fable3BoxScreenModel
 		{
 			new("Save", "Save", !screen.SaveAllowed),
 			new("SaveAndQuit", "Save and Quit", !screen.SaveAllowed),
-			new("CharacterManagement", "Character Management"),
 			new("Quit", "Quit"),
+			new("CharacterManagement", "Character Management"),
 		};
 
-		int selected = screen.SaveRow switch { 1 => 0, 2 => 1, 4 => 2, _ => 3 };
+		int selected = screen.SaveRow is >= 1 and <= 4 ? screen.SaveRow - 1 : 2;
 		return new Fable3ScreenPage(string.Empty, rows, selected, string.Empty,
 			new[] { new Fable3ScreenPage.Prompt("A", resolve("GUI_SELECT")), new Fable3ScreenPage.Prompt("B", resolve("GUI_BACK")) }, true);
 	}

@@ -155,6 +155,51 @@ public class Fable3StatedUiTests
 	}
 
 	[TestCase]
+	public void TheSaveMenuGoesWithItsScreenManager()
+	{
+		Fresh();
+		Fable3UiStatements.Take(Call("@SaveMenu.Open", B(true), N(1f)));
+		Fable3UiStatements.Take(Call("@SaveMenu.Row", N(2f)));
+		AssertThat(Fable3UiStatements.SaveMenuOpen).IsTrue();
+		AssertThat(Fable3UiStatements.SaveMenuRow).IsEqual(2);
+
+		// Save and Quit: the guest frees SM (+0x38 the save menu) without the menu's own close.
+		ulong before = Fable3UiStatements.Generation;
+		Fable3UiStatements.ScreensDestroyed();
+		AssertThat(Fable3UiStatements.SaveMenuOpen).IsFalse();
+		AssertThat(Fable3UiStatements.SaveMenuAllowed).IsFalse();
+		AssertThat(Fable3UiStatements.SaveMenuRow).IsEqual(0);
+		AssertThat(Fable3UiStatements.Generation > before).IsTrue();
+
+		// The rebuilt GUI's menu opens as new.
+		Fable3UiStatements.Take(Call("@SaveMenu.Open", B(false), N(3f)));
+		AssertThat(Fable3UiStatements.SaveMenuOpen).IsTrue();
+		AssertThat(Fable3UiStatements.SaveMenuRow).IsEqual(3);
+	}
+
+	[TestCase]
+	public void ARebuiltHudStartsWithNoRootState()
+	{
+		Fresh();
+		Fable3Elements.Take(Call("@Presentation.Load", S("40001000"), S("HUD.bgf")));
+		Fable3UiStatements.Take(Call("@Hud.Root", N(2f), S("825C1CB0")));
+		AssertThat(Fable3Elements.HudHidden).IsTrue();
+
+		// The interaction mode's reload leaves the HUD's root alone.
+		Fable3Elements.Take(Call("@Presentation.Load", S("40002000"), S("InteractionMode.bgf")));
+		AssertThat(Fable3Elements.HudRootState).IsEqual(2);
+
+		// The quit to the front end rebuilds the GUI: the new hud.bgf's root has no writer yet.
+		Fable3Elements.Take(Call("@Presentation.Load", S("40003000"), S("HUD.bgf")));
+		AssertThat(Fable3Elements.HudRootState).IsNull();
+		AssertThat(Fable3Elements.HudHidden).IsFalse();
+		AssertThat(Fable3Elements.Get("hud", "Scene")).IsNull();
+
+		Fable3UiStatements.Take(Call("@Hud.Root", N(1f), S("825C1D28")));
+		AssertThat(Fable3Elements.HudRootState).IsEqual(1);
+	}
+
+	[TestCase]
 	public void TheTopBoxUpIsTheBackOfTheFirstNonEmptyChannel()
 	{
 		Fresh();

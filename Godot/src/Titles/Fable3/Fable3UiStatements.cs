@@ -256,6 +256,20 @@ public static class Fable3UiStatements
 		Fable3Elements.StateSlide(Fable3Elements.HudDocument, JobRoot, success ? 4 : 5);
 	}
 
+	/// <summary>
+	/// The screen manager destroyed (`@Screens.Destroyed`, Fable3GuiNatives): its save menu +0x38 is
+	/// freed without its close sub_829B50A0, and the Options query box with the manager's boxes.
+	/// </summary>
+	public static void ScreensDestroyed()
+	{
+		SaveMenuOpen = false;
+		SaveMenuAllowed = false;
+		SaveMenuRow = 0;
+		OptionsQuery = null;
+		++Generation;
+		Log("[fable3-stated] save menu closed with its screen manager");
+	}
+
 	/// <summary>Forgets everything (a new session; the tests).</summary>
 	public static void Clear()
 	{

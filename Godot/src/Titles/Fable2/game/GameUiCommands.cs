@@ -40,14 +40,15 @@ public partial class GameUi
 			return Engine_UiCommandResult.From(accepted, "the bridge refused it: not on the pause root, or a modal is pending");
 		});
 
-		// Through the pump, because the guest's event method must run on ITS tick thread. The guest
-		// answers with its own query box (23/24/25), which the mirror draws and the guest's own input
-		// answers — the mask lifts the frame the modal id goes non-zero, so the box's A press is
-		// never held back.
-		Engine_UiCommands.Register(Fable2UiVerbs.PauseSaving, (_, context) =>
+		// Through the pump, on the guest's tick thread, with the acting player: the ported root answers
+		// the row as its handler did (gui_screen_stub_pause_root.cpp DispatchPauseSaving) — the guest's own confirm
+		// box (23/24/25), drawn by the mirror and answered through QueryAnswer, or the quit when nothing
+		// is held.
+		Engine_UiCommands.Register(Fable2UiVerbs.PauseSaving, (row, context) =>
 		{
-			HostBridge.PostFrontEndAction(context.Command);
-			GD.Print($"[game-ui] pause saving event '{context.Command}' ('{context.Row}') posted to the guest tick pump");
+			string lever = Fable2PortedScreens.Saving(Engine_UiSource.Current.ActingPlayer, row);
+			HostBridge.PostFrontEndAction(lever);
+			GD.Print($"[game-ui] pause saving row '{context.Row}' posted '{lever}' to the guest tick pump");
 			return Engine_UiCommandResult.Done;
 		});
 
@@ -57,8 +58,9 @@ public partial class GameUi
 		{
 			_quitToDesktopPending = true;
 			_quitToDesktopWindow = QuitToDesktopWindowSeconds;
-			HostBridge.PostFrontEndAction(Engine_PauseMenu.SavingCommandPrefix + saving);
-			GD.Print($"[game-ui] pause entry '{context.Row}' posted '{Engine_PauseMenu.SavingCommandPrefix}{saving}' " +
+			string lever = Fable2PortedScreens.Saving(Engine_UiSource.Current.ActingPlayer, saving);
+			HostBridge.PostFrontEndAction(lever);
+			GD.Print($"[game-ui] pause entry '{context.Row}' posted '{lever}' " +
 				"and armed the quit to the desktop; the app ends when the guest reaches the front end");
 			return Engine_UiCommandResult.Done;
 		});

@@ -2433,6 +2433,8 @@ public static partial class HostBridge
 		PendingRanged = 16,
 		ExperienceShown = 17,
 		FrontEndMode = 18,
+		WorldHeld = 19,
+		AbilityDiscardGate = 20,
 	}
 
 	/// <summary>The word the guest's own call last stated under <paramref name="key"/>; 0 until one is.</summary>
@@ -6302,7 +6304,7 @@ public static partial class HostBridge
 			RefiiHostGetMenuRowLabel(0, label, (uint)label.Length);
 			rows.Add(new MenuRow(
 				Text(name), Text(parent), firstId, firstType, firstRating, Text(label)));
-			for (uint i = 1; i < total && i < 104u; ++i)
+			for (uint i = 1; i < total; ++i)
 			{
 				RefiiHostGetMenuRow(i, name, (uint)name.Length, parent, (uint)parent.Length,
 					out uint id, out int type, out _, out int rating);

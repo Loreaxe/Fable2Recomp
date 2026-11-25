@@ -1032,9 +1032,9 @@ public partial class Engine_UiNumericBox : Node3D, IUiSurfaceView
 /// `Foreground/NameAndIcon/Title` and `.../Text` carry the localised strings, `IconGraphic` the
 /// item's icon as a live texture (the file's copy is a placeholder), the button prompts' active
 /// flags say which of Done/Info/Action stand, and the card flip (Y) is the Foreground/CardBack
-/// groups' active flags. Input: 36 done, 39 flip, 75 close — the pump's
-/// "ReceiveItemsAction:&lt;code&gt;". This screen does not pause the game, so only A and Y are
-/// masked while it stands.
+/// groups' active flags. Input: Done and Equip are the pump's `Card:&lt;player&gt;:dismiss|equip`, the
+/// flip is the surface's own. This screen does not pause the game, so only A and Y are masked
+/// while it stands.
 /// </remarks>
 public partial class Engine_UiReceiveItems : Node3D, IUiSurfaceView
 {

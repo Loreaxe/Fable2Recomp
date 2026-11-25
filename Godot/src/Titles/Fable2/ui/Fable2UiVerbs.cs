@@ -13,7 +13,7 @@ using Refii.Ui;
 public static class Fable2UiVerbs
 {
 	public static readonly Engine_UiVerb Inventory = new(Engine_UiInventorySource.InventoryAction, "Inventory:<op>:<record>",
-		"an inventory operation on the simulation (use, equip, gift...), run on the guest's tick", Engine_UiVerbs.Anywhere);
+		"an inventory operation on the simulation (use, equip, gift...), run on the guest's tick; on the items and clothing books it is posted as the book's own row lever", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb Quest = new(Engine_UiQuestSource.QuestAction, "Quest:select:<record>",
 		"makes a quest primary through the world map's own answer", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb Sale = new(Engine_UiQuestSource.SaleAction, "Sale:<...>",
@@ -32,6 +32,8 @@ public static class Fable2UiVerbs
 		"a property partnership row's answer", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb ModBuy = new(Engine_UiModAbilities.BuyAction, "Mod:buy:<ability>",
 		"buys a level of a mod ability (ui/abilities.json) for the row's player: the engine's purchase", Engine_UiVerbs.Anywhere);
+	public static readonly Engine_UiVerb OptionsPage = new(OptionsPageAction, "OptionsPage:Game|Controls|Video|Audio",
+		"opens one of the options screen's four pages; its A runs the page's setters, its B cancels", Engine_UiVerbs.GuestScreen);
 	public static readonly Engine_UiVerb PauseTab = new(Engine_PauseMenu.TabCommandPrefix, "PauseTab:<tab>",
 		"opens a pause tab through the guest's tab lever (2 map .. 8 options)", Engine_UiVerbs.PauseOnly);
 	public static readonly Engine_UiVerb PauseSaving = new(Engine_PauseMenu.SavingCommandPrefix, "PauseSaving:<0|1|2>",
@@ -45,6 +47,9 @@ public static class Fable2UiVerbs
 	public static readonly Engine_UiVerb MiniGameConfirm = new(MiniGameConfirmCommand, MiniGameConfirmCommand,
 		"A on the minigame tally: its rows finish counting, and the press goes on to the tally's own handler, which closes it once its rows have", Engine_UiVerbs.GuestScreen);
 
+	/// <summary>The options rows' command prefix: the page by the name the row carries.</summary>
+	public const string OptionsPageAction = "OptionsPage:";
+
 	/// <summary>The minigame tally's A (screen 11's `revealedAccept`).</summary>
 	public const string MiniGameConfirmCommand = "minigame:confirm";
 
@@ -52,7 +57,7 @@ public static class Fable2UiVerbs
 	public static readonly IReadOnlyList<Engine_UiVerb> All = new[]
 	{
 		Inventory, Quest, Sale, Ability, Furniture, Shop, PropertyRepair, PropertyRepairAll, Partner, ModBuy,
-		PauseTab, PauseSaving, PauseQuit, PauseCoop, PauseOwned, MiniGameConfirm,
+		OptionsPage, PauseTab, PauseSaving, PauseQuit, PauseCoop, PauseOwned, MiniGameConfirm,
 	};
 
 	/// <summary>The handlers for the rows' verbs; the pause levers are registered by the pause book.</summary>
@@ -121,7 +126,12 @@ public static class Fable2UiVerbs
 				return Engine_UiCommandResult.Done;
 			}
 
-			Refii.Host.HostBridge.PostFrontEndAction(action);
+			// On a ported item book (items 15, clothing 16) the row's consequence is its lever, with
+			// the acting player and the ticket the guest spawned the row with (Fable2PortedScreens).
+			uint screen = Engine_UiSource.Current.GetPauseState() is { } pause ? pause.ScreenId : 0u;
+			Refii.Host.HostBridge.PostFrontEndAction(
+				Fable2PortedScreens.ItemLever(screen, Engine_UiSource.Current.ActingPlayer, action,
+					Fable2PortedScreens.TicketOf(Engine_UiMenuSources.SpawnedRows(), context.Row)) ?? action);
 			return Engine_UiCommandResult.Done;
 		});
 
@@ -131,8 +141,7 @@ public static class Fable2UiVerbs
 		//
 		// `Ability:learn:<1..14>` — the abilities screen. The guest's own answer to one of those
 		// rows is a single two-argument call that reads nothing from the screen or the menu
-		// (`sub_8246C970` / `sub_8246CF48`), so the row performs it directly rather than borrowing
-		// an identity and hoping the guest's cursor agrees.
+		// (`sub_8246C970` / `sub_8246CF48`), posted as `Ability:<p>:learn:<n>` for the acting player.
 		Engine_UiCommandHandler pump = (_, context) =>
 		{
 			Refii.Host.HostBridge.PostFrontEndAction(context.Command);
@@ -140,8 +149,20 @@ public static class Fable2UiVerbs
 		};
 		set.Register(Fable2UiVerbs.Quest, pump);
 		set.Register(Fable2UiVerbs.Sale, pump);
-		set.Register(Fable2UiVerbs.Ability, pump);
+		set.Register(Fable2UiVerbs.Ability, (_, context) =>
+		{
+			Engine_UiSource.Current.PostFrontEndAction(
+				Fable2PortedScreens.Ability(Engine_UiSource.Current.ActingPlayer, context.Command) ?? context.Command);
+			return Engine_UiCommandResult.Done;
+		});
 		set.Register(Fable2UiVerbs.Furniture, pump);
+
+		// `OptionsPage:<page>` — the options screen's ported handler takes no page input
+		// (gui_screen_stub_options.cpp), so its page level is Godot's record, seeded from what the guest's
+		// page readers and level setters state.
+		set.Register(Fable2UiVerbs.OptionsPage, (page, _) => Engine_UiCommandResult.From(
+			Engine_UiOptionsPending.Enter(page, Refii.Host.HostBridge.GetOptionSliders(), GameUi.PauseIsPlayerTwos()),
+			$"'{page}' is not an options page"));
 
 		// `Shop:buy|sell:<ticket>` — the shop screen's handler `sub_826AE5C0` acts on the PUSHED
 		// row: it caches the event's id at screen+396 and its confirm's YES re-reads it

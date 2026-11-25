@@ -1174,15 +1174,16 @@ void refii_bridge_menu_spawn_row_labelled(const char* name, const char* parent, 
 
   std::lock_guard lock(refii::vfs::g_menu_mutex);
 
-  // Ceiling: nothing tells the payload a population has finished, so a screen that spawns
-  // without ever clearing would grow this without bound. The guest's pool is 26 buttons.
-  if (refii::vfs::g_menu_building.size() < 104u) {
-    refii::vfs::g_menu_building.push_back(std::move(row));
-  }
-
+  // Every row the guest spawns is kept: a population is bounded by its own boundary
+  // (`refii_bridge_menu_spawn_begin_for` clears both lists), and a list longer than any fixed
+  // count is ordinary — the shop spawns every sell row before its first buy row
+  // (`sub_82994218` 0x8299491C then 0x82994938 / disc `sub_828DF1A8`).
+  //
   // Published per row, not at the end: the in-game lists never call `UpdateAfterSpawning`,
-  // so there is no end marker to wait for.
-  refii::vfs::g_menu_rows = refii::vfs::g_menu_building;
+  // so there is no end marker to wait for. The published list is the builder row for row (both
+  // are cleared together and restated together), so the row is appended to each.
+  refii::vfs::g_menu_rows.push_back(row);
+  refii::vfs::g_menu_building.push_back(std::move(row));
   refii::vfs::g_menu_generation.fetch_add(1, std::memory_order_relaxed);
 }
 

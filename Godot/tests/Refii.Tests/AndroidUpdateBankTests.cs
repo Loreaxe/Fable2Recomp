@@ -28,12 +28,12 @@ public sealed class AndroidUpdateBankTests
         {
             byte[] Bank(byte value) => BnkWriter.Write(new[] { new BnkWriterEntry { Path = "world/value.bin", Bytes = new byte[] { value } } });
             File.WriteAllBytes(Path.Combine(game, "base.bnk"), Bank(1));
-            string extracted = Path.Combine(game, TitleUpdate.DataBankRelativePath);
+            string extracted = Path.Combine(game, TitleUpdate.DataRelativePath(Refii.Core.Engine_Title.Fable2.TitleUpdateDataFiles[0]));
             File.WriteAllBytes(extracted, Bank(2));
             File.WriteAllBytes(Path.Combine(mod, "mod.bnk"), Bank(3));
             AndroidLauncherSettings.PrepareUpdateBank(game);
             string update = Refii.Core.Engine_GameData.UpdateRootFor(game);
-            string copied = Path.Combine(update, TitleUpdate.DataBankRelativePath);
+            string copied = Path.Combine(update, TitleUpdate.DataRelativePath(Refii.Core.Engine_Title.Fable2.TitleUpdateDataFiles[0]));
             byte[] preserved = File.ReadAllBytes(copied);
             // Remove only the fixture's source copy to prove that the update volume
             // is supplying the override independently of loose disc files.

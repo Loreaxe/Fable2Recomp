@@ -393,6 +393,9 @@ uint32_t refii_bridge_stated_pause(uint32_t* modal_mode, uint32_t* modal_id, uin
 // The weapon switches the menu has pending (Fable 2): 15 the melee item, 16 the ranged item (record
 // ids, 0 none). The HUD experience counter (Fable 2): 17 — bit 0 shown for hero one, bit 1 hero two.
 // The front-end game-flow mode (Fable 2): 18 — 1 from its enter to its exit.
+// The world held (Fable 2): 19 — 1 when the last game-flow tick ran no world sim tick.
+// The abilities book's discard gate (Fable 2): 20 — the highlighted row's record id with bit 0 replaced by
+// the guest's gate `sub_826C3A30` for it (1 open); 0 when no row has been gated.
 void refii_bridge_stated_value(uint32_t key, uint32_t value);
 uint32_t refii_bridge_stated_value_now(uint32_t key);
 

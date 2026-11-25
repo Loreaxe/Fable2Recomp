@@ -376,9 +376,15 @@ public sealed class Engine_UiTheme
 			seat = previous.GetShaderParameter(ClipSeatName);
 		}
 
-		float iconAlpha = opacity is { } carried && carried.VariantType == Variant.Type.Float
-			? carried.AsSingle()
-			: 1f;
+		// A label the binding has culled (`Layers` 0 at opacity 0, Engine_UiCloneBinding) keeps no
+		// current `opacity` on its material — the culled write is skipped — and the binding refades
+		// its icons only when the opacity next changes. Its new icons start culled with it, or a
+		// re-texted invisible label stands its button glyph alone at full alpha (#59: the title's
+		// "Press <a_img> to start" icon over the quit fade before the text faded in).
+		float iconAlpha = node.Layers == 0u ? 0f
+			: opacity is { } carried && carried.VariantType == Variant.Type.Float
+				? carried.AsSingle()
+				: 1f;
 
 		Engine_UiTextMesh.Built built = Layout(
 			display, size, opaque, horizontal, vertical, box.X, box.Y, wrap,
@@ -574,14 +580,16 @@ public sealed class Engine_UiTheme
 				continue;
 			}
 
-			ShaderMaterial iconMat = IconMaterial(art, colour.A);
+			// Culled with a culled label, as SetMeshText's icons are.
+			float iconAlpha = label.Layers == 0u ? 0f : colour.A;
+			ShaderMaterial iconMat = IconMaterial(art, iconAlpha);
 			var quad = MarkInlineIcon(new MeshInstance3D
 			{
 				Mesh = IconQuad(icon.Size),
 				// Top-left anchored, drawing down in -Y, matching the glyph cells.
 				Position = new Vector3(icon.TopLeft.X, icon.TopLeft.Y, 0f),
 				MaterialOverride = iconMat,
-				Layers = colour.A > 0.001f ? 1u : 0u,
+				Layers = iconAlpha > 0.001f ? 1u : 0u,
 			});
 			Engine_UiSceneBuilder.MarkOwnedMaterial(quad, iconMat);
 

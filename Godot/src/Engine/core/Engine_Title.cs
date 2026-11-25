@@ -168,6 +168,21 @@ public sealed class Engine_Title
 	public int SaveSlots { get; private init; } = 6;
 
 	/// <summary>
+	/// The files the patched guest reads from the update volume's <c>data\</c>, lifted out of the
+	/// player's own title update package beside the patch (<c>Refii.Launcher.Core.Installer</c>).
+	/// Fable 2 TU1: <c>tu1_data.bnk</c>, opened as <c>update:\data\tu1_data.bnk</c> by
+	/// GameInit_MountDataFileSystems (0x822F2868). Fable 3 TU3: the package manager's refresh
+	/// (sub_822EE318, from the boot sub_822D7260 at 0x822D74F0) opens <c>update:\data</c>
+	/// (sub_822EC6D8: sub_82DB8C20 at 0x822EC740), reads <c>package_collection_info.xml</c>, else
+	/// <c>.xmb</c> (0x822EC760 / 0x822EC7B8; the package ships the .xmb), opens the bank its
+	/// <c>&lt;bankName&gt;</c> names (<c>tu1.bnk</c>, sub_823B41C0 at 0x823B4FA8; <c>.dat</c> beside it)
+	/// and mounts it with its startup.vfsconfig (sub_822ECC38, 0x822ECE74 / 0x822ECEB0). Without the
+	/// collection file the refresh returns at 0x822EC828 and the update's data layer is never mounted.
+	/// <c>tu1.manifest.pkg</c> is read by nothing.
+	/// </summary>
+	public IReadOnlyList<string> TitleUpdateDataFiles { get; private init; } = System.Array.Empty<string>();
+
+	/// <summary>
 	/// The title's folder in the active save profile, <c>assets/saves/&lt;profile&gt;/&lt;SaveFolder&gt;</c>:
 	/// its saves, settings, achievements and per-player state.
 	/// </summary>
@@ -214,6 +229,7 @@ public sealed class Engine_Title
 	{
 		PhoneHostLabels = Refii.AndroidRuntime.AndroidMenuWords.Fable2,
 		SaveSlots = 10,
+		TitleUpdateDataFiles = new[] { "tu1_data.bnk" },
 	};
 
 	/// <summary>Fable 3 in Return to Albion.</summary>
@@ -224,6 +240,7 @@ public sealed class Engine_Title
 	{
 		UiText = Refii.Ui.Engine_UiTextContract.Fable3,
 		SaveSlots = 5,
+		TitleUpdateDataFiles = new[] { "package_collection_info.xmb", "tu1.bnk", "tu1.bnk.dat" },
 	};
 
 	public static IReadOnlyList<Engine_Title> All { get; } = new[] { Fable2, Fable3 };

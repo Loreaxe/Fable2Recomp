@@ -42,27 +42,9 @@ public partial class GameInput
 			return known;
 		}
 
-		int vendor = 0, product = 0;
-		Godot.Collections.Dictionary info = Input.GetJoyInfo(joypad);
-		try
-		{
-			if (info.TryGetValue("vendor_id", out Variant v) && v.VariantType == Variant.Type.Int)
-			{
-				vendor = v.AsInt32();
-			}
-
-			if (info.TryGetValue("product_id", out Variant p) && p.VariantType == Variant.Type.Int)
-			{
-				product = p.AsInt32();
-			}
-		}
-		finally
-		{
-			info.Dispose();
-		}
-
-		string name = Input.GetJoyName(joypad);
-		ControllerFamily family = Engine_ControllerFamily.Classify(name, Input.GetJoyGuid(joypad), vendor, product);
+		(int vendor, int product) = Engine_Joypads.Ids(joypad);
+		string name = Engine_Joypads.Name(joypad);
+		ControllerFamily family = Engine_ControllerFamily.Classify(name, Engine_Joypads.Guid(joypad), vendor, product);
 		_families[joypad] = family;
 		GD.Print($"[input] joypad {joypad} '{name}' is a {family} controller");
 		return family;
@@ -125,10 +107,10 @@ public partial class GameInput
 	{
 		switch (@event)
 		{
-			case InputEventJoypadButton { Pressed: true } button when Input.IsJoyKnown(button.Device):
+			case InputEventJoypadButton { Pressed: true } button when Engine_Joypads.Known(button.Device):
 				_lastJoypad = button.Device;
 				break;
-			case InputEventJoypadMotion motion when Input.IsJoyKnown(motion.Device) && Mathf.Abs(motion.AxisValue) > 0.5f:
+			case InputEventJoypadMotion motion when Engine_Joypads.Known(motion.Device) && Mathf.Abs(motion.AxisValue) > 0.5f:
 				_lastJoypad = motion.Device;
 				break;
 		}

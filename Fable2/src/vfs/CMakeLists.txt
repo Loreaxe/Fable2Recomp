@@ -120,7 +120,16 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/frontend_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/logbook_stats_stated.cpp
     # The ported screens (S7): handler slots replaced, keeping the guest's statements and game calls.
-    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stubs.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_abilities.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_book_levers.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_clothing.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_items.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_logbook.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_options.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_pause_root.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_receive_items.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_small_screens.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_support.cpp
     ${REFII_VFS_ROOT}/src/hooks/preview_figures_stated.cpp
     # The shopkeeper, the previewed item, the pending weapons and the experience counter's
     # visibility, stated from the calls that set them.

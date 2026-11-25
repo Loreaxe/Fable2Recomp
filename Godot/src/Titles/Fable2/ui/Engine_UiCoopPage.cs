@@ -18,7 +18,8 @@ using Refii.Ui;
 /// r = 0 unless (`!f297 || f298 && S==2`) and a right save user, then 2 if L, else 1 in local
 /// co-op; q = `S==2 && !L && (!f297 || f298)`. `RightPage.buttons` slide = L ? (r==2 &amp;&amp; !s &amp;&amp;
 /// !accR ? 2 : 3) : 1; the load caption CHANGE_/SELECT_SAVE by s; `RightPage.ProfileSelector`
-/// slide when !L = (s || !q || accR) ? 5 : r==1 ? 3 : 4.</item>
+/// slide when !L = (s || !q || accR) ? 5 : r==1 ? 3 : 4. For local player two (r == 1) the
+/// save prompt and the name block are switched on: the guest takes their Y (`sub_8243A3E8`).</item>
 /// <item>PROFILES (`sub_8281F010`): a published widget (+56 == 4) puts its selector on slide 2.</item>
 /// <item>ACCEPT (`sub_8243AC48`, `sub_824398B8`): each side's `AcceptGroup` at 50 accepted, 100
 /// not; with flag 298 each `CancelGroup` at 100 accepted, 50 not. Accepted is stated by
@@ -100,6 +101,22 @@ public static class Engine_UiCoopPage
 		bool q = local && !signedIn && (!coop.Flag297 || coop.Flag298);
 		bool s = coop.SaveChosen;
 		said.Slides[Right + "buttons"] = signedIn ? (r == 2 && !s && !acceptedRight ? 2 : 3) : 1;
+
+		// LOCAL PLAYER TWO HAS NO PROFILE AND THE GUEST STILL TAKES THEIR Y: `sub_8243A3E8` answers 1
+		// (`8243A4A8 li r3, 1`, local co-op, `+292 != -1`) and the Y case lists player one's saves
+		// (`824393A0 bl sub_8243AD48` with r4 = 0, then `82439430 bl sub_8243B070`). The guest
+		// prompts for it on the profile selector (`82439C6C` "..._PLAYER_ONE_HERO_SAVE", opacity
+		// 100 at 0x82439C18), which this screen does not draw, and keeps the save prompt and the
+		// name block on slides it holds dark for an unsigned pad. Both are switched on, so the
+		// page reads as a signed-in pad's does.
+		if (local && !signedIn && r == 1)
+		{
+			said.Active[Right + "buttons.LoadGroup.LoadText"] = true;
+			said.Active[Right + "buttons.LoadGroup.LoadButton"] = true;
+			said.Active[Right + "ProfileSelector.gamertag"] = true;
+			said.Active[Right + "ProfileSelector.gamertag.gamertag"] = true;
+		}
+
 		if (!remotePlayerTwo)
 		{
 			said.Values[Right + "buttons.LoadGroup.LoadText"] =

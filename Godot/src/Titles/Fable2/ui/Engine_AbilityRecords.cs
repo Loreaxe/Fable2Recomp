@@ -259,12 +259,13 @@ public static class Engine_AbilityRecords
 	}
 
 	/// <summary>
-	/// The NEXT level's experience cost — `Record{level+1}`'s `ExperienceCost`, else the base's
-	/// own (`sub_824E48F8`'s fallback guards at `0x824e4960`/`0x824e4974`). BY NAME, never by
-	/// position: the level entries are stored in HASH order, and a positional walk handed back
-	/// whichever record hashes first — every Learn button quoted level 1's price.
+	/// `CECStats_AbilityExperienceCost(level)` (TU1 0x824E49D0 / disc 0x824AB140): `Record{level}`'s
+	/// `ExperienceCost`, else the base's own — `sub_824E48F8` takes the base when `level <= 0`
+	/// (0x824e4924) or past the list (0x824e4960 / 0x824e4974). Learn prices `level held + 1`
+	/// (0x826C3304 `addi r5,r11,1`), the discard text `level held` (0x826C38C0 `mr r5,r14`). BY NAME,
+	/// never by position: the level entries are stored in HASH order.
 	/// </summary>
-	public static bool TryCost(string baseRecord, int level, out int cost)
+	public static bool TryExperienceCost(string baseRecord, int level, out int cost)
 	{
 		cost = 0;
 		GdbMulti? multi = Database;
@@ -273,8 +274,8 @@ public static class Engine_AbilityRecords
 			return false;
 		}
 
-		if (TryLevelRecord(baseRecord, level + 1, out GdbCursor next) &&
-			TryInt(multi, next, "ExperienceCost", out cost))
+		if (TryLevelRecord(baseRecord, level, out GdbCursor record) &&
+			TryInt(multi, record, "ExperienceCost", out cost))
 		{
 			return true;
 		}

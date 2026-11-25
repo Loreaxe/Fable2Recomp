@@ -33,6 +33,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -79,10 +80,66 @@ void FormatFrames(const uint32_t* frames, uint32_t count, char* out, size_t capa
   out[used < capacity ? used : capacity - 1] = '\0';
 }
 
+void NoteDebugCall(uint32_t addr, uint64_t r3, const char* note) {
+  refiii_vfs_note_debug_result(addr, r3, note, std::strlen(note));
+}
+
+/// `debug-call:ADDR[:r3[:r4[:r5[:r6]]]]` (all hex, live addresses): one recompiled guest function
+/// called on the tick's own context with the registers stated, r3 recorded for the host's
+/// RefiiHostGetDebugCallResult; the context is restored afterwards. Fable 2's twin is in
+/// Fable2/src/vfs/src/hooks/guest_tick_pump.cpp; only the loopback debug channel posts these.
+void DebugCall(PPCContext& ctx, uint8_t* base, const char* args) {
+  const std::string text(args);
+  std::vector<uint64_t> values;
+  std::size_t from = 0u;
+  bool parsed = true;
+  while (from <= text.size()) {
+    const std::size_t colon = text.find(':', from);
+    const std::string part = text.substr(from, colon == std::string::npos ? std::string::npos : colon - from);
+    char* end = nullptr;
+    values.push_back(std::strtoull(part.c_str(), &end, 16));
+    if (end == part.c_str() || *end != '\0') {
+      parsed = false;
+      break;
+    }
+    if (colon == std::string::npos) {
+      break;
+    }
+    from = colon + 1u;
+  }
+  if (!parsed || values.empty() || values.size() > 5u) {
+    NoteDebugCall(0u, 0u, "debug-call needs ADDR[:r3[:r4[:r5[:r6]]]], all hex");
+    return;
+  }
+  const uint32_t target = static_cast<uint32_t>(values[0]);
+  PPCFunc* function = nullptr;
+  for (PPCFuncMapping* mapping = PPCFuncMappings; target != 0u && mapping != nullptr && mapping->host != nullptr;
+       ++mapping) {
+    if (static_cast<uint32_t>(mapping->guest) == target) {
+      function = mapping->host;
+      break;
+    }
+  }
+  if (function == nullptr) {
+    NoteDebugCall(target, 0u, "no recompiled function at that address");
+    return;
+  }
+  const PPCContext saved = ctx;
+  if (values.size() > 1u) ctx.r3.u64 = values[1];
+  if (values.size() > 2u) ctx.r4.u64 = values[2];
+  if (values.size() > 3u) ctx.r5.u64 = values[3];
+  if (values.size() > 4u) ctx.r6.u64 = values[4];
+  function(ctx, base);
+  const uint64_t result = ctx.r3.u64;
+  ctx = saved;
+  NoteDebugCall(target, result, "ok");
+}
+
 /// Actions the host posted (core/guest_tick_queue.h): the keyboard's answer (keyboard_ui.cpp),
-/// a box's and the menu box's answers (display_box_hooks.cpp) and the Options screen's actions
-/// (options_hooks.cpp). Any other is named in the log and dropped, never deferred, so the queue
-/// cannot hold a name forever. `ctx` is the tick's, the frame the answers call the guest below.
+/// a box's and the menu box's answers (display_box_hooks.cpp), the Options screen's actions
+/// (options_hooks.cpp) and the debug channel's `debug-gamelua:` / `debug-call:`. Any other is
+/// named in the log and dropped, never deferred, so the queue cannot hold a name forever. `ctx`
+/// is the tick's, the frame the answers call the guest below.
 void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
   const uint32_t taken = refii_bridge_guest_tick_pump_begin_drain();
   for (uint32_t i = 0; i < taken; ++i) {
@@ -124,6 +181,13 @@ void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
                                                   "=refii/debug", &error);
       const std::string note = ran ? std::string("ok") : error;
       refiii_vfs_note_debug_result(0u, ran ? 1u : 0u, note.c_str(), note.size());
+      continue;
+    }
+    constexpr const char kDebugCall[] = "debug-call:";
+    if (std::strncmp(name, kDebugCall, sizeof(kDebugCall) - 1u) == 0) {
+      std::vector<char> whole(needed + 1u, '\0');
+      refii_bridge_guest_tick_pump_taken_action(i, whole.data(), whole.size());
+      DebugCall(ctx, base, whole.data() + sizeof(kDebugCall) - 1u);
       continue;
     }
     REXLOG_WARN("Refii guest-tick pump: action '{}'{} has no Fable 3 implementation; dropped",

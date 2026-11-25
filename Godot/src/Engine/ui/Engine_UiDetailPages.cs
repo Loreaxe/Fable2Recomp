@@ -33,14 +33,16 @@ public static class Engine_UiDetailPages
 	/// Fills a box page's book from its provider as it draws — the pages no screen feed reaches
 	/// (<see cref="Engine_UiPageProvider.FillsOnDraw"/>). False for every other screen.
 	/// </summary>
-	public static bool FillOnDraw(uint screenId, Engine_UiOwnedBook book)
+	public static bool FillOnDraw(uint screenId, Engine_UiOwnedBook book, Refii.Text.Engine_BabelDatabase? strings)
 	{
 		if (Provider(screenId) is not { FillsOnDraw: true } provider)
 		{
 			return false;
 		}
 
-		Engine_UiPageContext page = Row(screenId, null);
+		// The game's text book: the info card's tags (`AcceptText` "GUI_DIALOG_ACCEPT") are drawn
+		// resolved, as its Open resolves them (`T displaybox 11 'Accept'`), not as the raw tag.
+		Engine_UiPageContext page = Row(screenId, null) with { Strings = strings };
 		book.HostValues = provider.Values(page);
 		book.HostActive = provider.Active(page);
 		book.HostSlides = provider.Slides(page) is { Count: > 0 } slides ? slides : null;

@@ -608,9 +608,9 @@ public partial class AndroidTouchControls : Control, IAndroidTouchControls
 
     private static bool AnyKnownJoypad()
     {
-        foreach (int id in Input.GetConnectedJoypads())
+        foreach (int id in Refii.Core.Engine_Joypads.Connected())
         {
-            if (Input.IsJoyKnown(id))
+            if (Refii.Core.Engine_Joypads.Known(id))
             {
                 return true;
             }

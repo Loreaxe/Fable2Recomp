@@ -11,7 +11,8 @@ namespace Refii.Core;
 /// ordinary pause it starves and the world coasts to a stop over a second; under a paused
 /// cutscene it keeps counting, so pairs swapped onto unchanged poses and every rig played its
 /// last rate and snapped a quarter second later. The statement is the in-game GUI's active
-/// screen (`RefiiHostGetPauseState`): a real screen up means the GameFlow GUI mode is in force.
+/// screen (`RefiiHostGetPauseState`): a real screen up means the GameFlow GUI mode is in force;
+/// and the world held: the guest's game-flow step ran no world tick (the lite pause box).
 /// `GameSession.Paused` is NOT touched — the guest's steps keep running the pause book's GUI tick.
 /// </remarks>
 public static class Engine_StatedPause
@@ -57,8 +58,11 @@ public static class Engine_StatedPause
 	}
 
 	/// <summary>
-	/// The in-game GUI's screen read as a pause statement: a screen is up. 31 is the id
-	/// `ExitScreen` leaves when nothing is up; `uint.MaxValue` is the bridge's "no screen manager".
+	/// The in-game GUI's statement read as a pause: a screen is up, or the guest's last game-flow
+	/// step ran no world tick (`worldHeld` 1 — the lite pause box and every other state whose step
+	/// slot does not call the world, payload_bridge.h key 19). 31 is the id `ExitScreen` leaves
+	/// when nothing is up; `uint.MaxValue` is the bridge's "no screen manager".
 	/// </summary>
-	public static bool StatesPause(uint screenId) => screenId != 31u && screenId != uint.MaxValue;
+	public static bool StatesPause(uint screenId, uint worldHeld = 0u) =>
+		worldHeld != 0u || (screenId != 31u && screenId != uint.MaxValue);
 }

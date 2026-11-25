@@ -137,6 +137,27 @@ public partial class GameDebugServer : Node
 	private static Key _heldKey = Key.None;
 	private static int _keyFrames;
 
+	/// <summary>The window pixel the `mouse` op last put the pointer at; null before its first call.</summary>
+	private static Vector2? _mouseAt;
+
+	/// <summary>The button the `mouse` op is holding, the frames left before its release, and the held mask.</summary>
+	private static MouseButton _heldMouse = MouseButton.None;
+	private static int _mouseFrames;
+	private static MouseButtonMask _mouseMask;
+
+	/// <summary>When the `mouse` op last injected anything (engine ticks, ms); 0 never.</summary>
+	private static ulong _mouseScriptedAt;
+
+	/// <summary>
+	/// The pointer is the debug channel's: a `mouse` op ran within the last two seconds, or its click is
+	/// held. The pad presses its leftovers make (a right click's B, the wheel's D-pad steps, a prompt's
+	/// button) then reach the guest with the window unfocused, as the channel's own presses do
+	/// (GameInput.Publish0); two seconds covers the longest wheel play-out (eight notches).
+	/// </summary>
+	public static bool PointerScripted =>
+		_heldMouse != MouseButton.None ||
+		(_mouseScriptedAt != 0 && Time.GetTicksMsec() - _mouseScriptedAt < 2000);
+
 	/// <summary>The guest pad a `press` is aimed at — 0 unless it names one. Player two's
 	/// drop-in is a START on a pad that is not player one's.</summary>
 	private static int _pressPad;
@@ -342,6 +363,83 @@ public partial class GameDebugServer : Node
 		pad == _pressPad && _pressFrames > 0 && --_pressFrames >= 0 ? _pressed : 0u;
 
 	/// <summary>
+	/// The `press` op's JOYPAD mode: the press raised as joypad events on the joypad the game treats as
+	/// the pad's (<see cref="GameInput.JoypadForPress"/>; `player` names the pad by
+	/// <see cref="GameInput.PadOfPlayer"/>), through <see cref="GameDebugJoypad"/>. Nothing is put in
+	/// the scripted mask: the guest gets it through the device path, as a player's controller.
+	/// `dummy` names the dummy controller's pad (<see cref="GameDebugDummyPad"/>), and so does
+	/// player 2 while no pad is player two's yet and the dummy is connected.
+	/// </summary>
+	private Dictionary<string, object?> JoypadPress(JsonElement root, uint mask, int frames, int pad)
+	{
+		if (root.TryGetProperty("dummy", out JsonElement dm) && dm.ValueKind == JsonValueKind.True)
+		{
+			pad = GameDebugDummyPad.PressPad(out string? refused);
+			if (refused is not null)
+			{
+				return new Dictionary<string, object?> { ["ok"] = false, ["error"] = refused };
+			}
+		}
+		else if (root.TryGetProperty("player", out JsonElement pl))
+		{
+			int player = pl.GetInt32();
+			pad = GameInput.PadOfPlayer(player);
+			if (pad < 0 && player == 2 && Refii.Core.Engine_DummyJoypad.Connected)
+			{
+				pad = GameDebugDummyPad.PressPad(out _);
+			}
+
+			if (pad < 0)
+			{
+				return new Dictionary<string, object?>
+				{
+					["ok"] = false,
+					["error"] = $"no guest pad is player {player}'s (name the pad instead)",
+				};
+			}
+		}
+
+		int device = GameInput.JoypadForPress(pad);
+		if (device < 0)
+		{
+			return new Dictionary<string, object?>
+			{
+				["ok"] = false,
+				["error"] = $"no joypad holds guest pad {pad} or would take it on a press: {GameInput.DescribeJoypads()}",
+			};
+		}
+
+		static float? Axis(JsonElement parent, string name) =>
+			parent.TryGetProperty(name, out JsonElement axis) ? (float)axis.GetDouble() : null;
+		JoyButton[] buttons = GameDebugJoypad.Buttons(mask);
+		(JoyAxis Axis, float Value)[] axes = GameDebugJoypad.Axes(Axis(root, "lx"), Axis(root, "ly"),
+			Axis(root, "rx"), Axis(root, "ry"), Axis(root, "lt"), Axis(root, "rt"));
+		bool keyboardMouse = Engine_UiInputMode.KeyboardMouse;
+		GameDebugJoypad.Press(device, buttons, axes, frames);
+		GD.Print($"[input] debug joypad press on joypad {device} '{Refii.Core.Engine_Joypads.Name(device)}' (guest pad {pad}): " +
+			$"{string.Join("+", System.Array.ConvertAll(buttons, b => b.ToString()))}" +
+			$"{(axes.Length > 0 ? $" axes {string.Join(" ", System.Array.ConvertAll(axes, a => $"{a.Axis}={a.Value:0.##}"))}" : string.Empty)}" +
+			$" for {System.Math.Max(1, frames)} frame(s)");
+		return Ok(new Dictionary<string, object?>
+		{
+			["mode"] = "joypad",
+			["device"] = device,
+			["name"] = Refii.Core.Engine_Joypads.Name(device),
+			["known"] = Refii.Core.Engine_Joypads.Known(device),
+			["dummy"] = Refii.Core.Engine_DummyJoypad.Is(device),
+			["pad"] = pad,
+			["buttons"] = System.Array.ConvertAll(buttons, b => b.ToString()),
+			["axes"] = System.Array.ConvertAll(axes, a => $"{a.Axis}={a.Value:0.##}"),
+			["frames"] = System.Math.Max(1, frames),
+			["keyboardMouseBefore"] = keyboardMouse,
+			// Bumped on every device switch: two presses a while apart whose generations differ by
+			// one at most saw no switch in between.
+			["inputModeGenerationBefore"] = Engine_UiInputMode.Generation,
+			["focused"] = GetWindow().HasFocus(),
+		});
+	}
+
+	/// <summary>
 	/// Ends the `key` op's hold once its frames are spent: the release goes through the same input
 	/// pipeline as the press, so the device switch and the bindings see a real key go up.
 	/// </summary>
@@ -355,6 +453,36 @@ public partial class GameDebugServer : Node
 		Input.ParseInputEvent(new InputEventKey { Keycode = _heldKey, PhysicalKeycode = _heldKey, Pressed = false });
 		_heldKey = Key.None;
 	}
+
+	/// <summary>
+	/// Ends the `mouse` op's click once its frames are spent, through the same pipeline as the press,
+	/// so the bindings and the pointer see the button go up where the pointer is.
+	/// </summary>
+	private static void ReleaseHeldMouse()
+	{
+		if (_heldMouse == MouseButton.None || --_mouseFrames > 0)
+		{
+			return;
+		}
+
+		_mouseMask &= ~MaskOf(_heldMouse);
+		Vector2 at = _mouseAt ?? Vector2.Zero;
+		Input.ParseInputEvent(new InputEventMouseButton
+		{
+			Position = at, GlobalPosition = at, ButtonIndex = _heldMouse, Pressed = false, ButtonMask = _mouseMask,
+		});
+		_heldMouse = MouseButton.None;
+	}
+
+	private static MouseButtonMask MaskOf(MouseButton button) => button switch
+	{
+		MouseButton.Left => MouseButtonMask.Left,
+		MouseButton.Right => MouseButtonMask.Right,
+		MouseButton.Middle => MouseButtonMask.Middle,
+		MouseButton.WheelUp => (MouseButtonMask)(1 << ((int)MouseButton.WheelUp - 1)),
+		MouseButton.WheelDown => (MouseButtonMask)(1 << ((int)MouseButton.WheelDown - 1)),
+		_ => 0,
+	};
 
 	/// <summary>Installs any owned samplers before attempting the opt-in loopback listener.</summary>
 	public override void _Ready()
@@ -439,6 +567,8 @@ public partial class GameDebugServer : Node
 
 	public override void _ExitTree()
 	{
+		// The dummy controller is the channel's: it does not outlive it.
+		GameDebugDummyPad.Disconnect();
 		foreach (StreamPeerTcp client in _clients)
 		{
 			client.DisconnectFromHost();
@@ -480,6 +610,8 @@ public partial class GameDebugServer : Node
 	private void ProcessBody(double delta)
 	{
 		ReleaseHeldKey();
+		ReleaseHeldMouse();
+		GameDebugJoypad.Tick();
 		if (_server is null)
 		{
 			return;
@@ -1168,6 +1300,15 @@ public partial class GameDebugServer : Node
 						uint id = root.TryGetProperty("id", out JsonElement i2)
 							? (uint)i2.GetInt64()
 							: 0u;
+
+						// The title presses the row on its own list when its lists are Godot's (Fable 2:
+						// the A path, its levers); otherwise the guest's MenuEvent.
+						if (Refii.Core.Engine_TitleGame.Active.DebugMenuEvent(name, type, id) is { } pressed)
+						{
+							pressed["verb"] = verb;
+							return Ok(pressed);
+						}
+
 						result = Refii.Host.HostBridge.MenuEvent(name, type, id);
 						break;
 					}
@@ -3805,6 +3946,11 @@ public partial class GameDebugServer : Node
 					};
 				}
 
+				if (root.TryGetProperty("joypad", out JsonElement jp) && jp.ValueKind == JsonValueKind.True)
+				{
+					return JoypadPress(root, mask, frames, pad);
+				}
+
 				_pressPad = pad;
 				_debugPads |= 1 << pad;
 				_pressed = mask;
@@ -3841,37 +3987,91 @@ public partial class GameDebugServer : Node
 			case "input":
 				return Ok(new Dictionary<string, object?> { ["keys"] = GameInput.DescribeKeys() });
 
+			case "pads":
+			{
+				Dictionary<string, object?> pads = GameDebugDummyPad.Answer(
+					root.TryGetProperty("do", out JsonElement padsDo) ? padsDo.GetString() : null,
+					root.TryGetProperty("pad", out JsonElement padsSeat) ? padsSeat.GetInt32() : null,
+					root.TryGetProperty("family", out JsonElement padsFamily) ? padsFamily.GetString() : null);
+				return pads.ContainsKey("error") ? pads : Ok(pads);
+			}
+
 			case "mouse":
 			{
-				// The MOUSE through Godot's own input pipeline: a move to window pixel (x, y), then a
-				// left or right click there, or wheel notches — the device switch and the pointer
-				// (Engine_UiPointer) see what a player's mouse would make.
-				Vector2 at = new(
-					root.TryGetProperty("x", out JsonElement mx) ? (float)mx.GetDouble() : 0f,
-					root.TryGetProperty("y", out JsonElement my) ? (float)my.GetDouble() : 0f);
-				Input.ParseInputEvent(new InputEventMouseMotion { Position = at, GlobalPosition = at, Relative = new Vector2(8f, 8f) });
+				// THE MOUSE through Godot's own input pipeline, as a player's arrives: a move to a
+				// window pixel (or 0..1 of the window), a button held `frames` frames and released by
+				// ReleaseHeldMouse, wheel notches as press/release pairs. The device switch
+				// (GameInput.DetectDevice), the pointer (Engine_UiPointer) and the play bindings
+				// (Input.IsMouseButtonPressed) see what a player's mouse would make.
+				_mouseScriptedAt = Time.GetTicksMsec();
+				Vector2I window = GetWindow().Size;
+				Vector2 from = _mouseAt ?? (Vector2)(DisplayServer.MouseGetPosition() - GetWindow().Position);
+				Vector2 at = from;
+				bool move = root.TryGetProperty("x", out JsonElement mx) & root.TryGetProperty("y", out JsonElement my);
+				if (move)
+				{
+					bool normalized = root.TryGetProperty("normalized", out JsonElement nz) && nz.ValueKind == JsonValueKind.True;
+					(float px, float py) = GameDebugMouse.WindowPoint(
+						(float)mx.GetDouble(), (float)my.GetDouble(), normalized, window.X, window.Y);
+					at = new Vector2(px, py);
+					Input.ParseInputEvent(new InputEventMouseMotion
+					{
+						Position = at, GlobalPosition = at, Relative = at - from, ScreenRelative = at - from,
+						Velocity = (at - from) * 60f, ButtonMask = _mouseMask,
+					});
+				}
+
+				_mouseAt = at;
 				string click = root.TryGetProperty("click", out JsonElement c) ? c.GetString() ?? string.Empty : string.Empty;
 				MouseButton button = click switch
 				{
 					"left" => MouseButton.Left,
 					"right" => MouseButton.Right,
+					"middle" => MouseButton.Middle,
 					_ => MouseButton.None,
 				};
+				int holdFrames = 0;
 				if (button != MouseButton.None)
 				{
-					Input.ParseInputEvent(new InputEventMouseButton { Position = at, GlobalPosition = at, ButtonIndex = button, Pressed = true });
-					Input.ParseInputEvent(new InputEventMouseButton { Position = at, GlobalPosition = at, ButtonIndex = button, Pressed = false });
+					if (_heldMouse != MouseButton.None)
+					{
+						_mouseFrames = 1;
+						ReleaseHeldMouse();
+					}
+
+					holdFrames = root.TryGetProperty("frames", out JsonElement hf) ? System.Math.Max(1, hf.GetInt32()) : 3;
+					_mouseMask |= MaskOf(button);
+					Input.ParseInputEvent(new InputEventMouseButton
+					{
+						Position = at, GlobalPosition = at, ButtonIndex = button, Pressed = true, ButtonMask = _mouseMask,
+					});
+					_heldMouse = button;
+					_mouseFrames = holdFrames;
 				}
 
 				int wheel = root.TryGetProperty("wheel", out JsonElement w) ? w.GetInt32() : 0;
 				for (int i = 0; i < System.Math.Abs(wheel); ++i)
 				{
 					MouseButton notch = wheel < 0 ? MouseButton.WheelUp : MouseButton.WheelDown;
-					Input.ParseInputEvent(new InputEventMouseButton { Position = at, GlobalPosition = at, ButtonIndex = notch, Pressed = true });
-					Input.ParseInputEvent(new InputEventMouseButton { Position = at, GlobalPosition = at, ButtonIndex = notch, Pressed = false });
+					Input.ParseInputEvent(new InputEventMouseButton
+					{
+						Position = at, GlobalPosition = at, ButtonIndex = notch, Pressed = true, Factor = 1f,
+						ButtonMask = _mouseMask | MaskOf(notch),
+					});
+					Input.ParseInputEvent(new InputEventMouseButton
+					{
+						Position = at, GlobalPosition = at, ButtonIndex = notch, Pressed = false, Factor = 1f,
+						ButtonMask = _mouseMask,
+					});
 				}
 
-				return Ok(new Dictionary<string, object?> { ["x"] = at.X, ["y"] = at.Y, ["click"] = click, ["wheel"] = wheel });
+				return Ok(new Dictionary<string, object?>
+				{
+					["x"] = at.X, ["y"] = at.Y, ["window"] = new[] { window.X, window.Y },
+					["moved"] = move, ["click"] = click, ["frames"] = holdFrames, ["wheel"] = wheel,
+					["keyboardMouse"] = Engine_UiInputMode.KeyboardMouse,
+					["focused"] = GetWindow().HasFocus(),
+				});
 			}
 
 			case "key":
@@ -3917,7 +4117,7 @@ public partial class GameDebugServer : Node
 						"objects", "perf", "exports", "cvars", "cvar-set", "vfs", "sockets",
 						"menu", "action", "call", "lua", "call-result", "poke", "heap", "heapcensus",
 						"probe", "guestlog", "mark", "uirecord", "metrics", "input-record", "input-replay",
-						"wait", "log", "shot", "flicker", "press", "key", "mouse", "input", "gdb", "achievements",
+						"wait", "log", "shot", "flicker", "press", "key", "mouse", "input", "pads", "gdb", "achievements",
 						"gpuprofile", "capture", "hang",
 					},
 				};

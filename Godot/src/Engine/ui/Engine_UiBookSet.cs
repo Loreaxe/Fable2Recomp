@@ -312,7 +312,7 @@ public sealed class Engine_UiBookSet
 
 		using (Refii.Core.Engine_FramePhases.Measure("ui.book.live"))
 		{
-			Engine_UiDetailPages.FillOnDraw(screenId, book);
+			Engine_UiDetailPages.FillOnDraw(screenId, book, Host?.Strings);
 
 			// Every presentation is headless (gui_headless_presentation.cpp): there is no guest
 			// sample, so the book stands on its file, the host and the guest's statements.

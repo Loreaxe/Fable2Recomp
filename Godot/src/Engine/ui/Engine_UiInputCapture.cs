@@ -70,23 +70,15 @@ public static class Engine_UiInputCapture
 		_triggerRested.Clear();
 		if (kind == Kind.Pad)
 		{
-			Godot.Collections.Array<int> devices = Input.GetConnectedJoypads();
-			try
+			foreach (int device in Engine_Joypads.Connected())
 			{
-				foreach (int device in devices)
+				foreach (JoyAxis axis in new[] { JoyAxis.TriggerLeft, JoyAxis.TriggerRight })
 				{
-					foreach (JoyAxis axis in new[] { JoyAxis.TriggerLeft, JoyAxis.TriggerRight })
+					if (Input.GetJoyAxis(device, axis) < TriggerOff)
 					{
-						if (Input.GetJoyAxis(device, axis) < TriggerOff)
-						{
-							_triggerRested.Add((device, axis));
-						}
+						_triggerRested.Add((device, axis));
 					}
 				}
-			}
-			finally
-			{
-				((Godot.Collections.Array)devices).Dispose();
 			}
 		}
 	}

@@ -63,6 +63,7 @@
 #include "core/guest_state.h"
 #include "core/payload_bridge_fable2.h"
 #include "core/refii_mod.h"
+#include "hooks/gui_screen_stubs.h"
 
 
 extern "C" REX_FUNC(__imp__rex_CECVillager_OnUse);
@@ -1346,10 +1347,6 @@ extern "C" REX_FUNC(__imp__rex_lhPromptManager_Request);
 extern "C" REX_FUNC(__imp__rex_CECOnActionUse_Hide);
 extern "C" REX_FUNC(__imp__rex_lhPromptManager_Witnessed);
 extern "C" REX_FUNC(__imp__rex_lhTutorials_Display);
-extern "C" REX_FUNC(__imp__rex_lhGuiItemsScreen_OnEnter);
-extern "C" REX_FUNC(__imp__rex_lhGuiItemsScreen_Update);
-extern "C" REX_FUNC(__imp__rex_lhGuiClothingScreen_OnEnter);
-extern "C" REX_FUNC(__imp__rex_lhGuiClothingScreen_Update);
 
 namespace {
 
@@ -1791,39 +1788,35 @@ REX_EXTERN(rex_lhTutorials_Display) {
 }
 
 // PLAYER TWO'S ITEMS AND CLOTHING PAGES (local co-op). The pause's screens 15 (items/weapons,
-// vtable 0x820CFEB0) and 16 (clothing, 0x820CFEDC) are built for hero one: the clothing page's
-// preview mannequin takes hero one's sex, age and body (`sub_826D2B88` 0x826D2C4C →
-// `sub_826D7650` 0x826D76EC, `sub_826D3358` 0x826D3388) and both pages' gold line reads hero one
-// (`sub_8246B5E8(…, 1)`). While player two owns the pause, hero two is lent into hero one's slot for
-// each page's open and update. Equipping is not done here: the pump equips player two's hero
-// directly (guest_tick_pump.cpp, Inventory:equip), because the pages' own answers commit to the
-// equipment record at GUI+52, which pause exit applies to hero one.
+// vtable 0x820CFEB0) and 16 (clothing, 0x820CFEDC) are built for hero one: the clothing page's preview
+// mannequin takes hero one's sex, age and body (`sub_826D7650` 0x826D76EC), both pages' gold line reads
+// hero one (`sub_8246B5E8(…, 1)`) and their populates list the local hero's inventory. While player two
+// owns the pause, hero two is lent into hero one's slot for each page's open and update, which are the
+// ported bodies (gui_screen_stub_items.cpp, gui_screen_stub_clothing.cpp). Equipping is not done here:
+// the pump acts on player two's hero directly (guest_tick_pump.cpp), because the pages' own answers
+// commit to the equipment record at GUI+52, which pause exit applies to hero one.
 namespace {
 bool PlayerTwoOwnsPause(uint8_t* base) { return refii_bridge_menu_owner_two() != 0 && LocalCoopGame(base); }
 }  // namespace
 
 REX_EXTERN(rex_lhGuiItemsScreen_OnEnter) {
   HeroTwoLend lend(base, PlayerTwoOwnsPause(base));
-  __imp__rex_lhGuiItemsScreen_OnEnter(ctx, base);
+  refii::vfs::ItemsScreenOnEnter(ctx, base);
 }
 
 REX_EXTERN(rex_lhGuiItemsScreen_Update) {
   HeroTwoLend lend(base, PlayerTwoOwnsPause(base));
-  __imp__rex_lhGuiItemsScreen_Update(ctx, base);
+  refii::vfs::ItemsScreenUpdate(ctx, base);
 }
 
-// The mannequin this open files with the preview scene is the clothing screen's
-// (preview_figures_stated.cpp).
 REX_EXTERN(rex_lhGuiClothingScreen_OnEnter) {
   HeroTwoLend lend(base, PlayerTwoOwnsPause(base));
-  const char* outer = refii::vfs::SetPreviewFigureRole("clothing");
-  __imp__rex_lhGuiClothingScreen_OnEnter(ctx, base);
-  refii::vfs::SetPreviewFigureRole(outer);
+  refii::vfs::ClothingScreenOnEnter(ctx, base);
 }
 
 REX_EXTERN(rex_lhGuiClothingScreen_Update) {
   HeroTwoLend lend(base, PlayerTwoOwnsPause(base));
-  __imp__rex_lhGuiClothingScreen_Update(ctx, base);
+  refii::vfs::ClothingScreenUpdate(ctx, base);
 }
 
 // The prompt manager's request (`sub_823DD730`: r3 manager, r4 &key, r5 the thing, r6 &title,

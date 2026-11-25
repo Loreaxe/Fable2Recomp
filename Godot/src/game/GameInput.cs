@@ -183,7 +183,8 @@ public partial class GameInput : Node
 			int joypad = _padDevice[pad];
 			uint left = 0;
 			uint right = 0;
-			bool stated = devices && ControllerVibration && joypad >= 0 &&
+			// The dummy is the debug channel's, a scripted source: the focus rule does not mute it.
+			bool stated = (devices || Engine_DummyJoypad.Is(joypad)) && ControllerVibration && joypad >= 0 &&
 				HostBridge.TryGetVibration(pad, out left, out right);
 			Engine_Rumble.Verdict verdict = stated ? _rumble[pad].Observe(left, right) : _rumble[pad].Silence();
 			switch (verdict)
@@ -192,16 +193,16 @@ public partial class GameInput : Node
 					// The pad may have moved joypads while running (a reconnect takes a new id).
 					if (_rumbleJoypad[pad] >= 0 && _rumbleJoypad[pad] != joypad)
 					{
-						Input.StopJoyVibration(_rumbleJoypad[pad]);
+						Engine_Joypads.StopVibration(_rumbleJoypad[pad]);
 					}
 
 					_rumbleJoypad[pad] = joypad;
-					Input.StartJoyVibration(joypad, _rumble[pad].Weak * VibrationStrength, _rumble[pad].Strong * VibrationStrength, 0f);
+					Engine_Joypads.StartVibration(joypad, _rumble[pad].Weak * VibrationStrength, _rumble[pad].Strong * VibrationStrength);
 					break;
 				case Engine_Rumble.Verdict.Stop:
 					if (_rumbleJoypad[pad] >= 0)
 					{
-						Input.StopJoyVibration(_rumbleJoypad[pad]);
+						Engine_Joypads.StopVibration(_rumbleJoypad[pad]);
 					}
 
 					_rumbleJoypad[pad] = -1;
@@ -220,7 +221,7 @@ public partial class GameInput : Node
 		{
 			if (_rumble[pad].Silence() == Engine_Rumble.Verdict.Stop && _rumbleJoypad[pad] >= 0)
 			{
-				Input.StopJoyVibration(_rumbleJoypad[pad]);
+				Engine_Joypads.StopVibration(_rumbleJoypad[pad]);
 			}
 
 			_rumbleJoypad[pad] = -1;
@@ -256,6 +257,61 @@ public partial class GameInput : Node
 	/// <summary>The joypad holding guest pad <paramref name="pad"/> (0..3), or -1 while it is free.</summary>
 	public static int JoypadForPad(int pad) =>
 		pad >= 0 && pad < MaxControllers ? _padDevice[pad] : -1;
+
+	/// <summary>
+	/// The joypad a debug-channel joypad press for guest pad <paramref name="pad"/> is raised on: the
+	/// joypad holding the pad, or, while it is free, the first mapped joypad holding none — the one
+	/// <see cref="AssignPads"/> gives that pad on the press, so only when it is the lowest free pad.
+	/// The debug channel's dummy takes its own seat and no other (<see cref="Engine_DummyJoypad"/>).
+	/// −1 when there is none.
+	/// </summary>
+	public static int JoypadForPress(int pad)
+	{
+		if (pad < 0 || pad >= MaxControllers)
+		{
+			return -1;
+		}
+
+		if (_padDevice[pad] >= 0)
+		{
+			return _padDevice[pad];
+		}
+
+		if (Engine_DummyJoypad.PadOnPress(_padDevice) == pad)
+		{
+			return Engine_DummyJoypad.Device;
+		}
+
+		if (System.Array.IndexOf(_padDevice, -1) != pad)
+		{
+			return -1;
+		}
+
+		EnsureJoypadsHooked();
+		foreach ((int id, bool known) in _connectedJoypads)
+		{
+			if (known && !Engine_DummyJoypad.Is(id) && System.Array.IndexOf(_padDevice, id) < 0)
+			{
+				return id;
+			}
+		}
+
+		return -1;
+	}
+
+	/// <summary>The connected joypads and the guest pad each holds, for a refused joypad press.</summary>
+	public static string DescribeJoypads()
+	{
+		EnsureJoypadsHooked();
+		var parts = new System.Collections.Generic.List<string>();
+		foreach ((int id, bool known) in _connectedJoypads)
+		{
+			int pad = System.Array.IndexOf(_padDevice, id);
+			parts.Add($"{id}{(Engine_DummyJoypad.Is(id) ? " (dummy)" : string.Empty)}{(known ? string.Empty : " (unmapped)")}{(pad >= 0 ? $" holds pad {pad}" : " holds no pad")}");
+		}
+
+		return parts.Count == 0 ? "no joypad connected" : string.Join(", ", parts);
+	}
 
 	/// <summary>Mouse events go to the UI pointer, which resolves them against the UI camera.</summary>
 	public override void _Input(InputEvent @event)
@@ -330,10 +386,10 @@ public partial class GameInput : Node
 			case InputEventMouseMotion motion when MouseInput && motion.Relative.LengthSquared() > 4f:
 				Engine_UiInputMode.KeyboardMouse = true;
 				break;
-			case InputEventJoypadButton { Pressed: true } button when Input.IsJoyKnown(button.Device):
+			case InputEventJoypadButton { Pressed: true } button when Engine_Joypads.Known(button.Device):
 				Engine_UiInputMode.KeyboardMouse = false;
 				break;
-			case InputEventJoypadMotion axis when Input.IsJoyKnown(axis.Device) &&
+			case InputEventJoypadMotion axis when Engine_Joypads.Known(axis.Device) &&
 				Mathf.Abs(axis.AxisValue) > 0.5f:
 				Engine_UiInputMode.KeyboardMouse = false;
 				break;
@@ -551,6 +607,7 @@ public partial class GameInput : Node
 
 		_joypadsHooked = true;
 		Input.JoyConnectionChanged += OnJoyConnectionChanged;
+		Engine_DummyJoypad.Changed += OnDummyJoypadChanged;
 		RefreshConnectedJoypads();
 	}
 
@@ -561,35 +618,40 @@ public partial class GameInput : Node
 		GD.Print($"[input] joypad {device} {(connected ? "connected" : "disconnected")}");
 	}
 
+	/// <summary>The debug channel's dummy came or went: the same refresh, and it is no longer the joypad last used once gone.</summary>
+	private static void OnDummyJoypadChanged()
+	{
+		if (!Engine_DummyJoypad.Connected && _lastJoypad == Engine_DummyJoypad.Device)
+		{
+			_lastJoypad = -1;
+		}
+
+		OnJoyConnectionChanged(Engine_DummyJoypad.Device, Engine_DummyJoypad.Connected);
+	}
+
+	/// <summary>Reads the roster (<see cref="Engine_Joypads"/>): Godot's joypads, and the debug channel's dummy while connected.</summary>
 	private static void RefreshConnectedJoypads()
 	{
-		Godot.Collections.Array<int> connected = Input.GetConnectedJoypads();
-		try
+		int[] connected = Engine_Joypads.Connected();
+		if (connected.Length == 0)
 		{
-			if (connected.Count == 0)
-			{
-				_connectedJoypads = System.Array.Empty<(int, bool)>();
-				return;
-			}
-
-			var list = new (int Id, bool Known)[connected.Count];
-			for (int i = 0; i < connected.Count; ++i)
-			{
-				int id = connected[i];
-				list[i] = (id, Input.IsJoyKnown(id));
-			}
-
-			if (list.Length != _connectedJoypads.Length)
-			{
-				GD.Print($"[input] {list.Length} joypad(s) connected: {string.Join(", ", System.Array.ConvertAll(list, j => $"{j.Id}{(j.Known ? "" : " (unmapped)")}"))}");
-			}
-
-			_connectedJoypads = list;
+			_connectedJoypads = System.Array.Empty<(int, bool)>();
+			return;
 		}
-		finally
+
+		var list = new (int Id, bool Known)[connected.Length];
+		for (int i = 0; i < connected.Length; ++i)
 		{
-			((Godot.Collections.Array)connected).Dispose();
+			int id = connected[i];
+			list[i] = (id, Engine_Joypads.Known(id));
 		}
+
+		if (list.Length != _connectedJoypads.Length)
+		{
+			GD.Print($"[input] {list.Length} joypad(s) connected: {string.Join(", ", System.Array.ConvertAll(list, j => $"{j.Id}{(j.Known ? "" : " (unmapped)")}"))}");
+		}
+
+		_connectedJoypads = list;
 	}
 
 	/// <summary>Serves the cached Godot enumeration unless a native fixture supplied device metadata.</summary>
@@ -638,27 +700,28 @@ public partial class GameInput : Node
 			}
 		}
 
-		if (!devices)
-		{
-			return;
-		}
-
 		foreach ((int joypad, bool known) in connected)
 		{
-			if (!known || System.Array.IndexOf(_padDevice, joypad) >= 0 ||
+			if (!(devices || GameDebugJoypad.Scripted(joypad)) || !known || System.Array.IndexOf(_padDevice, joypad) >= 0 ||
 				(JoypadButtons(joypad) | PendingPhysicalButtons(joypad)) == 0)
 			{
 				continue;
 			}
 
-			int free = System.Array.IndexOf(_padDevice, -1);
+			// The lowest free pad; the debug channel's dummy its stated seat (Engine_DummyJoypad).
+			int free = Engine_DummyJoypad.PadForFirstPress(joypad, _padDevice);
 			if (free < 0)
 			{
+				if (Engine_DummyJoypad.Is(joypad))
+				{
+					continue;
+				}
+
 				return;
 			}
 
 			_padDevice[free] = joypad;
-			GD.Print($"[input] joypad {joypad} '{Input.GetJoyName(joypad)}' is guest pad {free}");
+			GD.Print($"[input] joypad {joypad} '{Engine_Joypads.Name(joypad)}' is guest pad {free}");
 		}
 	}
 
@@ -725,7 +788,7 @@ public partial class GameInput : Node
 		}
 
 		int joypad = _padDevice[pad];
-		if (devices && joypad >= 0)
+		if ((devices || GameDebugJoypad.Scripted(joypad)) && joypad >= 0)
 		{
 			state.Merge(joypad, PhysicalButtons(joypad));
 		}
@@ -813,7 +876,8 @@ public partial class GameInput : Node
 		// driven; the title-to-world and menu-walking scripts that lived here are gone.
 		var state = new PadState
 		{
-			Buttons = (devices ? _pointerBits : 0u) | GameDebugServer.Buttons(0),
+			// The pointer's presses follow the devices, or the debug channel while it drives the pointer.
+			Buttons = (devices || GameDebugServer.PointerScripted ? _pointerBits : 0u) | GameDebugServer.Buttons(0),
 		};
 		state.OtherButtons = state.Buttons;
 
@@ -823,14 +887,12 @@ public partial class GameInput : Node
 			TouchState(ref state);
 		}
 
-		if (devices)
+		// The debug channel's joypad (GameDebugJoypad) passes the gate alone, as a player's would arrive.
+		foreach ((int joypad, bool known) in ConnectedJoypadStates())
 		{
-			foreach ((int joypad, bool known) in ConnectedJoypadStates())
+			if ((devices || GameDebugJoypad.Scripted(joypad)) && (joypad == _padDevice[0] || !known))
 			{
-				if (joypad == _padDevice[0] || !known)
-				{
-					state.Merge(joypad, PhysicalButtons(joypad));
-				}
+				state.Merge(joypad, PhysicalButtons(joypad));
 			}
 		}
 

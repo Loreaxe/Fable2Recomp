@@ -3,19 +3,10 @@ namespace Refii.Titles.Fable2;
 using Refii.Ui;
 
 /// <summary>
-/// Input cadence for a screen's second input level (the options category page). Nothing is
-/// drawn: the level stays guest-mirrored; this only supplies the auto-repeat the guest's stick
-/// translator would (the masked D-pad never reaches it) and posts the codes. 36 commits the
-/// whole page (`sub_829BF698`); nothing is written while scrolling. Each axis has its own clock.
-///
-/// Two gates on the guest's side shape what is sent. The page's repeat gate (`sub_82881B28`)
-/// drops a second 28..31 within 0.3 s of the first unless a release (32..35) came between —
-/// `sub_828818E8` resets the gate's clocks on any release — so every press goes out WITH its
-/// release and every tap lands. And the page group dispatches nothing to the page for its first
-/// half second (`sub_829907F0`: `timer <= 0.5` returns) while the screen's own handler still
-/// takes a 36 and closes the page without committing (`sub_826DA228` case 36 → `sub_826D9F28`),
-/// so the codes of that window are HELD here and posted when it ends — not dropped, not early.
-/// A host page (<see cref="Engine_UiHostOptionsPage"/>) has no guest and no gates.
+/// Input cadence for the options screen's page level. The page is Godot's record
+/// (<see cref="Engine_UiOptionsPending"/>): this supplies the auto-repeat the guest's stick translator
+/// would and steps the record; the record posts the guest's setters as levers. Each axis has its own
+/// clock, on the page widgets' repeat numbers.
 /// </summary>
 public sealed class Engine_UiScreenLevel
 {
@@ -23,17 +14,7 @@ public sealed class Engine_UiScreenLevel
 
 	private Engine_UiNavigationClock? _horizontal;
 
-	/// <summary>`sub_829907F0` ignores the page for its first half second; so do the pad and the pointer.</summary>
-	public const double OpenQuiet = 0.55;
-
-	/// <summary>Codes pressed inside the quiet window, posted in order when it ends.</summary>
-	private readonly System.Collections.Generic.Queue<uint> _held = new();
-
-	private const int HeldCap = 16;
-
 	private string _page = string.Empty;
-
-	private double _openFor;
 
 	private int _dragRow = -1;
 
@@ -49,111 +30,56 @@ public sealed class Engine_UiScreenLevel
 
 	public void Drive(Engine_UiSurfaceInput input)
 	{
-		Follow(input.Delta);
-		if (!Quiet)
-		{
-			Flush();
-		}
-
+		Follow();
 		_vertical ??= PageClock();
 		_horizontal ??= PageClock();
 
 		for (int step = _vertical.Steps(input.Direction, input.Delta);
 			step > 0; --step)
 		{
-			Post(input.Direction < 0 ? Engine_UiScreenInput.Up : Engine_UiScreenInput.Down);
+			Send(input.Direction < 0 ? Engine_UiScreenInput.Up : Engine_UiScreenInput.Down);
 		}
 
 		for (int step = _horizontal.Steps(input.Horizontal, input.Delta);
 			step > 0; --step)
 		{
-			Post(input.Horizontal < 0 ? Engine_UiScreenInput.Left : Engine_UiScreenInput.Right);
+			Send(input.Horizontal < 0 ? Engine_UiScreenInput.Left : Engine_UiScreenInput.Right);
 		}
 
 		if (input.Accept)
 		{
-			Post(Engine_UiScreenInput.Select);
+			Send(Engine_UiScreenInput.Select);
 		}
 		else if (input.Back)
 		{
-			Post(Engine_UiScreenInput.Back);
+			Send(Engine_UiScreenInput.Back);
 		}
 	}
 
-	/// <summary>Restarts the page clock when the open page changes; advances it by <paramref name="delta"/>.</summary>
-	private void Follow(double delta)
+	/// <summary>Resets the pointer's drag and walk when the open page changes.</summary>
+	private void Follow()
 	{
 		string page = Engine_UiOptionsPending.Page;
 		if (page != _page)
 		{
 			_page = page;
-			_openFor = 0.0;
 			_dragRow = -1;
 			_walkTarget = -1;
-			_held.Clear();
-		}
-
-		_openFor += delta;
-	}
-
-	/// <summary>Whether a guest page is still inside its quiet window.</summary>
-	private bool Quiet => !Engine_UiHostOptionsPage.Open && _openFor < OpenQuiet;
-
-	/// <summary>A code from the pad: held through the quiet window, otherwise sent after anything held.</summary>
-	private void Post(uint code)
-	{
-		if (Quiet)
-		{
-			if (_held.Count < HeldCap)
-			{
-				_held.Enqueue(code);
-			}
-
-			return;
-		}
-
-		Flush();
-		Send(code);
-	}
-
-	private void Flush()
-	{
-		while (_held.Count > 0)
-		{
-			Send(_held.Dequeue());
 		}
 	}
 
-	/// <summary>
-	/// One code to the page. A guest page gets the press and, for 28..31, its release, so its
-	/// repeat gate takes the next tap; a host page has no guest, only the host's record moves.
-	/// </summary>
-	private static void Send(uint code)
-	{
-		if (Engine_UiHostOptionsPage.Open)
-		{
-			Engine_UiOptionsPending.Track(code);
-			return;
-		}
-
-		Engine_UiSource.Current.ScreenAction(code);
-		if (code >= Engine_UiScreenInput.Up && code <= Engine_UiScreenInput.Right)
-		{
-			Engine_UiSource.Current.ScreenAction(
-				code + (Engine_UiScreenInput.UpReleased - Engine_UiScreenInput.Up));
-		}
-	}
+	/// <summary>One code to the open page's record.</summary>
+	private static void Send(uint code) => Engine_UiOptionsPending.Track(code);
 
 	// ---------------------------------------------------------------------------------------
 	// THE MOUSE ON AN OPTIONS PAGE
 	// ---------------------------------------------------------------------------------------
 	//
-	// The guest owns the row and every value; the pointer only posts the codes the keys would.
+	// The pointer steps the same record the keys do.
 	// Hovering a row walks the cursor to it; a click or drag on a slider steps it to the point
 	// under the pointer; a pickbox steps back on its left half and forward on its right; the
 	// wheel over a value row steps it; the page's A and B prompts commit and cancel. Every other
-	// click is taken, so a stray one cannot commit the page. A guest page's cursor moves on the
-	// guest's frame, so a walk is one pair per frame and a value step waits until it has arrived.
+	// click is taken, so a stray one cannot commit the page.
 
 	/// <summary>Each page's rows, top to bottom, as the guest orders them.</summary>
 	private static readonly System.Collections.Generic.Dictionary<string, string[]> Rows = new()
@@ -176,8 +102,7 @@ public sealed class Engine_UiScreenLevel
 	/// <summary>One frame of the pointer on the open page of <paramref name="book"/>.</summary>
 	public void Pointer(Engine_UiOwnedBook book, double delta)
 	{
-		// Drive, which runs after the pointer every frame, advances the clock.
-		Follow(0.0);
+		Follow();
 
 		// A host page stands on the shared five rows whatever it is called.
 		string[]? rows = Engine_UiHostOptionsPage.Open ? Engine_UiHostOptionsPage.Rows : null;
@@ -193,11 +118,6 @@ public sealed class Engine_UiScreenLevel
 
 		bool left = Engine_UiPointer.TakeLeft();
 		int wheel = Engine_UiPointer.TakeWheel();
-		if (_openFor < OpenQuiet)
-		{
-			return;
-		}
-
 		Walk();
 
 		// A slider drag holds its row while the button is down, wherever the pointer goes.
@@ -274,9 +194,8 @@ public sealed class Engine_UiScreenLevel
 	}
 
 	/// <summary>
-	/// One 28/29 pair per row the cursor has still to move. A host page's record moves at once,
-	/// so the walk completes here; a guest page's cursor moves on its own frame and arrives
-	/// with the guest's statement, so the target is kept until then.
+	/// One step per row the cursor has still to move; the record moves at once, so the walk
+	/// completes here unless the cursor is at its last row.
 	/// </summary>
 	private void Walk()
 	{

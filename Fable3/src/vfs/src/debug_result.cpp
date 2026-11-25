@@ -1,5 +1,5 @@
 // refii - Fable 3's debug-channel answer: the outcome of the last probe the guest tick ran (the game
-// VM's `debug-gamelua:` chunk, game_tick_pump.cpp), stated by the payload and read by the shell's
+// VM's `debug-gamelua:` chunk or a `debug-call:`, game_tick_pump.cpp), stated by the payload and read by the shell's
 // RefiiHostGetDebugCallResult (Fable3/src/hostbridge/src/host_bridge.cpp).
 
 #include "fable3_vfs.h"

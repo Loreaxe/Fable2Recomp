@@ -309,11 +309,15 @@ REX_EXTERN(rex_GuiPresentation_Load) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_last.clear();
   }
+  const std::string document = DocumentName(file);
   {
     std::lock_guard<std::mutex> lock(g_documents_mutex);
-    g_documents[presentation] = DocumentName(file);
+    g_documents[presentation] = document;
   }
   ForgetPresentationReaders(presentation);
+  if (document == "hud") {
+    ForgetHudRoot();
+  }
   g_list_last.store(-1);
   Statement("@Presentation.Load").Add(Text(Hex(presentation))).Add(Text(file)).Post();
 }

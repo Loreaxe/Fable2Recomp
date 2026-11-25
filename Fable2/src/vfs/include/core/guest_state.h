@@ -98,6 +98,17 @@ std::string ReadBestEffortGuestString(uint8_t* base,
 /// screen as a menu label.
 std::string ReadGuestLhString(uint8_t* base, uint32_t handle);
 
+/// The same two hops for a string the guest STATES as a call argument (a menu row's name, a
+/// string parameter's value): every byte to the NUL, none refused. A row name is its localised
+/// label cut to one byte per character (`sub_826CE848` -> `sub_82B3F898`: `82B3F904 lhzx` /
+/// `82B3F910 stbx`; disc `sub_82408338` -> `sub_82B398A8`), so Cyrillic names are control bytes
+/// and accented ones are bytes above 0x7F, which ReadGuestLhString's path whitelist blanks.
+std::string ReadStatedLhBytes(uint8_t* base, uint32_t handle);
+
+/// Bytes as Latin-1, in UTF-8: what the host is handed for a stated narrow string, so a cut
+/// accented character reads as itself and no two byte strings share a text.
+std::string Latin1ToUtf8(const std::string& bytes);
+
 /// The same handle shape read as WIDE UTF-16 — the guest's display-text class. See the
 /// implementation for why reading one with the other returns an empty string rather than noise.
 std::string ReadGuestWideString(uint8_t* base, uint32_t handle);

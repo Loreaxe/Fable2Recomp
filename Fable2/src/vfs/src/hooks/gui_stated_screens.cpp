@@ -38,8 +38,6 @@ thread_local bool t_menu_box_opened = false;
 
 // The pause root handler's player, as its setter last stated it: non-zero when player two's.
 std::atomic<uint32_t> g_pause_player_two{0u};
-// The abilities screen handler's, the same way: non-zero when player two's book.
-std::atomic<uint32_t> g_abilities_player_two{0u};
 
 constexpr uint32_t kAbilitiesAssignMode = 1u;
 constexpr uint32_t kFlowTopVtable = 2u;
@@ -85,8 +83,6 @@ void StatedMenuBoxOpened() {
 }
 
 bool StatedPausePlayerTwo() { return g_pause_player_two.load(std::memory_order_relaxed) != 0u; }
-
-bool StatedAbilitiesPlayerTwo() { return g_abilities_player_two.load(std::memory_order_relaxed) != 0u; }
 
 }  // namespace refii::vfs
 
@@ -150,14 +146,6 @@ REX_EXTERN(rex_lhGuiTabStrip_Show) {
 // and the screens that hand the menu back through `lhGuiManager_FindScreenHandler(owner, 0)`
 // (0x826a6fb0, 0x826b18f0, 0x826cccf4, 0x827d0050, 0x827e146c, 0x82805578). The guest reads it
 // back as `*(FindScreenHandler(owner, 0) + 4) == 1` (`sub_8236E400` 0x8236e430).
-//
-// WHOSE ABILITIES BOOK IT IS. The abilities handler (vtable 0x820CF4BC, disc 0x820C1D30; screen 14)
-// keeps it at `+4` too, read as `screen+4 == 0` for player one (0x826C2D58, disc 0x8259ED08). Its
-// writers: the constructor's 0 (`sub_826C1E80` 0x826c1ea4); the same folded slot 8 (vtable
-// +0x20 is `sub_82EC34C8`), called by the pause root before it switches to screen 14 (0x826a6264);
-// and its enter `sub_826C2118` (disc `sub_8259E0C8`, vtable +8), which copies the pause root's:
-// `FindScreenHandler(owner, 0)` (0x826c2150), `lwz r11, 4(r3)`, `stw r11, 4(r31)` (0x826c216c,
-// disc 0x8259e11c), 0 when there is no root.
 REX_EXTERN(rex_lhFolded_StoreWordAt4) {
     const uint32_t self = ctx.r3.u32;
     const uint32_t value = ctx.r4.u32;
@@ -165,22 +153,13 @@ REX_EXTERN(rex_lhFolded_StoreWordAt4) {
     const uint32_t vtable = refii::vfs::LoadGuestU32(base, self);
     if (vtable == refii::guest::Address(0x820CDE18u)) {
         g_pause_player_two.store(value == 1u ? 1u : 0u, std::memory_order_relaxed);
-    } else if (vtable == refii::guest::Address(0x820CF4BCu)) {
-        g_abilities_player_two.store(value != 0u ? 1u : 0u, std::memory_order_relaxed);
     }
-}
-
-REX_EXTERN(rex_lhGuiAbilitiesScreen_Enter) {
-    REX_FUNC_PROLOGUE();
-    __imp__rex_lhGuiAbilitiesScreen_Enter(ctx, base);
-    g_abilities_player_two.store(g_pause_player_two.load(std::memory_order_relaxed), std::memory_order_relaxed);
 }
 
 REX_EXTERN(rex_lhGuiScreenSet_ShowRoot) {
     REX_FUNC_PROLOGUE();
     refii_bridge_stated_screens_up(1u);  // the GUI's init makes the set and files its root
     g_pause_player_two.store(0u, std::memory_order_relaxed);  // and constructs its handlers
-    g_abilities_player_two.store(0u, std::memory_order_relaxed);
     const int32_t outer = t_loading;
     t_loading = 0;
     __imp__rex_lhGuiScreenSet_ShowRoot(ctx, base);

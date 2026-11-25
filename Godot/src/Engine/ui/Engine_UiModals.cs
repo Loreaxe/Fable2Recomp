@@ -38,16 +38,19 @@ public sealed class Engine_UiModals
 	public const string Section = "modals";
 
 	/// <summary>
-	/// The shipped rows. Unlisted boxes keep the guest's input deliberately: the coop boxes
-	/// (39/40/41/43) answer only on the router's pad index 2 while our lever passes 0, the
-	/// marketplace offer (42) carries an X download action and a sign-in gate, and photo mode's box
-	/// has no dismiss code at all.
+	/// The shipped rows. Unlisted boxes keep the guest's input deliberately: the marketplace offer
+	/// (42) carries an X download action and a sign-in gate, and photo mode's box has no dismiss
+	/// code at all.
 	///
 	/// The guest's own input still answers them under the UI cut: an unlisted box is drawn but not
 	/// masked, and the router's modal input `sub_8236E458` (disc `sub_82336668`) answers boxes 42 and
 	/// 44 itself and hands every other box's code to the C++ handler of the screen the opener pushed
 	/// (`FindScreenHandler(*(*(GUI+56)+4))`, vtable +28 at 0x8236e5c8 / 0x823367cc). Nothing on that
 	/// path reads a presentation or runs the cut Lua.
+	///
+	/// The co-op screen's boxes answer for player two only (`sub_8243A828`: `8243A838 cmplwi cr6,
+	/// r5, 2`, disc 0x8247BA30): the query pair 39 / 41 takes 36 and, as a query (mode 3), 37; the
+	/// notices 40 / 43 close on 36. The lever carries player two (Fable2ActingPlayer.BoxOwner).
 	/// </summary>
 	public static IReadOnlyList<Engine_UiModalTemplate> Shipped() => new[]
 	{
@@ -61,6 +64,9 @@ public sealed class Engine_UiModals
 
 		// The henchman and generic boxes answer the uniform accept/back pair.
 		Query(26, 36, 37), Query(27, 36, 37), Query(28, 36, 37), Query(44, 36, 37),
+
+		// The co-op screen's warnings and notices, player two's.
+		Query(39, 36, 37), Query(41, 36, 37), Dismiss(40, 36), Dismiss(43, 36),
 
 		// Fast travel confirms on the per-screen Y action.
 		Query(13, 39, 37),

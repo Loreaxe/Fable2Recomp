@@ -225,11 +225,14 @@ public static class AndroidLauncherSettings
     /// <param name="gameRoot">The prepared private game directory containing the extracted update bank.</param>
     public static void PrepareUpdateBank(string gameRoot)
     {
-        string source = Path.Combine(gameRoot, TitleUpdate.DataBankRelativePath);
-        string target = Path.Combine(Refii.Core.Engine_GameData.UpdateRootFor(gameRoot), TitleUpdate.DataBankRelativePath);
-        if (!File.Exists(source) || File.Exists(target)) return;
-        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        File.Copy(source, target, overwrite: false);
+        foreach (string name in Refii.Core.Engine_Title.Active.TitleUpdateDataFiles)
+        {
+            string source = Path.Combine(gameRoot, TitleUpdate.DataRelativePath(name));
+            string target = Path.Combine(Refii.Core.Engine_GameData.UpdateRootFor(gameRoot), TitleUpdate.DataRelativePath(name));
+            if (!File.Exists(source) || File.Exists(target)) continue;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(source, target, overwrite: false);
+        }
     }
 
     /// <summary>Recognizes an installer's own prior game locator when activating a replacement installation.</summary>

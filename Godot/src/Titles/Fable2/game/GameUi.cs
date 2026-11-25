@@ -1519,7 +1519,7 @@ public partial class GameUi : Node, IGameTitleUi
 			// Start leaving Options with a host page open comes through HERE, not the page
 			// branch below: the page goes with its screen, or the next Options visit opens on
 			// the page path with the list hidden. A modal over the page keeps the screen id.
-			if (Engine_UiHostOptionsPage.Open &&
+			if (Engine_UiOptionsPending.Open &&
 				(pause is not { } optionsGone || optionsGone.ScreenId != Engine_UiDetailPages.OptionsScreenId))
 			{
 				Engine_UiOptionsPending.Leave();
@@ -1619,12 +1619,12 @@ public partial class GameUi : Node, IGameTitleUi
 		}
 
 		_screenMenuDeclined = null;
-		if (state.ScreenId != Engine_UiDetailPages.OptionsScreenId && Engine_UiHostOptionsPage.Open)
+		if (state.ScreenId != Engine_UiDetailPages.OptionsScreenId && Engine_UiOptionsPending.Open)
 			Engine_UiOptionsPending.Leave();
 
 		// The options page level is not a list and must not be drawn as one: the owned view comes
-		// down, the guest's page stays mirrored, and input becomes the page's own vocabulary.
-		if (ScreenPageOpen(state.ScreenId, address, drawn) || Engine_UiHostOptionsPage.Open)
+		// down and input becomes the page's own record (Engine_UiOptionsPending), opened by the row.
+		if (ScreenPageOpen(state.ScreenId, address, drawn) || Engine_UiOptionsPending.Open)
 		{
 			bool hostPage = Engine_UiHostOptionsPage.Open;
 			if (_screenMenuView is not null)
@@ -1639,14 +1639,6 @@ public partial class GameUi : Node, IGameTitleUi
 			// Any screen whose provider fills a page gets the same treatment; only a screen that
 			// declared a page element reaches here at all, and only one that needs the sliders
 			// pays for reading them.
-			// THE PAGE'S ROW AND VALUES ARE THE GUEST'S, as its row widgets state them
-			// (Engine_UiOptionsPending). The host paints the captions from them and steps
-			// nothing of its own.
-			if (!hostPage)
-			{
-				Engine_UiOptionsPending.Enter(_screenMenu?.Script.Highlighted?.Name ?? string.Empty);
-			}
-
 			if (Engine_UiDetailPages.Owns(state.ScreenId) &&
 				_books.Book(state.ScreenId) is { } pageBook)
 			{
@@ -1751,20 +1743,20 @@ public partial class GameUi : Node, IGameTitleUi
 			}
 		}
 
-		// A ROW SEEN IS VIEWED. The guest's highlight ticks clear an item's or a quest's "!" on
-		// the row their cursor stands on (`*(item+20) = 1` in `sub_829B5160`, `Quest+78 = 1` in
-		// `sub_829AF638`/`sub_829AFE58`); that cursor no longer moves, so ours states it. The
-		// pump writes the flag and moves the data generation, and the re-read above restates
-		// the row, its header and (on the next pause build) the tab.
-		if (_screenMenu?.Script.Highlighted is { Unviewed: true } seen)
+		// A QUEST ROW SEEN IS VIEWED. The guest's highlight tick clears a quest's "!" on the row
+		// its cursor stands on (`Quest+78 = 1` in `sub_829AF638`/`sub_829AFE58`); that cursor no
+		// longer moves, so ours states it. The pump writes the flag and moves the data generation,
+		// and the re-read above restates the row, its header and (on the next pause build) the tab.
+		// An ITEM row needs no post: the item books' ported Update keeps the guest's page fill for
+		// the row stated here, which writes the item's own flag (`*(item+20) = 1`, `sub_829B5160` /
+		// `sub_829B6310`) and moves the data generation itself.
+		if (_screenMenu?.Script.Highlighted is { Unviewed: true, EventType: 42 or 43 } seen)
 		{
 			uint id = ((uint)seen.IdHigh << 16) | ((uint)seen.IdLow & 0xFFFFu);
 			if (id != 0u && id != _viewedPosted)
 			{
 				_viewedPosted = id;
-				HostBridge.PostFrontEndAction(seen.EventType is 42 or 43
-					? $"{Engine_UiQuestSource.QuestAction}viewed:0x{id:X8}"
-					: $"{Engine_UiInventorySource.InventoryAction}viewed:{id}");
+				HostBridge.PostFrontEndAction($"{Engine_UiQuestSource.QuestAction}viewed:0x{id:X8}");
 			}
 		}
 
@@ -1995,7 +1987,7 @@ public partial class GameUi : Node, IGameTitleUi
 				return true;
 			}
 
-			if (Engine_UiAbilitySource.AskUnlearn(flipRow.Name))
+			if (Engine_UiAbilitySource.AskUnlearn(flipRow))
 			{
 				return true;
 			}
@@ -2746,7 +2738,8 @@ public partial class GameUi : Node, IGameTitleUi
 		// so the other player keeps their view of the world.
 		if (_presentation is not null && GodotObject.IsInstanceValid(_presentation))
 		{
-			int owner = split ? Fable2Input.MenuOwner : 0;
+			// The co-op screen is both players' and stays whole while player two answers its box.
+			int owner = split && OwnedScreenId() != CoopScreenId ? Fable2Input.MenuOwner : 0;
 			if (owner != 0)
 			{
 				Engine_UiSeats.Frame half = Engine_UiSeats.Of(window, Engine_UiSeats.For(owner, true));
@@ -2892,6 +2885,13 @@ public partial class GameUi : Node, IGameTitleUi
 		if (Engine_UiModMenuBox.Active is { } modBox)
 		{
 			return modBox.Player;
+		}
+
+		// A box over the co-op screen is player two's (Fable2ActingPlayer.BoxOwner).
+		if (HostBridge.GetPauseState() is { } coop &&
+			Fable2ActingPlayer.BoxOwner(CoopSession.LocalCoop, coop.ScreenId, coop.ModalUp) is var coopBox and not 0)
+		{
+			return coopBox;
 		}
 
 		// A box built for one player (the core co-op Lua's @Box.Seat): the showing box's player.
@@ -3231,21 +3231,32 @@ public partial class GameUi : Node, IGameTitleUi
 		if (up && _creditsOpenedMs != 0 && _presentation?.Strings is { } strings &&
 			_presentation.DocumentFor(Engine_UiCreditsRoll.Presentation) is { } document)
 		{
-			if (_creditSlots.Count == 0)
+			if (_creditSlots.Count == 0 && _credits.Count == 0)
 			{
-				_credits.Clear();
 				foreach (uint key in strings.GroupMembers("GUI_CREDITS"))
 				{
 					_credits.Add(strings.TryGetString(key, out string line) ? line : string.Empty);
 				}
 
-				foreach (UiNode node in document.Nodes)
+				// Slot i is the element the guest resolves as `"Text.Text" + i` (`sub_826B79D8`:
+				// "Text.Text" 0x826B7B38, `sub_8234ECC0(i)` 0x826B7B60, `GuiElement_Resolve_p`
+				// 0x826B7B90), i = 0..23 — by NAME, in the guest's order.
+				for (int i = 0; i < Engine_UiCreditsTiming.Slots; ++i)
 				{
-					if (node.Type == BgfElementType.Text)
+					uint name = Refii.Core.Engine_GameHash.Sdbm("Text" + i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+					uint parent = Refii.Core.Engine_GameHash.Sdbm("Text");
+					UiNode? slot = System.Array.Find(document.Nodes, node =>
+						node.Element.NameHash == name && node.Parent?.Element.NameHash == parent);
+					if (slot is null)
 					{
-						_creditSlots.Add(node);
+						break;
 					}
+
+					_creditSlots.Add(slot);
 				}
+
+				GD.Print($"[game-ui] credits: {_creditSlots.Count} text slot(s) of {document.Nodes.Length} element(s), " +
+					$"{_credits.Count} line(s), fonts {(_presentation.Fonts is null ? "MISSING" : "present")}");
 			}
 
 			double seconds = (Time.GetTicksMsec() - _creditsOpenedMs) / 1000.0;
@@ -3257,6 +3268,21 @@ public partial class GameUi : Node, IGameTitleUi
 				_creditsEndPosted = true;
 				HostBridge.PostFrontEndAction("CreditsEnd");
 				GD.Print($"[game-ui] credits: the roll ended at {seconds:F1} s ({_credits.Count} lines) — CreditsEnd");
+			}
+		}
+
+		// What the roll drew, every ten seconds of it: a roll that ends on time and shows nothing
+		// is otherwise invisible from the log.
+		if (up && _creditsOpenedMs != 0)
+		{
+			ulong tenths = (Time.GetTicksMsec() - _creditsOpenedMs) / 10000;
+			if (tenths != _creditsReported)
+			{
+				_creditsReported = tenths;
+				Engine_UiCreditsRoll.Line? first = _creditLines.Count > 0 ? _creditLines[0] : null;
+				GD.Print($"[game-ui] credits at {tenths * 10} s: {_creditLines.Count} line(s) drawn" +
+					(first is { } line ? $", first '{line.Text}' at ({line.At.X}, {line.At.Y}) size {line.Size}" : string.Empty) +
+					$" — roll {(_creditsRoll?.IsVisibleInTree() == true ? "visible" : "not standing")}");
 			}
 		}
 
@@ -3276,6 +3302,9 @@ public partial class GameUi : Node, IGameTitleUi
 
 		_creditsRoll.Show(_creditLines);
 	}
+
+	/// <summary>The ten-second mark of the roll last reported.</summary>
+	private ulong _creditsReported = ulong.MaxValue;
 
 	private bool _fullCutscene;
 
@@ -4420,7 +4449,7 @@ public partial class GameUi : Node, IGameTitleUi
 			DriveCreditsRoll();
 		}
 
-		if (_worldIcons is null || _hudAddress == 0 ||
+		if (_worldIcons is null || _hudAddress == 0 || !HostBridge.IsInGame ||
 			!GodotObject.IsInstanceValid(_worldIcons))
 		{
 			return;
@@ -5113,6 +5142,9 @@ public partial class GameUi : Node, IGameTitleUi
 	/// a query box, or the resume all leave that window, and the view yields the frame the
 	/// guest says so.
 	/// </summary>
+	/// <summary>A pause screen was stated up last frame — the open edge rebuilds the list.</summary>
+	private bool _pauseBookWasUp;
+
 	private bool DrivePauseMenu(double delta)
 	{
 		// A pattern-book retire (a mod remount) frees the view, and the guest rebuilds
@@ -5139,6 +5171,20 @@ public partial class GameUi : Node, IGameTitleUi
 		// it does not vanish — so visibility follows the SCREEN and only input follows the
 		// modal. ScreenId stays 0 under a box (the opener restores it).
 		bool onRoot = _pauseTreeUp && IsRevealed && pause is { ScreenId: 0 };
+
+		// A NEW LIST ON EVERY OPEN, as the guest's: Start's open `sub_826A2C88` runs the populate
+		// `sub_8298DF98` (0x826A2D14; disc `sub_82842860` from 0x8240F0CC), which deletes every spawned row
+		// (0x8298DFF0 / disc 0x828428B4) and runs `g_Menu:SetInitiallySelectedItem(2)` (`sub_826CE070`, 0x8298E000 / disc 0x828428C4) —
+		// every folder shut, the cursor on the second row. The open is screen 0 stated over none.
+		bool bookUp = pause is { } stated && Engine_StatedPause.StatesPause(stated.ScreenId);
+		if (pause is { ScreenId: 0 } && !_pauseBookWasUp)
+		{
+			_pauseMenu = Engine_PauseMenu.BuildHero(_pauseMenuJoiner);
+			_pauseTabsMask = 0u;
+			_pauseView.Bind(_pauseMenu);
+		}
+
+		_pauseBookWasUp = bookUp;
 		_pauseView.Visible = onRoot;
 
 		// A mod's menu stands over the pause ROOT only: a tab push, a resume or a quit drops it.
@@ -5207,7 +5253,6 @@ public partial class GameUi : Node, IGameTitleUi
 			else
 			{
 				_pauseView.Visible = false;
-				Fable2Input.PauseMenuSwallowsBack = true;
 
 				float slab =
 					_drawn.TryGetValue(_pauseAddress, out Engine_UiDrawnPresentation? behind) &&
@@ -5229,12 +5274,6 @@ public partial class GameUi : Node, IGameTitleUi
 				return true;
 			}
 		}
-
-		// The nav mask keys on the guest's own pause state inside GameInput; only the B
-		// swallow is ours to declare, and it is re-derived every frame so it can never
-		// outlive the expansion that justified it.
-		Fable2Input.PauseMenuSwallowsBack = standing &&
-			(_pauseView.Menu?.CanCollapse == true || _pauseView.OpenedDepth > 0);
 
 		if (!standing)
 		{
@@ -5304,19 +5343,33 @@ public partial class GameUi : Node, IGameTitleUi
 			return true;
 		}
 
+		// THE ROOT'S SHOULDERS are the tab cycle, `PauseCycle:<player>:prev|next` (`sub_826B8780` /
+		// `sub_826B8878`, player one only — the ported root's input slot no longer runs them).
+		if (Fable2Input.MenuTabPrevPressed || Fable2Input.MenuTabNextPressed)
+		{
+			uint code = Fable2Input.MenuTabNextPressed ? Engine_UiScreenInput.TabNext : Engine_UiScreenInput.TabPrev;
+			uint depth = PostScreenButton(Fable2PortedScreens.PauseRoot, code);
+			GD.Print($"[game-ui] pause root: {(code == Engine_UiScreenInput.TabNext ? "RB" : "LB")} posted " +
+				$"{Fable2PortedScreens.Lever(Fable2PortedScreens.PauseRoot, code, Engine_UiSource.Current.ActingPlayer)} — queue depth {depth}");
+			return true;
+		}
+
 		if (Fable2Input.MenuBackPressed)
 		{
-			// Collapse, then close a mod's menu. With neither B is left through to the guest,
-			// whose own B on the pause root resumes the game — that path is entirely the guest's.
+			// Collapse, then close a mod's menu. With neither, B at the top of the list closes the
+			// book: `PauseClose:<player>` (`ExitScreen(QM, 1)`, the guest's `sub_826D5A60` at its root).
 			// A level closed below the root is the shared cancel (`SE_GUI_MENU_BOX_CANCEL`,
 			// 0x826D5BBC).
 			if (_pauseView.Back())
 			{
 				Cue(frontEnd: false, "cancel");
 			}
-			else
+			else if (!Engine_UiModMenus.Back(_pauseView))
 			{
-				Engine_UiModMenus.Back(_pauseView);
+				uint depth = PostScreenButton(Fable2PortedScreens.PauseRoot, Engine_UiScreenInput.Back);
+				GD.Print($"[game-ui] pause root: B posted " +
+					$"{Fable2PortedScreens.Lever(Fable2PortedScreens.PauseRoot, Engine_UiScreenInput.Back, Engine_UiSource.Current.ActingPlayer)} — queue depth {depth}");
+				return true;
 			}
 		}
 
@@ -6731,6 +6784,11 @@ public partial class GameUi : Node, IGameTitleUi
 			return false;
 		}
 
+		if (NamedRowDue(view))
+		{
+			return true;
+		}
+
 		if (Engine_UiPointer.Canvas is not { } at)
 		{
 			// The pad took over: a click still waiting is dropped, never answered later.
@@ -6887,6 +6945,89 @@ public partial class GameUi : Node, IGameTitleUi
 		_clickItem = null;
 		return true;
 	}
+
+	/// <summary>
+	/// The debug channel's `menu event` (<see cref="Fable2Title.DebugMenuEvent"/>): the row named is
+	/// pressed as a player's A on whichever list holds it — highlighted, then answered by that list's
+	/// own A path (its mod rows, its fold, its command: the pause levers, a host action, or the
+	/// identity push a row with no action of its own makes) the first frame the list takes a press.
+	/// Nothing is posted to the guest's MenuEvent here.
+	/// </summary>
+	public static System.Collections.Generic.Dictionary<string, object?> RequestRow(string name, int type, uint id)
+	{
+		_namedRow = (name, type, id, Time.GetTicksMsec());
+		_namedView = null;
+		_namedItem = null;
+		GD.Print($"[game-ui] menu event '{name}' ({type}/{id}): queued as A on the row of that name");
+		return new System.Collections.Generic.Dictionary<string, object?>
+		{
+			["queued"] = true,
+			["name"] = name,
+			["patienceMs"] = NamedRowPatienceMs,
+			["outcome"] = "logged as '[game-ui] menu event'",
+		};
+	}
+
+	/// <summary>Whether the named row is due as A on <paramref name="view"/> this frame (see
+	/// <see cref="RequestRow"/>); the same gates as a click (<see cref="ClickDue"/>).</summary>
+	private static bool NamedRowDue(Engine_FrontEndMenuView view)
+	{
+		if (_namedRow is not { } named || view.Menu is null)
+		{
+			return false;
+		}
+
+		if (Time.GetTicksMsec() - named.At > NamedRowPatienceMs)
+		{
+			GD.Print(_namedItem is null
+				? $"[game-ui] menu event '{named.Name}': no list up holds a visible row of that name — nothing pressed"
+				: $"[game-ui] menu event '{named.Name}': the list never took the press — nothing pressed");
+			_namedRow = null;
+			_namedView = null;
+			_namedItem = null;
+			return false;
+		}
+
+		if (_namedItem is null)
+		{
+			Engine_UiExpandableMenu.Item? found = view.Menu.Model.VisibleNamed(named.Name, named.Type, named.Id);
+			if (found is null)
+			{
+				return false;
+			}
+
+			_namedView = view;
+			_namedItem = found;
+		}
+
+		if (_namedItem is not { } item || !ReferenceEquals(_namedView, view) || view.PressGated)
+		{
+			return false;
+		}
+
+		if (!ReferenceEquals(view.Menu.Highlighted, item))
+		{
+			view.PointAt(item);
+			if (view.PressGated || !ReferenceEquals(view.Menu.Highlighted, item))
+			{
+				return false;
+			}
+		}
+
+		GD.Print($"[game-ui] menu event '{named.Name}' ({named.Type}/{named.Id}): row '{item.Name}' " +
+			$"(type {item.EventType}, id 0x{(((uint)item.IdHigh << 16) | ((uint)item.IdLow & 0xFFFFu)):X}) highlighted and pressed as A");
+		_namedRow = null;
+		_namedView = null;
+		_namedItem = null;
+		return true;
+	}
+
+	private static (string Name, int Type, uint Id, ulong At)? _namedRow;
+	private static Engine_FrontEndMenuView? _namedView;
+	private static Engine_UiExpandableMenu.Item? _namedItem;
+
+	/// <summary>How long a named row waits for a list that holds it and takes the press.</summary>
+	private const ulong NamedRowPatienceMs = 3000;
 
 	/// <summary>The list a click is waiting on, and the row it landed on.</summary>
 	private static Engine_FrontEndMenuView? _clickView;
@@ -9460,8 +9601,6 @@ public partial class GameUi : Node, IGameTitleUi
 		}
 
 		// The owned pause view stands over the mirrored pause tree; it comes down with it.
-		// The B swallow clears HERE as well as in DrivePauseMenu, so B can never stay
-		// masked past the menu that justified masking it.
 		if (drawn.Name == PausePresentation)
 		{
 			_pauseTreeUp = false;
@@ -9469,8 +9608,6 @@ public partial class GameUi : Node, IGameTitleUi
 			{
 				_pauseView.Visible = false;
 			}
-
-			Fable2Input.PauseMenuSwallowsBack = false;
 		}
 
 		_movieSlots.Remove(address);
@@ -10059,8 +10196,11 @@ public partial class GameUi : Node, IGameTitleUi
 		// shipped for.
 		if (string.Equals(name, HudPresentation, System.StringComparison.OrdinalIgnoreCase))
 		{
-			// The newest stated hud.bgf only: see StatedHudPresentation.
-			if (_statedHud != 0u && _statedHud != presentation.Address)
+			// The newest stated hud.bgf only: see StatedHudPresentation. And only in game: Quit to
+			// Title clears the guest's in-game flag (`byte_83496A5E`, 0x82311860) before its GUI is
+			// deleted, so the hud.bgf the leaving game still shows is followed once more after
+			// LeaveGame — taking it back relit the world icons over the title (#59).
+			if ((_statedHud != 0u && _statedHud != presentation.Address) || !HostBridge.IsInGame)
 			{
 				return;
 			}

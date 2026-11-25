@@ -118,17 +118,18 @@ public static class Installer
     }
 
     /// <summary>
-    /// The title update's data bank, on the update volume the runtime mounts beside the game
-    /// data: <c>&lt;assets&gt;/update/data/tu1_data.bnk</c>, for a patch at <c>&lt;assets&gt;/game/default.xexp</c>.
+    /// One of the title update's data files (<see cref="Refii.Core.Engine_Title.TitleUpdateDataFiles"/>),
+    /// on the update volume the runtime mounts beside the game data: <c>&lt;assets&gt;/update/data/&lt;name&gt;</c>,
+    /// for a patch at <c>&lt;assets&gt;/game/default.xexp</c>.
     /// </summary>
-    public static string GetTitleUpdateDataBankPath(string patchPath) =>
+    public static string GetTitleUpdateDataPath(string patchPath, string name) =>
         Path.Combine(
             Refii.Core.Engine_GameData.UpdateRootFor(Path.GetDirectoryName(patchPath) ?? string.Empty),
-            TitleUpdate.DataBankRelativePath);
+            TitleUpdate.DataRelativePath(name));
 
     /// <summary>
     /// Writes the title update beside the installed executable, from a .xexp or the package
-    /// it came in, after checking that it patches that executable. A package's data bank goes
+    /// it came in, after checking that it patches that executable. A package's data files go
     /// to the update volume with it.
     /// </summary>
     /// <remarks>
@@ -151,15 +152,21 @@ public static class Installer
             return false;
         }
 
-        string dataBankPath = GetTitleUpdateDataBankPath(destinationPath);
-        if (!SafePath.IsSafeDestinationUnderBase(dataBankPath, installBase, out error))
+        var dataPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in title.TitleUpdateDataFiles)
         {
-            return false;
+            string dataPath = GetTitleUpdateDataPath(destinationPath, name);
+            if (!SafePath.IsSafeDestinationUnderBase(dataPath, installBase, out error))
+            {
+                return false;
+            }
+
+            dataPaths[name] = dataPath;
         }
 
         // No title update chosen: the disc executable is installed as it is. A patch left by an
         // earlier install has to go, because its presence is what selects the patched build,
-        // and its bank with it, because the guest would layer it over the disc data.
+        // and its data with it, because the guest would layer it over the disc data.
         if (sourcePath.Length == 0)
         {
             try
@@ -169,10 +176,7 @@ public static class Installer
                     File.Delete(destinationPath);
                 }
 
-                if (File.Exists(dataBankPath))
-                {
-                    File.Delete(dataBankPath);
-                }
+                DeleteTitleUpdateData(dataPaths.Values);
 
                 error = string.Empty;
                 return true;
@@ -184,7 +188,7 @@ public static class Installer
             }
         }
 
-        if (!TitleUpdate.TryLoad(sourcePath, out TitleUpdate update, out error))
+        if (!TitleUpdate.TryLoad(sourcePath, title, out TitleUpdate update, out error))
         {
             return false;
         }
@@ -213,21 +217,18 @@ public static class Installer
 
             File.WriteAllBytes(destinationPath, update.Patch);
 
-            // A bank from an earlier package never outlives the patch it came with.
-            if (File.Exists(dataBankPath))
+            // Data from an earlier package never outlives the patch it came with.
+            DeleteTitleUpdateData(dataPaths.Values);
+            foreach ((string name, byte[] bytes) in update.DataFiles)
             {
-                File.Delete(dataBankPath);
-            }
-
-            if (update.HasDataBank)
-            {
-                string? bankParent = Path.GetDirectoryName(dataBankPath);
-                if (!string.IsNullOrEmpty(bankParent))
+                string dataPath = dataPaths[name];
+                string? dataParent = Path.GetDirectoryName(dataPath);
+                if (!string.IsNullOrEmpty(dataParent))
                 {
-                    Directory.CreateDirectory(bankParent!);
+                    Directory.CreateDirectory(dataParent!);
                 }
 
-                File.WriteAllBytes(dataBankPath, update.DataBank);
+                File.WriteAllBytes(dataPath, bytes);
             }
 
             error = string.Empty;
@@ -237,6 +238,17 @@ public static class Installer
         {
             error = exception.Message;
             return false;
+        }
+    }
+
+    private static void DeleteTitleUpdateData(IEnumerable<string> paths)
+    {
+        foreach (string path in paths)
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
         }
     }
 
@@ -316,7 +328,7 @@ public static class Installer
             return true;
         }
 
-        if (!TitleUpdate.TryLoad(patchPath, out TitleUpdate update, out string patchError))
+        if (!TitleUpdate.TryLoad(patchPath, title, out TitleUpdate update, out string patchError))
         {
             summary = "The installed title update is unusable: " + patchError;
             return false;
@@ -329,11 +341,17 @@ public static class Installer
             return false;
         }
 
-        // The bank is what a bare .xexp install lacks: the patched code runs, on the disc's
+        // The data is what a bare .xexp install lacks: the patched code runs, on the disc's
         // scripts and text. Said here so the reinstall panel shows it, not an error.
-        string bank = File.Exists(GetTitleUpdateDataBankPath(patchPath))
-            ? " and its data bank"
-            : ", without its data bank (install the update from its package to get it)";
+        bool data = title.TitleUpdateDataFiles.Count != 0;
+        foreach (string name in title.TitleUpdateDataFiles)
+        {
+            data &= File.Exists(GetTitleUpdateDataPath(patchPath, name));
+        }
+
+        string bank = data
+            ? " and its data"
+            : ", without its data (install the update from its package to get it)";
         summary = "Game version " + executable.VersionText + " with title update " +
                   update.Identity.VersionText + bank + ", media ID " + executable.ShortMediaIdText + ".";
         return true;

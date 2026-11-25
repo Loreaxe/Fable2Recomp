@@ -34,6 +34,38 @@ public class ActingPlayerTests
 	}
 
 	[TestCase]
+	public void ABoxOverTheLocalCoopScreenIsPlayerTwos()
+	{
+		AssertThat(Fable2ActingPlayer.BoxOwner(localCoop: true, screenId: 24u, modalUp: true)).IsEqual(2);
+		AssertThat(Fable2ActingPlayer.BoxOwner(localCoop: true, screenId: 24u, modalUp: false)).IsEqual(0);
+		AssertThat(Fable2ActingPlayer.BoxOwner(localCoop: true, screenId: 0u, modalUp: true)).IsEqual(0);
+		AssertThat(Fable2ActingPlayer.BoxOwner(localCoop: false, screenId: 24u, modalUp: true)).IsEqual(0);
+	}
+
+	[TestCase]
+	public void TheCoopScreensBoxesAreAnsweredByGodot()
+	{
+		static Engine_UiModalTemplate Row(uint id, bool dismissal)
+		{
+			foreach (Engine_UiModalTemplate row in Engine_UiModals.Shipped())
+			{
+				if (row.ModalId == id && row.Dismissal == dismissal)
+				{
+					return row;
+				}
+			}
+
+			throw new System.InvalidOperationException($"no row for box {id}");
+		}
+
+		AssertThat(Row(39u, false).Confirm).IsEqual(36u);
+		AssertThat(Row(39u, false).Cancel).IsEqual(37u);
+		AssertThat(Row(41u, false).Confirm).IsEqual(36u);
+		AssertThat(Row(40u, true).Confirm).IsEqual(36u);
+		AssertThat(Row(43u, true).Confirm).IsEqual(36u);
+	}
+
+	[TestCase]
 	public void TheLeverLeadsWithThePlayer()
 	{
 		AssertThat(Engine_UiSource.PlayerLever("QueryAnswer", 2, "46@3")).IsEqual("QueryAnswer:2:46@3");
@@ -45,7 +77,7 @@ public class ActingPlayerTests
 	{
 		var source = new Engine_UiAuthoredSource();
 		source.ScreenAction(37u);
-		source.PostPlayerLever("ReceiveItemsAction", "36");
-		AssertThat(source.Posted).ContainsExactly("ScreenAction:1:37", "ReceiveItemsAction:1:36");
+		source.PostPlayerLever(Engine_UiReceiveItemsSurface.Lever, Engine_UiReceiveItemsSurface.Dismiss);
+		AssertThat(source.Posted).ContainsExactly("ScreenAction:1:37", "Card:1:dismiss");
 	}
 }

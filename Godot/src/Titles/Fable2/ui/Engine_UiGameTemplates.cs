@@ -32,6 +32,7 @@ public static class Engine_UiGameTemplates
         {
           "name": "Game",
           "tag": "GUI_SCREEN_OPTIONS_GAME",
+          "command": "OptionsPage:Game",
           "icon": "Art\\GUI\\WheelIcons\\Abilities\\icon_logbook.tga",
           "eventType": 70
         },
@@ -45,6 +46,7 @@ public static class Engine_UiGameTemplates
             {
               "name": "Video",
               "tag": "GUI_SCREEN_OPTIONS_GAMMA",
+              "command": "OptionsPage:Video",
               "icon": "Art\\GUI\\WheelIcons\\Abilities\\icon_logbook.tga",
               "eventType": 72
             },
@@ -76,6 +78,7 @@ public static class Engine_UiGameTemplates
             {
               "name": "Controls",
               "tag": "GUI_SCREEN_OPTIONS_CONTROLS",
+              "command": "OptionsPage:Controls",
               "icon": "Art\\GUI\\WheelIcons\\Abilities\\icon_logbook.tga",
               "eventType": 71
             },
@@ -100,6 +103,7 @@ public static class Engine_UiGameTemplates
         {
           "name": "Audio",
           "tag": "GUI_SCREEN_OPTIONS_AUDIO",
+          "command": "OptionsPage:Audio",
           "icon": "Art\\GUI\\WheelIcons\\Abilities\\icon_logbook.tga",
           "eventType": 73
         }
@@ -1692,9 +1696,6 @@ public static class Engine_UiGameTemplates
       "ownsList": true,
       "restFromFile": true,
       "purse": true,
-      "commitsByHighlight": true,
-      "pageElement": "Foreground.ExpandableMenu",
-      "pageSlide": 2,
       "provider": "options",
       "fadesBottomEnd": false,
       "presentation": "optionsscreen",

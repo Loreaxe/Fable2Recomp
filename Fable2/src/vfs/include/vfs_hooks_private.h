@@ -228,10 +228,6 @@ uint32_t StatedShopkeeper();
 /// (hooks/gui_stated_screens.cpp).
 bool StatedPausePlayerTwo();
 
-/// Whether the abilities screen's `+4` (whose book it is), as its setter and its enter last
-/// stated it, names player two (hooks/gui_stated_screens.cpp).
-bool StatedAbilitiesPlayerTwo();
-
 /// The list key Godot states its front-end main menu's fold under (`RefiiHostSetListFoldDepth`);
 /// in-game screens are keyed by their TU1 id, all below 64.
 constexpr uint32_t kFrontEndMainMenuList = 1010u;
@@ -257,9 +253,11 @@ void AnswerParamText(uint32_t presentation, const char* name, const std::string&
 
 /// The guest's population ticket for the item `record` on the row registry every list screen
 /// shares, as its allocate and clear stated it (the lowest when several rows hold it), or 0 when
-/// no row holds it; and that registry, the argument its lookup `sub_82880BC0` takes, 0 before
-/// one was stated. Defined in hooks/menu_tickets_stated.cpp.
+/// no row holds it; the record a ticket was allocated for, 0 for a ticket the populate did not
+/// hand out; and that registry, the argument its lookup `sub_82880BC0` takes, 0 before one was
+/// stated. Defined in hooks/menu_tickets_stated.cpp.
 uint32_t MenuTicketForRecord(uint32_t record);
+uint32_t MenuRecordForTicket(uint32_t ticket);
 uint32_t MenuTicketRegistry();
 
 /// Posts one presentation event the host's slide playback stated (`PresentationEvent:` action,

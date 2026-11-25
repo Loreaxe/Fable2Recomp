@@ -28,10 +28,11 @@ using Refii.Ui;
 /// ITEM path makes (`vfn+32(screen14, 0)`) and so inherits the screen's last mode — the guest's
 /// own LB/RB behaves identically.
 ///
-/// The Saving group's children dispatch by EVENT — {type 2, param} alone, per `sub_826A5FC0`:
-/// param 0/1/2 open query boxes 23/24/25 (param 2 quits immediately when `sub_82448900` says
-/// there is no unsaved progress). The tab lever cannot express that, so these go through the
-/// guest-tick pump ("PauseSaving:<param>") and the guest's own query box takes the confirm.
+/// The Saving group's children are rows 0/1/2 of `sub_826A5FC0`'s {type 2, row} branch: they open
+/// query boxes 23/24/25 (row 2 quits immediately when `sub_82448900` says nothing is held). The
+/// row command names the row; the verb posts "PauseSaving:&lt;player&gt;:&lt;row&gt;" to the pump,
+/// whose ported root runs that branch (gui_screen_stub_pause_root.cpp) and the guest's own query box takes
+/// the confirm.
 /// </remarks>
 public static class Engine_PauseMenu
 {

@@ -164,7 +164,7 @@ public static class Engine_UiAbilitySource
 			// Expressed through the row's own `Counted` flag rather than a special case in the
 			// menu, because that flag already means exactly this.
 			bool upgradeable = !maxed &&
-				Engine_AbilityRecords.TryCost(record, level, out int next) &&
+				Engine_AbilityRecords.TryExperienceCost(record, level + 1, out int next) &&
 				next <= Affordable(vitals, category);
 
 			rows.Add(new Engine_UiMenuSources.Row(
@@ -297,17 +297,17 @@ public static class Engine_UiAbilitySource
 	/// already maxed, with the maxed tag's last character forced to '6'.
 	/// </summary>
 	/// <summary>
-	/// Y on one of the fourteen: the guest's discard confirm, then its own unlearn BY TYPE —
-	/// `Ability:unlearn:&lt;type&gt;`, `sub_8246D510` through the pump — which takes one level
-	/// back, refunds half its cost and opens its own result box. Never the guest's Y lever (code
-	/// 39): its YES handler (`sub_826C2B58`) resolves the ability from the guest menu's cached
-	/// highlight at screen+624, not from any pushed row, and that cache is not Godot's cursor —
-	/// Physique's Y took a level of Brutal Styles (2026-10-26). An ability with no level is the
-	/// guest's "cannot discard" text, told without a confirm. False when the record is not one
-	/// of the fourteen.
+	/// Y on one of the fourteen, as the guest's Y arm runs it (`sub_826C2D40` / `sub_826C2E68`): with the
+	/// guest's discard gate open for the row (Engine_AbilityDiscardGates, 0x826C2DC0 / 0x826C2EF0) the
+	/// discard confirm, whose YES is the guest's own unlearn BY TYPE — `Ability:&lt;p&gt;:unlearn:&lt;type&gt;`,
+	/// `sub_8246D510` behind the same gate natively — which takes one level back, refunds half its cost
+	/// and opens its own result box; with it shut, nothing (the arm falls through to its destructors).
+	/// Never the guest's Y lever (code 39): its YES handler (`sub_826C2B58`) resolves the ability from
+	/// the guest menu's cached highlight at screen+624. False when the row is not one of the fourteen.
 	/// </summary>
-	public static bool AskUnlearn(string record)
+	public static bool AskUnlearn(Engine_UiExpandableMenu.Item row)
 	{
+		string record = row.Name;
 		int type = 0;
 		foreach ((int candidate, string name, _) in Abilities)
 		{
@@ -323,6 +323,11 @@ public static class Engine_UiAbilitySource
 			return false;
 		}
 
+		if (!Engine_AbilityDiscardGates.IsOpenNow(Engine_AbilityDiscardGates.RowId(row.IdHigh, row.IdLow)))
+		{
+			return true;
+		}
+
 		Refii.Host.HostBridge.HeroVitals vitals = Refii.Host.HostBridge.GetHeroVitals();
 		int level = vitals.Known && vitals.AbilityLevels is { Length: > 14 } levels ? levels[type] : 0;
 		Refii.Text.Engine_BabelDatabase? book = Engine_UiInventorySource.Strings;
@@ -333,14 +338,8 @@ public static class Engine_UiAbilitySource
 				System.StringComparison.Ordinal);
 		}
 
-		if (level <= 0)
-		{
-			Engine_UiHostBoxes.Tell(Text("GUI_SCREEN_ABILITY_CANNOT_DISCARD_ABILITY"));
-			return true;
-		}
-
 		Engine_UiHostBoxes.Ask(Text("GUI_SCREEN_ABILITIES_DISCARD_CONFIRM"), () =>
-			Refii.Host.HostBridge.PostFrontEndAction($"{AbilityAction}unlearn:{type}"));
+			Engine_UiSource.Current.PostPlayerLever("Ability", $"unlearn:{type}"));
 		return true;
 	}
 

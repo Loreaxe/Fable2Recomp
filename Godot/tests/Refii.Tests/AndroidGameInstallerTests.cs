@@ -336,6 +336,56 @@ public sealed class AndroidGameInstallerTests
         data[at + 13] = (byte)name.Length; Encoding.ASCII.GetBytes(name).CopyTo(data, at + 14);
     }
 
+    /// <summary>
+    /// A package lifts exactly the title's update data files: Fable 3's collection file, bank and
+    /// bank data (never the build manifest), Fable 2's tu1_data.bnk, each under the update root's data\.
+    /// </summary>
+    [TestCase]
+    public void TitleUpdateLiftsExactlyTheTitlesDataFiles()
+    {
+        string root = Path.Combine(Refii.Tests.TestTemp.Root, "refii-tudata-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            byte[] data = new byte[0x13000];
+            Encoding.ASCII.GetBytes("LIVE").CopyTo(data, 0);
+            Be(data, 0x340, 0xb000); Be(data, 0x344, 0xb0000); Be(data, 0x360, 0x4d5308d6);
+            data[0x37c] = 1;
+            PackageEntry(data, 0xc000, "data", 0, 0, 0xffff, true);
+            PackageEntry(data, 0xc040, "default.xexp", 1, 1024, 0xffff, false);
+            PackageEntry(data, 0xc080, "package_collection_info.xmb", 2, 4, 0, false);
+            PackageEntry(data, 0xc0c0, "tu1.bnk", 3, 4, 0, false);
+            PackageEntry(data, 0xc100, "tu1.bnk.dat", 4, 4, 0, false);
+            PackageEntry(data, 0xc140, "tu1.manifest.pkg", 5, 4, 0, false);
+            PackageEntry(data, 0xc180, "tu1_data.bnk", 6, 4, 0, false);
+            Xex(true).CopyTo(data, 0xd000);
+            Encoding.ASCII.GetBytes("coll").CopyTo(data, 0xe000);
+            Encoding.ASCII.GetBytes("bank").CopyTo(data, 0xf000);
+            Encoding.ASCII.GetBytes("bdat").CopyTo(data, 0x10000);
+            Encoding.ASCII.GetBytes("mani").CopyTo(data, 0x11000);
+            Encoding.ASCII.GetBytes("f2tu").CopyTo(data, 0x12000);
+            string package = Path.Combine(root, "TU_package");
+            File.WriteAllBytes(package, data);
+
+            AssertThat(TitleUpdate.TryLoad(package, Refii.Core.Engine_Title.Fable3, out var fable3, out string error)).IsTrue();
+            AssertThat(error).IsEqual(string.Empty);
+            AssertThat(string.Join(",", fable3.DataFiles.Select(f => f.Name + "=" + Encoding.ASCII.GetString(f.Bytes))))
+                .IsEqual("package_collection_info.xmb=coll,tu1.bnk=bank,tu1.bnk.dat=bdat");
+
+            AssertThat(TitleUpdate.TryLoad(package, Refii.Core.Engine_Title.Fable2, out var fable2, out _)).IsTrue();
+            AssertThat(string.Join(",", fable2.DataFiles.Select(f => f.Name + "=" + Encoding.ASCII.GetString(f.Bytes))))
+                .IsEqual("tu1_data.bnk=f2tu");
+
+            string patch = Path.Combine(root, "assets", "Fable3", "game", "default.xexp");
+            AssertThat(Installer.GetTitleUpdateDataPath(patch, "tu1.bnk"))
+                .IsEqual(Path.Combine(root, "assets", "Fable3", "update", "data", "tu1.bnk"));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
     /// <summary>Builds a renamed LIVE TU fixture with a patch and a nested update bank.</summary>
     private static byte[] Package()
     {

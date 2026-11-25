@@ -1,6 +1,7 @@
 namespace Refii.Tests.Titles;
 
 using System.Collections.Generic;
+using System.Linq;
 using GdUnit4;
 using static GdUnit4.Assertions;
 using Refii.Titles.Fable3;
@@ -226,9 +227,12 @@ public class Fable3BoxScreenModelTests
 	[TestCase]
 	public void SaveMenuRowAndGhostingAreItsOpensStatements()
 	{
+		// The guest's order (TU3 sub_829B5480 / sub_829B5540 step the row by one): Save 1,
+		// Save and Quit 2, Quit 3, Character Management 4.
 		var screen = new Fable3ScreenState { SaveRow = 4, SaveAllowed = false };
 		Fable3ScreenPage page = Fable3ScreenModel.Compose("SaveMenu", new Dictionary<string, Probe>(), screen, Resolve)!.Value;
-		AssertThat(page.Selected).IsEqual(2);
+		AssertThat(string.Join(",", page.Rows.Select(row => row.Name))).IsEqual("Save,SaveAndQuit,Quit,CharacterManagement");
+		AssertThat(page.Selected).IsEqual(3);
 		AssertThat(page.Rows[0].Ghosted).IsTrue();
 		AssertThat(page.Rows[1].Ghosted).IsTrue();
 		AssertThat(page.Rows[3].Ghosted).IsFalse();
@@ -236,8 +240,14 @@ public class Fable3BoxScreenModelTests
 		screen.SaveRow = 3;
 		screen.SaveAllowed = true;
 		page = Fable3ScreenModel.Compose("SaveMenu", new Dictionary<string, Probe>(), screen, Resolve)!.Value;
-		AssertThat(page.Selected).IsEqual(3);
+		AssertThat(page.Selected).IsEqual(2);
+		AssertThat(page.Rows[page.Selected].Name).IsEqual("Quit");
 		AssertThat(page.Rows[0].Ghosted).IsFalse();
+
+		// Any other row is the highlight's Quit (TU3 0x829B53A4).
+		screen.SaveRow = 0;
+		page = Fable3ScreenModel.Compose("SaveMenu", new Dictionary<string, Probe>(), screen, Resolve)!.Value;
+		AssertThat(page.Rows[page.Selected].Name).IsEqual("Quit");
 	}
 
 	[TestCase]

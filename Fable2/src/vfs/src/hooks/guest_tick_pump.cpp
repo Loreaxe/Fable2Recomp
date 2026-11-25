@@ -151,26 +151,6 @@ PPC_EXTERN_FUNC(rex_lhGuiManager_FindScreenHandler);
 PPC_EXTERN_FUNC(rex_lhGuiPresentation_GetRootElement);  // the presentation's scene-root element
 PPC_EXTERN_FUNC(rex_lhGuiElement_GoToSlide);  // goToSlide(element, presentation, index)
 
-// The pause handler's event method — vtable slot +20 of 0x820CDE18, `(this, event)`.
-//
-// The event is three words: `+0` a pointer to a string body whose own `+0` is a `char*`
-// (dereferenced as `**(const char ***)a2`), `+4` the type, `+8` the param. Dispatch of the
-// Saving group is PURELY {type == 2, param}: the name is only strstr/strcmpi'd against the
-// tab names ("Map" and "Henchman" by SUBSTRING, Items/Weapons/Clothing/Abilities/Logbook/
-// Options/Kick exact) and must match none of them; it is never retained. param 0 opens query
-// box 23 (save and continue), 1 box 24 (save and quit), 2 box 25 (quit without saving) — or,
-// when `sub_82448900` says there is no unsaved progress, param 2 QUITS IMMEDIATELY with no
-// box at all. The opener `sub_8236FA68` requires the modal latch idle (`guiOwner+40 == 1`)
-// and parks the query id at `guiOwner+44`; the screen id stays 0 while the box is up, and
-// the guest's own input path answers it (action codes 46 confirm / 47 cancel).
-PPC_EXTERN_FUNC(rex_lhGuiPauseRootScreen_OnMenuEvent);
-
-// The ReceiveItemsScreen handler's SCREEN-INPUT method — vtable slot +24 of 0x820C0E08,
-// `(this, code, held)`. The non-modal input route (vtable+28 is the modal one): code 36 (A)
-// closes the card done, 39 (Y) flips it, 75 closes. The handler is the screen map's entry for
-// id 8 (`sub_8236FFC0(guiOwner, 8)`).
-PPC_EXTERN_FUNC(rex_lhGuiReceiveItemsScreen_OnScreenAction);
-
 // The MenuBox accept — `sub_823DC720(ctl)`, ctl = *(guiOwner+56). Reads the selected index
 // at ctl+0, checks the item's enabled byte, invokes the callback, and CLOSES/publishes
 // itself (player message 35/101). Refuses a disabled item.
@@ -902,9 +882,9 @@ constexpr uint32_t kCommandActivateItem = 2u;
 /// guest spawns one language entry per installed language with command 302 and the row index.
 constexpr const char* kActionLanguagePrefix = "Language:";
 
-/// "PauseSaving:<param>" — one of the pause menu's Saving children, by the guest's own
-/// {type 2, param} contract: 0 save-and-continue, 1 save-and-quit, 2 quit-without-saving.
-/// A number, not a name: the guest's dispatch never reads the name on this path.
+/// "PauseSaving:<player>:<row>" — one of the pause menu's Saving rows as the ported root answers
+/// it (gui_screen_stub_pause_root.cpp DispatchPauseSaving): 0 save-and-continue, 1 save-and-quit,
+/// 2 quit-without-saving.
 constexpr const char* kActionPauseSavingPrefix = "PauseSaving:";
 
 /// "PauseTab:<tab>" — a pause tab picked: 1 root, 2 map, 3 abilities, 4 items, 5 weapons,
@@ -1052,9 +1032,9 @@ constexpr const char* kActionCoopHeroHeldPrefix = "CoopHeroHeld:";
 /// loss and on a role change; the pump also runs it on the session's live→not-live edge.
 constexpr const char* kActionCoopHeroReset = "CoopHeroReset";
 
-/// "ReceiveItemsAction:<player>:<code>" — one press on the received-item card, through its handler's
-/// own screen-input method: 36 done, 39 flip, 75 close.
-constexpr const char* kActionReceiveItemsPrefix = "ReceiveItemsAction:";
+/// `Card:<p>:dismiss|equip` — the received-item card's Done and Equip now, see
+/// gui_screen_stub_receive_items.cpp DispatchCard.
+constexpr const char* kActionCardPrefix = "Card:";
 
 /// "MenuBoxSelect:<index>" — move the MenuBox highlight to a 0-based option, the guest's own
 /// way, so the drawn card follows the host highlight.
@@ -1098,12 +1078,16 @@ constexpr const char* kActionMenuEventPrefix = "MenuEvent:";
 /// `Inventory:<op>:<recordHash>` — see DispatchInventoryAction.
 constexpr const char* kActionInventoryPrefix = "Inventory:";
 
+/// `Items:<p>:…` / `Clothing:<p>:…` — the item books' rows, see DispatchItemLever.
+constexpr const char* kActionItemsPrefix = "Items:";
+constexpr const char* kActionClothingPrefix = "Clothing:";
+
 /// `InventoryFor:<player>:<op>:<recordHash>` — the same, on player 1's or 2's own hero when their
 /// menus are not the open ones (local co-op); see DispatchInventoryAction's `addressed`.
 constexpr const char* kActionInventoryForPrefix = "InventoryFor:";
 
-/// `Ability:learn:<index>` / `Ability:unlearn:<index>` — one level of one of the fourteen
-/// abilities bought or given back, see DispatchAbilityAction.
+/// `Ability:<p>:learn|unlearn:<index>` — one level of one of the fourteen abilities bought or given
+/// back for player p, see gui_screen_stub_abilities.cpp DispatchAbility.
 constexpr const char* kActionAbilityPrefix = "Ability:";
 
 /// `Furniture:upgrade:<level>` — the furniture screen's upgrade on a stated level, see
@@ -1124,8 +1108,9 @@ constexpr const char* kActionFurniturePrefix = "Furniture:";
 bool IsInGameUiAction(const std::string& name) {
   static constexpr const char* kPrefixes[] = {
       "MenuEvent:",   "ScreenAction:", "QueryAnswer:",
-      "BoxAction:",   "ReceiveItemsAction:", "MenuBoxSelect:", "MenuBoxAnswer:", "PauseTab:",
-      "ButtonBox:",   "AcceptHold", "PauseBack", "PauseCycle:", "CreditsEnd",
+      "BoxAction:",   "Card:", "MenuBoxSelect:", "MenuBoxAnswer:", "PauseTab:",
+      "ButtonBox:",   "AcceptHold", "PauseBack", "PauseCycle:", "CreditsEnd", "Options:",
+      "PauseClose:",
       kActionCoopPickSavePrefix, kActionCoopPickCursorPrefix,
   };
   for (const char* prefix : kPrefixes) {
@@ -1136,8 +1121,17 @@ bool IsInGameUiAction(const std::string& name) {
   return false;
 }
 
+/// THE PLAYER'S START is delivered where the guest's own input dispatch delivers it: `lhEngine_FrameUpdate`
+/// (0x821C8FB0 / disc 0x821C8F08) runs the action handlers `sub_821CCED8` at 0x821C9020 (`CGUIInput_vf6` →
+/// `sub_82403920` → `bl sub_82371B10`, r5 = 0, at 0x82403D50) and then the game-flow tick at 0x821C902C —
+/// every sim step, whatever state is on top. The GUI tick is skipped under a full cutscene (0x82287054
+/// `cmpwi cr6,r3,7`), so draining Start there held the press until the cutscene ended and then opened
+/// the book; the guest's own Start under state 7 opens nothing (r31 = 1 at 0x82371C7C: no lite box at
+/// 0x82371CA4, no book at 0x82371CEC). Drained at the flow tick's entry (rex_lhGameFlow_Tick), once.
+bool IsInputAction(const std::string& name) { return name.rfind("Start:", 0) == 0; }
+
 /// Takes the `<player>:` that leads the levers answering a handler — `QueryAnswer:`, `BoxAction:`,
-/// `ScreenAction:`, `ReceiveItemsAction:` — and returns it, 1 or 2; 0 when it is absent or out of
+/// `ScreenAction:`, `Card:` — and returns it, 1 or 2; 0 when it is absent or out of
 /// range. It is the handler's r5, which the guest fills from its GUI input object's vf+16
 /// (`sub_822A4E38` player one: 2 on an online joiner, else 1; `sub_828EDC88` player two: 2), read at
 /// 0x82404A90 for the modal router and 0x82404AC4 for the box chain. Godot states it
@@ -1255,100 +1249,6 @@ bool DispatchByName(PPCContext& ctx, uint8_t* base, const std::string& name,
   ctx.r4.u32 = record;
 
   rex_lhGui_FrontendRoot_MenuActionDispatch(ctx, base);
-
-  ctx = saved;
-  return true;
-}
-
-/// One of the pause menu's Saving children, dispatched the way the guest's own drain
-/// (`sub_82370450`) dispatches it: the pause handler's event method with {type 2, param}.
-///
-/// Drops rather than defers when the window is gone: the post is only made from the live pause
-/// root, so a failed gate means a stale request, and re-queuing would fire a save dialog over
-/// the next screen.
-bool DispatchPauseSavingEvent(PPCContext& ctx, uint8_t* base, uint32_t param) {
-  const uint32_t kPauseHandlerVtable = refii::guest::Address(0x820CDE18u);
-
-  // Stated: the pause ROOT is the screen up, no box is pending and the modal latch is idle.
-  uint32_t mode = 1u;
-  uint32_t modal = 0u;
-  if (refii_bridge_stated_pause(&mode, &modal, nullptr) == 0u || mode != 1u || modal != 0u ||
-      refii_bridge_stated_screen_now() != 0u) {
-    REXLOG_INFO("Refii guest-tick pump: PauseSaving:{} outside the pause root — dropped",
-                param);
-    return true;
-  }
-
-  // The handler for screen id 0, out of the guest's own map, checked against the pause handler's
-  // vtable before `sub_826A26E8` is called statically on it.
-  const PPCContext saved = ctx;
-  const uint32_t handler = InGameScreenHandler(ctx, base, 0u);
-  if (handler == 0u || LoadGuestU32(base, handler) != kPauseHandlerVtable) {
-    REXLOG_INFO("Refii guest-tick pump: PauseSaving:{} found no pause handler — dropped",
-                param);
-    return true;
-  }
-
-  // The same scratch-frame layout as DispatchByName: text, the 4-byte body pointing at it, then
-  // the three-word event. "Saving" matches none of the tab names, which is all the type-2 path
-  // asks of the name.
-  const uint32_t frame = (saved.r1.u32 - 0x80u) & ~0xFu;
-  const uint32_t text = frame + 0x20u;
-  const uint32_t body = frame + 0x60u;
-  const uint32_t record = frame + 0x68u;
-
-  static constexpr char kName[] = "Saving";
-  for (size_t i = 0; i < sizeof(kName); ++i) {
-    base[text + i] = static_cast<uint8_t>(kName[i]);
-  }
-
-  StoreGuestU32(base, body, text);
-  StoreGuestU32(base, record + 0u, body);
-  StoreGuestU32(base, record + 4u, 2u);
-  StoreGuestU32(base, record + 8u, param);
-
-  ctx.r1.u32 = frame;
-  ctx.r3.u32 = handler;
-  ctx.r4.u32 = record;
-
-  rex_lhGuiPauseRootScreen_OnMenuEvent(ctx, base);
-
-  ctx = saved;
-  return true;
-}
-
-/// One press on the received-item card, through its handler's own screen-input method.
-///
-/// SCREEN input, not modal input: the card is a pushed screen (id 8) whose handler consumes
-/// GameAction codes on vtable+24, not the modal router's +28, so the QueryAnswer lever cannot
-/// reach it. The handler comes from the guest's screen map and its vtable is checked first.
-/// Drops when stale: gated on the card being the stated screen with the modal latch idle.
-bool DispatchReceiveItemsAction(PPCContext& ctx, uint8_t* base, uint32_t code, uint32_t player) {
-  const uint32_t kReceiveItemsVtable = refii::guest::Address(0x820C0E08u);
-  constexpr uint32_t kReceiveItemsScreen = 8u;
-
-  uint32_t screen_id = 0;
-  if (!StatedInGameScreen(&screen_id) || screen_id != kReceiveItemsScreen) {
-    REXLOG_INFO("Refii guest-tick pump: ReceiveItemsAction:{} off the card screen — dropped",
-                code);
-    return true;
-  }
-
-  const PPCContext saved = ctx;
-  const uint32_t handler = InGameScreenHandler(ctx, base, kReceiveItemsScreen);
-  if (handler == 0u || LoadGuestU32(base, handler) != kReceiveItemsVtable) {
-    REXLOG_INFO("Refii guest-tick pump: ReceiveItemsAction:{} found no card handler — dropped",
-                code);
-    return true;
-  }
-
-  ctx.r3.u32 = handler;
-  ctx.r4.u32 = code;
-  // The acting player: the guest's dispatcher passes `inputObject->vtable+16()` (`sub_822A4E38`),
-  // 1 or 2 — never 0.
-  ctx.r5.u32 = player;
-
-  rex_lhGuiReceiveItemsScreen_OnScreenAction(ctx, base);
 
   ctx = saved;
   return true;
@@ -2293,7 +2193,8 @@ void DressOutfit(PPCContext& ctx, uint8_t* base, const PPCContext& saved, uint32
 }
 
 /// TRYING AN OUTFIT ON — `Inventory:tryon:<record>`, the remaster's preview of the highlighted
-/// outfit on screen 16's mannequin. The original changes the mannequin only on a press; in dye
+/// outfit on screen 16's mannequin. The mannequin is a preview body only: nothing here, and no
+/// lever, reads it to decide what the player wears (gui_screen_stub_clothing.cpp). The original changes the mannequin only on a press; in dye
 /// mode it already dresses it on HIGHLIGHT (`sub_826D31E0`), and that is the mechanism used here.
 ///
 /// First the mannequin is put back in the hero's clothes, as `sub_826D3358` does: the worn list
@@ -2488,32 +2389,30 @@ bool DispatchAugment(PPCContext& ctx, uint8_t* base, const std::string& argument
 }
 
 /// AN ITEM ROW COMMITTED THROUGH THE SCREEN THAT LISTS IT, so the screen's own answer runs with
-/// every side effect it has. Each list screen answers its item rows' event type 3:
+/// every side effect it has. Two list screens answer their item rows' event type 3 with a decision
+/// tree of the guest's own:
 ///
 ///   items 15 (`sub_826D1800`, disc `sub_8257D250`) — case 3 refuses a weapon while swimming
 ///   (0x826D1B5C, `GUI_CANNOT_EQUIP_WEAPON_WHILE_SWIMMING`), completes tutorial 188 (0x826D1BDC),
-///   activates `screen+396` (`lhGuiInventory_ActivateItemByCategory` 0x826D1BEC) and queues the
-///   `GUI_SCREEN_EXPRESSIONS_LEARNED` box for an expression book (0x826D1C9C..0x826D1DC8);
-///   clothing 16 (`sub_826D4D58`, disc `sub_825807F0`) — case 3 on `screen+244`: a dog item
-///   (Category 24, 0x826D5050) is activated and the screen exits (0x826D5060 / 0x826D506C, disc
-///   0x82580AF8 / 0x82580B04); a garment goes to `sub_826D3608` — its swimming refusal
-///   (`sub_826CB218` 0x826CB360), the OverrideOpenModel toggle (0x826D37B4) and tutorial 229
-///   (0x826D39F4);
+///   activates `screen+396` (`lhGuiInventory_ActivateItemByCategory` 0x826D1BEC), restates the
+///   weapons' rows (0x826D1C08) and queues the `GUI_SCREEN_EXPRESSIONS_LEARNED` box for an
+///   expression book (0x826D1C9C..0x826D1DC8);
 ///   gift 25 (`sub_826C45C8`, disc `sub_825A0568`) — looks the pushed id up in the row map
 ///   (0x826C46CC), asks query 15 (`GUI_GIFT_GIVING_SCREEN_WOULD_YOU_LIKE`, 0x826C4B80) and on
 ///   its YES (`sub_826C4CC0`) gives the item, or the orb in orb mode (`+48 == 1`,
 ///   `sub_826C5578`), then leaves the screen (0x826C4DEC, disc 0x825A0C58's twin).
 ///
-/// The row's id is the populate's TICKET for the item (MenuTicketForRecord, as the ticket
-/// allocator stated it). Items and clothing act on the handle their Update caches from the
-/// highlight, so the commit first makes the Update's own lookup for that ticket
-/// (`sub_82880BC0(registry, ticket, screen+cache)`, 0x826D1754 / 0x826D2EDC, disc `sub_827BE1E8`):
-/// a handle assign (`sub_8218DF38`), the same handle again when the Update already ran.
+/// The row's id is the populate's TICKET for the item: `ticket` when the populate filed it for
+/// `record` (MenuRecordForTicket), else the record's first row (MenuTicketForRecord). The items
+/// screen acts on the handle its Update caches from the highlight, so the commit first makes the
+/// Update's own lookup for that ticket (`sub_82880BC0(*(QM+60)+4, ticket, screen+396)`, 0x826D1754,
+/// disc `sub_827BE1E8`) and goes on only when the handle it leaves is an item of `record`.
 ///
-/// Player two's books keep the direct calls: the screens' answers act on player one.
+/// The clothing screen's rows are `Clothing:` levers (gui_screen_stub_clothing.cpp), and player
+/// two's books keep the direct calls: the screens' answers act on player one.
 /// False when this is not that screen, or the row is not on it.
 bool CommitItemThroughScreen(PPCContext& ctx, uint8_t* base, const std::string& op,
-                             uint32_t record) {
+                             uint32_t record, uint32_t ticket) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
   uint32_t screen_id = 0;
   if (!StatedInGameScreen(&screen_id) || IsCoopJoiner(base) || MenusActForPlayerTwo(base)) {
@@ -2523,13 +2422,13 @@ bool CommitItemThroughScreen(PPCContext& ctx, uint8_t* base, const std::string& 
   uint32_t cache = 0u;
   if (screen_id == 15u && (op == "use" || op == "equip")) {
     cache = 0x18Cu;
-  } else if (screen_id == 16u && (op == "wear" || op == "equip")) {
-    cache = 0xF4u;
   } else if (!(screen_id == 25u && op == "gift")) {
     return false;
   }
 
-  const uint32_t ticket = MenuTicketForRecord(record);
+  if (ticket == 0u || MenuRecordForTicket(ticket) != record) {
+    ticket = MenuTicketForRecord(record);
+  }
   if (ticket == 0u) {
     REXLOG_INFO("Refii guest-tick pump: Inventory:{} — record 0x{:08X} is on no row of screen "
                 "{}'s map", op, record, screen_id);
@@ -2554,6 +2453,12 @@ bool CommitItemThroughScreen(PPCContext& ctx, uint8_t* base, const std::string& 
     ctx.ctr.u32 = refii::guest::Address(0x82880BC0u);
     lookup(ctx, base);
     ctx = saved;
+    const uint32_t item = LoadGuestU32(base, screen + cache);
+    if (!plausible(item) || LoadGuestU32(base, item + 4u) != record) {
+      REXLOG_INFO("Refii guest-tick pump: Inventory:{} — ticket {} is not an item of record 0x{:08X} on "
+                  "screen {}", op, ticket, record, screen_id);
+      return false;
+    }
   }
 
   char name[32];
@@ -2572,7 +2477,7 @@ bool CommitItemThroughScreen(PPCContext& ctx, uint8_t* base, const std::string& 
 /// on through the direct calls player two's own book takes, never through the open screen's rows (they
 /// list the other player's inventory). Only use, equip, wear, outfit and unequip.
 bool DispatchInventoryAction(PPCContext& ctx, uint8_t* base, const std::string& body,
-                             int32_t addressed) {
+                             int32_t addressed, uint32_t ticket = 0u) {
   if (addressed != 0) {
     const uint32_t root = LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
     const uint32_t game = LooksLikeGuestPointer(root) ? LoadGuestU32(base, root + 12u) : 0u;
@@ -2613,28 +2518,6 @@ bool DispatchInventoryAction(PPCContext& ctx, uint8_t* base, const std::string& 
   // `tryon:0` is the one zero that means something: put the mannequin back in the hero's clothes.
   if (end == body.c_str() + colon + 1 || *end != '\0' || (hash == 0u && op != "tryon")) {
     REXLOG_INFO("Refii guest-tick pump: 'Inventory:{}' has no record hash — dropped", body);
-    return true;
-  }
-
-  // A ROW SEEN IS VIEWED. The "!" on an item row, its category and its pause tab is an unviewed
-  // item (`item+20 == 0`: `sub_826CE230` 0x826CE378, counted by `sub_826CF6A8`); the screen's
-  // highlight tick clears it on the row its cursor stands on (`sub_829B5160`: `*(item+20) = 1`
-  // at 0x829B55BC), and that cursor stops once Godot owns it — so the host states the row it
-  // highlights. Every record of the hero's inventory (component 13, the list at +0x10) with
-  // that id.
-  if (op == "viewed") {
-    const uint32_t entity = HeroEntity(base);
-    const uint32_t inventory = entity != 0u ? HeroComponent(base, entity, 13u) : 0u;
-    const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-    const uint32_t sentinel = inventory != 0u ? LoadGuestU32(base, inventory + 0x10u) : 0u;
-    uint32_t node = plausible(sentinel) ? LoadGuestU32(base, sentinel) : 0u;
-    for (uint32_t n = 0; plausible(node) && node != sentinel && n < 4096u; ++n, node = LoadGuestU32(base, node)) {
-      const uint32_t item = LoadGuestU32(base, node + 8u);
-      if (plausible(item) && LoadGuestU32(base, item + 4u) == static_cast<uint32_t>(hash) &&
-          LoadGuestU8(base, item + 0x14u) == 0u) {
-        StoreGuestU8(base, item + 0x14u, 1u);
-      }
-    }
     return true;
   }
 
@@ -2714,8 +2597,8 @@ bool DispatchInventoryAction(PPCContext& ctx, uint8_t* base, const std::string& 
   //   Then `sub_823E0FF8(entity, &handle, "")` uses it, or `sub_823F2718(component33, &handle)`
   //   gives it. `sub_823F2718` resolves the RECIPIENT itself, off the giver's property 77 and
   //   that object's vtable+68, so no target has to be supplied.
-  if (addressed == 0 && (op == "use" || op == "equip" || op == "wear" || op == "gift") &&
-      CommitItemThroughScreen(ctx, base, op, static_cast<uint32_t>(hash))) {
+  if (addressed == 0 && (op == "use" || op == "equip" || op == "gift") &&
+      CommitItemThroughScreen(ctx, base, op, static_cast<uint32_t>(hash), ticket)) {
     return true;
   }
 
@@ -2961,105 +2844,20 @@ bool DispatchInventoryAction(PPCContext& ctx, uint8_t* base, const std::string& 
   return true;
 }
 
-/// BUYING AN ABILITY LEVEL — `Ability:learn:<1..14>`.
-///
-/// The abilities screen answers a press on one of its rows through `sub_826C2660`'s switch:
-/// event types 20 and 21 reach `sub_826C2D40`, event type 22 reaches `sub_826C2E68`, and each
-/// calls one two-argument function that does the whole transaction:
-///
-///   `sub_8246C970(index, whichHero)`   Strength and Skill (indices 1..6)
-///   `sub_8246CF48(index, whichHero)`   Will (indices 7..14)
-///
-/// Both read NOTHING from the screen, the menu, Lua or `g_Param` — the hero comes out of
-/// `dword_83496AB8`, and everything else off the hero's own components (57 abilities,
-/// 164 experience). Inside, they take the max level from `sub_824E2D40`, test affordability
-/// with `sub_824E4E28`, read `ExperienceCost` (GDB type 1) off the next level's record through
-/// `sub_824E49D0`, spend it with `sub_8256E2F0` and raise the level with `sub_824E2F28` — which
-/// is also where the morph recompute, the spell-slot rebuild and the stat writes happen. Calling
-/// the outer function rather than the five primitives is what keeps all of that.
-///
-/// `whichHero` IS 1, NOT 0, and the difference is the whole call. The screen computes it as
-/// `screen+4 == 0` — `lwz r11, 4(r31); cntlzw r10, r11; extrwi r29, r10, 1,26` at 0x826C2D58,
-/// which is the "player index is zero" BIT, not the index. `sub_8246C970` then branches
-/// `if (a2) hero = sub_8222C1B8(...) else hero = sub_828E5A78(...)`, so 0 would fetch the other
-/// hero entirely. It is read off the screen object exactly so: a book opened for player two
-/// passes 0, and player two's hero (`sub_828E5A78`) spends player two's experience.
-///
-/// The guest puts up its own result box (`sub_8236FA68`, `guiMgr+40 = 2`) either way — the
-/// tutorial text on success, `GUI_SCREEN_ABILITY_YOU_DO_NOT_HAVE_ENOUGH_EXPERIENCE` or
-/// `GUI_SCREEN_ABILITIES_MAXED` on refusal. That is the feedback, and it arrives through the
-/// message-box path the host already mirrors.
-bool DispatchAbilityAction(PPCContext& ctx, uint8_t* base, const std::string& body) {
-  const std::size_t colon = body.rfind(':');
-  const bool unlearn = colon != std::string::npos && body.compare(0, colon, "unlearn") == 0;
-  if (colon == std::string::npos || (!unlearn && body.compare(0, colon, "learn") != 0)) {
-    REXLOG_INFO("Refii guest-tick pump: 'Ability:{}' is not learn:<index> or unlearn:<index> — "
-                "dropped", body);
+/// THE ITEM BOOKS' ROWS, as levers that carry the acting player, the row's ticket and its record:
+/// `Items:<p>:use|equip:<ticket>:<record>` on the items screen (15), `Clothing:<p>:wear|outfit:<ticket>:
+/// <record>` and `Clothing:<p>:remove:<event type 91..97>` on the clothing screen (16). The items screen's
+/// row is its own handler's type 3 arm on that ticket (CommitItemThroughScreen); the clothing screen's
+/// are gui_screen_stub_clothing.cpp's, decided on the player's worn list. An online joiner's hero is not
+/// the one the guest's screen code picks (the `game+140` chooser), and player two's items commit to no
+/// pending record of their own: both take the direct inventory call (DispatchInventoryAction).
+bool DispatchItemLever(PPCContext& ctx, uint8_t* base, bool clothing, uint32_t player, const std::string& verb,
+                       uint32_t ticket, uint32_t value) {
+  const std::string direct = (clothing && verb == "remove" ? std::string("unequip") : verb) + ":" + std::to_string(value);
+  if (clothing && !IsCoopJoiner(base) && refii::vfs::DispatchClothing(ctx, base, player, verb, ticket, value)) {
     return true;
   }
-
-  char* end = nullptr;
-  const unsigned long index = std::strtoul(body.c_str() + colon + 1, &end, 10);
-  if (end == body.c_str() + colon + 1 || *end != '\0' || index < 1u || index > 14u) {
-    REXLOG_INFO("Refii guest-tick pump: 'Ability:{}' names no ability 1..14 — dropped", body);
-    return true;
-  }
-
-  // Learn: Strength 1..3 and Skill 4..6 share one entry point; Will 7..14 has its own. Unlearn
-  // is one function for all fourteen (`sub_8246D510`): the level back by one (`sub_824E2F28`),
-  // half that level's cost refunded, and its own result box. All three take (index, hero flag)
-  // and read nothing from the screen, which is why the discard is CALLED BY TYPE here rather
-  // than pushed at the menu: the guest's YES handler (`sub_826C2B58`) resolves the ability from
-  // its menu's cached highlight at screen+624, never from the pushed row, and that cache is not
-  // Godot's cursor — Physique's Y took a level of Brutal Styles (2026-10-26).
-  const uint32_t entry = unlearn      ? refii::guest::Address(0x8246D510u)
-                         : index <= 6u ? refii::guest::Address(0x8246C970u)
-                                       : refii::guest::Address(0x8246CF48u);
-  const char* verb = unlearn ? "unlearn" : "learn";
-  PPCFunc* function = FindGuestFunction(entry);
-  if (function == nullptr) {
-    REXLOG_INFO("Refii guest-tick pump: Ability:{}:{} — 0x{:08X} is not callable here", verb,
-                index, entry);
-    return true;
-  }
-
-  // THE HERO FLAG IS THE SCREEN'S OWN: `screen+4 == 0` (0x826C2D58, disc 0x8259ED08), as its
-  // setter and its enter stated it (StatedAbilitiesPlayerTwo). The handler is looked up only to
-  // hand to the ghosting call below.
-  const uint32_t screen = InGameScreenHandler(ctx, base, 14u);
-  if (screen == 0u) {
-    REXLOG_INFO("Refii guest-tick pump: Ability:{}:{} with no abilities screen — dropped", verb,
-                index);
-    return true;
-  }
-  const bool player_two = StatedAbilitiesPlayerTwo();
-  const PPCContext saved = ctx;
-  ctx.r3.u32 = static_cast<uint32_t>(index);
-  ctx.r4.u32 = player_two ? 0u : 1u;
-  ctx.ctr.u32 = entry;
-  function(ctx, base);
-  const bool done = (ctx.r3.u32 & 0xFFu) != 0u;
-  ctx = saved;
-
-  // A Will ability bought restates the Spell Selector row's ghosting, as the screen's own Will
-  // purchase `sub_826C2E68` does after `sub_8246CF48` succeeds (0x826C2EE0, disc 0x8259EE88):
-  // `sub_826C2C88(screen)` (disc `sub_8259EC38`) ghosts "SpellAssigning" by
-  // `lhGuiWillAssignWidget_CanOpen` and runs `UpdateAllGhosting`, both recorded for Godot's model.
-  if (done && !unlearn && index >= 7u) {
-    if (PPCFunc* ghost = FindGuestFunction(refii::guest::Address(0x826C2C88u))) {
-      ctx.r3.u32 = screen;
-      ctx.ctr.u32 = refii::guest::Address(0x826C2C88u);
-      ghost(ctx, base);
-      ctx = saved;
-    }
-  }
-
-  REXLOG_INFO("Refii guest-tick pump: Ability:{}:{} ran 0x{:08X}(index {}, hero {}) — {}", verb,
-              index, entry, index, player_two ? 2 : 1,
-              done      ? (unlearn ? "one level given back" : "bought")
-              : unlearn ? "refused (no level to give back)"
-                        : "refused (maxed, or not enough experience)");
-  return true;
+  return DispatchInventoryAction(ctx, base, direct, 0, ticket);
 }
 
 extern "C" int32_t RefiiFurnitureUpgrade(PPCContext* ctx, uint8_t* base, int32_t level);
@@ -8878,11 +8676,6 @@ void SampleHeroDerived(PPCContext& ctx, uint8_t* base) {
 /// Commits a menu row by identity — see kActionMenuEventPrefix.
 bool DispatchMenuEvent(PPCContext& ctx, uint8_t* base, const std::string& name, uint32_t type,
                        uint32_t id) {
-  // The abilities screen's learn/discard arm (handler `+198`, read by `sub_826C2D40`) is the
-  // guest's: 1 from the constructor (0x826c1fa4), and written only by its own input method
-  // `sub_826C2958` — A sets it, Y clears it (0x826c2b30 / disc 0x8259eae0). Godot sends no Y to
-  // this screen (the discard is `Ability:unlearn:<index>`, by type), so it stays armed.
-
   // The screen's own handler, called with the event. The guest's Lua event queue
   // (`guieventqueue.lua`, drained by `sub_82370450`) is cut with the rest of its UI Lua, so a
   // class this build cannot call is reported, not pushed.
@@ -9259,16 +9052,19 @@ bool PerformQuickslot(PPCContext& ctx, uint8_t* base, uint32_t player, uint32_t 
   return done;
 }
 
+enum class DrainPass { kTick, kGui, kInput };
+
 /// Whether the in-game GUI is up: its init stated the screen set (rex_lhGuiScreenSet_ShowRoot)
 /// and its Gameface has not been destroyed since.
 bool InGameGuiUp() { return refii_bridge_stated_pause(nullptr, nullptr, nullptr) != 0u; }
 
-/// One pass over the queue. `ui_pass` false is the tick-delegate pass (the simulation's
-/// actions: inventory, abilities, co-op, the front end); true is the GUI-tick pass inside the
-/// Lua window (IsInGameUiAction). An action for the other pass is put back untouched. An
-/// in-game GUI action posted with no in-game GUI up is dropped here rather than held: held, it
-/// fired the moment the next game came up.
-void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
+/// One pass over the queue. kTick is the tick-delegate pass (the simulation's actions: inventory,
+/// abilities, co-op, the front end); kGui the GUI-tick pass inside the Lua window
+/// (IsInGameUiAction); kInput the game-flow tick's entry, where the guest's input dispatch has just
+/// run (IsInputAction). An action for another pass is put back untouched. An in-game action posted
+/// with no in-game GUI up is dropped here rather than held: held, it fired the moment the next game
+/// came up.
+void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
   const uint32_t taken = GuestTickPumpBeginDrain();
   if (taken == 0) {
     return;
@@ -9285,13 +9081,15 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
     const std::string name = GuestTickPumpTakenAction(slot);
     bool ran = false;
 
+    const bool input_action = IsInputAction(name);
     const bool ui_action = IsInGameUiAction(name);
-    if (ui_action && !gui_up) {
+    if ((ui_action || input_action) && !gui_up) {
       REXLOG_INFO("Refii guest-tick pump: '{}' posted with no in-game GUI up — dropped", name);
       GuestTickPumpNoteRan();
       continue;
     }
-    if (ui_action != ui_pass) {
+    const DrainPass wanted = input_action ? DrainPass::kInput : ui_action ? DrainPass::kGui : DrainPass::kTick;
+    if (wanted != pass) {
       GuestTickPumpDeferAction(name);
       continue;
     }
@@ -9652,28 +9450,107 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
       ran = DispatchInventoryAction(ctx, base,
                                     name.substr(std::strlen(kActionInventoryPrefix)), 0);
       refii_bridge_ui_data_changed();
+    } else if (name.rfind(kActionItemsPrefix, 0) == 0 || name.rfind(kActionClothingPrefix, 0) == 0) {
+      // Only on the book the lever names, with no box up (the consequences' own gate, `QM+40 == 0`).
+      const bool clothing = name.rfind(kActionClothingPrefix, 0) == 0;
+      std::string rest = name.substr(std::strlen(clothing ? kActionClothingPrefix : kActionItemsPrefix));
+      const uint32_t player = TakeActingPlayer(rest);
+      const size_t colon = rest.find(':');
+      const std::string verb = colon == std::string::npos ? std::string() : rest.substr(0, colon);
+      unsigned long ticket = 0ul;
+      unsigned long value = 0ul;
+      const char* numbers = colon == std::string::npos ? "" : rest.c_str() + colon + 1;
+      const bool remove = clothing && verb == "remove";
+      const bool parsed = remove ? std::sscanf(numbers, "%lu", &value) == 1
+                                 : std::sscanf(numbers, "%lu:%lu", &ticket, &value) == 2;
+      const bool known = clothing ? (verb == "wear" || verb == "outfit" || remove) : (verb == "use" || verb == "equip");
+      if (player == 0u || !known || !parsed || value == 0ul) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' is not {} — dropped", name,
+                    clothing ? "Clothing:<p>:wear|outfit:<ticket>:<record> or Clothing:<p>:remove:<type>"
+                             : "Items:<p>:use|equip:<ticket>:<record>");
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      uint32_t modal = 0u;
+      const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
+      if (!up || modal != 0u || refii_bridge_stated_screen_now() != (clothing ? 16u : 15u)) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name,
+                    refii_bridge_stated_screen_now(), modal);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      ran = DispatchItemLever(ctx, base, clothing, player, verb, static_cast<uint32_t>(ticket),
+                              static_cast<uint32_t>(value));
+      refii_bridge_ui_data_changed();
     } else if (name.rfind(kActionInventoryForPrefix, 0) == 0) {
       const std::string rest = name.substr(std::strlen(kActionInventoryForPrefix));
       const int32_t player = rest.size() > 2 && rest[1] == ':' ? rest[0] - '0' : 0;
       ran = DispatchInventoryAction(ctx, base, player != 0 ? rest.substr(2) : rest, player != 0 ? player : -1);
       refii_bridge_ui_data_changed();
     } else if (name.rfind(kActionAbilityPrefix, 0) == 0) {
-      ran = DispatchAbilityAction(ctx, base,
-                                  name.substr(std::strlen(kActionAbilityPrefix)));
+      // `Ability:<p>:learn|unlearn:<1..14>` — only on the abilities screen with no box up (its
+      // OnMenuEvent's own gate, `QM+44 == 0` 0x826C268C), gui_screen_stub_abilities.cpp DispatchAbility.
+      std::string rest = name.substr(std::strlen(kActionAbilityPrefix));
+      const uint32_t player = TakeActingPlayer(rest);
+      const size_t colon = rest.find(':');
+      const std::string verb = colon == std::string::npos ? std::string() : rest.substr(0, colon);
+      char* end = nullptr;
+      const unsigned long index =
+          colon == std::string::npos ? 0ul : std::strtoul(rest.c_str() + colon + 1, &end, 10);
+      uint32_t modal = 0u;
+      const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
+      if (player == 0u || (verb != "learn" && verb != "unlearn") || end == nullptr || *end != '\0' || index < 1u ||
+          index > 14u) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' is not Ability:<p>:learn|unlearn:<1..14> — dropped", name);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      if (!up || modal != 0u || refii_bridge_stated_screen_now() != 14u) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name,
+                    refii_bridge_stated_screen_now(), modal);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      ran = refii::vfs::DispatchAbility(ctx, base, player, verb == "unlearn", static_cast<uint32_t>(index));
       refii_bridge_ui_data_changed();
     } else if (name.rfind(kActionFurniturePrefix, 0) == 0) {
       ran = DispatchFurnitureAction(ctx, base, name.substr(std::strlen(kActionFurniturePrefix)));
       refii_bridge_ui_data_changed();
     } else if (name == kActionRegisterPlayer) {
       ran = DispatchRegisterPlayer(ctx, base);
+    } else if (name.rfind("Start:", 0) == 0) {
+      // `Start:<player>` — the player's Start through the guest's own handler (gui_screen_stub_pause_root.cpp),
+      // which keeps every gate of its own; the pad's Start never reaches the guest in game.
+      std::string rest = name.substr(std::strlen("Start:")) + ":";
+      const uint32_t player = rest.size() == 2u ? TakeActingPlayer(rest) : 0u;
+      if (player == 0u) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' names no player — dropped", name);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      ran = refii::vfs::DispatchStart(ctx, base, player);
+    } else if (name.rfind("PauseClose:", 0) == 0) {
+      // `PauseClose:<player>` — the pause root's B at the top of its list. Only on the root with no
+      // box up.
+      std::string rest = name.substr(std::strlen("PauseClose:")) + ":";
+      const uint32_t player = rest.size() == 2u ? TakeActingPlayer(rest) : 0u;
+      uint32_t modal = 0u;
+      const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
+      if (player == 0u || !up || modal != 0u || refii_bridge_stated_screen_now() != 0u) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name,
+                    refii_bridge_stated_screen_now(), modal);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      ran = refii::vfs::DispatchPauseClose(ctx, base, player);
     } else if (name == "PauseBack" || name.rfind("PauseCycle:", 0) == 0) {
       // `PauseBack` / `PauseCycle:<player>:prev|next` — a ported book's B at its root and its LB /
-      // RB, the spine calls its handler made (gui_screen_stubs.cpp). Only on a ported book with no
-      // box up.
+      // RB, the spine calls its handler made (gui_screen_stub_book_levers.cpp). Only on a ported book with no
+      // box up; the root (0) takes the cycle only — its B is `PauseClose:`.
       uint32_t modal = 0u;
       const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
       const uint32_t screen = refii_bridge_stated_screen_now();
-      if (!up || modal != 0u || screen != 17u) {
+      if (!up || modal != 0u || ((screen < 14u || screen > 18u) && (screen != 0u || name == "PauseBack"))) {
         REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name, screen, modal);
         GuestTickPumpNoteRan();
         continue;
@@ -9689,6 +9566,46 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
           continue;
         }
         ran = refii::vfs::DispatchPauseCycle(ctx, base, screen, player, rest == "next");
+      }
+    } else if (name.rfind("Options:", 0) == 0) {
+      // `Options:<p>:<setting>:<value>` / `Options:<p>:audio:<sfx>:<music>:<speech>:<speaker>` — the
+      // options screen's settings through the guest's setters (gui_screen_stub_options.cpp). Only on the
+      // options screen with no box up.
+      uint32_t modal = 0u;
+      const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
+      std::string rest = name.substr(std::strlen("Options:"));
+      const uint32_t player = TakeActingPlayer(rest);
+      const size_t colon = rest.find(':');
+      if (!up || modal != 0u || refii_bridge_stated_screen_now() != 18u || player == 0u || colon == std::string::npos) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name,
+                    refii_bridge_stated_screen_now(), modal);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      const std::string setting = rest.substr(0, colon);
+      const std::string values = rest.substr(colon + 1u);
+      if (setting == "audio") {
+        float levels[3] = {0.0f, 0.0f, 0.0f};
+        unsigned speaker = 0u;
+        if (std::sscanf(values.c_str(), "%f:%f:%f:%u", &levels[0], &levels[1], &levels[2], &speaker) != 4 ||
+            speaker > 2u) {
+          REXLOG_INFO("Refii guest-tick pump: '{}' is not sfx:music:speech:speaker — dropped", name);
+          GuestTickPumpNoteRan();
+          continue;
+        }
+        for (float& level : levels) {
+          level = std::clamp(level, 0.0f, 1.0f);
+        }
+        ran = refii::vfs::DispatchOptionsAudioCommit(ctx, base, levels, speaker);
+      } else {
+        char* end = nullptr;
+        const double value = std::strtod(values.c_str(), &end);
+        if (end == values.c_str() || *end != '\0' || value < 0.0 || value > 4.0) {
+          REXLOG_INFO("Refii guest-tick pump: '{}' has no value — dropped", name);
+          GuestTickPumpNoteRan();
+          continue;
+        }
+        ran = refii::vfs::DispatchOptions(ctx, base, player, setting, value);
       }
     } else if (name == "CreditsEnd") {
       if (refii_bridge_stated_screen_now() != 29u) {
@@ -9718,16 +9635,19 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
       REXLOG_INFO("Refii guest-tick pump: SetRumbleEnabled({})", work.r3.u32);
       ran = true;
     } else if (name.rfind(kActionPauseSavingPrefix, 0) == 0) {
-      const std::string index = name.substr(std::strlen(kActionPauseSavingPrefix));
-      char* end = nullptr;
-      const unsigned long value = std::strtoul(index.c_str(), &end, 10);
-      if (end == index.c_str() || *end != '\0' || value > 2u) {
-        REXLOG_INFO("Refii guest-tick pump: '{}' has no saving param — dropped", name);
+      // Only on the pause root with no box up: a stale row would open a confirm over the next screen.
+      std::string index = name.substr(std::strlen(kActionPauseSavingPrefix));
+      const uint32_t player = TakeActingPlayer(index);
+      uint32_t modal = 0u;
+      const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
+      if (player == 0u || index.size() != 1u || index[0] < '0' || index[0] > '2' || !up || modal != 0u ||
+          refii_bridge_stated_screen_now() != 0u) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name,
+                    refii_bridge_stated_screen_now(), modal);
         GuestTickPumpNoteRan();
         continue;
       }
-
-      ran = DispatchPauseSavingEvent(ctx, base, static_cast<uint32_t>(value));
+      ran = refii::vfs::DispatchPauseSaving(ctx, base, player, static_cast<uint32_t>(index[0] - '0'));
     } else if (name.rfind(kActionQueryAnswerPrefix, 0) == 0) {
       // `QueryAnswer:<player>:<code>[@<modal id>]` — the id names the box the surface drew.
       std::string codeText = name.substr(std::strlen(kActionQueryAnswerPrefix));
@@ -9752,19 +9672,24 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, bool ui_pass) {
       }
 
       ran = DispatchQueryAnswer(ctx, base, static_cast<uint32_t>(code), addressed, modal_id, player);
-    } else if (name.rfind(kActionReceiveItemsPrefix, 0) == 0) {
-      std::string codeText = name.substr(std::strlen(kActionReceiveItemsPrefix));
-      const uint32_t player = TakeActingPlayer(codeText);
-      char* end = nullptr;
-      const unsigned long code = std::strtoul(codeText.c_str(), &end, 10);
-      if (player == 0u || end == codeText.c_str() || *end != '\0' ||
-          (code != 36u && code != 39u && code != 75u)) {
-        REXLOG_INFO("Refii guest-tick pump: '{}' has no card code — dropped", name);
+    } else if (name.rfind(kActionCardPrefix, 0) == 0) {
+      // Only while the card is the stated screen with no box over it.
+      std::string verb = name.substr(std::strlen(kActionCardPrefix));
+      const uint32_t player = TakeActingPlayer(verb);
+      uint32_t modal = 0u;
+      refii_bridge_stated_pause(nullptr, &modal, nullptr);
+      if (player == 0u || (verb != "dismiss" && verb != "equip")) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' is not Card:<p>:dismiss|equip — dropped", name);
         GuestTickPumpNoteRan();
         continue;
       }
-
-      ran = DispatchReceiveItemsAction(ctx, base, static_cast<uint32_t>(code), player);
+      if (modal != 0u || refii_bridge_stated_screen_now() != 8u) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name,
+                    refii_bridge_stated_screen_now(), modal);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      ran = refii::vfs::DispatchCard(ctx, base, player, verb);
     } else if (name.rfind(kActionScreenActionPrefix, 0) == 0) {
       std::string codeText = name.substr(std::strlen(kActionScreenActionPrefix));
       const uint32_t player = TakeActingPlayer(codeText);
@@ -10519,7 +10444,7 @@ void OnGuestTick(PPCContext& ctx, uint8_t* base) {
   refii_bridge_menu_settle();
   StateMenuOwner(ctx, base);
 
-  DrainOnGuestThread(ctx, base, /*ui_pass=*/false);
+  DrainOnGuestThread(ctx, base, DrainPass::kTick);
 
   // Hard mods' per-tick callbacks (core/refii_mod.h).
   RunModTicks(ctx, base);
@@ -10572,8 +10497,8 @@ void OnGuestTick(PPCContext& ctx, uint8_t* base) {
 /// `lwz r11, 0(r5)`, empty literal if zero, else `lwz r4, 0(r11)` into the wide-to-UTF-8
 /// conversion (0x826E4804 / 0x826CE930 on TU1).
 void OnMenuSpawn(PPCContext& ctx, uint8_t* base, bool stack_rating) {
-  const std::string name = ReadGuestLhString(base, ctx.r4.u32);
-  const std::string parent = ReadGuestLhString(base, ctx.r7.u32);
+  const std::string name = Latin1ToUtf8(ReadStatedLhBytes(base, ctx.r4.u32));
+  const std::string parent = Latin1ToUtf8(ReadStatedLhBytes(base, ctx.r7.u32));
   const std::string label = ReadStatedWideLhString(base, ctx.r5.u32);
   const int32_t rating =
       stack_rating ? static_cast<int32_t>(LoadGuestU32(base, ctx.r1.u32 + 0x54u)) : 0;
@@ -10607,7 +10532,7 @@ REX_EXTERN(rex_lhGuiManager_TickUpdate) {
   REX_FUNC_PROLOGUE();
 
   // The in-game GUI's own actions, inside the Lua window — see IsInGameUiAction.
-  refii::vfs::DrainOnGuestThread(ctx, base, /*ui_pass=*/true);
+  refii::vfs::DrainOnGuestThread(ctx, base, refii::vfs::DrainPass::kGui);
 
   static std::atomic<uint32_t> gui_ticks{0};
   if ((gui_ticks.fetch_add(1, std::memory_order_relaxed) % 8u) == 0u) {
@@ -10646,6 +10571,36 @@ REX_EXTERN(rex_lhGuiManager_TickUpdate) {
   refii::vfs::SamplePropertyEstate(ctx, base);
 
   __imp__rex_lhGuiManager_TickUpdate(ctx, base);
+}
+
+// THE GAME-FLOW TICK `sub_821762C0` (disc `sub_82176088`), called by `lhEngine_FrameUpdate` once a sim
+// step right after the guest's input dispatch (0x821C9020 / 0x821C902C; disc 0x821C9078 / 0x821C9084).
+// It runs only the top state's sim-step slot (0x821764C4 `lwz r10,0x18(r11)`, 0x821764CC `bctrl`; disc
+// 0x8217628C). Two things are stated here:
+//   - the player's Start (IsInputAction), drained at the entry where the guest's own dispatch delivered it;
+//   - THE WORLD HELD, key 19: whether the step ran no world tick. `sub_82275F68(world)` (disc
+//     `sub_82275F00`) is the world's sim tick — game time, actions, the animation components — and has two
+//     callers, PlayGame's step (0x821D49D8 / disc 0x821D4788) and the full cutscene's (0x823D98D0 / disc
+//     0x82460EB0). The display box state (vt 0x820AED78 / disc 0x820B3BE8) and GUI mode (0x820AEC7C /
+//     0x820B3AEC) have `nullsub_1` in that slot (+0x18 = 0x82B96E78 `blr`), so under the lite pause box
+//     and the pause book the guest's world does not advance.
+namespace {
+thread_local bool t_world_ticked = false;
+constexpr uint32_t kWorldHeld = 19u;
+}  // namespace
+
+REX_EXTERN(rex_lhGameFlow_Tick) {
+  REX_FUNC_PROLOGUE();
+  refii::vfs::DrainOnGuestThread(ctx, base, refii::vfs::DrainPass::kInput);
+  t_world_ticked = false;
+  __imp__rex_lhGameFlow_Tick(ctx, base);
+  refii_bridge_stated_value(kWorldHeld, t_world_ticked ? 0u : 1u);
+}
+
+REX_EXTERN(rex_lhWorld_SimTick) {
+  REX_FUNC_PROLOGUE();
+  t_world_ticked = true;
+  __imp__rex_lhWorld_SimTick(ctx, base);
 }
 
 // The attractiveness ratio, read from the page's own store after its writer runs.

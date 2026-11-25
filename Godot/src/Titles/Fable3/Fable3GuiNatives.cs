@@ -72,6 +72,11 @@ public partial class Fable3GuiNatives : Node
 		_router.Register("@Box.Dropped", call => _queued.Remove(Parse(call.Argument(0).Text)));
 		_router.Register("@Box.Close", call => BoxClosed(Parse(call.Argument(1).Text)));
 
+		// The screen manager SM = *(GUI+0x1C) destroyed (TU3 sub_82334A48, disc sub_8232D740; the GUI
+		// shutdown, Save and Quit and the quit to the front end): it frees the box manager +0x30 with
+		// both queues, the menu box +0x34 and the save menu +0x38 without closing any of them.
+		_router.Register("@Screens.Destroyed", _ => ScreensDestroyed());
+
 		// ---- THE OPTIONS SCREEN: its handler's state as it returns (options_hooks.cpp) ----------
 		_router.Register("@Options.State", call => Fable3OptionsState.Stated(call));
 
@@ -564,6 +569,26 @@ public partial class Fable3GuiNatives : Node
 	/// <summary>The screen boxes showing, by the guest's box address, and each one's kind.</summary>
 	private readonly HashSet<uint> _screens = new();
 	private readonly Dictionary<uint, string> _screenKinds = new();
+
+	/// <summary>
+	/// `@Screens.Destroyed(sm)`: every box queued or showing on the freed manager, its menu box and
+	/// the save menu went with it (display_box_hooks.cpp rex_ScreenManager_Destroy).
+	/// </summary>
+	private void ScreensDestroyed()
+	{
+		var closing = new List<uint>(_shown.Keys);
+		closing.AddRange(_screens);
+		foreach (uint address in closing)
+		{
+			BoxClosed(address);
+		}
+
+		_queued.Clear();
+		_queuedOrder.Clear();
+		Boxes.CloseMenuBox();
+		Fable3UiStatements.ScreensDestroyed();
+		GD.Print($"[fable3-boxes] screen manager destroyed: {closing.Count} box(es) closed with it, menu box and save menu closed");
+	}
 
 	private void BoxClosed(uint address)
 	{

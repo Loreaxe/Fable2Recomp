@@ -512,6 +512,40 @@ public sealed class Engine_UiExpandableMenu
 		return null;
 	}
 
+	/// <summary>
+	/// The visible entry <paramref name="name"/> names — by its name, else by its stated label. Of
+	/// several, the one whose event type and full id (`(IdHigh &lt;&lt; 16) | IdLow`) are
+	/// <paramref name="type"/> / <paramref name="id"/>, else the first. Null when none is visible.
+	/// </summary>
+	public Item? VisibleNamed(string name, int type, uint id)
+	{
+		foreach (bool byLabel in new[] { false, true })
+		{
+			Item? first = null;
+			foreach (Item row in Visible)
+			{
+				if (!string.Equals(byLabel ? row.StatedLabel : row.Name, name, System.StringComparison.Ordinal))
+				{
+					continue;
+				}
+
+				if (row.EventType == type && (((uint)row.IdHigh << 16) | ((uint)row.IdLow & 0xFFFFu)) == id)
+				{
+					return row;
+				}
+
+				first ??= row;
+			}
+
+			if (first is not null)
+			{
+				return first;
+			}
+		}
+
+		return null;
+	}
+
 	/// <summary>`GetMenuItemVisibleIdx(name)` — 1-based, or 0 when the entry is not visible.</summary>
 	public int VisibleIndexOf(Item item)
 	{

@@ -128,6 +128,12 @@ public abstract class Engine_TitleGame
 	public virtual System.Collections.Generic.Dictionary<string, object?>? DebugRequest(
 		string op, System.Text.Json.JsonElement request) => null;
 
+	/// <summary>
+	/// The debug channel's `menu event` (name, event type, id): how the title presses that row. Null
+	/// when its lists are not Godot's, and the channel posts the guest's <c>MenuEvent</c> as before.
+	/// </summary>
+	public virtual System.Collections.Generic.Dictionary<string, object?>? DebugMenuEvent(string name, int type, uint id) => null;
+
 	/// <summary>The debug-channel ops <see cref="DebugRequest"/> answers.</summary>
 	public virtual System.Collections.Generic.IReadOnlyList<string> DebugOps => System.Array.Empty<string>();
 

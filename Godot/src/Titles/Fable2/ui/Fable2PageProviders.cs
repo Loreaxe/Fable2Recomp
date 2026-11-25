@@ -350,7 +350,14 @@ public static class Fable2PageProviders
 		public IReadOnlyDictionary<string, string> Values(in Engine_UiPageContext page) =>
 			Engine_UiAbilityPage.Values(
 				page.Row, page.Vitals.AbilityLevels, page.Vitals.ExperienceAvailable,
-				page.Hero.SpellDamage, page.Strings);
+				page.Hero.SpellDamage, page.Strings,
+				page.Row is { } row && Engine_AbilityDiscardGates.IsOpenNow(
+					Engine_AbilityDiscardGates.RowId(row.IdHigh, row.IdLow)));
+
+		/// <summary>Discard at 100 when the guest's gate is open for the row, at 50 when shut.</summary>
+		public IReadOnlyDictionary<string, float> Opacities(in Engine_UiPageContext page) =>
+			Engine_UiAbilityPage.DiscardOpacities(page.Row, page.Row is { } row &&
+				Engine_AbilityDiscardGates.IsOpenNow(Engine_AbilityDiscardGates.RowId(row.IdHigh, row.IdLow)));
 
 		public IReadOnlyDictionary<string, uint> Textures(in Engine_UiPageContext page) =>
 			Engine_UiAbilityPage.Textures(page.Row);

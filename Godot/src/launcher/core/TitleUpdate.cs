@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Refii.Launcher.Stfs;
 
@@ -15,21 +16,18 @@ namespace Refii.Launcher.Core;
 /// same title id and the same file name and is rejected by the loader at run time, long after
 /// the install, so it is rejected here first.
 ///
-/// The package also ships the update's data bank, <c>tu1_data.bnk</c>: the scripts and text the
-/// update changed. The patched guest opens it as <c>update:\data\tu1_data.bnk</c> on every
-/// boot (GameInit_MountDataFileSystems, 0x822F2868) and layers it over the game data, so the
-/// bank is lifted out with the patch. A bare .xexp has none.
+/// The package also ships the update's data: the scripts and text the update changed. The patched
+/// guest reads the title's <see cref="Refii.Core.Engine_Title.TitleUpdateDataFiles"/> from
+/// <c>update:\data\</c> on every boot and layers them over the game data, so they are lifted out
+/// with the patch. A bare .xexp has none.
 /// </remarks>
 public sealed class TitleUpdate
 {
 	private const int HeadLength = 64 * 1024;
 	private const string PatchExtension = ".xexp";
 
-	/// <summary>The data bank's name, the one the guest opens on the update volume.</summary>
-	public const string DataBankName = "tu1_data.bnk";
-
-	/// <summary>Where the bank goes under the update root: the guest asks for <c>data\</c>.</summary>
-	public static readonly string DataBankRelativePath = Path.Combine("data", DataBankName);
+	/// <summary>Where a data file goes under the update root: the guest asks for <c>data\</c>.</summary>
+	public static string DataRelativePath(string name) => Path.Combine("data", name);
 
 	public string SourcePath = string.Empty;
 
@@ -39,10 +37,11 @@ public sealed class TitleUpdate
 	/// <summary>The patch bytes, whole.</summary>
 	public byte[] Patch = Array.Empty<byte>();
 
-	/// <summary>The data bank's bytes, whole; empty when the source carried none.</summary>
-	public byte[] DataBank = Array.Empty<byte>();
-
-	public bool HasDataBank => DataBank.Length != 0;
+	/// <summary>
+	/// The title's update data files the package carried (name, bytes), in the title's order; empty
+	/// for a bare .xexp or a package without them.
+	/// </summary>
+	public List<(string Name, byte[] Bytes)> DataFiles = new();
 
 	public XexIdentity Identity = new();
 
@@ -53,7 +52,14 @@ public sealed class TitleUpdate
 	/// <summary>
 	/// Loads the patch from a path that is either a .xexp or an STFS package holding one.
 	/// </summary>
-	public static bool TryLoad(string path, out TitleUpdate update, out string error)
+	public static bool TryLoad(string path, out TitleUpdate update, out string error) =>
+		TryLoad(path, Refii.Core.Engine_Title.Active, out update, out error);
+
+	/// <summary>
+	/// Loads the patch, and from a package <paramref name="title"/>'s update data files, from a path
+	/// that is either a .xexp or an STFS package holding one.
+	/// </summary>
+	public static bool TryLoad(string path, Refii.Core.Engine_Title title, out TitleUpdate update, out string error)
 	{
 		update = new TitleUpdate { SourcePath = path };
 		error = string.Empty;
@@ -110,11 +116,14 @@ public sealed class TitleUpdate
 				return false;
 			}
 
-			// The bank is part of the update, not a condition of it: a package without one
-			// installs its patch alone, as a bare .xexp does.
-			if (!StfsPackage.TryReadFile(path, IsDataBankEntry, out _, out update.DataBank, out _))
+			// The data is part of the update, not a condition of it: a package without it installs
+			// its patch alone, as a bare .xexp does.
+			foreach (string name in title.TitleUpdateDataFiles)
 			{
-				update.DataBank = Array.Empty<byte>();
+				if (StfsPackage.TryReadFile(path, entry => IsDataEntry(entry, name), out _, out byte[] bytes, out _))
+				{
+					update.DataFiles.Add((name, bytes));
+				}
 			}
 		}
 		else
@@ -145,9 +154,9 @@ public sealed class TitleUpdate
 	private static bool IsPatchEntry(StfsPackage.Entry entry) =>
 		entry.Name.EndsWith(PatchExtension, StringComparison.OrdinalIgnoreCase);
 
-	private static bool IsDataBankEntry(StfsPackage.Entry entry) =>
+	private static bool IsDataEntry(StfsPackage.Entry entry, string name) =>
 		!entry.IsDirectory &&
-		string.Equals(entry.Name, DataBankName, StringComparison.OrdinalIgnoreCase);
+		string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>Whether this patch applies to the given base executable.</summary>
 	public bool AppliesTo(XexIdentity executable, out string error)

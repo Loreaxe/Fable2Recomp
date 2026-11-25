@@ -359,6 +359,13 @@ public static class Fable3Elements
 			ByPath.Remove(key);
 		}
 
+		// A new hud.bgf (the GUI rebuilt after the quit to the front end) has a root no writer has
+		// spoken for; ui_stated_hooks.cpp states the new root's first write.
+		if (document == HudDocument)
+		{
+			HudRootState = null;
+		}
+
 		NextStamp();
 		Log($"[fable3-elements] {presentation:X8} loads '{file}' as document '{document}'" +
 			(drop.Count == 0 ? string.Empty : $" ({drop.Count} element(s) of its previous load forgotten)"));

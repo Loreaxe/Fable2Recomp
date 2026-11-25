@@ -209,6 +209,10 @@ void NoteStatedSlide(uint32_t element, uint32_t presentation, int32_t slide);
 void NoteStatedEntry(uint32_t presentation, const std::string& path);
 /// A presentation loaded into an empty slot: its stated slides and entries start afresh.
 void ForgetPresentationReaders(uint32_t presentation);
+/// hud.bgf loaded into an empty slot: `@Hud.Root` states the new root's first write (screen_stated_hooks.cpp).
+void ForgetHudRoot();
+/// The save menu freed with its screen manager: `@SaveMenu.Row` states the next menu's first write.
+void ForgetSaveMenu();
 /// The path setter (SetStateAt / RestartStateAt) running on this thread names the owner its
 /// GuiElement_SetState reaches.
 class StatedPathScope {

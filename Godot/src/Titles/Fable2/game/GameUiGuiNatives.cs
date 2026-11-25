@@ -827,18 +827,14 @@ public partial class GameUi
 			box.MarketplaceOffer = call.Argument(2).Text;
 		});
 
-		// `DisplayReceivedMoney(amount)` / `DisplayReceivedDiscount(percent)` — one toast, two
-		// differences: the discount displays `100 - argument`, and the money line is hardcoded
-		// and unlocalised ("+N Gold") while the discount goes through Babel.
-		_guiNatives.Register("DisplayReceivedMoney", call =>
-			_boxes.InfoBoxEx("ReceivedMoney", Engine_UiGuiBoxes.InfoBoxSeconds,
-				$"+{(int)call.Argument(0).Number} Gold"));
-
-		_guiNatives.Register("DisplayReceivedDiscount", call =>
-			_boxes.InfoBoxEx("ReceivedDiscount", Engine_UiGuiBoxes.InfoBoxSeconds,
-				Engine_UiGuiText.Substitute(
-					Engine_UiGuiText.Resolve("INV_ITEM_DISCOUNT", _presentation?.Strings),
-					new[] { (100 - (int)call.Argument(0).Number).ToString() })));
+		// `DisplayReceivedMoney(amount)` / `DisplayReceivedDiscount(percent)` open the received-item
+		// card (screen 8) on `ObjectInventoryGoldBag` / `ObjectInventoryDiscount` (`sub_823C44E8` /
+		// `sub_823C45E8`): a pausing card that waits for its Done, stated by the card's own draw and
+		// drawn by Engine_UiReceiveItemsSurface.
+		const string receivedCard =
+			"opens the received-item card (screen 8), which its own surface draws from the card's stated draw";
+		_guiNatives.Observe("DisplayReceivedMoney", receivedCard);
+		_guiNatives.Observe("DisplayReceivedDiscount", receivedCard);
 
 		// `DisplayCornerBoxTradeItemInfo(name, ...)` is not a box: it publishes three corner-text
 		// records keyed by the name and two suffixed variants. Persistent — no lifetime float,

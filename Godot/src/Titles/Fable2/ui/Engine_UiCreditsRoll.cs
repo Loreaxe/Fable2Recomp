@@ -94,13 +94,16 @@ public sealed partial class Engine_UiCreditsRoll : Control
 
 	public override void _Draw()
 	{
-		if (Fonts is null || Size.Y <= 0f)
+		// The viewport, not the control's own rect: a Control under a bare CanvasLayer was measured
+		// at size (0, 0) here, and the roll drew nothing for its whole 645 s.
+		Vector2 size = GetViewportRect().Size;
+		if (Fonts is null || size.Y <= 0f)
 		{
 			return;
 		}
 
-		float scale = Size.Y / 720f;
-		Vector2 centre = Size * 0.5f;
+		float scale = size.Y / 720f;
+		Vector2 centre = size * 0.5f;
 		foreach (Line line in _lines)
 		{
 			if (Fonts.For(line.Size) is not { } picked)
@@ -108,14 +111,34 @@ public sealed partial class Engine_UiCreditsRoll : Control
 				continue;
 			}
 
+			// The credits carry the guest's colour tags (`<s4>Microsoft Game Studios</s4>`): drawn as
+			// runs in their tint, as every other game text is (Engine_UiTextMarkup.Split).
 			(UiFont font, float fontScale) = picked;
 			float textScale = fontScale * scale;
-			float width = Engine_UiCanvasText.Measure(font, line.Text) * textScale;
+			List<Engine_UiTextMarkup.Run> runs = Engine_UiTextMarkup.Split(line.Text);
+			float width = 0f;
+			foreach (Engine_UiTextMarkup.Run run in runs)
+			{
+				if (run.Tag is null && !run.Break)
+				{
+					width += Engine_UiCanvasText.Measure(font, run.Text) * textScale;
+				}
+			}
+
 			float height = font.Font.LineHeight * textScale;
 			var origin = new Vector2(
 				centre.X + (line.At.X * scale) - (width * 0.5f),
 				centre.Y - (line.At.Y * scale) - (height * 0.5f));
-			Engine_UiCanvasText.DrawLine(this, font, line.Text, origin, textScale, line.Colour);
+			foreach (Engine_UiTextMarkup.Run run in runs)
+			{
+				if (run.Tag is not null || run.Break)
+				{
+					continue;
+				}
+
+				Color tint = run.Colour is { } c ? new Color(c.R, c.G, c.B, line.Colour.A) : line.Colour;
+				origin.X += Engine_UiCanvasText.DrawLine(this, font, run.Text, origin, textScale, tint);
+			}
 		}
 	}
 }

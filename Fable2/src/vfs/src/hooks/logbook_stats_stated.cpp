@@ -40,7 +40,7 @@ void Add(refii::vfs::GuiNativeCall& call, std::string value) {
 }  // namespace
 
 // The opener's return target is the world map when it is the screen up (`*(PS+4) == 23`,
-// 0x823C4924; disc 0x16): stated for the ported logbook's B (gui_screen_stubs.cpp).
+// 0x823C4924; disc 0x16): stated for the ported logbook's B (gui_screen_stub_book_levers.cpp).
 REX_EXTERN(rex_lhGuiLogbookScreen_OpenOnPlayer) {
     REX_FUNC_PROLOGUE();
     g_other_players_stats.store(ctx.r4.u32);

@@ -1,14 +1,15 @@
 // THE GUI'S PREVIEW FIGURES, STATED. The preview scene `*(GUI + 8)` keeps one 24-byte record per
 // figure a screen stands on a page: `+4` the entity's smart-pointer holder (`*holder` the entity),
 // `+16` its ticket. Three figures exist, each made inside its own function:
-//   - the clothing screen's mannequin: `lhGuiClothingScreen_OnEnter` → `sub_826D7650` (0x826d2c68,
-//     disc 0x8257e6a0), which spawns a `CreatureHeroMannequin*` and files it;
+//   - the clothing screen's mannequin: its ported OnEnter (gui_screen_stub_clothing.cpp) keeps the
+//     guest's `sub_826D7650` (0x826d2c68, disc 0x8257e6a0), which spawns a `CreatureHeroMannequin*`
+//     and files it;
 //   - the co-op screen's player-one mannequin: its open `sub_82436548` → `sub_826D7650`
 //     (0x82436a2c, disc `sub_82477768` 0x82477c4c);
 //   - the co-op screen's henchman: `lhCoopScreen_SpawnPreviewMannequin`, which spawns it and files
 //     the record itself (0x824389a0, disc 0x82479bc0).
 // Each of the three names its figure for the filing it makes (SetPreviewFigureRole; the clothing
-// screen's and the henchman's hooks are coop_hero_hooks.cpp and coop_player_hooks.cpp).
+// screen's is its ported OnEnter, the henchman's hook is coop_player_hooks.cpp).
 //
 //   filed   `sub_826D81C8(records, record)` (disc `sub_823FDDB0`), the vector's push; its only
 //           callers are the two above (0x826d7e18 / 0x824389a0, disc 0x823fda00 / 0x82479bc0).

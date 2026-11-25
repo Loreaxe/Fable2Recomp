@@ -164,6 +164,9 @@
 0x82621E48 = { name = "rex_MenuBox_SetEnabled" }
 0x82621DC0 = { name = "rex_MenuBox_Highlight" }
 0x826226D8 = { name = "rex_MenuBox_Accept" }
+# The screen manager SM = *(GUI+0x1C)'s destructor (save menu +0x38, menu box +0x34, box manager +0x30),
+# from the GUI shutdown sub_823332D0 (0x82333360); disc sub_8232D740.
+0x82334A48 = { name = "rex_ScreenManager_Destroy" }
 0x82B51118 = { name = "rex_GuiInput_MenuAction" }
 # The options (Fable3/src/hooks/src/options_hooks.cpp): the audio appliers — sfx, voice, music
 # (A, f1) and the speaker mode (A, mode) — the Options screen's gamma applier (screen), the
@@ -917,6 +920,110 @@
 0x823F9610 = { size = 0x8 }
 0x823FDA18 = { size = 0x1A0 }
 0x823FDBB8 = { size = 0x5C }
+# The first TU3 install (2026-11-25) against the built module's registered list (refii_init.cpp):
+# its unresolved targets (bl 0x8239EB50 from 0x8239E6E8 / 0x8239E720; b 0x82809A58 from the thunk
+# 0x8280A390), the boot fault 'Call to invalid or unregistered function at guest address 0x828BD238'
+# (a 16-byte vcall thunk `lwz r12,0(r3); lwz r11,0x68(r12); mtctr r11; bctr`, its neighbours
+# 0x828BD248 / 0x828BD298 / 0x828BD2E8 / 0x828BD2F8 likewise), and every other TU3 IDA function, .rdata/
+# .data word and code-formed pointer at code outside every generated function. Switch cases (IDA's
+# jumptable labels, inline tables in .text) and targets inside a generated function's own extent are
+# not functions and are left out. Each is sized by IDA's flow and ends on b / blr / bctr; nine stop at
+# the shared tail the generator already registered (0x8239C8C4 `b Lua_Cinematic_UnMountVFS`; seven
+# `li r3,0; blr`; 0x8296E8B4).
+0x8228A288 = { size = 0x1C }
+0x82295D7C = { size = 0x8 }
+0x82301770 = { size = 0x48 }
+0x823380C8 = { size = 0x28 }
+0x8238B708 = { size = 0x10 }
+0x8238D858 = { size = 0x10 }
+0x8239C3C0 = { size = 0x8 }
+0x8239C8A8 = { size = 0x1C }
+0x8239EB50 = { size = 0xE0 }
+0x823AAA58 = { size = 0xC }
+0x823F0CD0 = { size = 0x14 }
+0x823FB0D0 = { size = 0x8 }
+0x824473D8 = { size = 0x10 }
+0x824474E0 = { size = 0x14 }
+0x82448128 = { size = 0x10 }
+0x82459600 = { size = 0x14 }
+0x824C1CE8 = { size = 0x14 }
+0x824E6B60 = { size = 0x10 }
+0x824E6C78 = { size = 0x10 }
+0x824E7340 = { size = 0x10 }
+0x82504080 = { size = 0x8 }
+0x8254FD18 = { size = 0x50 }
+0x825BE910 = { size = 0x178 }
+0x825EC9E0 = { size = 0x10 }
+0x8261CEF0 = { size = 0x10 }
+0x8261CFF8 = { size = 0x10 }
+0x8261D100 = { size = 0xC }
+0x8262D4F0 = { size = 0x8 }
+0x826BE548 = { size = 0x4 }
+0x826D77B0 = { size = 0x14 }
+0x826D78C0 = { size = 0x18 }
+0x826D7CC8 = { size = 0x8 }
+0x826E4740 = { size = 0x110 }
+0x82722020 = { size = 0x10 }
+0x827225B8 = { size = 0xC }
+0x82734DA0 = { size = 0xC }
+0x827864C0 = { size = 0x48 }
+0x8279F110 = { size = 0x4C }
+0x827A0090 = { size = 0x8 }
+0x827C3DA8 = { size = 0x8 }
+0x827CABA8 = { size = 0x10 }
+0x82809A58 = { size = 0xF0 }
+0x8280AAB0 = { size = 0x10 }
+0x8280ABD0 = { size = 0xC }
+0x82827F18 = { size = 0x14 }
+0x82848A70 = { size = 0x14 }
+0x8286ED28 = { size = 0x54 }
+0x8288FC90 = { size = 0x10 }
+0x828BB5B0 = { size = 0x10 }
+0x828BD238 = { size = 0x10 }
+0x828BD248 = { size = 0x10 }
+0x828BD298 = { size = 0x10 }
+0x828BD2E8 = { size = 0x10 }
+0x828BD2F8 = { size = 0x10 }
+0x828C5B18 = { size = 0x54 }
+0x828E1EF8 = { size = 0x8 }
+0x828E20F0 = { size = 0x54 }
+0x828F0660 = { size = 0xC }
+0x82914FE0 = { size = 0x10 }
+0x82923DDC = { size = 0x8 }
+0x8292E4F0 = { size = 0x20 }
+0x8292E898 = { size = 0x8 }
+0x8296E068 = { size = 0x14 }
+0x8296E630 = { size = 0x14 }
+0x8296E878 = { size = 0x3C }
+0x8296E9D0 = { size = 0xC }
+0x8296EAD0 = { size = 0x4 }
+0x8298F568 = { size = 0x3C }
+0x82991D88 = { size = 0x8 }
+0x82A12178 = { size = 0x8 }
+0x82A14DF0 = { size = 0x8 }
+0x82A310F8 = { size = 0x118 }
+0x82A35F90 = { size = 0x8 }
+0x82A428F8 = { size = 0x54 }
+0x82A47B38 = { size = 0x54 }
+0x82AB9378 = { size = 0x8 }
+0x82AB9980 = { size = 0x10 }
+0x82AB9A80 = { size = 0x34 }
+0x82AE58E8 = { size = 0x4C }
+0x82B1ADF8 = { size = 0x14 }
+0x82C32EE8 = { size = 0x8 }
+0x82C3A520 = { size = 0x8 }
+0x82D97640 = { size = 0x8 }
+0x82DF1000 = { size = 0x10 }
+0x82E30758 = { size = 0xC }
+0x82E425D8 = { size = 0x1C }
+0x82E7C918 = { size = 0x8 }
+0x82E83400 = { size = 0x8 }
+0x82E83F08 = { size = 0x8 }
+0x82EAA0F8 = { size = 0x8 }
+0x82ECA240 = { size = 0x10 }
+0x830603E0 = { size = 0x40 }
+0x831433F0 = { size = 0x1C }
+0x8326F4C8 = { size = 0xC }
 0x82406FE0 = { size = 0x8 }
 0x82413018 = { size = 0x1A0 }
 0x824131B8 = { size = 0x5C }

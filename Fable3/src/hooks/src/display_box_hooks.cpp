@@ -100,6 +100,7 @@ REX_EXTERN(__imp__rex_MenuBox_Close);
 REX_EXTERN(__imp__rex_MenuBox_Input);
 REX_EXTERN(__imp__rex_MenuBox_AddRow);
 REX_EXTERN(__imp__rex_MenuBox_SetEnabled);
+REX_EXTERN(__imp__rex_ScreenManager_Destroy);
 REX_EXTERN(rex_MessageBox_HandleInput);
 REX_EXTERN(rex_QueryBox_HandleInput);
 REX_EXTERN(rex_NatalQueryBox_HandleInput);
@@ -773,4 +774,25 @@ REX_EXTERN(rex_MenuBox_Input) {
                        mapped == kMenuActionSelect
                    ? 1u
                    : 0u;
+}
+
+/// SM's destructor, SM = *(GUI+0x1C) (TU3 sub_82334A48, disc sub_8232D740), from the GUI shutdown
+/// sub_823332D0 (0x82333360), the members' destructor sub_82331E60 (0x82332218) and sub_825ECD70
+/// (0x825ECF28). It frees the save menu +0x38, the menu box +0x34 and the box manager +0x30 with both
+/// queues (stores 0 at 0x82334ADC / 0x82334B18 / 0x82334B94; disc 0x8232D7D4 / 0x8232D810 / +0x30)
+/// without closing a box, the menu box or the save menu: Save and Quit and the quit to the front end
+/// end every one of them here. `@Screens.Destroyed(sm)`.
+REX_EXTERN(rex_ScreenManager_Destroy) {
+  const uint32_t manager = ctx.r3.u32;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    Queued().clear();
+    ShowingBoxes().clear();
+    MenuRows().clear();
+    g_menu = 0u;
+    g_modal = 0u;
+  }
+  refii::fable3::ForgetSaveMenu();
+  Statement("@Screens.Destroyed").Add(Text(Hex(manager))).Post();
+  __imp__rex_ScreenManager_Destroy(ctx, base);
 }

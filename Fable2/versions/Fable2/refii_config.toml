@@ -47,7 +47,7 @@
 0x82175E40 = { size = 0x14 }
 0x82176008 = { size = 0x8 }
 0x82176010 = { name = "rex_lhHeightfieldManager_ResetGrid", size = 0x78 }
-0x82176088 = { name = "rex_lhCamera_Update", size = 0x218 }
+0x82176088 = { name = "rex_lhGameFlow_Tick", size = 0x218 }
 0x8217AB30 = { name = "rex_wcslen", size = 0x24 }
 0x8217B840 = { size = 0x17C }
 0x8267C630 = { size = 0x174 }
@@ -10762,6 +10762,7 @@
 0x8245C228 = { name = "rex_CGameModePause_ctor" }
 0x8233A198 = { name = "rex_GameFlow_QueueCommand" }
 0x8233A280 = { name = "rex_GameFlow_PopCommand" }
+0x82275F00 = { name = "rex_lhWorld_SimTick" }
 0x825AD498 = { name = "rex_lhLuaScriptSystem_LoadStartupScripts" }
 0x825AE828 = { name = "rex_lhLuaScriptSystem_RunCameraScripts" }
 0x8273DA00 = { name = "rex_CECAbilities_PerformRequest" }
@@ -10784,8 +10785,11 @@
 0x82483AB0 = { name = "rex_CECHitReceiver_OnHit" }
 0x82433400 = { name = "rex_CECCreature_Die" }
 0x8268E920 = { name = "rex_CECHealth_OnHeroDeath" }
-0x824036D8 = { name = "rex_CGUIReceiveItems_SetItem" }
-0x82403A08 = { name = "rex_CGUIReceiveItems_SetPeerItem" }
+# The received-item card (S7, gui_screen_stub_receive_items.cpp): its draw states the card, its
+# OnEnter / Update / OnScreenAction are replaced in full, its OnLeave is wrapped.
+0x824040B0 = { name = "rex_CGUIReceiveItems_DrawCard", size = 0x2DC }
+0x82402608 = { name = "rex_lhGuiReceiveItemsScreen_OnEnter", size = 0x108 }
+0x82402758 = { name = "rex_lhGuiReceiveItemsScreen_Update", size = 0x16C }
 0x82402710 = { name = "rex_CGUIReceiveItems_OnLeave" }
 0x8268AB30 = { name = "rex_CECHealth_OnHit" }
 0x8268BD90 = { name = "rex_CECHealth_Modify" }
@@ -11366,6 +11370,11 @@
 0x82469850 = { name = "rex_lhTextureMorph_StateWildcard" }
 0x824B8428 = { name = "rex_lhFx_SpawnFromDefProperty" }
 0x8240EAA0 = { name = "rex_lhGuiPauseRootScreen_OnMenuEvent" }
+0x8240DD98 = { name = "rex_lhGuiPauseRootScreen_OnEnter", size = 0xA18 }
+0x8240E7B0 = { name = "rex_lhGuiPauseRootScreen_Update", size = 0x2EC }
+0x8240EBC0 = { name = "rex_lhGuiPauseRootScreen_OnScreenAction", size = 0x148 }
+0x8240ED08 = { name = "rex_lhGuiPauseRootScreen_OnModalAnswer", size = 0x110 }
+0x8240EE18 = { name = "rex_lhGuiPauseRootScreen_OnExit", size = 0x228 }
 0x82591B50 = { name = "rex_lhGuiCrimeScreen_OnMenuEvent", size = 0x3E0 }
 0x82591F30 = { name = "rex_lhGuiCrimeScreen_OnScreenAction" }
 0x8258D7A0 = { name = "rex_lhGuiExpressionWheel_SetCursorFromStick" }
@@ -11414,8 +11423,8 @@
 0x82580BB8 = { name = "rex_lhGuiClothingScreen_OnScreenAction", size = 0x360 }
 0x825822B0 = { name = "rex_lhGuiLogbookScreen_OnMenuEvent" }
 0x82582380 = { name = "rex_lhGuiLogbookScreen_OnScreenAction", size = 0x28C }
-# The ported screens (S7, gui_screen_stubs.cpp): handler slots replaced in full. The logbook's
-# OnMenuEvent / OnScreenAction and the minigame / quest-completion HandleAction rows are above. The disc has no screen 13.
+# The ported screens (S7, gui_screen_stub_*.cpp): handler slots replaced in full. The logbook's
+# and abilities' OnMenuEvent / OnScreenAction and the minigame / quest-completion HandleAction rows are above. The disc has no screen 13.
 0x82581A68 = { name = "rex_lhGuiLogbookScreen_OnEnter", size = 0x390 }
 0x82581DF8 = { name = "rex_lhGuiLogbookScreen_Update", size = 0x4B8 }
 0x82582610 = { name = "rex_lhGuiLogbookScreen_OnExit", size = 0x44 }
@@ -11427,6 +11436,13 @@
 0x8258CAD8 = { name = "rex_lhGuiMinigameCompletedScreen_Update", size = 0x68 }
 0x82582C60 = { name = "rex_lhGuiOptionsScreen_OnMenuEvent", size = 0x1F0 }
 0x82582E50 = { name = "rex_lhGuiOptionsScreen_OnScreenAction", size = 0x2EC }
+0x82582968 = { name = "rex_lhGuiOptionsScreen_OnEnter", size = 0x178 }
+0x82582AE0 = { name = "rex_lhGuiOptionsScreen_Update", size = 0x34 }
+0x82582B18 = { name = "rex_lhGuiOptionsScreen_OnExit", size = 0x34 }
+0x8259E0C8 = { name = "rex_lhGuiAbilitiesScreen_OnEnter", size = 0x1F0 }
+0x8259E358 = { name = "rex_lhGuiAbilitiesScreen_Update", size = 0xD4 }
+0x8259EB08 = { name = "rex_lhGuiAbilitiesScreen_OnModalAnswer", size = 0x130 }
+0x8259E2B8 = { name = "rex_lhGuiAbilitiesScreen_OnExit", size = 0xA0 }
 0x826C72A8 = { name = "rex_lhGui_FrontendRoot_OnScreenAction", size = 0xEF8 }
 0x826CA388 = { name = "rex_lhGui_FrontendRoot_PopulateMainMenu", size = 0x354 }
 0x826C61B8 = { name = "rex_lhGui_FrontendTitle_OnScreenAction", size = 0x1C8 }
@@ -15058,6 +15074,7 @@
 0x82763BE8 = { name = "rex_CECOpinionReaction_ModifyAxisValue" }
 0x82759570 = { name = "rex_CECOpinionReaction_OnDeed" }
 0x82261710 = { name = "rex_CECOpinionReaction_Update" }
+0x821EE210 = { name = "rex_lhHero_HenchmanDefersToHeroOne" }
 0x825BFDF8 = { name = "rex_CECVillager_SpeechReaction" }
 0x825C86D8 = { name = "rex_CECVillager_ChooseTopic" }
 0x823B6D98 = { name = "rex_lhWorldIcons_Request" }
@@ -15260,11 +15277,10 @@
 0x8241A420 = { name = "rex_lhHudExperienceCounter_DecideShown" }
 # Stated from their own calls (menu_tickets_stated.cpp, gui_stated_screens.cpp, frontend_stated.cpp):
 # the list screens' row-ticket allocate (r3 registry, r4 item handle, ticket returned) and clear
-# (r3 registry); the abilities screen's enter (copies the pause root's player to its +4); the
+# (r3 registry); the
 # profile's subtitles setter (r5 on); the front-end game-flow mode's enter and exit.
 0x827BE0F0 = { name = "rex_lhGuiRowTickets_Allocate" }
 0x827BE308 = { name = "rex_lhGuiRowTickets_Clear" }
-0x8259E0C8 = { name = "rex_lhGuiAbilitiesScreen_Enter" }
 0x824E6E18 = { name = "rex_lhProfile_SetSubtitlesEnabled" }
 0x82354BB8 = { name = "rex_lhFrontEndMode_Enter" }
 0x823552B8 = { name = "rex_lhFrontEndMode_Exit" }
@@ -15927,14 +15943,9 @@ address = 0x82410390  # sub_82410390 entry
 registers = ["r4", "r5"]
 return_on_true = true
 
-# The inline texture stores on a headless element (gui_pause_hooks.cpp): the pause map image (r31,
-# hash at sp+0x58), each co-op save card's portrait (r31, hash at *r29). The legend rows'
-# icons are SetMapKey's argument.
-[[midasm_hook]]
-name = "RefiiPauseMapTexture"
-address = 0x8240E57C  # sub_8240DD98, `lwz r11, 4(r31)`
-registers = ["r31", "r1"]
-
+# The inline texture store on a headless element (gui_pause_hooks.cpp): each co-op save card's
+# portrait (r31, hash at *r29). The pause map image is stated by the ported pause OnEnter
+# (gui_screen_stub_pause_root.cpp); the legend rows' icons are SetMapKey's argument.
 [[midasm_hook]]
 name = "RefiiHeadlessInlineTexture"
 address = 0x8247C834  # sub_8247C7D8, `lwz r11, 4(r31)`

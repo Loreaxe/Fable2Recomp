@@ -72,7 +72,7 @@ public partial class GameUi
 			// A second player can join only into a game with nobody else in it.
 			bool open = inGame && !CoopSession.PeerStanding && !CoopSession.LocalCoop &&
 				!CoopSession.IsClient;
-			_coopNotices.Pads(new List<int>(Input.GetConnectedJoypads()), open);
+			_coopNotices.Pads(Refii.Core.Engine_Joypads.Connected(), open);
 			DriveJoinQuestion(inGame);
 			DriveGamerCard(inGame, open);
 

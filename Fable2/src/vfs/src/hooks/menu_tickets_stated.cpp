@@ -44,6 +44,12 @@ uint32_t MenuTicketForRecord(uint32_t record) {
     return 0u;
 }
 
+uint32_t MenuRecordForTicket(uint32_t ticket) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    const auto found = g_records.find(ticket);
+    return found != g_records.end() ? found->second : 0u;
+}
+
 uint32_t MenuTicketRegistry() {
     std::lock_guard<std::mutex> lock(g_lock);
     return g_registry;

@@ -799,29 +799,30 @@ public sealed class Engine_UiNumericSurface : Engine_UiModalSurface<Engine_UiNum
 
 /// <summary>
 /// The owned received-item card (screen id 8), drawn from what the guest STATES at its own
-/// entry points. The handler's set-item (`sub_82537F38`, and `sub_82538268` for the co-op
-/// partner's card), its input handler and its leave are hooked (receive_items_hooks.cpp) and post
-/// the handler's fields as a host-only record: the title and description TEXT KEYS, the icon's
-/// resource hash, the NameAndIcon line, the usable flag, the side and the peer flag. Nothing here
-/// reads the presentation's elements — the guest rebuilds that presentation under a sampler
-/// between the items of one chest, which is how the card stood invisible. The answers go through
-/// the handler's own screen-input method (`ReceiveItemsAction`), as before.
+/// entry points. The card's draw (`sub_82538910(handler)`, run for an item, the co-op partner's
+/// item, money, a discount and "work harder" alike) is replaced by its statement
+/// (gui_screen_stub_receive_items.cpp): the handler it is handed, as a host-only record — the title
+/// and description TEXT KEYS, the icon's resource hash, the NameAndIcon line, the extra line and its
+/// amount, the usable flag and the peer flag; the handler's leave states the card down. Nothing here
+/// reads the presentation's elements. Done and Equip are the levers `Card:&lt;player&gt;:dismiss|equip`
+/// (the guest's own dismiss behind its one-second gate); the side is turned here, the guest's card
+/// has none.
 /// </summary>
 public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_UiReceiveItems>
 {
-	/// <summary>The host-only record kind the hooks post (receive_items_hooks.cpp kCardKind).</summary>
+	/// <summary>The host-only record kind the draw posts (gui_screen_stub_receive_items.cpp kCardKind).</summary>
 	public const int StateKind = 1006;
 
 	/// <summary>The guest's screen id for the card, read beside the stated record as the sanity
 	/// that the screen the record belongs to is still the current one.</summary>
 	private const uint CardScreen = 8;
 
-	/// <summary>The screen handler's own codes: done, turn the card over, equip.</summary>
-	private const uint DoneCode = 36;
+	/// <summary>The card's lever and its two verbs (guest_tick_pump.cpp `Card:&lt;p&gt;:…`).</summary>
+	public const string Lever = "Card";
 
-	private const uint FlipCode = 39;
+	public const string Dismiss = "dismiss";
 
-	private const uint EquipCode = 75;
+	public const string Equip = "equip";
 
 	/// <summary>The prompt tags the card's file authors (`receiveitemsscreen.bgf`: GUI_USE,
 	/// GUI_INFO, GUI_FLIP, GUI_TAKE); the partner's card captions Done as GUI_DONE (+324).</summary>
@@ -835,7 +836,7 @@ public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_
 
 	private const string DoneTag = "GUI_DONE";
 
-	/// <summary>One stated card: the handler's fields after set-item, the side after each input.</summary>
+	/// <summary>One stated card: the handler's fields at its draw; the side is the surface's own.</summary>
 	public sealed record CardState(
 		bool Up, bool Peer, bool Front, bool Usable,
 		uint Record, uint Model, uint Icon, uint Title, uint Description, uint Extra, uint Amount,
@@ -845,6 +846,12 @@ public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_
 
 	/// <summary>What the guest last stated; read by the drive each frame.</summary>
 	public static CardState State { get; private set; } = Down;
+
+	/// <summary>The card shows its back: turned by the player, front again with every card stated.</summary>
+	public static bool Reversed { get; private set; }
+
+	/// <summary>Turns the standing card over; nothing to turn when none stands.</summary>
+	public static void Turn() => Reversed = State.Up && !Reversed;
 
 	/// <summary>A record from the hooks: `up=1,peer=,front=,usable=,record=,model=,icon=,title=,desc=,extra=,amount=,name='…'` or `up=0`.</summary>
 	public static void Stated(string fields)
@@ -859,13 +866,15 @@ public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_
 		bool B(string key) => U(key) != 0u;
 		if (!B("up"))
 		{
+			Reversed = false;
 			State = Down;
 			GD.Print("[game-ui] received-item card stated DOWN");
 			return;
 		}
 
+		Reversed = false;
 		State = new CardState(
-			true, B("peer"), B("front"), B("usable"),
+			true, B("peer"), true, B("usable"),
 			U("record"), U("model"), U("icon"), U("title"), U("desc"), U("extra"), U("amount"),
 			values.TryGetValue("name", out object? name) ? name as string ?? name?.ToString() ?? string.Empty : string.Empty);
 		GD.Print($"[game-ui] received-item card stated UP — record 0x{State.Record:X8} title 0x{State.Title:X8} " +
@@ -898,7 +907,7 @@ public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_
 	/// resource hash, the prompts by the file's tags.</summary>
 	protected override bool ApplyHost(Engine_UiPresentationHost host)
 	{
-		CardState s = State;
+		CardState s = State with { Front = !Reversed };
 		if (!s.Up || View is null)
 		{
 			return false;
@@ -969,19 +978,19 @@ public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_
 
 		if (input.Accept)
 		{
-			Engine_UiSource.Current.PostPlayerLever("ReceiveItemsAction", $"{DoneCode}");
+			Engine_UiSource.Current.PostPlayerLever(Lever, Dismiss);
 			GD.Print("[game-ui] received-item card DONE");
 		}
 		else if (input.Flip)
 		{
-			Engine_UiSource.Current.PostPlayerLever("ReceiveItemsAction", $"{FlipCode}");
-			GD.Print("[game-ui] received-item card flipped");
+			Turn();
+			GD.Print($"[game-ui] received-item card turned to its {(Reversed ? "back" : "front")}");
 		}
-		else if (input.Equip)
+		else if (input.Equip && State.Usable)
 		{
-			// `sub_82537128` code 75: honoured only while `+80` (equippable) is set — it equips
-			// through `sub_8246FFF0` and then takes the same close path as 36.
-			Engine_UiSource.Current.PostPlayerLever("ReceiveItemsAction", $"{EquipCode}");
+			// `sub_82537128` code 75: honoured only while `+80` (usable now) is set — it activates the
+			// item through `sub_8246FFF0` and then takes the same close path as Done.
+			Engine_UiSource.Current.PostPlayerLever(Lever, Equip);
 			GD.Print("[game-ui] received-item card EQUIP");
 		}
 	}

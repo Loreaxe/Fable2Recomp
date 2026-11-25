@@ -44,6 +44,7 @@
 PPC_EXTERN_FUNC(__imp__rex_CPlayerActionReceiver_ProcessAction);
 PPC_EXTERN_FUNC(__imp__rex_CECCrime_Add);
 PPC_EXTERN_FUNC(__imp__rex_CECOpinionReaction_Update);
+PPC_EXTERN_FUNC(__imp__rex_lhHero_HenchmanDefersToHeroOne);
 PPC_EXTERN_FUNC(__imp__rex_CECOpinionReaction_Shutdown);
 PPC_EXTERN_FUNC(__imp__rex_CECOpinionReaction_Reset);
 PPC_EXTERN_FUNC(__imp__rex_CECOpinionReaction_SendIcon);
@@ -5632,6 +5633,26 @@ struct OpinionHeroScope {
   OpinionHeroScope(const OpinionHeroScope&) = delete;
   OpinionHeroScope& operator=(const OpinionHeroScope&) = delete;
 };
+
+// THE HENCHMAN DEFERS TO THE REAL HERO ONE. `sub_821EE348` (disc `sub_821EE210`; r3 a hero's
+// component 33) is a loop: in local co-op (`821EE3EC cmpwi r10, 2` on game+284) a component owned
+// by hero two (`821EE3F8 cmplw r11, r4`, players+116) is replaced by hero one's (players+108) and
+// the test runs again (`821EE510 mr r28, r11` / `821EE514 b loc_821EE364`). While the slot is lent
+// (+108 holds hero two's holder) hero one's component IS hero two's and the loop never ends: the
+// opinion rebuild `sub_8278B948` calls it at 0x8278BD60 inside player two's scope, on the first
+// world tick after a local join. The call runs with hero one's own holder in the slot.
+REX_EXTERN(rex_lhHero_HenchmanDefersToHeroOne) {
+  const uint32_t real = refii_bridge_hero_slot_lent_here();
+  const uint32_t players = real != 0u ? OpinionPlayers(base) : 0u;
+  if (players < 0x10000u) {
+    __imp__rex_lhHero_HenchmanDefersToHeroOne(ctx, base);
+    return;
+  }
+  const uint32_t lent = Load32(base, players + 108u);
+  refii::mods::StoreU32(base, players + 108u, real);
+  __imp__rex_lhHero_HenchmanDefersToHeroOne(ctx, base);
+  refii::mods::StoreU32(base, players + 108u, lent);
+}
 
 /// The hero a villager's opinion concerns when the caller names none: the nearer hero, the
 /// game's own rule for whom a villager notices (GetEntityToNoticeExpressionsOf `sub_82798578`).
