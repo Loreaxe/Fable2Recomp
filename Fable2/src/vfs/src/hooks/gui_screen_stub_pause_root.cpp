@@ -264,14 +264,19 @@ REX_EXTERN(rex_lhGuiPauseRootScreen_OnEnter) {
   Said("pause root (0)", "OnEnter", h, LoadU32(base, h + 4u), map_shown);
 }
 
-// Update TU1 0x826A23F8 / disc 0x8240E7B0. Kept: the readouts `sub_826A4D50(h, h+4 != 1)` (0x826A2558 /
+// Update TU1 0x826A23F8 / disc 0x8240E7B0. Kept: the row list's per-tick restate, the tail of the base
+// tick `sub_826D5D00` (0x826A2408 / disc `sub_82583560`: vf+40 → h+24, then that list's vf+8, 0x826D5D70 /
+// 0x826D5D88) — `sub_8298DEF0` / 0x828427B8 ghosts "Kick" unless an online game has a second hero
+// (`sub_823DF660(0, "Kick", …)` 0x8298DF64) and, through `sub_8298F578(list, sub_82448900(SaveMgr))`
+// (0x8298DF7C / 0x8298DF88; disc 0x824EBF30 / 0x82843D18), "Save and Continue" and "Save and Quit" while
+// no save can be made; the readouts `sub_826A4D50(h, h+4 != 1)` (0x826A2558 /
 // 0x82411108: gold, renown and the hero's stats, SetText each tick); the marker pass `sub_826A3150`
 // (0x826A25A0 / 0x8240F508) while h+100 is clear and the input block `**(G+68)` is not positive —
 // its placer states each quest marker (gui_pause_hooks.cpp); the kick countdown h+280: at 0
 // `LeaveSession(*(GAME+0x8C), 0)` + `ExitScreen(QM, 1)` (0x826A26A0 / 0x826A26B0), above 0 one less.
 // the third open tick's slide, h+248 0 → 1 → 2 → 3 and at 2 `lhGuiElement_GoToSlideAndRestart(root,
 // pres, 3)` (0x826A264C / 0x823F9140) — the root's resting slide, which Godot's book stands on.
-// Dropped: the base child tick `sub_826D5D00` (0x826A2408), the highlighted quest row's string
+// Dropped: the base tick's child widgets (`sub_826D5D00` 0x826D5D34..0x826D5D5C), the highlighted quest row's string
 // params (0x826A24D0 / 0x826A252C — keyed to the guest's highlight, which Godot's cursor never
 // moves), the scroll region's tick h+252 vf+12 (0x826A25B4), the minimap draw `sub_826A49E0`
 // (0x826A25C8), and the slide's sound (`sub_82371E80(…, 0x83497DD0)` + `sub_82C05EF8`, 0x826A2664).
@@ -280,6 +285,7 @@ REX_EXTERN(rex_lhGuiPauseRootScreen_Update) {
   const uint32_t h = ctx.r3.u32;
   const Scratch s = Claim(ctx);
   const uint32_t g = Gui(base);
+  CallSlot(ctx, base, s.frame, h + 24u, 2u, {});
   Call(ctx, base, s.frame, 0x826A4D50u, {h, LoadU32(base, h + 4u) != 1u ? 1u : 0u});
   const uint32_t block = LoadU32(base, g + 68u);
   const bool open = !Plausible(block) || static_cast<int32_t>(LoadU32(base, block)) <= 0;
@@ -314,7 +320,8 @@ REX_EXTERN(rex_lhGuiPauseRootScreen_Update) {
 // OnMenuEvent TU1 0x826A26E8 / disc 0x8240EAA0: 140/141 sounds; type 2 / 300 rows to the hero's
 // `sub_826A5FC0` / henchman's `sub_826A6610` (disc 0x82412378 / 0x824129C0), whose consequences are
 // levers Godot posts: the tabs `PauseTab:<n>` (`lhGuiTabStrip_Push`), the Saving rows
-// `PauseSaving:<p>:<row>` (DispatchPauseSaving), Kick / Leave `CoopKick` / `CoopLeave`; then the
+// `PauseSaving:<p>:<row>` (DispatchPauseSaving), player two's Quit `PauseHenchmanQuit:<p>`
+// (DispatchPauseHenchmanQuit, the guest's own arm), Kick `CoopKick`; then the
 // debug rows' `sub_826A5170` / `5590` / `5A30` ("CYCLE the Theme", "Shop Screen", "Tag Test" — not
 // spawned in a retail list). Nothing kept.
 REX_EXTERN(rex_lhGuiPauseRootScreen_OnMenuEvent) {
@@ -499,7 +506,9 @@ bool DispatchPauseSaving(PPCContext& ctx, uint8_t* base, uint32_t player, uint32
   // `sub_82448900(SaveMgr)` (0x826A64A4 / 0x824EBF30) says nothing is held — `ExitScreen(QM, 1)` +
   // `sub_82312530(GAME, "")` — else opens 25 with "GUI_SAVING_PROGRESS_WARNING". The text is
   // localised by `sub_8230E0E8` (0x82301D40). The answer reaches OnModalAnswer above. The rows exist
-  // only in the hero list (`sub_8298DF98`, owner h+4 == 0), which only player one's pad drives.
+  // only in the hero list (`sub_8298DF98`, owner h+4 == 0), which only player one's pad drives. Rows 0
+  // and 1 are ghosted, and cannot be picked, while `sub_82448900(SaveMgr)` is 0 (`sub_8298F578`:
+  // `sub_823DF660(0, name, held == 0, 0)` 0x8298F5D8 / 0x8298F61C, restated every tick by the list's vf+8).
   const Scratch s = Claim(ctx);
   const uint32_t root = PauseRoot(ctx, base, s.frame);
   if (root == 0u || row > 2u) {
@@ -515,7 +524,13 @@ bool DispatchPauseSaving(PPCContext& ctx, uint8_t* base, uint32_t player, uint32
   const uint32_t text = s.data;
   const uint32_t wide = s.data + 8u;
   uint32_t box = 23u + row;
-  if (row == 2u && (Call(ctx, base, s.frame, 0x82448900u, {LoadU32(base, game + 0x94u)}) & 0xFFu) == 0u) {
+  const bool held = (Call(ctx, base, s.frame, 0x82448900u, {LoadU32(base, game + 0x94u)}) & 0xFFu) != 0u;
+  if (row < 2u && !held) {
+    REXLOG_INFO("Refii guest-tick pump: PauseSaving:{}:{} — no save can be made, the row is ghosted: refused", player,
+                row);
+    return true;
+  }
+  if (row == 2u && !held) {
     Call(ctx, base, s.frame, 0x8236ED98u, {qm, 1u});
     MakeString(ctx, base, s.frame, text, text + 0x20u, "");
     Call(ctx, base, s.frame, 0x82312530u, {game, text});
@@ -528,6 +543,40 @@ bool DispatchPauseSaving(PPCContext& ctx, uint8_t* base, uint32_t player, uint32
   Call(ctx, base, s.frame, 0x8236FA68u, {qm, said, 3u, box, 1u, 0u, 0u});  // lhGuiManager_OpenModal
   REXLOG_INFO("Refii guest-tick pump: PauseSaving:{}:{} — the guest's confirm, box {} (modal now {})", player, row,
               box, LoadU32(base, qm + 44u));
+  return true;
+}
+
+bool DispatchPauseHenchmanQuit(PPCContext& ctx, uint8_t* base, uint32_t player) {
+  // Player two's one way out, the henchman list's last row: `sub_8298EDE0` spawns "HenchmanQuit"
+  // (`GUI_SCREEN_PAUSE_HENCHMAN_QUIT`, event type 300, `li r9,0x12C` 0x8298F204 / disc 0x828439A8) for a
+  // local and an online player two alike. Its A is the root's OnMenuEvent `sub_826A26E8` → the henchman
+  // arm `sub_826A6610(h, event, QM)` (0x826A27FC / disc 0x8240EBB4 → 0x824129C0), run here on the
+  // event as the guest builds it ({CCharString name, type, id}): with a save named at SaveMgr+4 box 27
+  // `GUI_SCREEN_HENCHMAN_PAUSE_QUIT_TEXT` with player two's experience and gold, without one box 26
+  // `..._QUIT_WITHOUT_SAVES_TEXT` (they go to the hero), `lhGuiManager_OpenModal(QM, text, 3, 27|26,
+  // 0, 0, 0)` (0x826A67CC / 0x826A6828 → 0x826A6928; disc 0x82412CD4). Its yes reaches OnModalAnswer
+  // above (26/27 → `sub_826A6E70`). Refused unless the root is player two's (h+4 == 1) and player two
+  // asked.
+  const Scratch s = Claim(ctx);
+  const uint32_t root = PauseRoot(ctx, base, s.frame);
+  if (root == 0u) {
+    REXLOG_INFO("Refii guest-tick pump: PauseHenchmanQuit:{} — no pause root, dropped", player);
+    return true;
+  }
+  if (player != 2u || LoadU32(base, root + 4u) != 1u) {
+    REXLOG_INFO("Refii guest-tick pump: PauseHenchmanQuit:{} — the root is player {}'s, refused", player,
+                LoadU32(base, root + 4u) == 1u ? 2u : 1u);
+    return true;
+  }
+  const uint32_t qm = LoadU32(base, Gui(base) + 28u);
+  const uint32_t event = s.data;
+  MakeString(ctx, base, s.frame, event, s.data + 0x20u, "HenchmanQuit");
+  StoreU32(base, event + 4u, 300u);
+  StoreU32(base, event + 8u, 0u);
+  Call(ctx, base, s.frame, 0x826A6610u, {root, event, qm});
+  DropString(ctx, base, s.frame, event);
+  REXLOG_INFO("Refii guest-tick pump: PauseHenchmanQuit:{} — the henchman's quit ran (sub_826A6610), modal now {}",
+              player, LoadU32(base, qm + 44u));
   return true;
 }
 

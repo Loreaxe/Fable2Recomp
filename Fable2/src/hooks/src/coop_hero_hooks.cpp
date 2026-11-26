@@ -393,6 +393,12 @@ void RefiiCoopLodNearer(PPCRegister& f1, PPCVRegister& v127) {
 //   (0x823899A4 → 0x823899E0, 0x82389F6C → 0x82389FA4) lets player two's Player through: the
 //   constructor's hook records the Player it built a manager for (r31), and the setter's hook
 //   (r27) only takes Players so recorded — its path dereferences Player+4.
+//   WANTED IS NOT IN EFFECT. The constructor reads the switch once, inside the drop-in, before
+//   the co-op screen opens (TU1 `sub_8233C2A0`: `bl lhScene_UpdateNodes` 0x8233C42C builds the
+//   Player, `bl lhNetManager_DisplayCoopScreen` 0x8233C4B4; disc 0x8231EE04 / 0x8231EE8C), and a
+//   region change builds no Player while the map holds one (`sub_82316FE0` tests the map's count
+//   first). So the constructor asks RefiiCoopSplitScreenWanted, and everything else asks
+//   RefiiCoopSplitScreen — wanted AND player two's current Player is one recorded here.
 //   One manager is ticked per frame (0x821d4a68: sub_821F87C8 "the camera" → sub_821B9258). The
 //   update wrapper ticks player two's manager straight after player one's, with the three
 //   latch bytes the update shares across managers (byte_83496BE9/BEA/BEB) kept per manager,
@@ -406,25 +412,36 @@ void RefiiCoopLodNearer(PPCRegister& f1, PPCVRegister& v127) {
 //   peer's would overwrite one's own.
 
 extern "C" int RefiiCoopSplitScreen(void);
+extern "C" int RefiiCoopSplitScreenWanted(void);
 extern "C" REX_FUNC(__imp__rex_lhCameraManager_Update);
 
 namespace {
 
 /// The Players the constructor built a camera manager for on split screen (player two's; one or
-/// two entries over a session). Read only by the entity setter on the same thread.
-std::array<uint32_t, 4> g_split_players{};
+/// two entries over a session). Written by the constructor on the guest thread; the host bridge
+/// asks RefiiCoopSplitCameraBuilt from Godot's.
+std::array<std::atomic<uint32_t>, 4> g_split_players{};
+
+bool IsSplitPlayer(uint32_t player) {
+  for (const std::atomic<uint32_t>& slot : g_split_players) {
+    if (player != 0u && slot.load(std::memory_order_relaxed) == player) {
+      return true;
+    }
+  }
+  return false;
+}
 
 void RememberSplitPlayer(uint32_t player, bool built) {
-  for (uint32_t& slot : g_split_players) {
-    if (slot == player) {
-      slot = built ? player : 0u;
+  for (std::atomic<uint32_t>& slot : g_split_players) {
+    if (slot.load(std::memory_order_relaxed) == player) {
+      slot.store(built ? player : 0u, std::memory_order_relaxed);
       return;
     }
   }
   if (built) {
-    for (uint32_t& slot : g_split_players) {
-      if (slot == 0u) {
-        slot = player;
+    for (std::atomic<uint32_t>& slot : g_split_players) {
+      if (slot.load(std::memory_order_relaxed) == 0u) {
+        slot.store(player, std::memory_order_relaxed);
         return;
       }
     }
@@ -439,9 +456,9 @@ std::array<uint8_t, 3> g_second_latches{};
 
 constexpr std::array<uint32_t, 3> kLatches = {0x83496BE9u, 0x83496BEAu, 0x83496BEBu};
 
-/// A player's camera manager: the player map at game+0x9C ({key, Player, _} entries from
-/// container+8 to +0xC), Player+4 the holder, holder+4 the manager. 0 when there is none.
-uint32_t ManagerForKey(uint8_t* base, uint32_t key) {
+/// A player's Player: the player map at game+0x9C ({key, Player, _} entries from container+8
+/// to +0xC). 0 when there is none.
+uint32_t PlayerForKey(uint8_t* base, uint32_t key) {
   const uint32_t root = refii::vfs::LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
   const uint32_t game = Plausible(root) ? refii::vfs::LoadGuestU32(base, root + 0xCu) : 0u;
   const uint32_t container = Plausible(game) ? refii::vfs::LoadGuestU32(base, game + 0x9Cu) : 0u;
@@ -454,15 +471,20 @@ uint32_t ManagerForKey(uint8_t* base, uint32_t key) {
     return 0u;
   }
   for (uint32_t entry = begin; entry + 12u <= end; entry += 12u) {
-    if (refii::vfs::LoadGuestU32(base, entry) != key) {
-      continue;
+    if (refii::vfs::LoadGuestU32(base, entry) == key) {
+      const uint32_t player = refii::vfs::LoadGuestU32(base, entry + 4u);
+      return Plausible(player) ? player : 0u;
     }
-    const uint32_t player = refii::vfs::LoadGuestU32(base, entry + 4u);
-    const uint32_t holder = Plausible(player) ? refii::vfs::LoadGuestU32(base, player + 4u) : 0u;
-    const uint32_t manager = Plausible(holder) ? refii::vfs::LoadGuestU32(base, holder + 4u) : 0u;
-    return Plausible(manager) ? manager : 0u;
   }
   return 0u;
+}
+
+/// A player's camera manager: Player+4 the holder, holder+4 the manager. 0 when there is none.
+uint32_t ManagerForKey(uint8_t* base, uint32_t key) {
+  const uint32_t player = PlayerForKey(base, key);
+  const uint32_t holder = player != 0u ? refii::vfs::LoadGuestU32(base, player + 4u) : 0u;
+  const uint32_t manager = Plausible(holder) ? refii::vfs::LoadGuestU32(base, holder + 4u) : 0u;
+  return Plausible(manager) ? manager : 0u;
 }
 
 std::atomic<bool> g_said_split_camera{false};
@@ -470,21 +492,33 @@ std::atomic<bool> g_said_split_camera{false};
 }  // namespace
 
 bool RefiiCoopSplitPlayerCamera(PPCRegister& r31) {
-  const bool split = RefiiCoopSplitScreen() != 0;
+  const bool split = RefiiCoopSplitScreenWanted() != 0;
   RememberSplitPlayer(r31.u32, split);
+  REXLOG_INFO("Refii co-op heroes: a second player's Player 0x{:08X} constructed {} a camera "
+              "manager (split screen {})", r31.u32, split ? "with" : "without",
+              split ? "wanted" : "not wanted");
   if (split) {
     Once(g_said_split_camera, "player two gets their own camera (split screen)");
   }
   return split;
 }
 
-bool RefiiCoopSplitPlayerCameraEntities(PPCRegister& r27) {
-  for (uint32_t slot : g_split_players) {
-    if (slot != 0u && slot == r27.u32) {
-      return true;
-    }
-  }
-  return false;
+bool RefiiCoopSplitPlayerCameraEntities(PPCRegister& r27) { return IsSplitPlayer(r27.u32); }
+
+/// 1 when player two's current Player (player-map key 2) is one the constructor built a camera
+/// manager for on split screen; the half of "split screen in effect" the switch cannot answer.
+extern "C" int RefiiCoopSplitCameraBuilt(void) {
+  uint8_t* base = RefiiGuestBase();
+  return base != nullptr && IsSplitPlayer(PlayerForKey(base, 2u)) ? 1 : 0;
+}
+
+/// 1 while player two has a Player (player-map key 2). Local co-op's drop-in builds it before the co-op
+/// screen opens, without its hero (`lhScene_UpdateNodes` key 2, last argument 0 = no SetupCamera: TU1
+/// `li r7,2` 0x82316BFC / `bl lhScene_CreateNode` 0x82316C10, disc 0x82352F5C / 0x82352F70); the hero is
+/// set later by `lhNetManager_SetupHenchman`.
+extern "C" int RefiiCoopPlayerTwoNode(void) {
+  uint8_t* base = RefiiGuestBase();
+  return base != nullptr && PlayerForKey(base, 2u) != 0u ? 1 : 0;
 }
 
 void RefiiCoopNoCameraPostSend() {}
@@ -583,16 +617,22 @@ void RefiiCoopInteractionHero(PPCRegister& r1, PPCRegister& r25) {
   refii::vfs::StoreGuestU32(base, r1.u32 + 0x60u, 0xFFFFFFFFu);
 }
 
+extern "C" void RefiiCameraActivated(uint8_t* base, uint32_t manager, uint32_t lua_camera);
+
 // ActivateCamera (r3 camera manager, r4 the Lua camera table). Records a joiner's call, and
-// points a call made during player two's tick at player two's manager.
+// points a call made during player two's tick at player two's manager; the activation is stated
+// (Fable2/src/hooks/src/camera_statements.cpp).
 REX_EXTERN(rex_lhCameraManager_ActivateCamera) {
   const bool previous = g_activate_as_joiner;
   g_activate_as_joiner = IsJoiner(base);
   if (g_ticking_manager != 0u) {
     ctx.r3.u32 = g_ticking_manager;
   }
+  const uint32_t manager = ctx.r3.u32;
+  const uint32_t lua_camera = ctx.r4.u32;
   __imp__rex_lhCameraManager_ActivateCamera(ctx, base);
   g_activate_as_joiner = previous;
+  RefiiCameraActivated(base, manager, lua_camera);
 }
 
 extern "C" void RefiiMouseLookBeforeCameraUpdate(PPCContext& ctx, uint8_t* base, uint32_t manager);

@@ -121,6 +121,9 @@ public sealed class Engine_Title
 	/// <summary>How the title's Gameface text element lays out: box canvas, font buckets, line advance.</summary>
 	public Refii.Ui.Engine_UiTextContract UiText { get; private init; } = Refii.Ui.Engine_UiTextContract.Fable2;
 
+	/// <summary>The title's own words where its text banks have none (Refii.Text.Engine_OwnWords).</summary>
+	public Refii.Text.Engine_OwnWords.Table OwnWords { get; private init; } = new();
+
 	/// <summary>The title's host-only menu labels as a phone says them (Refii.AndroidRuntime.AndroidMenuWords).</summary>
 	public IReadOnlyDictionary<string, string> PhoneHostLabels { get; private init; } =
 		Refii.AndroidRuntime.AndroidMenuWords.None;
@@ -228,6 +231,7 @@ public sealed class Engine_Title
 		"refii_hostbridge", "refii_vfs", "refii_lua")
 	{
 		PhoneHostLabels = Refii.AndroidRuntime.AndroidMenuWords.Fable2,
+		OwnWords = Refii.Text.Engine_OwnWords.Fable2,
 		SaveSlots = 10,
 		TitleUpdateDataFiles = new[] { "tu1_data.bnk" },
 	};
@@ -239,6 +243,7 @@ public sealed class Engine_Title
 		"refii_hostbridge", "refii_vfs")
 	{
 		UiText = Refii.Ui.Engine_UiTextContract.Fable3,
+		OwnWords = Refii.Text.Engine_OwnWords.Fable3,
 		SaveSlots = 5,
 		TitleUpdateDataFiles = new[] { "package_collection_info.xmb", "tu1.bnk", "tu1.bnk.dat" },
 	};

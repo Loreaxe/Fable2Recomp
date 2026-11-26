@@ -1518,7 +1518,7 @@ public static partial class ModValidate
 	private static readonly string[] ScreenTextKeys =
 	{
 		"name", "menuScript", "previewAnchor", "pageElement", "menu", "provider", "revealedAccept", "revealedBack",
-		"flipAction", "rowAction", "scrollContent", "scrollMask", "scrollBar", "flowMeasured", "flowBase", "flowTailAnchor",
+		"flipAction", "xAction", "rowAction", "scrollContent", "scrollMask", "scrollBar", "flowMeasured", "flowBase", "flowTailAnchor",
 		"presentation", "pageRootUnit", "backdropUnit", "boxPresentation",
 	};
 
@@ -1534,7 +1534,7 @@ public static partial class ModValidate
 	};
 
 	private static readonly string[] ScreenKeys = ScreenTextKeys.Concat(ScreenFlagKeys).Concat(ScreenListKeys)
-		.Concat(new[] { "pageSlide", "listLift", "boxPaths", "pageStackAt", "statFields", "panelFields", "menuScriptByMode", "restPose", "restOpacity" })
+		.Concat(new[] { "pageSlide", "listLift", "boxPaths", "pageStackAt", "pageSpan", "statFields", "panelFields", "menuScriptByMode", "restPose", "restOpacity" })
 		.Concat(new[] { "patch", "fields", "switches" })
 		.ToArray();
 
@@ -1931,6 +1931,7 @@ public static partial class ModValidate
 		}
 
 		doc.Vector(screen, "pageStackAt", at, 3, 3, extraIgnored: false);
+		doc.Vector(screen, "pageSpan", at, 2, 2, extraIgnored: false);
 		if (Has(screen, "boxPaths") &&
 			doc.Object(screen.GetProperty("boxPaths"), At(at, "boxPaths"), "must be an object of path to path; ignored"))
 		{

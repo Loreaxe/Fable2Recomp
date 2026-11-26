@@ -519,7 +519,7 @@ REX_EXTERN(rex_lhGuiPresentation_SetStringParam) {
     REX_FUNC_PROLOGUE();
     const std::string name = refii::vfs::ReadGuestLhString(base, ctx.r4.u32);
     const std::string value = refii::vfs::ReadStatedLhBytes(base, ctx.r5.u32);
-    refii::vfs::StageMenuAttribute(name, refii::vfs::Latin1ToUtf8(value), 0.0f, /*is_number=*/false);
+    refii::vfs::StageMenuAttribute(name, refii::vfs::StatedBytesToUtf8(value), 0.0f, /*is_number=*/false);
     const uint32_t presentation = ctx.r6.u32 != 0u ? ctx.r6.u32 : CurrentPresentation(ctx, base);
     if (presentation != 0u && !refii::headless::ParamSetText(presentation, ParamId(name), value)) {
         NoteMiss("string write", presentation, name);

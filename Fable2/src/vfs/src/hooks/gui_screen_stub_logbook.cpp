@@ -28,21 +28,9 @@ using refii::mods::StoreU32;
 
 namespace {
 
-/// The logbook opened on another player (`sub_823C48D8`, the orb's View Stats): 0 not, 1 opened
-/// elsewhere, 2 opened over the world map (its B returns there). Stated by the opener's hook.
-int g_logbook_orb = 0;
-
 bool g_logbook_update_said = false;
 
 }  // namespace
-
-int refii::vfs::stub::LogbookOrbMode() { return g_logbook_orb; }
-
-namespace refii::vfs {
-
-void StateLogbookOpenedOnPlayer(bool over_world_map) { g_logbook_orb = over_world_map ? 2 : 1; }
-
-}  // namespace refii::vfs
 
 // ---- THE LOGBOOK (17; disc 16) — vtable 0x820D0110 / 0x820C04C4 ----------------------------
 //
@@ -119,6 +107,7 @@ REX_EXTERN(rex_lhGuiLogbookScreen_OnEnter) {
   Call(ctx, base, s.frame, 0x823DF660u, {refii::guest::ScreenId(17u), text, dog == 0u ? 1u : 0u, 0u});
   DropString(ctx, base, s.frame, text);
   Call(ctx, base, s.frame, 0x8246B5E8u, {pres, Address(0x8349B458u), 1u});
+  RestatePurseForPlayerTwo(ctx, base, s.frame, pres, 0x8349B458u);
   const uint32_t storage = LoadU32(base, pages + 4u);
   if (storage != 0u) {
     Call(ctx, base, s.frame, 0x8221BD38u, {storage});  // Render_FreeD3DObject
@@ -163,6 +152,5 @@ REX_EXTERN(rex_lhGuiLogbookScreen_OnExit) {
   StoreU32(base, h + 28u, 0u);
   StoreU32(base, h + 4u, 0u);
   Call(ctx, base, s.frame, 0x829912B0u, {h + 52u});
-  g_logbook_orb = 0;
   Said("logbook (17)", "OnExit", h);
 }

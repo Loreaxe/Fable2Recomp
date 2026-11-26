@@ -109,7 +109,7 @@ public partial class Fable3GuiNatives : Node
 		// sub_825FA220 opens it with the rows its filler added (sub_825F9E68 / sub_825F9FC0), the
 		// title it resolved and whether B cancels; sub_825FA420 closes it and posts
 		// MESSAGE_EVENT_MENUBOX (65) with the 1-based row or 0. The highlight is Godot's: the pick
-		// goes back as `menubox:<row>` to the guest's own highlight and select.
+		// goes back as `menubox:<p>:<row>` to the guest's own highlight and select.
 		_router.Register("@MenuBox.Open", MenuBoxOpened);
 		_router.Register("@MenuBox.Close", _ => Boxes.CloseMenuBox());
 		_router.Observe("DisplayMenuBox", "fills the menu box's rows; stated when it opens (@MenuBox.Open)");
@@ -451,10 +451,42 @@ public partial class Fable3GuiNatives : Node
 	private readonly List<OwnedBox> _owned = new();
 
 	/// <summary>A box on screen whose pad is Godot's: the guest's address, its kind and its model.</summary>
-	public sealed record OwnedBox(uint Address, string Kind, Engine_UiGuiBoxes.Box Box, bool Download);
+	public sealed record OwnedBox(uint Address, string Kind, Engine_UiGuiBoxes.Box Box, bool Download, int Queue = 0);
 
-	/// <summary>The box the pad answers now, or null.</summary>
-	public OwnedBox? FrontOwned => _owned.Count == 0 ? null : _owned[^1];
+	/// <summary>The kind of the owned box <paramref name="box"/> is the model of, or null for one Godot does not answer.</summary>
+	public string? OwnedKind(Engine_UiGuiBoxes.Box box)
+	{
+		foreach (OwnedBox owned in _owned)
+		{
+			if (ReferenceEquals(owned.Box, box))
+			{
+				return owned.Kind;
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// The box the pad answers now, or null: the newest of the first queue's (and the pause screen's
+	/// message box), else the newest of the second's — the router hands the pad to Q0's showing box
+	/// before Q1's (sub_825F38F8, 0x825F3910..0x825F3960).
+	/// </summary>
+	public OwnedBox? FrontOwned
+	{
+		get
+		{
+			for (int i = _owned.Count - 1; i >= 0; --i)
+			{
+				if (_owned[i].Queue <= 0)
+				{
+					return _owned[i];
+				}
+			}
+
+			return _owned.Count == 0 ? null : _owned[^1];
+		}
+	}
 
 	private void BoxQueued(Engine_UiModel.GuiNativeCall call)
 	{
@@ -523,12 +555,21 @@ public partial class Fable3GuiNatives : Node
 				box.Buttons = new Engine_UiGuiBoxes.BoxButtons(false, false, false, false, false, string.Empty, string.Empty);
 				break;
 			case "card":
-				// CAcceptHoldBox (type 8) draws nothing on the 360: its Show 0x82B56D80 takes presentation 4
-				// from sub_8291F4C8 and skips every write when it is null (beq 0x82B56DA0); that
-				// presentation is DisplayBox.bgf (sub_82B3EC40 0x82B3ED30..0x82B3ED40), which no bank ships.
-				// The hold itself stays the guest's (its meter step sub_82C06070 runs on its own ticks).
-				GD.Print($"[fable3-boxes] hold box {address:X8} '{name}' shown — the 360 draws none");
-				return;
+				// CAcceptHoldBox (type 8, `DisplayInfoBoxParams` with DisplayBoxStyle 0): its stated
+				// title (+36), accept and help tags (+44 / +48), A and Y shown (+40 / +41) and whether A
+				// must be held (+42). Godot draws it and owns its pad and its hold (display_box_hooks.cpp).
+				box = Boxes.InfoBoxParams(name, call.Argument(5).Text, -1f, text, 0, new Engine_UiGuiBoxes.BoxButtons(
+					call.Argument(8).Boolean, call.Argument(10).Boolean, false, call.Argument(9).Boolean, false,
+					call.Argument(6).Text, call.Argument(7).Text));
+				break;
+			case "buttons":
+				// CButtonBox (type 7, `DisplayButtonBox(name, text)`, the scripts' acceptance box with help,
+				// miscfunctions.lua GUI.ShowAcceptanceBoxWithHelp): its text alone; it answers every face
+				// button, A accept and Y help the two its script reads.
+				box = Boxes.MessageBoxNamed(name, text);
+				box.Title = "GUI_ACCEPTANCE_BOX";
+				box.Buttons = new Engine_UiGuiBoxes.BoxButtons(true, false, false, true, false, string.Empty, string.Empty);
+				break;
 			case "unknown":
 			case string screen when screen.StartsWith("screen:", System.StringComparison.Ordinal):
 				// The box-manager SCREENS: Options (`screen:options`, drawn by Fable3Options from
@@ -561,7 +602,8 @@ public partial class Fable3GuiNatives : Node
 			if (Fable3BoxAnswers.Owns(kind))
 			{
 				_owned.RemoveAll(owned => owned.Address == address);
-				_owned.Add(new OwnedBox(address, kind, box, kind is "message" or "modal" && call.Argument(5).Boolean));
+				_owned.Add(new OwnedBox(address, kind, box, kind is "message" or "modal" && call.Argument(5).Boolean,
+					(int)call.Argument(0).Number));
 			}
 		}
 	}

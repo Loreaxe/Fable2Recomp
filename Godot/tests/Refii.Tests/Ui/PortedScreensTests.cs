@@ -49,7 +49,7 @@ public class PortedScreensTests
 	[TestCase]
 	public void TheItemBooksButtonsAreLevers()
 	{
-		foreach (uint book in new[] { Fable2PortedScreens.Items, Fable2PortedScreens.Clothing })
+		foreach (uint book in new[] { Fable2PortedScreens.Items, Fable2PortedScreens.Clothing, Fable2PortedScreens.WorldMap })
 		{
 			AssertThat(Fable2PortedScreens.Lever(book, Engine_UiScreenInput.Back, 1)).IsEqual("PauseBack");
 			AssertThat(Fable2PortedScreens.Lever(book, Engine_UiScreenInput.TabPrev, 2)).IsEqual("PauseCycle:2:prev");
@@ -79,10 +79,88 @@ public class PortedScreensTests
 		AssertThat(Fable2PortedScreens.ItemLever(16, 1, "Inventory:unequip:91", 0u)).IsEqual("Clothing:1:remove:91");
 	}
 
+	/// <summary>A gift row is the gift screen's own row answer; the shop's and the gift screen's B is the
+	/// guest's back, and nothing else of theirs is a lever.</summary>
+	[TestCase]
+	public void TheGiftAndShopScreensPostTheirLevers()
+	{
+		AssertThat(Fable2PortedScreens.ItemLever(25, 1, "Inventory:gift:12345", 8u)).IsEqual("Gift:1:item:8:12345");
+		AssertThat(Fable2PortedScreens.Lever(22, Engine_UiScreenInput.Back, 1)).IsEqual("Shop:1:close");
+		AssertThat(Fable2PortedScreens.Lever(25, Engine_UiScreenInput.Back, 2)).IsEqual("Gift:2:close");
+		AssertThat(Fable2PortedScreens.Lever(22, Engine_UiScreenInput.TabNext, 1)).IsNull();
+		AssertThat(Fable2PortedScreens.Lever(25, Engine_UiScreenInput.Select, 1)).IsNull();
+	}
+
+	/// <summary>Upgrade furniture, decoration and real estate: B is the screen's own close, a row its
+	/// screen's lever with the acting player; a real-estate row is its event (110..120) and never its
+	/// name.</summary>
+	[TestCase]
+	public void TheHouseScreensPostTheirLevers()
+	{
+		AssertThat(Fable2PortedScreens.Lever(26, Engine_UiScreenInput.Back, 1)).IsEqual("Furniture:1:close");
+		AssertThat(Fable2PortedScreens.Lever(27, Engine_UiScreenInput.Back, 1)).IsEqual("Decoration:1:close");
+		AssertThat(Fable2PortedScreens.Lever(28, Engine_UiScreenInput.Back, 2)).IsEqual("RealEstate:2:close");
+		AssertThat(Fable2PortedScreens.Lever(28, Engine_UiScreenInput.Select, 1)).IsNull();
+		AssertThat(Fable2PortedScreens.Lever(27, Engine_UiScreenInput.Unlearn, 1)).IsNull();
+
+		AssertThat(Fable2PortedScreens.RowLever(26, 1, "Furniture:upgrade:3", 0)).IsEqual("Furniture:1:upgrade:3");
+		AssertThat(Fable2PortedScreens.RowLever(27, 1, "Decoration:mount:268435455", 0)).IsEqual("Decoration:1:mount:268435455");
+		AssertThat(Fable2PortedScreens.RowLever(27, 2, "Decoration:takedown", 0)).IsEqual("Decoration:2:takedown");
+		AssertThat(Fable2PortedScreens.RowLever(28, 1, "RealEstate:event", 111)).IsEqual("RealEstate:1:event:111");
+		AssertThat(Fable2PortedScreens.RowLever(28, 2, "RealEstate:event", 120)).IsEqual("RealEstate:2:event:120");
+
+		AssertThat(Fable2PortedScreens.RowLever(28, 1, "RealEstate:event", 0)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(28, 1, "RealEstate:event", 140)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(28, 1, "Furniture:upgrade:3", 111)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(26, 1, "Furniture:upgrade:", 0)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(26, 1, "Furniture:upgrade:x", 0)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(27, 1, "Decoration:mount:", 0)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(22, 1, "Shop:close", 0)).IsNull();
+	}
+
+	/// <summary>The crime screen's rows are their events (50 pay, 51 resist, 52 community service) and
+	/// it has no B; the villager card's B and Y are its two levers; the HUD's two levers carry the
+	/// player the guest's own gate then judges.</summary>
+	[TestCase]
+	public void TheCrimeScreenTheCardAndTheHudPostTheirLevers()
+	{
+		AssertThat(Fable2PortedScreens.RowLever(21, 1, "Crime:choice", 50)).IsEqual("Crime:1:pay");
+		AssertThat(Fable2PortedScreens.RowLever(21, 2, "Crime:choice", 51)).IsEqual("Crime:2:resist");
+		AssertThat(Fable2PortedScreens.RowLever(21, 1, "Crime:choice", 52)).IsEqual("Crime:1:service");
+		AssertThat(Fable2PortedScreens.RowLever(21, 1, "Crime:choice", 0)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(21, 1, "Crime:choice", 140)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(21, 1, "Crime:pay", 50)).IsNull();
+		AssertThat(Fable2PortedScreens.Lever(21, Engine_UiScreenInput.Back, 1)).IsNull();
+
+		AssertThat(Fable2PortedScreens.RowLever(10, 1, "Query:close", 0)).IsEqual("Query:1:close");
+		AssertThat(Fable2PortedScreens.RowLever(10, 2, "Query:rename", 0)).IsEqual("Query:2:rename");
+		AssertThat(Fable2PortedScreens.RowLever(10, 1, "Query:other", 0)).IsNull();
+		AssertThat(Fable2PortedScreens.RowLever(21, 1, "Query:close", 0)).IsNull();
+
+		AssertThat(Fable2PortedScreens.SafetyToggle(1)).IsEqual("SafetyToggle:1");
+		AssertThat(Fable2PortedScreens.TargetQuery(1)).IsEqual("TargetQuery:1");
+	}
+
+	/// <summary>A real-estate row's key is its event's name whatever its localised String1 holds (GitHub
+	/// #81: a Russian label cut to bytes carries separators and control bytes, a CJK one may be empty);
+	/// every other row keeps its stated name.</summary>
+	[TestCase]
+	public void ARealEstateRowIsKeyedByItsEvent()
+	{
+		AssertThat(Engine_UiMenuConstants.RealEstateRowName(110)).IsEqual("RealEstateSell");
+		AssertThat(Engine_UiMenuConstants.RealEstateRowName(111)).IsEqual("RealEstateBuy");
+		AssertThat(Engine_UiMenuConstants.RealEstateRowName(116)).IsEqual("RealEstateSetMarital");
+		AssertThat(Engine_UiMenuConstants.RealEstateRowName(120)).IsEqual("RealEstateBack");
+		AssertThat(Engine_UiMenuConstants.RealEstateRowName(109)).IsNull();
+		AssertThat(Engine_UiMenuConstants.RealEstateRowName(121)).IsNull();
+		AssertThat(Engine_UiMenuConstants.RealEstateRowName(0)).IsNull();
+		AssertThat(Engine_UiMenuConstants.RealEstateRowName(301)).IsNull();
+	}
+
 	[TestCase]
 	public void WhatIsNotAnItemBooksRowIsPostedAsItStands()
 	{
-		AssertThat(Fable2PortedScreens.ItemLever(25, 1, "Inventory:gift:12345", 1u)).IsNull();
+		AssertThat(Fable2PortedScreens.ItemLever(22, 1, "Inventory:use:12345", 1u)).IsNull();
 		AssertThat(Fable2PortedScreens.ItemLever(0, 1, "Inventory:use:12345", 0u)).IsNull();
 		AssertThat(Fable2PortedScreens.ItemLever(16, 1, "Inventory:dye:11:22:1", 0u)).IsNull();
 		AssertThat(Fable2PortedScreens.ItemLever(15, 1, "Inventory:augment:11:22", 0u)).IsNull();

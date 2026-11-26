@@ -62,6 +62,16 @@ public sealed class Engine_UiIdentityCache<TKey, TValue>
 
 	public bool Remove(TKey key) => _entries.Remove(key);
 
+	/// <summary>Every value held, valid or not.</summary>
+	public IEnumerable<TValue> Values
+	{
+		get
+		{
+			foreach (Entry entry in _entries.Values)
+				yield return entry.Value;
+		}
+	}
+
 	public void Clear() => _entries.Clear();
 
 	private static bool SameInstances(object?[] was, object?[] now)

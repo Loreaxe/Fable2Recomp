@@ -38,6 +38,8 @@
 #include "core/refii_mod.h"
 #include "core/refii_mod_bus.h"
 #include "core/refii_mod_events.h"
+#include "hooks/gui_screen_stub_support.h"
+#include "hooks/gui_screen_stubs.h"
 #include "hooks/ppc_externs.h"
 #include "vfs_hooks_private.h"
 
@@ -70,9 +72,7 @@ PPC_EXTERN_FUNC(__imp__rex_CECFollow_AnySexPartner);
 PPC_EXTERN_FUNC(__imp__rex_CECFollow_AnyOtherSexPartner);
 PPC_EXTERN_FUNC(__imp__rex_CECFollow_FirstEngaged);
 PPC_EXTERN_FUNC(__imp__rex_CECFollow_FirstMarried);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_Update);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_OnMenuEvent);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_OnScreenAction);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_Confirm);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_Buy);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_Clear);
@@ -6333,11 +6333,12 @@ REFII_FOLLOW_SCAN(rex_CECFollow_FirstMarried, 4u, 0u, true)
 
 // The real-estate screen (vtable 0x820CEA58) caches its buyer at screen+144 when it opens
 // (`sub_826B1A08`, player two's when it was their sale sign: coop_ui_hooks.cpp RefiiCoopEstateBuyer)
-// and works for it: its update and menu builder (`sub_82998300`, hero one at 0x8299836C), its
-// menu event (`sub_826B2210`), screen action (`sub_826B2A18`) and confirm (`sub_826B25E0`) — the
-// purchase, the rent and budget, and the wedding (`sub_826B35B8` → `sub_826B3778`, the engaged
-// follower and hero one's JustMarriedHero at 0x826B3F2C). Player two's screen runs as their
-// household. TU1 0x826B1EF0 / 0x826B2210 / 0x826B2A18 / 0x826B25E0.
+// and works for it: its update (the page tick's income reader, gui_screen_stub_real_estate.cpp), its
+// menu builder (`sub_82998300`, hero one at 0x8299836C), its menu event (`sub_826B2210`) and confirm
+// (`sub_826B25E0`) — the purchase, the rent and budget, and the wedding (`sub_826B35B8` →
+// `sub_826B3778`, the engaged follower and hero one's JustMarriedHero at 0x826B3F2C). Player two's
+// screen runs as their household. TU1 0x826B1EF0 / 0x826B2210 / 0x826B25E0. Its screen action
+// (`sub_826B2A18`) is a stub that reads no hero (gui_screen_stub_real_estate.cpp).
 //
 // ONLINE, A JOINER'S ESTATE ACTIONS ARE THE HOST'S. Player two's household lives on the host's copy
 // of hero two (household_persist.cpp); the joiner's screen runs on its mirror, where a client's money
@@ -6388,18 +6389,23 @@ void PostEstate(uint8_t* base, uint32_t screen, const char* action, int32_t valu
 }
 }  // namespace
 
-#define REFII_ESTATE_SCREEN(name)                                                                 \
-  REX_EXTERN(name) {                                                                              \
-    const uint32_t screen = ctx.r3.u32;                                                           \
-    PPCContext entry = ctx;                                                                       \
-    EstateScreenScope screen_scope(screen);                                                       \
-    HouseholdScope scope(entry, base, screen >= 0x10000u ? Load32(base, screen + 144u) : 0u);     \
-    __imp__##name(ctx, base);                                                                     \
-  }
-REFII_ESTATE_SCREEN(rex_lhGuiRealEstateScreen_Update)
-REFII_ESTATE_SCREEN(rex_lhGuiRealEstateScreen_OnMenuEvent)
-REFII_ESTATE_SCREEN(rex_lhGuiRealEstateScreen_OnScreenAction)
-#undef REFII_ESTATE_SCREEN
+// The ported Update (gui_screen_stub_real_estate.cpp), under the screen's household. TU1 0x826B1EF0.
+REX_EXTERN(rex_lhGuiRealEstateScreen_Update) {
+  const uint32_t screen = ctx.r3.u32;
+  PPCContext entry = ctx;
+  EstateScreenScope screen_scope(screen);
+  HouseholdScope scope(entry, base, screen >= 0x10000u ? Load32(base, screen + 144u) : 0u);
+  refii::vfs::RealEstateScreenUpdate(ctx, base);
+}
+
+// TU1 0x826B2210.
+REX_EXTERN(rex_lhGuiRealEstateScreen_OnMenuEvent) {
+  const uint32_t screen = ctx.r3.u32;
+  PPCContext entry = ctx;
+  EstateScreenScope screen_scope(screen);
+  HouseholdScope scope(entry, base, screen >= 0x10000u ? Load32(base, screen + 144u) : 0u);
+  __imp__rex_lhGuiRealEstateScreen_OnMenuEvent(ctx, base);
+}
 
 // The confirm (`sub_826B25E0`) also writes the rent/profit level itself (comp67+0x5C, pickers
 // 36/37); on a joiner that value goes to the host as well. TU1 0x826B25E0.
@@ -6799,14 +6805,17 @@ REX_EXTERN(rex_CECBuilding_RedecorateUpdate) {
 }
 
 namespace {
-// An upgrade is hero two's when player two started the redecorating and the menus are player two's.
-bool FurnitureForTwo(uint8_t* base) {
+// Player two started a redecorating that still stands.
+bool TwoRedecorates() {
   bool two_redecorates = false;
   for (const auto& [building, player] : g_redecorating) {
     two_redecorates = two_redecorates || player == 2;
   }
-  return two_redecorates && refii_mod_menu_player(base) == 2;
+  return two_redecorates;
 }
+
+// An upgrade is hero two's when player two started the redecorating and the menus are player two's.
+bool FurnitureForTwo(uint8_t* base) { return TwoRedecorates() && refii_mod_menu_player(base) == 2; }
 }  // namespace
 
 // TU1 0x826B6A18 (r3 the furniture screen).
@@ -6820,9 +6829,11 @@ REX_EXTERN(rex_lhGuiFurnitureScreen_Upgrade) {
   t_furniture_for_two = previous;
 }
 
-// `Furniture:upgrade:<level>` (guest_tick_pump.cpp): the transaction of the furniture screen's A,
+// `Furniture:<p>:upgrade:<level>` (guest_tick_pump.cpp): the transaction of the furniture screen's A,
 // `sub_826B6A18` (disc `sub_8259BB80`), on the STATED level instead of the highlight
-// (`lhGuiMenu_GetHighlightedItemData` 0x826B6AC0 / 0x8259BC28), under the same household scope.
+// (`lhGuiMenu_GetHighlightedItemData` 0x826B6AC0 / 0x8259BC28), for the player the lever names: hero
+// two's household when player two started the redecorating, else refused for player two (the screen
+// takes player one's A alone, 0x826B6DAC).
 // The two emphasis statements `sub_826C1A50` makes (0x826B6B70, 0x826B6BCC) are made here from
 // the spawned rows' names; not called: the label lookups `sub_826B6678`, `sub_82764688` and
 // `this+348 = -1` (0x826B6D5C / 0x8259BEC4).
@@ -6846,10 +6857,11 @@ REX_EXTERN(rex_lhGuiFurnitureScreen_Upgrade) {
 // read the hero through; HouseholdScope lends hero two into it for hero two's upgrade.
 // Returns 0 done, 1 no targeted piece, 2 the piece is not upgradeable, 3 the level is installed,
 // 4 the hero holds no unlock card for it, 5 the level was not set (a mod cancelled it, or SetLevel
-// refused it).
-extern "C" int32_t RefiiFurnitureUpgrade(PPCContext* ctx, uint8_t* base, int32_t level) {
+// refused it), 6 player two with no redecorating of their own.
+extern "C" int32_t RefiiFurnitureUpgrade(PPCContext* ctx, uint8_t* base, int32_t level, int32_t player) {
   if (ctx == nullptr || base == nullptr) return 1;
-  const bool for_two = FurnitureForTwo(base);
+  const bool for_two = player == 2 && TwoRedecorates();
+  if (player == 2 && !for_two) return 6;
   PPCContext entry = *ctx;
   HouseholdScope scope(entry, base, for_two ? refii_mod_player_hero(base, 2) : 0u);
   const bool previous = t_furniture_for_two;
@@ -7228,7 +7240,10 @@ bool ReplayEstateIntent(PPCContext& ctx, uint8_t* base, const std::string& text)
     } else if (what == "rentout") {
       call(0x828D28D8u, props, building, value != 0 ? 1u : 0u);
     } else if (what == "rent") {
-      refii::mods::StoreU32(base, record + 0x5Cu, static_cast<uint32_t>(std::clamp(value, -100, 100)));
+      // The confirm's own write (0x826B29CC..0x826B2A08 / disc ..0x82597CA8): the floor is -100 for a
+      // home (`(type & 0xEFE) == 0`, type at comp67+0x1C) and -60 for a business, the ceiling 100.
+      const int floor = (Load32(base, record + 0x1Cu) & 0xEFEu) == 0u ? -100 : -60;
+      refii::mods::StoreU32(base, record + 0x5Cu, static_cast<uint32_t>(std::clamp(value, floor, 100)));
     }
     t_estate_replay = false;
   }
@@ -7751,6 +7766,7 @@ REX_EXTERN(rex_lhGuiManager_SetScreen) {
   const int32_t screen = static_cast<int32_t>(ctx.r4.u32);
   const bool changed = AnySubscriber(REFII_EVENT_MENU_SCREEN) &&
                        static_cast<int32_t>(refii::guest::ScreenIdToTu1(static_cast<uint32_t>(screen))) != CurrentScreen();
+  refii::vfs::stub::SaidAnew();
   __imp__rex_lhGuiManager_SetScreen(ctx, base);
   // The setter writes its argument as the screen that is up (`stw r28,4(r9)` 0x8236eb20, disc
   // 0x82336d28), whatever it loaded — except inside a box opener, which writes the screen it

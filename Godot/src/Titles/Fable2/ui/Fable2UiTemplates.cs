@@ -366,7 +366,7 @@ public static class Fable2UiTemplates
 					new Engine_UiMenuEntry
 					{
 						Name = "DynamicSkyAndWeather",
-						Tag = "Dynamic Sky and Weather",
+						Tag = "REFII_F2_DYNAMIC_SKY",
 						Icon = gamma.Icon,
 						HostOnly = true,
 						Counted = false,
@@ -382,7 +382,7 @@ public static class Fable2UiTemplates
 			options.Entries.Insert(videoIndex + 1, new Engine_UiMenuEntry
 			{
 				Name = "ModSettings",
-				Tag = "Mods",
+				Tag = "REFII_MODS",
 				Icon = gamma.Icon,
 				HostOnly = true,
 				Counted = false,
@@ -495,9 +495,11 @@ public static class Fable2UiTemplates
 					// title counterparts, so the guest's confirmation box and its save
 					// sequencing run either way — see Engine_PauseMenu.QuitCommandPrefix.
 					//
-					// The four quit labels are LITERALS: the text bank has tags for "Save and
-					// Quit" and "Quit and Don't Save" but none naming a destination.
-					// GUI_SCREEN_PAUSE_SAVE_AND_CONTINUE keeps its tag, that row is unchanged.
+					// THE CONSOLE'S PAIR IS THE GAME'S OWN TEXT: its quit goes to the title, and the
+					// bank says it as "Save and Quit" (`GUI_SCREEN_PAUSE_SAVE_AND_QUIT`) and "Quit and
+					// Don't Save" (`GUI_SCREEN_PAUSE_QUIT_DONT_SAVE`), in every language it ships. The
+					// two desktop rows are the PC's additions, which the bank has no words for: our
+					// own (Refii.Text.Engine_OwnWords), said in the language in force.
 					Children =
 					{
 						new Engine_UiMenuEntry
@@ -509,25 +511,25 @@ public static class Fable2UiTemplates
 						new Engine_UiMenuEntry
 						{
 							Name = "SaveAndQuit",
-							Tag = "Save and Quit to Title",
+							Tag = "GUI_SCREEN_PAUSE_SAVE_AND_QUIT",
 							Command = $"{Engine_PauseMenu.SavingCommandPrefix}1",
 						},
 						new Engine_UiMenuEntry
 						{
 							Name = "SaveAndQuitToDesktop", HostOnly = true,
-							Tag = "Save and Quit to Desktop",
+							Tag = "REFII_F2_SAVE_QUIT_DESKTOP",
 							Command = $"{Engine_PauseMenu.QuitCommandPrefix}1",
 						},
 						new Engine_UiMenuEntry
 						{
 							Name = "QuitDontSave",
-							Tag = "Quit to Title and Don't Save",
+							Tag = "GUI_SCREEN_PAUSE_QUIT_DONT_SAVE",
 							Command = $"{Engine_PauseMenu.SavingCommandPrefix}2",
 						},
 						new Engine_UiMenuEntry
 						{
 							Name = "QuitToDesktopDontSave", HostOnly = true,
-							Tag = "Quit to Desktop and Don't Save",
+							Tag = "REFII_F2_QUIT_DESKTOP_NO_SAVE",
 							Command = $"{Engine_PauseMenu.QuitCommandPrefix}2",
 						},
 					},
@@ -556,18 +558,18 @@ public static class Fable2UiTemplates
 				// for it, so the guest's own rows still join by NAME wherever they end up.
 				//
 				// Its command OPENS A SCREEN (Engine_UiHostScreens) — `sub_826B89E0`'s switch has
-				// no case to select — which is what lets it sit anywhere at all. The tag is a
-				// LITERAL: the shipped text bank has no achievements string.
+				// no case to select — which is what lets it sit anywhere at all. The tag is OUR
+				// OWN key (Refii.Text.Engine_OwnWords): the shipped text bank has no achievements string.
 				new Engine_UiMenuEntry
 				{
-					Name = "Achievements", Tag = "Achievements", HostOnly = true,
+					Name = "Achievements", Tag = "REFII_ACHIEVEMENTS", HostOnly = true,
 					Command = Engine_UiHostScreens.OpenCommand(Engine_UiAchievementPage.ScreenId),
 				},
 
 				// The multiplayer book, on the same verb.
 				new Engine_UiMenuEntry
 				{
-					Name = "Multiplayer", Tag = "Multiplayer", HostOnly = true,
+					Name = "Multiplayer", Tag = "REFII_MULTIPLAYER", HostOnly = true,
 					Command = Engine_UiHostScreens.OpenCommand(Engine_UiMultiplayerPage.ScreenId),
 				},
 
@@ -575,53 +577,38 @@ public static class Fable2UiTemplates
 
 				// FABLE 3'S KICK, the online host's (the guest's own root adds "Kick" only when
 				// game+0x11C == 1 and the henchman exists, `sub_8298DF98`). Offered by GameUi only
-				// while an online partner stands; the child is the confirmation, worded as Fable 3's
-				// GUI_SCREEN_PAUSE_CONFIRM_KICK_HENCHMAN.
+				// while an online partner stands. The row is the game's own text key for it
+				// (`GUI_NET_PAUSED_KICK_CLIENT`, TU1 0x8230CD68, disc 0x823331A8). The child is the
+				// confirmation, ours, after Fable 3's GUI_SCREEN_PAUSE_CONFIRM_KICK_HENCHMAN; what it
+				// says of the kicked player is what the guest does: a kicked joiner's own hero is
+				// saved on the way out, as on a leave or a drop (their kick handler runs the
+				// lost-connection handler first, TU1 0x8233E848, which writes the hero package when
+				// they hold a save, 0x8232DEC0; disc 0x823212B8, 0x82310898).
 				new Engine_UiMenuEntry
 				{
-					Name = Engine_PauseMenu.KickRow, Tag = "Kick", HostOnly = true, When = hero,
+					Name = Engine_PauseMenu.KickRow, Tag = "GUI_NET_PAUSED_KICK_CLIENT", HostOnly = true, When = hero,
 					Children =
 					{
 						new Engine_UiMenuEntry
 						{
 							Name = "KickConfirm", HostOnly = true,
-							Tag = "Kick the other Hero out of your game (they lose unsaved progress)",
+							Tag = "REFII_F2_KICK_CONFIRM",
 							Command = $"{Engine_PauseMenu.CoopCommandPrefix}kick",
 						},
 					},
 				},
 
-				// LEAVING, as Fable 3's "Leave": player two leaves the game, the partner plays on.
-				// `PauseCoop:leave` runs the guest's own drop-out answer (`sub_826A6E70`): an online
-				// joiner's HeroSave is written on the way out; local player two's is written when
-				// they loaded one (box 27), else their earnings go to player one (box 26). The
-				// "don't save" pair below quits this machine's whole game. Saving stays the host's —
-				// the world is theirs; player two's HeroSave is written by the guest on leave and
-				// autosave.
+				// PLAYER TWO'S WAY OUT, the original's one row: `sub_8298EDE0` spawns "HenchmanQuit"
+				// (`GUI_SCREEN_PAUSE_HENCHMAN_QUIT`, 0x8298F1E0 / disc 0x82843984) for a local and an
+				// online player two alike, and no quit to the title or the desktop — on a local machine
+				// either would end player one's game too. Its A runs the guest's own henchman arm
+				// (`PauseHenchmanQuit`, `sub_826A6610`): box 27 with a save held, box 26 (their
+				// experience and gold go to the hero) without, each with the guest's own numbers; the
+				// yes is the guest's drop-out answer `sub_826A6E70`.
 				new Engine_UiMenuEntry
 				{
-					Name = "HenchmanQuit", Tag = "Leave or Quit", HostOnly = true, When = playerTwo,
-					Children =
-					{
-						new Engine_UiMenuEntry
-						{
-							Name = "LeaveGame", HostOnly = true,
-							Tag = "Leave this co-op game (your Hero is saved)",
-							Command = $"{Engine_PauseMenu.CoopCommandPrefix}leave",
-						},
-						new Engine_UiMenuEntry
-						{
-							Name = "QuitDontSave",
-							Tag = "Quit to Title",
-							Command = $"{Engine_PauseMenu.SavingCommandPrefix}2",
-						},
-						new Engine_UiMenuEntry
-						{
-							Name = "QuitToDesktopDontSave", HostOnly = true,
-							Tag = "Quit to Desktop",
-							Command = $"{Engine_PauseMenu.QuitCommandPrefix}2",
-						},
-					},
+					Name = "HenchmanQuit", Tag = "GUI_SCREEN_PAUSE_HENCHMAN_QUIT", HostOnly = true, When = playerTwo,
+					Command = Engine_PauseMenu.HenchmanQuitCommand,
 				},
 			},
 		};
@@ -736,10 +723,13 @@ public static class Fable2UiTemplates
 		// furniture screens ask for the root, so they keep the per-presentation model path they
 		// had — which was working — until the capture is keyed by presentation.
 		//
-		// Those rows carry event type 0 and `sub_826B65F0` handles only 140/141, so an identity
-		// push does nothing. Upgrade furniture commits by the screen's `RowAction` (the level, to
-		// `sub_826B6A18`'s transaction); decoration through the stated highlight and its A
-		// (`sub_826B7550`).
+		// The furniture rows carry event type 0 and `sub_826B65F0` handles only 140/141, so an
+		// identity push does nothing. All three commit by the screen's `RowAction`: upgrade
+		// furniture the level (to `sub_826B6A18`'s transaction), decoration the row's ticket (to
+		// the guest's own mount `sub_826B7550`), real estate the row's event, 110..120 (to the
+		// handler's own OnMenuEvent). A real-estate row is KEYED by that event too
+		// (`Engine_UiMenuConstants.RealEstateRowName`): its stated name is the localised label cut
+		// to bytes.
 
 		// THE SHOP'S SIX GROUPS — `sub_82994218`'s own spawn order, each a counted header
 		// through `sub_826CF098` and each emitted only when its own count is non-zero (the guest
@@ -925,17 +915,17 @@ public static class Fable2UiTemplates
 			{
 				new Engine_UiMenuEntry
 				{
-					Name = "Hosting", Tag = "My game", HostOnly = true,
+					Name = "Hosting", Tag = "REFII_F2_MP_MY_GAME", HostOnly = true,
 					Source = Engine_UiNetworkSource.HostingSource,
 				},
 				new Engine_UiMenuEntry
 				{
-					Name = "AddFriend", Tag = "Add a friend (paste code)", HostOnly = true,
+					Name = "AddFriend", Tag = "REFII_F2_MP_ADD_FRIEND", HostOnly = true,
 					Command = $"{Engine_UiNetworkSource.CommandPrefix}paste",
 				},
 				new Engine_UiMenuEntry
 				{
-					Name = "MyCode", Tag = "My friend code", HostOnly = true,
+					Name = "MyCode", Tag = "REFII_F2_MP_MY_CODE", HostOnly = true,
 					Command = $"{Engine_UiNetworkSource.CommandPrefix}code",
 				},
 			},
@@ -944,11 +934,11 @@ public static class Fable2UiTemplates
 		// EACH SUBJECT IS A FOLD, the same shape as `My game`: its rows are its children, so an
 		// empty one still opens onto a row that says so. The right page shows whatever the
 		// cursor is on — the list is the subject, the page is the detail.
-		foreach ((string source, string title) in Engine_UiNetworkSource.Pages)
+		foreach ((string source, string title, string tag) in Engine_UiNetworkSource.Pages)
 		{
 			multiplayer.Entries.Add(new Engine_UiMenuEntry
 			{
-				Name = title, Tag = title, HostOnly = true, Source = source,
+				Name = title, Tag = tag, HostOnly = true, Source = source,
 			});
 		}
 
@@ -959,7 +949,7 @@ public static class Fable2UiTemplates
 		menus[Engine_UiMultiplayerPage.ModsMenuName] = new Engine_UiMenuTemplate
 		{
 			Name = Engine_UiMultiplayerPage.ModsMenuName,
-			Title = "Active Mods",
+			Title = "REFII_ACTIVE_MODS",
 			Source = Engine_UiNetworkSource.ModsSource,
 		};
 
@@ -971,12 +961,12 @@ public static class Fable2UiTemplates
 			{
 				new Engine_UiMenuEntry
 				{
-					Name = "Continue", Tag = "Continue", HostOnly = true,
+					Name = "Continue", Tag = "REFII_CONTINUE", HostOnly = true,
 					Command = Engine_UiHostBoxPage.AcceptCommand,
 				},
 				new Engine_UiMenuEntry
 				{
-					Name = "Back", Tag = "Back", HostOnly = true,
+					Name = "Back", Tag = "REFII_BACK", HostOnly = true,
 					Command = Engine_UiHostBoxPage.CancelCommand,
 				},
 			},
@@ -992,7 +982,7 @@ public static class Fable2UiTemplates
 				new Engine_UiMenuEntry
 				{
 					Name = Engine_UiAchievementPage.FolderRowName,
-					Tag = "Achievements",
+					Tag = "REFII_ACHIEVEMENTS",
 					EventType = Engine_UiAchievementPage.EventType,
 					HostOnly = true,
 				},
@@ -1030,7 +1020,7 @@ public static class Fable2UiTemplates
 						// left page and the highlighted one's description on its right.
 						new Engine_UiMenuEntry
 						{
-							Name = "Mods", Tag = "Active Mods", HostOnly = true,
+							Name = "Mods", Tag = "REFII_ACTIVE_MODS", HostOnly = true,
 							Command = $"{Engine_UiNetworkSource.CommandPrefix}mods",
 						},
 					},
@@ -1040,7 +1030,7 @@ public static class Fable2UiTemplates
 				// and a fold has nowhere to put them. See Engine_UiMultiplayerScreen.
 				new Engine_UiMenuEntry
 				{
-					Name = "Multiplayer", Tag = "Multiplayer", HostOnly = true,
+					Name = "Multiplayer", Tag = "REFII_MULTIPLAYER", HostOnly = true,
 					Command = $"{Engine_UiNetworkSource.CommandPrefix}book",
 				},
 				new Engine_UiMenuEntry { Name = "Language", Tag = "GUI_SCREEN_FRONT_END_LANGUAGE" },
@@ -1055,11 +1045,11 @@ public static class Fable2UiTemplates
 				},
 
 				// THE WAY OUT. A console front end had none, so there is no guest dispatch to
-				// reach and no shipped tag to localise against — host-only, literal label, for
+				// reach and no shipped tag to localise against — host-only, our own key, for
 				// the same reasons as `Achievements`. Last because this list IS the order.
 				new Engine_UiMenuEntry
 				{
-					Name = "QuitToDesktop", Tag = "Quit to Desktop", HostOnly = true,
+					Name = "QuitToDesktop", Tag = "REFII_QUIT_TO_DESKTOP", HostOnly = true,
 					Command = Engine_FrontEndMenu.QuitToDesktopCommand,
 				},
 			},
@@ -1203,18 +1193,23 @@ public static class Fable2UiTemplates
 				// clothing (`sub_829B7328`), gift (`sub_829A9E08`) and decoration
 				// (`sub_8299CEA8`). Upgrade furniture (26) has no mask: the guest registers
 				// nothing there.
-				// Decoration chooses in the input handler's 36 arm from the guest's highlight
-				// (`sub_826B7550`); the item books act by stated command, and so does upgrade
-				// furniture: a row is a level and the verb runs `sub_826B6A18`'s transaction on it.
-				CommitsByHighlight = id is 27,
-				RowAction = id == Engine_UiFurniturePage.ScreenId ? Engine_UiFurniturePage.UpgradeAction : string.Empty,
+				// The item books act by stated command, and so do the two furniture screens: an
+				// upgrade row is a level and the verb runs `sub_826B6A18`'s transaction on it; a
+				// decoration row is the guest's ticket for a trophy and the verb runs the guest's
+				// own mount `sub_826B7550` on it.
+				RowAction = id switch
+				{
+					Engine_UiFurniturePage.ScreenId => Engine_UiFurniturePage.UpgradeAction,
+					27 => Fable2UiVerbs.DecorationMountAction,
+					_ => string.Empty,
+				},
 
 				// DECORATION'S Y REMOVES what the slot holds: the input handler's code 39 arm
 				// (`sub_826B7770` case 13, 0x826B78C4..0x826B7908; disc `sub_8259CA10`
 				// 0x8259CB64..0x8259CBA8) takes no highlight — `sub_8243ED88(*(screen+0x58))`
-				// (disc `sub_825A91F8`), then ExitScreen. The list's Y is Godot's, so the lever
-				// is posted as the guest's own code.
-				FlipAction = id == 27 ? Engine_UiScreenActions.ScreenUnlearn : string.Empty,
+				// (disc `sub_825A91F8`), then ExitScreen. The list's Y is Godot's, posted as the
+				// screen's own lever.
+				FlipAction = id == 27 ? Fable2UiVerbs.DecorationTakeDownAction : string.Empty,
 				ScrollContent = id == 26 ? string.Empty : "Foreground.Book.Pages.Page2.Contents.ItemDescription",
 				ScrollMask = id == 26 ? string.Empty : "Mask",
 				ScrollBar = id == 26 ? string.Empty : "Foreground.Book.Pages.Page2.Contents.Scrollbar",
@@ -1448,6 +1443,10 @@ public static class Fable2UiTemplates
 		AddScreen(screens, new Engine_UiScreenTemplate
 		{
 			ScreenId = 21, Name = "crime", OwnsList = true,
+
+			// A row is its event (50 pay, 51 resist, 52 community service): the verb posts it as
+			// the screen's own lever, `Crime:<p>:pay|resist|service`.
+			RowAction = Fable2UiVerbs.CrimeChoiceAction,
 			// Three pages, one per row; the stack is authored on the leaf.
 			Pages = { "Foreground.Book.Pages.Page1", "Foreground.Book.Pages.Page2", "Foreground.Book.Pages.Page3" },
 			Provider = Fable2PageProviders.Crime,
@@ -1592,8 +1591,11 @@ public static class Fable2UiTemplates
 			Provider = Fable2PageProviders.RealEstate,
 			OwnsList = true,
 
-			// PopulationScript ("RealEstateMenu") is stated on realestatescreen.bgf; its rows are
-			// authored in BuildDefaults above.
+			// A row is its event (110..120): the verb posts it to the handler's own OnMenuEvent,
+			// which reads the event's type and nothing else (0x826B2224).
+			RowAction = Fable2UiVerbs.RealEstateEventAction,
+
+			// DELIBERATELY UNBOUND — see the conditional-list note in BuildDefaults.
 			FadesTopEnd = false,
 			ChromeUnits = { "Foreground" },
 
@@ -1820,7 +1822,12 @@ public static class Fable2UiTemplates
 		{
 			ScreenId = 10, Name = "query", Presentation = "queryscreen",
 			OwnsRevealedInput = true,
-			RevealedBack = Engine_UiScreenActions.ScreenBack,
+
+			// B closes the card and X asks to rename its target (`Query:<p>:close|rename`,
+			// gui_screen_stub_query.cpp); the guest asks the platform keyboard, which
+			// Engine_UiPlatformKeyboard answers.
+			RevealedBack = Fable2UiVerbs.QueryCloseAction,
+			XAction = Fable2UiVerbs.QueryRenameAction,
 			ChromeUnits = { "elements" },
 
 			// THE CARD IS REGISTRY STATEMENTS: `sub_826CCC88` and its fillers publish every text
@@ -2196,6 +2203,27 @@ public static class Fable2UiTemplates
 			{
 				screen.WideLeft = new List<string> { list };
 				screen.WideRight = new List<string>(pieces);
+			}
+		}
+
+		// THE LOGBOOK PRESENTATION'S PAGE ENDS SHORT OF THE COVER. `logbookscreen.bgf` authors every
+		// subject page's title centred at x 207 over a divider 384 wide (`Title` pos (207, 279),
+		// halign 1, wrap 0; `motifs` pos (207, 236), scale 3.84 of the 100-unit quad: x 15..399),
+		// on parchment that runs from the spine to about x 400. A title wider than its divider
+		// ran under the spine and the cover (a friend row's "Name — in Fable II — Exploring").
+		// Every screen drawn from that presentation states its TEXT COLUMN as its page: the subject
+		// pages' lines start at x 50 (left-aligned labels, `Clothing` pos (50, 130) halign 0) and end
+		// at x 387 (right-aligned values, `ClothingValue` pos (387, 130) halign 2) — the authored inset
+		// inside the divider's 15..399, so a fitted title keeps the page's own margin.
+		foreach (uint id in new[]
+		{
+			17u, Engine_UiMultiplayerPage.ScreenId, Engine_UiMultiplayerPage.ModsScreenId,
+			Engine_UiHostBoxPage.ScreenId, Engine_UiAchievementPage.ScreenId,
+		})
+		{
+			if (screens.TryGetValue(id, out Engine_UiScreenTemplate? screen))
+			{
+				screen.PageSpan = new Vector2(50f, 387f);
 			}
 		}
 

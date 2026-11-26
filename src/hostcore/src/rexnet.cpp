@@ -143,6 +143,20 @@ bool SamePeerId(const RexNetPeerId& a, const RexNetPeerId& b) {
     return a.len == b.len && std::memcmp(a.bytes, b.bytes, a.len) == 0;
 }
 
+/// The name to show for a PLAYER behind a connection (§17.2): what RexNet's snapshot names them
+/// (a friend's display name, anyone else's pseudonym), except for the one case where the
+/// snapshot names a role instead of a person. A non-friend this node also relays through is
+/// "relay" there, as infrastructure; as a player they are their pseudonym like any other
+/// non-friend. The relay role never decides WHETHER a peer is a player: the nearest reachable
+/// peer is the one a node relays through, and on one LAN that is the co-op partner.
+std::string PlayerName(const rex::net::RexNet::Connection& connection) {
+    if (connection.is_relay && !connection.is_friend) {
+        return rex::net::Pseudonym(connection.peer);
+    }
+    return connection.display_name.empty() ? rex::net::Pseudonym(connection.peer)
+                                           : connection.display_name;
+}
+
 /// The live node, or null when RexNet is off, not built in, or not up yet.
 ///
 /// A RAW STATIC, NOT A REFERENCE. `RexNet::shared()` is `shared_instance_`, deleted by the
@@ -682,8 +696,8 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiNetPeerName(const char* peer_text, char* out
 extern "C" uint32_t RefiiCoopChannelPeer(void);
 
 /// The online co-op partner's name to show, by the same rule: the connection the co-op channel
-/// talks to (`RefiiCoopChannelPeer`), named by RexNet's own snapshot (a friend's display name, else
-/// the peer's pseudonym; §17.2). `name` in one record, 0 when no partner is known.
+/// talks to (`RefiiCoopChannelPeer`), whatever else that peer is to this node, named as a player
+/// (PlayerName). `name` in one record, 0 when no partner is known.
 REFII_HOST_ABI_EXPORT uint32_t RefiiNetPartnerName(char* out, uint32_t capacity) {
 #if defined(REXGLUE_ENABLE_REXNET)
     rex::net::RexNet* net = Net();
@@ -693,11 +707,9 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiNetPartnerName(char* out, uint32_t capacity)
     }
 
     for (const rex::net::RexNet::Connection& connection : net->SnapshotConnections()) {
-        if (connection.virtual_ip == partner && !connection.is_relay) {
+        if (connection.virtual_ip == partner) {
             std::string row;
-            Field(row, connection.display_name.empty() ? rex::net::Pseudonym(connection.peer)
-                                                       : connection.display_name,
-                  '\n');
+            Field(row, PlayerName(connection), '\n');
             return Emit(row, out, capacity);
         }
     }
@@ -756,12 +768,12 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiNetGamerCard(char* out, uint32_t capacity) {
 
     const uint32_t partner = RefiiCoopChannelPeer();
     for (const rex::net::RexNet::Connection& connection : net->SnapshotConnections()) {
-        if (connection.is_relay || rex::net::RexNet::XuidFromPeer(connection.peer) != xuid) {
+        if (rex::net::RexNet::XuidFromPeer(connection.peer) != xuid) {
             continue;
         }
         if (!found.has_value()) {
             found = connection.peer;
-            name = connection.display_name;
+            name = PlayerName(connection);
         }
         flags |= partner != 0u && connection.virtual_ip == partner ? 4u : 0u;
         break;

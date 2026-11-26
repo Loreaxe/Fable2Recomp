@@ -135,6 +135,8 @@ constexpr uint32_t kPromiseAccepted = 77u;
 
 std::atomic<int32_t> g_hud_root{0};
 std::atomic<int32_t> g_save_row{0};
+/// The save menu its open last stated (the row lever's target, save_menu_row.cpp); 0 once closed or freed.
+std::atomic<uint32_t> g_save_menu{0u};
 std::atomic<int64_t> g_crime_fine{-1};
 std::atomic<int64_t> g_crime_seconds{-1};
 
@@ -258,6 +260,7 @@ REX_EXTERN(rex_SaveMenu_Open) {
   }
   const int32_t row = static_cast<int32_t>(LoadGuestU32(base, menu + kSaveMenuRow));
   g_save_row.store(row);
+  g_save_menu.store(menu);
   Statement("@SaveMenu.Open")
       .Add(Boolean(base[menu + kSaveMenuAllowed] != 0u))
       .Add(Number(static_cast<float>(row)))
@@ -279,6 +282,7 @@ REX_EXTERN(rex_SaveMenu_Close) {
   __imp__rex_SaveMenu_Close(ctx, base);
   if (open) {
     g_save_row.store(0);
+    g_save_menu.store(0u);
     Statement("@SaveMenu.Close").Post();
   }
 }
@@ -474,6 +478,11 @@ void ForgetHudRoot() {
 /// the next menu's first row write is stated.
 void ForgetSaveMenu() {
   g_save_row.store(0);
+  g_save_menu.store(0u);
+}
+
+uint32_t OpenSaveMenu() {
+  return g_save_menu.load();
 }
 
 }  // namespace refii::fable3

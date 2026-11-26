@@ -95,18 +95,9 @@ public partial class Fable3Hud : Fable3Canvas
 	{
 		new("InteractionMenuRight", "InteractionButtons", null, 0f, true, "LowerElements"),
 
-		// The option list: a three-row window over the guest's list. sub_82963DE0 writes the row at
-		// the cursor (mode+116) into `Buttons.Button3` (sub_82961340 at 0x82963ED8), the next two into
-		// Button2 / Button1 (0x82963F5C / 0x82964050) and the leaving one into DissapearingButton —
-		// committing "" to a row past the end's and the leaving row's `Title` (the box guards
-		// 0x82963FA4 / 0x82964098 / 0x829641F4, `@Ui.Text`, ui_stated_hooks.cpp
-		// RefiiF3InteractionRowEmptied) and hiding it (sub_82819AE0 at 0x82963FEC / 0x829640E0 /
-		// 0x8296423C), so no row keeps a label from an earlier pass. The
-		// cursor IS Button3, the only row with `Selection_Box_Glow`. A scroll moves the cursor and
-		// plays the list root's slide 3 (down, sub_82963D18 at 0x82963D9C) or 4 (up, sub_82964248 at
-		// 0x82964520) through sub_8281A500 -> sub_8281A490 -> SetState (0x8281A4AC); a refresh sets 2
-		// (sub_82963BE0 at 0x82963C28).
-		new("InteractionMenuScrollableList", "InteractionList", null, 0f, true, "LowerElements"),
+		// The option list (`LowerElements.InteractionMenuScrollableList`) is not cut here: Godot draws it
+		// itself, in the PC arrangement, from the same statements (Fable3InteractionList). The document's
+		// playback still runs its component, whose clock is the guest's scroll gate (StateReached).
 
 		// The info box: one component whose slide is the panel, IM+64 — staged by sub_82963040
 		// (0x8296307C), rested at 1 by the mode's clear (0x825C400C) and close (0x825C62F0), stated at
@@ -152,6 +143,8 @@ public partial class Fable3Hud : Fable3Canvas
 	};
 
 	private Fable3Presentations? _host;
+	private bool _stood;
+	private static Fable3Hud? _standing;
 	private Engine_UiScreenFade _fade = null!;
 	private readonly List<Fable3HudDocument> _documents = new();
 
@@ -168,7 +161,24 @@ public partial class Fable3Hud : Fable3Canvas
 		_host = new Fable3Presentations { Name = "Presentations", LoadsInBackground = true };
 		_host.Loaded += Stand;
 		Root.AddChild(_host);
+		_standing = this;
 	}
+
+	public override void _ExitTree()
+	{
+		if (_standing == this)
+		{
+			_standing = null;
+		}
+	}
+
+	/// <summary>
+	/// A document's pattern book — its art by element name, for a Fable 3 surface that borrows a
+	/// piece of another document (<see cref="Fable3ListCursor"/>) — or null until the banks are
+	/// indexed and the documents stand.
+	/// </summary>
+	public static Engine_UiTheme? Book(string document) =>
+		_standing is { _stood: true, _host: { } host } ? host.PatternBookFor(document) : null;
 
 	/// <summary>Builds every document's view once the banks are indexed.</summary>
 	private void Stand()
@@ -178,6 +188,7 @@ public partial class Fable3Hud : Fable3Canvas
 			return;
 		}
 
+		_stood = true;
 		foreach (Fable3HudDocument document in _documents)
 		{
 			if (document.View is null && document.Stand(_host, Root) && document.Document == "hud" &&

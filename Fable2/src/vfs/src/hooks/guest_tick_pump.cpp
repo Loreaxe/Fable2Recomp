@@ -63,6 +63,7 @@
 #include "gui/gui_display_box.h"
 #include "hooks/frontend_stated.h"
 #include "hooks/gui_screen_stubs.h"
+#include "hooks/keyboard_ui.h"
 #include "hooks/ppc_externs.h"
 #include "gui/gui_told_statements.h"
 #include "core/gui_native_calls.h"
@@ -110,10 +111,12 @@ PPC_EXTERN_FUNC(rex_GameFlow_PopCommand);
 PPC_EXTERN_FUNC(rex_lhGuiTabStrip_Push);
 PPC_EXTERN_FUNC(rex_lhLua_SetRumbleEnabled);
 extern "C" int RefiiCoopShoppingPlayerTwo(void);
+extern "C" int RefiiCoopPlayerTwoNode(void);
 extern "C" int32_t RefiiPropertyRepair(PPCContext& ctx, uint8_t* base, uint32_t hero, uint64_t uid);
 extern "C" void RefiiPropertyRepairAll(PPCContext& ctx, uint8_t* base, uint32_t hero, int32_t* repaired, int32_t* spent,
                                        int32_t* left);
 extern "C" int RefiiCoopSplitScreen(void);
+extern "C" int RefiiCoopSplitScreenWanted(void);
 extern "C" void RefiiCoopLocalPlayerTwoCall(int on);
 extern "C" uint32_t refii_household_resolve_uid(PPCContext* ctx, uint8_t* base, uint64_t uid);
 
@@ -209,6 +212,8 @@ PPC_EXTERN_FUNC(rex_lhGuiExpressionWheel_EndHeldExpression);  // expression whee
 PPC_EXTERN_FUNC(rex_lhGuiExpressionWheel_Accept);  // expression wheel: accept (36) — enter a group / start the item
 PPC_EXTERN_FUNC(rex_lhGuiExpressionWheel_Back);  // expression wheel: back (37) — leave the group, or close at the top
 PPC_EXTERN_FUNC(rex_lhGuiExpressionWheel_SetCursorFromStick);  // expression wheel: cursor from a stick vector (x, y)
+PPC_EXTERN_FUNC(rex_lhGuiInput_PlayAPress);  // GameAction 36's play consumer (r3 a consumer whose +12 is the player)
+PPC_EXTERN_FUNC(rex_lhGuiInput_PostExpressionMenuOpened);  // message 32 at the player's hero (r3 as above)
 PPC_EXTERN_FUNC(rex_lhGui_RegisterPlayer);  // GUI RegisterPlayer(GUI, player): ++GUI+0x65, binds the action consumer
 PPC_EXTERN_FUNC(rex_lhGuiMinigameCompletedScreen_HandleAction);  // 11 minigame completed (6)
 PPC_EXTERN_FUNC(rex_lhGuiQuestCompletionScreen_HandleAction);  // 12 quest completion (6, player 1)
@@ -283,6 +288,7 @@ PPC_EXTERN_FUNC(rex_lhEntity_Destroy);   // entity: destroy
 PPC_EXTERN_FUNC(rex_lhCoopScreen_SpawnPreviewMannequin);   // co-op screen: spawn the preview entity for the current pickbox
 PPC_EXTERN_FUNC(rex_lhGuiCoopScreen_SetPickerCursor);   // co-op save picker: the cursor's setter (r3 screen, r4 save)
 PPC_EXTERN_FUNC(rex_lhGuiCoopScreen_CommitPickedSave);   // co-op save picker: load the save at +392 (r3 screen)
+PPC_EXTERN_FUNC(rex_lhGuiCoopScreen_OnScreenAction);     // co-op screen vf+24 (r3 screen, r4 code, r5 player)
 PPC_EXTERN_FUNC(rex_lhGuiCoopScreen_ClosePicker);   // co-op save picker: close the fan (r3 screen)
 
 // Dressing player two. `sub_824F0370(ItemRef out[4], CECInventory*, defHash)` puts a def's item
@@ -887,6 +893,10 @@ constexpr const char* kActionLanguagePrefix = "Language:";
 /// 2 quit-without-saving.
 constexpr const char* kActionPauseSavingPrefix = "PauseSaving:";
 
+/// "PauseHenchmanQuit:<player>" — player two's Quit row (gui_screen_stub_pause_root.cpp
+/// DispatchPauseHenchmanQuit): the guest's own henchman quit box, 26 or 27.
+constexpr const char* kActionPauseHenchmanQuitPrefix = "PauseHenchmanQuit:";
+
 /// "PauseTab:<tab>" — a pause tab picked: 1 root, 2 map, 3 abilities, 4 items, 5 weapons,
 /// 6 clothing, 7 logbook, 8 options. The guest's own tab request ends in `sub_826B89E0(tab)`
 /// when the tab is not the one the strip is on (`cmpw cr6,r3,r11; beq; bl sub_826B89E0`
@@ -905,6 +915,8 @@ constexpr const char* kActionRumblePrefix = "Rumble:";
 /// STICK needs no lever — `sub_82402F70` routes the raw left-stick event to `sub_826AA060`
 /// itself, gated on `QM+35`; `point:<i>` is the fallback that feeds the same routine the unit
 /// vector of sector i (angle 3π/4 − iπ/4, 0 = NE clockwise to 7 = N).
+/// "rb:press" / "rb:release" are RB's own GameActions 40 / 41 (`sub_824040B8`), the input map's toggle
+/// byte deciding hold or toggle as it does there (see DispatchQuickWheel).
 /// "QuickWheel:2:<verb>" is local player two's: the wheel opens with player two's Player (it
 /// stores the opener's id at W+24, `sub_826A9A60`), and every other verb acts only on a wheel
 /// that player owns — each pad drives its own wheel, never the other's.
@@ -1048,9 +1060,15 @@ constexpr const char* kActionMenuBoxAnswerPrefix = "MenuBoxAnswer:";
 /// DispatchDisplayBoxAction. The player is TakeActingPlayer's.
 constexpr const char* kActionBoxActionPrefix = "BoxAction:";
 
-/// "FrontEndDialog:<code>" — answers the front end's own `dialog` box (36 accept, 37 cancel)
-/// through the owning screen's input slot. See DispatchFrontEndDialog.
+/// "FrontEndDialog:<pad>:<code>" — answers the front end's own `dialog` box (36 accept, 37 cancel)
+/// through the owning screen's input slot, for the pad that pressed. See DispatchFrontEndDialog.
 constexpr const char* kActionFrontEndDialogPrefix = "FrontEndDialog:";
+
+/// "TitleStart:<pad>" — the title's A, for the pad that pressed it. See DispatchTitleStart.
+constexpr const char* kActionTitleStartPrefix = "TitleStart:";
+
+/// "FrontEndBack:<pad>" — the main menu's B where no host panel answers it. See DispatchFrontEndBack.
+constexpr const char* kActionFrontEndBackPrefix = "FrontEndBack:";
 
 /// "ScreenAction:<player>:<code>" — one action code to the CURRENT in-game screen's own input method
 /// (vtable+24): 36 select, 37 back, 39 the per-screen Y action, 72/73 tab prev/next.
@@ -1078,6 +1096,12 @@ constexpr const char* kActionMenuEventPrefix = "MenuEvent:";
 /// `Inventory:<op>:<recordHash>` — see DispatchInventoryAction.
 constexpr const char* kActionInventoryPrefix = "Inventory:";
 
+/// `Shop:<p>:close` — the shop's B (gui_screen_stub_shop.cpp). `Gift:<p>:close` — the
+/// gift screen's B, and `Gift:<p>:item:<ticket>:<record>` — a gift row's A: the gift screen's own row
+/// answer on that ticket (CommitItemThroughScreen; its confirm, commit and exit are the guest's).
+constexpr const char* kActionShopPrefix = "Shop:";
+constexpr const char* kActionGiftPrefix = "Gift:";
+
 /// `Items:<p>:…` / `Clothing:<p>:…` — the item books' rows, see DispatchItemLever.
 constexpr const char* kActionItemsPrefix = "Items:";
 constexpr const char* kActionClothingPrefix = "Clothing:";
@@ -1090,9 +1114,28 @@ constexpr const char* kActionInventoryForPrefix = "InventoryFor:";
 /// back for player p, see gui_screen_stub_abilities.cpp DispatchAbility.
 constexpr const char* kActionAbilityPrefix = "Ability:";
 
-/// `Furniture:upgrade:<level>` — the furniture screen's upgrade on a stated level, see
-/// DispatchFurnitureAction.
+/// `Furniture:<p>:upgrade:<level>` — the furniture screen's upgrade on a stated level, and
+/// `Furniture:<p>:close`, its B; see DispatchFurnitureAction.
 constexpr const char* kActionFurniturePrefix = "Furniture:";
+
+/// `Decoration:<p>:mount:<ticket>|takedown|close` — the decoration screen's A on a stated row, its Y
+/// and its B (gui_screen_stub_decoration.cpp).
+constexpr const char* kActionDecorationPrefix = "Decoration:";
+
+/// `Crime:<p>:pay|resist|service` — a crime row's A (gui_screen_stub_crime.cpp). `Query:<p>:close|rename`
+/// — the villager card's B and Y (gui_screen_stub_query.cpp). Each only while its own screen stands
+/// with no box over it.
+constexpr const char* kActionCrimePrefix = "Crime:";
+constexpr const char* kActionQueryPrefix = "Query:";
+
+/// `SafetyToggle:<p>` and `TargetQuery:<p>` — the HUD's two levers in play (hud_levers.cpp).
+constexpr const char* kActionSafetyTogglePrefix = "SafetyToggle:";
+constexpr const char* kActionTargetQueryPrefix = "TargetQuery:";
+
+/// `RealEstate:<p>:event:<110..120>` — a real-estate row's commit by its stated event, and
+/// `RealEstate:<p>:close`, the screen's B (gui_screen_stub_real_estate.cpp). (`Estate:` is the online
+/// joiner's intent, replayed on the host.)
+constexpr const char* kActionRealEstatePrefix = "RealEstate:";
 
 /// THE IN-GAME GUI'S OWN ACTIONS run inside the guest's Lua window, not before the tick body.
 ///
@@ -1108,9 +1151,10 @@ constexpr const char* kActionFurniturePrefix = "Furniture:";
 bool IsInGameUiAction(const std::string& name) {
   static constexpr const char* kPrefixes[] = {
       "MenuEvent:",   "ScreenAction:", "QueryAnswer:",
-      "BoxAction:",   "Card:", "MenuBoxSelect:", "MenuBoxAnswer:", "PauseTab:",
+      "BoxAction:",   "Card:", "Shop:", "Gift:", "MenuBoxSelect:", "MenuBoxAnswer:", "PauseTab:",
       "ButtonBox:",   "AcceptHold", "PauseBack", "PauseCycle:", "CreditsEnd", "Options:",
-      "PauseClose:",
+      "PauseClose:",  "Furniture:", "Decoration:", "RealEstate:", "Crime:", "Query:",
+      refii::vfs::kKeyboardAnswerAction, refii::vfs::kKeyboardCancelAction,
       kActionCoopPickSavePrefix, kActionCoopPickCursorPrefix,
   };
   for (const char* prefix : kPrefixes) {
@@ -1121,6 +1165,14 @@ bool IsInGameUiAction(const std::string& name) {
   return false;
 }
 
+/// THE CO-OP SCREEN'S PRESSES (`CoopAction:`) are delivered where the
+/// guest's own input dispatch delivered the pad's — the flow tick's entry, as Start — and are not
+/// held to the in-game GUI: a joiner arriving from the title has the screen under the front end's
+/// GUI (DispatchCoopAction finds the handler either way).
+bool IsCoopScreenInput(const std::string& name) {
+  return name.rfind("CoopAction:", 0) == 0;
+}
+
 /// THE PLAYER'S START is delivered where the guest's own input dispatch delivers it: `lhEngine_FrameUpdate`
 /// (0x821C8FB0 / disc 0x821C8F08) runs the action handlers `sub_821CCED8` at 0x821C9020 (`CGUIInput_vf6` →
 /// `sub_82403920` → `bl sub_82371B10`, r5 = 0, at 0x82403D50) and then the game-flow tick at 0x821C902C —
@@ -1128,7 +1180,9 @@ bool IsInGameUiAction(const std::string& name) {
 /// `cmpwi cr6,r3,7`), so draining Start there held the press until the cutscene ended and then opened
 /// the book; the guest's own Start under state 7 opens nothing (r31 = 1 at 0x82371C7C: no lite box at
 /// 0x82371CA4, no book at 0x82371CEC). Drained at the flow tick's entry (rex_lhGameFlow_Tick), once.
-bool IsInputAction(const std::string& name) { return name.rfind("Start:", 0) == 0; }
+bool IsInputAction(const std::string& name) {
+  return name.rfind("Start:", 0) == 0 || IsCoopScreenInput(name);
+}
 
 /// Takes the `<player>:` that leads the levers answering a handler — `QueryAnswer:`, `BoxAction:`,
 /// `ScreenAction:`, `Card:` — and returns it, 1 or 2; 0 when it is absent or out of
@@ -1438,29 +1492,125 @@ bool DispatchDisplayBoxAction(PPCContext& ctx, uint8_t* base, uint32_t code,
 
 /// Answers the front end's `dialog` box. Every front-end warning goes through `sub_826E40E0`
 /// (the main-menu root reaches it via slot +32 `sub_826E1C50`, the title directly), and its
-/// answer is the owner's own input slot (+12): root `sub_826DEE40` (36 accept, 37 cancel when
-/// `+206`), title `sub_826E2F18` (36), each taking only the pad in `dword_83496AF8`. The owner is
-/// the one OpenDialog was called on, while its warning is raised (frontend_stated.cpp).
-bool DispatchFrontEndDialog(PPCContext& ctx, uint8_t* base, uint32_t code) {
+/// answer is the owner's own input slot (+12): root `sub_826DEE40` / disc `sub_826C72A8` (36
+/// accept, 37 cancel when `+206`), title `sub_826E2F18` / disc `sub_826C61B8` (36 in mode 12). r5
+/// is the pad that pressed. The root acts only for the title's pad (`cmpw cr6,r5,r4` 0x826dee60 /
+/// 0x826c72c8, r4 = `dword_83496AF8`); the title takes any pad. A press from another pad on the
+/// main menu is still sent — the root's compare decides — and logged with the pad the title took A
+/// from. The owner is the one OpenDialog was called on, while its warning is raised
+/// (frontend_stated.cpp).
+bool DispatchFrontEndDialog(PPCContext& ctx, uint8_t* base, uint32_t pad, uint32_t code) {
   bool title = false;
   const uint32_t owner = FrontEndDialogOwner(&title);
   if (owner == 0u) {
-    REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{} with no dialog up — dropped", code);
+    REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{}:{} with no dialog up — dropped", pad, code);
     return true;
+  }
+  if (!title && pad != FrontEndPad()) {
+    REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{}:{} is not the owning pad — the main menu takes only "
+                "the pad the title took A from ({})", pad, code, FrontEndPad());
   }
 
   const PPCContext saved = ctx;
   ctx.r3.u32 = owner;
   ctx.r4.u32 = code;
-  ctx.r5.u32 = LoadGuestU32(base, refii::guest::Address(0x83496AF8u));
-  if (title) {
+  ctx.r5.u32 = pad;
+  {
+    const FrontEndLeverCall lever;
+    if (title) {
+      rex_lhGui_FrontendTitle_OnScreenAction(ctx, base);
+    } else {
+      rex_lhGui_FrontendRoot_OnScreenAction(ctx, base);
+    }
+  }
+  ctx = saved;
+  REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{}:{} answered 0x{:08X} ({})", pad, code, owner,
+              title ? "title" : "main menu");
+  return true;
+}
+
+/// THE TITLE'S A. The title's input slot `sub_826E2F18` / disc `sub_826C61B8` (r3 title, r4 code,
+/// r5 pad) is the whole contract: every call stamps the idle clock (`stfd f9,0x48(r31)` 0x826e2f60 /
+/// disc +0x40); with no dialog raised (`lbz r10,0x39(r31)` 0x826e3010 / 0x826c62a4) in mode 8 the
+/// attract's skip (`cmpwi r11,8` 0x826e301c, `stb r10,0xF4(r11)` 0x826e3064 / 0x826c62f8); else on
+/// 36 with the latch set (`lbz r11,0x50(r31)` 0x826e3078 / `0x48` 0x826c630c) the latch clear, the
+/// root's slide 3, mode 10, the voice cue, and the session's pad (`stw r29,dword_83496AF8`
+/// 0x826e30dc / `dword_83496934` 0x826c6370). Mode 11's handover in the title's Update reads that
+/// pad: with its bit clear in the signed-in mask it shows the sign-in UI and waits on it
+/// (`slw r8,r9,r11; and r7,r8,r10; cmplwi; bne` then `bl j_XamShowSigninUI` 0x82379564..0x823795A0 /
+/// 0x8237A004..0x8237A040). Only user 0 signs in here and the sign-in UI signs nobody in, so while
+/// some pad is signed in a pad that is not is refused for the start (not for the attract's skip),
+/// with that reason; with none signed in the start goes as the console's would, and the session
+/// runs on no profile. The title is the one its activate stated; mode 12 is the dialog's, answered
+/// by FrontEndDialog.
+bool DispatchTitleStart(PPCContext& ctx, uint8_t* base, uint32_t pad) {
+  uint32_t mode = 0u;
+  bool armed = false;
+  const uint32_t title = FrontEndTitleScreen();
+  if (!FrontEndTitleState(&mode, &armed) || title == 0u) {
+    REXLOG_INFO("Refii guest-tick pump: TitleStart:{} with no title active — dropped", pad);
+    return true;
+  }
+  if (mode == 12u || mode == 1u) {
+    REXLOG_INFO("Refii guest-tick pump: TitleStart:{} dropped — the title's dialog is up (mode {}); "
+                "FrontEndDialog answers it", pad, mode);
+    return true;
+  }
+  if (mode != 8u) {
+    if (!armed) {
+      REXLOG_INFO("Refii guest-tick pump: TitleStart:{} dropped — the title is not taking A (mode {})", pad, mode);
+      return true;
+    }
+    const uint32_t signed_in = LoadGuestU32(base, kSignedInUserMask);
+    if (pad >= 4u || (signed_in != 0u && ((1u << pad) & signed_in) == 0u)) {
+      REXLOG_INFO("Refii guest-tick pump: TitleStart:{} refused — pad {} is not signed in (mask 0x{:X}); "
+                  "the title is started from a signed-in pad", pad, pad, signed_in);
+      return true;
+    }
+  }
+
+  const PPCContext saved = ctx;
+  ctx.r3.u32 = title;
+  ctx.r4.u32 = 36u;
+  ctx.r5.u32 = pad;
+  {
+    const FrontEndLeverCall lever;
     rex_lhGui_FrontendTitle_OnScreenAction(ctx, base);
-  } else {
+  }
+  ctx = saved;
+  REXLOG_INFO("Refii guest-tick pump: TitleStart:{} sent to the title 0x{:08X} in mode {}{}", pad, title, mode,
+              mode == 8u ? " (the attract's skip)" : "");
+  return true;
+}
+
+/// THE MAIN MENU'S B. The root's input slot `sub_826DEE40` / disc `sub_826C72A8` on 37 (r5 the pad;
+/// only the title's pad acts, `cmpw cr6,r5,r4` 0x826dee60 / 0x826c72c8): in mode 0 at the list's
+/// root back to the title (`li r11,7; stw r11,0x18(r31)` 0x826dfbb0 / 0x826c8004), in mode 5 the load
+/// fan's close (`+24 = 0` 0x826dfb7c / 0x826c7fd0). Those are the two modes Godot's menu mask holds B in without a host panel
+/// answering it; any other mode is refused here.
+bool DispatchFrontEndBack(PPCContext& ctx, uint8_t* base, uint32_t pad) {
+  const uint32_t menu = FrontEndMenuScreen();
+  uint32_t activation = 0u;
+  const uint32_t mode = FrontEndMenuMode();
+  if (menu == 0u || FrontEndActiveScreen(&activation) != menu || (mode != 0u && mode != 5u)) {
+    REXLOG_INFO("Refii guest-tick pump: FrontEndBack:{} dropped — the main menu is not on its list or its "
+                "load fan (mode {})", pad, mode);
+    return true;
+  }
+  if (pad != FrontEndPad()) {
+    REXLOG_INFO("Refii guest-tick pump: FrontEndBack:{} is not the owning pad — the main menu takes only "
+                "the pad the title took A from ({})", pad, FrontEndPad());
+  }
+  const PPCContext saved = ctx;
+  ctx.r3.u32 = menu;
+  ctx.r4.u32 = 37u;
+  ctx.r5.u32 = pad;
+  {
+    const FrontEndLeverCall lever;
     rex_lhGui_FrontendRoot_OnScreenAction(ctx, base);
   }
   ctx = saved;
-  REXLOG_INFO("Refii guest-tick pump: FrontEndDialog:{} answered 0x{:08X} ({})", code, owner,
-              title ? "title" : "main menu");
+  REXLOG_INFO("Refii guest-tick pump: FrontEndBack:{} answered 0x{:08X} in mode {}", pad, menu, mode);
   return true;
 }
 
@@ -1481,7 +1631,10 @@ bool DispatchLoadFanBack(PPCContext& ctx, uint8_t* base) {
   ctx.r3.u32 = menu;
   ctx.r4.u32 = 37u;
   ctx.r5.u32 = LoadGuestU32(base, refii::guest::Address(0x83496AF8u));
-  rex_lhGui_FrontendRoot_OnScreenAction(ctx, base);
+  {
+    const FrontEndLeverCall lever;
+    rex_lhGui_FrontendRoot_OnScreenAction(ctx, base);
+  }
   ctx = saved;
   REXLOG_INFO("Refii guest-tick pump: LoadFanBack answered 0x{:08X}", menu);
   return true;
@@ -2860,29 +3013,114 @@ bool DispatchItemLever(PPCContext& ctx, uint8_t* base, bool clothing, uint32_t p
   return DispatchInventoryAction(ctx, base, direct, 0, ticket);
 }
 
-extern "C" int32_t RefiiFurnitureUpgrade(PPCContext* ctx, uint8_t* base, int32_t level);
+extern "C" int32_t RefiiFurnitureUpgrade(PPCContext* ctx, uint8_t* base, int32_t level, int32_t player);
 
-/// `Furniture:upgrade:<level>` — the transaction of the furniture screen's A (`sub_826B6A18`, disc
+/// `Furniture:<p>:upgrade:<level>` — the transaction of the furniture screen's A (`sub_826B6A18`, disc
 /// `sub_8259BB80`) on the level the row states (`Float1 + (Float2 << 16)`, as `sub_8299D910`
-/// spawned it), never the guest's highlight; RefiiFurnitureUpgrade (mod_events.cpp) runs it.
+/// spawned it), never the guest's highlight; RefiiFurnitureUpgrade (mod_events.cpp) runs it for the
+/// player named. `Furniture:<p>:close` — the screen's B (gui_screen_stub_furniture.cpp). Both only
+/// while screen 26 stands with no box over it.
 bool DispatchFurnitureAction(PPCContext& ctx, uint8_t* base, const std::string& body) {
   constexpr const char* kUpgrade = "upgrade:";
-  const bool upgrade = body.rfind(kUpgrade, 0) == 0;
-  const char* digits = upgrade ? body.c_str() + std::strlen(kUpgrade) : body.c_str();
+  std::string rest = body;
+  const uint32_t player = TakeActingPlayer(rest);
+  const bool upgrade = rest.rfind(kUpgrade, 0) == 0;
+  const char* digits = upgrade ? rest.c_str() + std::strlen(kUpgrade) : rest.c_str();
   char* end = nullptr;
   const long level = upgrade ? std::strtol(digits, &end, 10) : -1;
-  if (end == nullptr || end == digits || *end != '\0' || level < 0 || level > 0xFFFF) {
-    REXLOG_INFO("Refii guest-tick pump: 'Furniture:{}' is not upgrade:<level> — dropped", body);
+  const bool levelled = upgrade && end != nullptr && end != digits && *end == '\0' && level >= 0 && level <= 0xFFFF;
+  if (player == 0u || (rest != "close" && !levelled)) {
+    REXLOG_INFO("Refii guest-tick pump: 'Furniture:{}' is not <p>:upgrade:<level> or <p>:close — dropped", body);
     return true;
+  }
+  uint32_t mode = 1u;
+  const bool up = refii_bridge_stated_pause(&mode, nullptr, nullptr) != 0u;
+  if (!up || mode != 1u || refii_bridge_stated_screen_now() != 26u) {
+    REXLOG_INFO("Refii guest-tick pump: 'Furniture:{}' refused (screen {}, modal mode {})", body,
+                refii_bridge_stated_screen_now(), mode);
+    return true;
+  }
+  if (!levelled) {
+    return refii::vfs::DispatchFurnitureClose(ctx, base, player);
   }
   static constexpr const char* kOutcome[] = {
       "upgraded", "no targeted piece", "the piece is not upgradeable", "already installed",
       "no unlock card for it", "the level was not set (cancelled or refused)",
+      "player two has no redecorating of their own, refused",
   };
-  const int32_t outcome = RefiiFurnitureUpgrade(&ctx, base, static_cast<int32_t>(level));
-  REXLOG_INFO("Refii guest-tick pump: Furniture:upgrade:{} — {}", level,
-              outcome >= 0 && outcome < 6 ? kOutcome[outcome] : "?");
+  const int32_t outcome =
+      RefiiFurnitureUpgrade(&ctx, base, static_cast<int32_t>(level), static_cast<int32_t>(player));
+  REXLOG_INFO("Refii guest-tick pump: Furniture:{}:upgrade:{} — {}", player, level,
+              outcome >= 0 && outcome < 7 ? kOutcome[outcome] : "?");
   return true;
+}
+
+/// `Decoration:<p>:…` and `RealEstate:<p>:…` — see their prefixes; each only while its own screen
+/// stands with no box over it (a box takes its own answer, `QueryAnswer`).
+bool DispatchHouseScreenLever(PPCContext& ctx, uint8_t* base, const std::string& name, bool estate) {
+  std::string rest = name.substr(std::strlen(estate ? kActionRealEstatePrefix : kActionDecorationPrefix));
+  const uint32_t player = TakeActingPlayer(rest);
+  unsigned long value = 0ul;
+  const bool valued = std::sscanf(rest.c_str(), estate ? "event:%lu" : "mount:%lu", &value) == 1;
+  const bool plain = rest == "close" || (!estate && rest == "takedown");
+  if (player == 0u || (!valued && !plain)) {
+    REXLOG_INFO("Refii guest-tick pump: '{}' is not {} — dropped", name,
+                estate ? "RealEstate:<p>:event:<110..120> or RealEstate:<p>:close"
+                       : "Decoration:<p>:mount:<ticket>, Decoration:<p>:takedown or Decoration:<p>:close");
+    return true;
+  }
+  // The modal MODE, not its id: real estate's buy-denied notice is a box with id 0 (mode 2).
+  uint32_t mode = 1u;
+  const bool up = refii_bridge_stated_pause(&mode, nullptr, nullptr) != 0u;
+  if (!up || mode != 1u || refii_bridge_stated_screen_now() != (estate ? 28u : 27u)) {
+    REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal mode {})", name,
+                refii_bridge_stated_screen_now(), mode);
+    return true;
+  }
+  if (estate) {
+    return valued ? refii::vfs::DispatchRealEstateEvent(ctx, base, player, static_cast<uint32_t>(value))
+                  : refii::vfs::DispatchRealEstateClose(ctx, base, player);
+  }
+  return refii::vfs::DispatchDecoration(ctx, base, player, valued ? "mount" : rest, static_cast<uint32_t>(value));
+}
+
+/// `Crime:<p>:…` and `Query:<p>:…` — see their prefixes.
+bool DispatchCardScreenLever(PPCContext& ctx, uint8_t* base, const std::string& name, bool crime) {
+  std::string rest = name.substr(std::strlen(crime ? kActionCrimePrefix : kActionQueryPrefix));
+  const uint32_t player = TakeActingPlayer(rest);
+  const bool known = crime ? rest == "pay" || rest == "resist" || rest == "service" : rest == "close" || rest == "rename";
+  if (player == 0u || !known) {
+    REXLOG_INFO("Refii guest-tick pump: '{}' is not {} — dropped", name,
+                crime ? "Crime:<p>:pay|resist|service" : "Query:<p>:close|rename");
+    return true;
+  }
+  uint32_t mode = 1u;
+  const bool up = refii_bridge_stated_pause(&mode, nullptr, nullptr) != 0u;
+  if (!up || mode != 1u || refii_bridge_stated_screen_now() != (crime ? 21u : 10u)) {
+    REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal mode {})", name,
+                refii_bridge_stated_screen_now(), mode);
+    return true;
+  }
+  return crime ? refii::vfs::DispatchCrime(ctx, base, player, rest) : refii::vfs::DispatchQuery(ctx, base, player, rest);
+}
+
+/// `SafetyToggle:<p>` and `TargetQuery:<p>` — in play alone: no in-game screen up and no box.
+bool DispatchHudLever(PPCContext& ctx, uint8_t* base, const std::string& name, bool safety) {
+  std::string rest = name.substr(std::strlen(safety ? kActionSafetyTogglePrefix : kActionTargetQueryPrefix)) + ":";
+  const uint32_t player = TakeActingPlayer(rest);
+  if (player == 0u || !rest.empty()) {
+    REXLOG_INFO("Refii guest-tick pump: '{}' is not {}<1|2> — dropped", name,
+                safety ? kActionSafetyTogglePrefix : kActionTargetQueryPrefix);
+    return true;
+  }
+  // StatedInGameScreen: the in-game screen set is up with no box; 31 is its "no screen".
+  uint32_t screen = 0u;
+  if (!StatedInGameScreen(&screen) || screen != 31u) {
+    REXLOG_INFO("Refii guest-tick pump: '{}' refused — not in play (stated screen {})", name,
+                refii_bridge_stated_screen_now());
+    return true;
+  }
+  return safety ? refii::vfs::DispatchSafetyToggle(ctx, base, player) : refii::vfs::DispatchTargetQuery(ctx, base, player);
 }
 
 /// The `Player` with this id, out of the `PlayerManager` at `game+156`.
@@ -3012,10 +3250,6 @@ struct CoopExitUse {
   uint32_t frame = 0;  // the guest's frame counter (0x83319650) when it arrived
 };
 CoopExitUse g_coop_exit_use;
-
-/// Guest ticks until a kick's disconnect: the pause screen's own countdown (`+0x118` = 5, set at
-/// 0x826A2A3C, run down by `sub_826A23F8`) so the queued 0x121 is flushed before the drop.
-int g_coop_kick_ticks = 0;
 
 /// Defined at the foot of this file, outside `refii::vfs`, so the hooks payload can reach it.
 extern "C" void RefiiCoopSetOwnHero(int on);
@@ -3470,12 +3704,25 @@ void WearHashes(PPCContext& ctx, uint8_t* base, uint32_t inventory, uint32_t mod
 /// Dresses one player's current body, once per (entity, outfit): each hash is given only when
 /// the inventory does not already hold it (HeldCount, keyed by the def hash, which is the
 /// record an AddItemByDefHash lands under), and always worn. Returns true when dressed (or no
-/// outfit to dress); false when the body is not dressable yet — the caller asks again.
+/// stated hero to dress as); false when the body is not dressable yet — the caller asks again.
 ///
-/// Wearing replaces only the clusters the new item covers, so A NEW OUTFIT ON THE SAME BODY
-/// first takes off what the last one wore and this one does not: each worn record of
-/// component 15 (+0x10..+0x14, 24-byte {item +0, index +4}) whose def hash (item+4) the latch
-/// names and the new outfit does not, through the guest's RemoveItem with that {item, index}.
+/// THE STATED WORN LIST IS THE WHOLE OUTFIT, and wearing replaces only the clusters the new
+/// item covers, so what the statement does not name is taken off first: each worn record of
+/// component 15 (+0x10..+0x14, 24-byte {item +0, index +4}, def hash at item+4) through the
+/// guest's RemoveItem with that {item, index}.
+///   - A BODY'S FIRST DRESS: every worn record the statement does not name. A body is created
+///     wearing its definition's `InitialModifiers` only on the copy that owns it
+///     (`CECAppearanceModifierManager_vf8` 0x824BDFB8: `bl sub_82214AF8` 0x824BE0FC, then
+///     `bl CECAppearanceModifiers_ApplyInitialModifiers` 0x824BE110; disc 0x8256ED14 /
+///     0x8256ED28), so the host's copy of a preview and the joiner's copy of its own body start
+///     in `CreatureHero`'s starter clothes and the other machine's copy of each starts bare.
+///     The same rule on every copy is what makes the two screens agree.
+///   - A NEW OUTFIT ON THE SAME BODY: what the last statement named and this one does not; a
+///     record neither names is one the guest put on since and stays.
+/// A statement that names nothing worn takes nothing off on a first dress: the body keeps the
+/// starter clothes its owner copy was made in (a new-game hero's save names no worn list and the
+/// solo game shows it in `InitialModifiers`). A body with no statement yet (generation 0) is left
+/// as the guest made it.
 bool CoopRedressPlayer(PPCContext& ctx, uint8_t* base, int player, uint32_t entity) {
   const int slot = player - 1;
   if (entity == 0u) {
@@ -3487,11 +3734,8 @@ bool CoopRedressPlayer(PPCContext& ctx, uint8_t* base, int player, uint32_t enti
     return true;
   }
 
-  if (g_coop_wear[slot].empty()) {
-    // NO OUTFIT, NO DRESS. The def's own `InitialItems`/`InitialModifiers` were tried here and
-    // put `CreatureHero`'s creation-time defaults on a body that then also received the real
-    // outfit when it arrived — wear adds, it never replaces. A bare body until the kit lands
-    // is the honest state; the latch is left clear so the first named outfit dresses it.
+  // Slot 2 is the co-op screen's preview, which mirrors player two's statement.
+  if (g_coop_record[player == 3 ? 1 : slot].generation == 0u) {
     g_coop_dressed_entity[slot] = 0u;
     g_coop_dressed_set[slot].clear();
     g_coop_dyed_entity[slot] = 0u;
@@ -3505,44 +3749,45 @@ bool CoopRedressPlayer(PPCContext& ctx, uint8_t* base, int player, uint32_t enti
     return false;  // not a dressable body yet — the next tick asks again
   }
 
+  const bool first = entity != g_coop_dressed_entity[slot];
+  const std::vector<uint32_t> last =
+      first ? std::vector<uint32_t>() : CoopWearTextHashes(g_coop_dressed_set[slot]);
+  const std::vector<uint32_t>& wear = g_coop_wear[slot];
+  const auto comes_off = [&](uint32_t hash) {
+    if (std::find(wear.begin(), wear.end(), hash) != wear.end()) {
+      return false;
+    }
+    return (first && !wear.empty()) || std::find(last.begin(), last.end(), hash) != last.end();
+  };
+
+  const uint32_t begin = LoadGuestU32(base, modifiers + 0x10u);
+  const uint32_t end = LoadGuestU32(base, modifiers + 0x14u);
+  if (begin != end && (!LooksLikeGuestPointer(begin) || end < begin ||
+                       ((end - begin) % 24u) != 0u || (end - begin) > 24u * 64u)) {
+    return false;  // a torn worn vector — the next tick reads it again
+  }
+
+  // Snapshot first: each removal erases its record and moves the rest down.
+  std::vector<std::pair<uint32_t, uint32_t>> off;
+  for (uint32_t at = begin; at < end; at += 24u) {
+    const uint32_t item = LoadGuestU32(base, at);
+    if (LooksLikeGuestPointer(item) && comes_off(LoadGuestU32(base, item + 4u))) {
+      off.emplace_back(item, LoadGuestU32(base, at + 4u));
+    }
+  }
+
   uint32_t taken_off = 0u;
-  if (entity == g_coop_dressed_entity[slot]) {
-    std::vector<uint32_t> stale;
-    for (uint32_t hash : CoopWearTextHashes(g_coop_dressed_set[slot])) {
-      if (std::find(g_coop_wear[slot].begin(), g_coop_wear[slot].end(), hash) == g_coop_wear[slot].end()) {
-        stale.push_back(hash);
-      }
-    }
-
-    const uint32_t begin = LoadGuestU32(base, modifiers + 0x10u);
-    const uint32_t end = LoadGuestU32(base, modifiers + 0x14u);
-    if (begin != end && (!LooksLikeGuestPointer(begin) || end < begin ||
-                         ((end - begin) % 24u) != 0u || (end - begin) > 24u * 64u)) {
-      return false;  // a torn worn vector — the next tick reads it again
-    }
-
-    // Snapshot first: each removal erases its record and moves the rest down.
-    std::vector<std::pair<uint32_t, uint32_t>> off;
-    for (uint32_t at = begin; !stale.empty() && at < end; at += 24u) {
-      const uint32_t item = LoadGuestU32(base, at);
-      if (LooksLikeGuestPointer(item) &&
-          std::find(stale.begin(), stale.end(), LoadGuestU32(base, item + 4u)) != stale.end()) {
-        off.emplace_back(item, LoadGuestU32(base, at + 4u));
-      }
-    }
-
-    const uint32_t frame = (ctx.r1.u32 - 0x100u) & ~0xFu;
-    const uint32_t holder = frame + 0x60u;
-    for (const auto& [item, index] : off) {
-      StoreGuestU32(base, holder, item);
-      StoreGuestU32(base, holder + 4u, index);
-      PPCContext work = ctx;
-      work.r1.u32 = frame;
-      work.r3.u32 = modifiers;
-      work.r4.u32 = holder;
-      __imp__rex_CECAppearanceModifiers_RemoveItem(work, base);
-      ++taken_off;
-    }
+  const uint32_t frame = (ctx.r1.u32 - 0x100u) & ~0xFu;
+  const uint32_t holder = frame + 0x60u;
+  for (const auto& [item, index] : off) {
+    StoreGuestU32(base, holder, item);
+    StoreGuestU32(base, holder + 4u, index);
+    PPCContext work = ctx;
+    work.r1.u32 = frame;
+    work.r3.u32 = modifiers;
+    work.r4.u32 = holder;
+    __imp__rex_CECAppearanceModifiers_RemoveItem(work, base);
+    ++taken_off;
   }
 
   g_coop_dressed_entity[slot] = entity;
@@ -3554,9 +3799,10 @@ bool CoopRedressPlayer(PPCContext& ctx, uint8_t* base, int player, uint32_t enti
   uint32_t given = 0u;
   WearHashes(ctx, base, inventory, modifiers, g_coop_wear[slot], &worn, &given);
 
-  REXLOG_INFO("Refii guest-tick pump: CoopRedress — player {} 0x{:08X} dressed: {} of {} outfit "
-              "item(s) given and worn ({} newly given), {} taken off", player, entity, worn,
-              g_coop_wear[slot].size(), given, taken_off);
+  REXLOG_INFO("Refii guest-tick pump: CoopRedress — player {} 0x{:08X} dressed ({}): {} of {} "
+              "outfit item(s) given and worn ({} newly given), {} taken off", player, entity,
+              first ? "first dress" : "new outfit", worn, g_coop_wear[slot].size(), given,
+              taken_off);
   return true;
 }
 
@@ -5450,6 +5696,50 @@ bool DispatchCoopPick(PPCContext& ctx, uint8_t* base, const std::string& rest, b
   return true;
 }
 
+/// THE CO-OP SCREEN'S HANDLER (id 24, disc 23), found the way the guest's openers reach the
+/// screen: `QM = *(*dword_83496B08 + 0x1C)` (DisplayCoopScreen `lwz r11,dword_83496B08; lwz
+/// r3,0x1C(r11)` 0x8232cc74..0x8232cc78 / disc `dword_834968A4` 0x8230f64c..0x8230f650) for whichever
+/// GUI is published — the in-game one, or the front end's while a joiner arrives from the title —
+/// then `lhGuiManager_FindScreenHandler(QM, 24)`. An object to call, never to read.
+uint32_t CoopScreenHandler(PPCContext& ctx, uint8_t* base) {
+  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
+  const uint32_t gui = LoadGuestU32(base, kGuiObject);
+  const uint32_t owner = plausible(gui) ? LoadGuestU32(base, gui + 0x1Cu) : 0u;
+  if (!plausible(owner)) {
+    return 0u;
+  }
+  PPCContext work = ctx;
+  work.r3.u32 = owner;
+  work.r4.u32 = refii::guest::ScreenId(24u);
+  rex_lhGuiManager_FindScreenHandler(work, base);
+  return plausible(work.r3.u32) ? work.r3.u32 : 0u;
+}
+
+/// `CoopAction:<code>:<player>` — one press on the co-op screen, for the player it is theirs:
+/// the screen's own input slot vf+24, TU1 `sub_824389D0` / disc `sub_82479BF0` (one vtable each),
+/// with r3 the screen, r4 the code, r5 the player. Its own gates stand: nothing while closing
+/// (`lbz r11,0x10C(r3)` 0x824389d0 / 0x82479bf0), r5 1 to the left page `sub_82438A08` unless the
+/// picker is up (`lbz r11,0x130(r3)` 0x824389f0), r5 2 to the right page `sub_82438CF8` /
+/// `sub_82479F18`, any other player ignored (`cmpwi cr6,r5,2; bnelr` 0x824389e4). Each page first
+/// runs its repeat filter (`sub_828818E8` / `sub_82841730` on +308 / +348): 28..31 pass a repeat
+/// gate, 32..35 reset it, so every direction is posted as its press and its release. Codes:
+/// 28..31 up / down / left / right, 32..35 their releases, 36 A, 37 B, 38 X, 39 Y. Update stays
+/// the guest's: the commit, the sync packets, Finish and the close all run there.
+bool DispatchCoopAction(PPCContext& ctx, uint8_t* base, uint32_t code, uint32_t player) {
+  const uint32_t screen = CoopScreenHandler(ctx, base);
+  if (screen == 0u) {
+    REXLOG_INFO("Refii guest-tick pump: CoopAction:{}:{} dropped — no co-op screen handler", code, player);
+    return true;
+  }
+  PPCContext work = ctx;
+  work.r3.u32 = screen;
+  work.r4.u32 = code;
+  work.r5.u32 = player;
+  rex_lhGuiCoopScreen_OnScreenAction(work, base);
+  REXLOG_INFO("Refii guest-tick pump: CoopAction:{}:{} answered 0x{:08X}", code, player, screen);
+  return true;
+}
+
 /// See kActionCoopHeroBodyPrefix.
 bool DispatchCoopHeroBody(PPCContext& ctx, uint8_t* base, const std::string& which) {
   // The four hero bodies, from `scripts/Startup/DebugMenu.txt` — the readable index of spawnable
@@ -5593,6 +5883,37 @@ bool DispatchRegisterPlayer(PPCContext& ctx, uint8_t* base) {
   return true;
 }
 
+/// A consumer record for the play-mode GameAction routines that read only `a1+12`, the player
+/// (`lwz r3,0xC(r31)` and `lwz r11,0xC(r31)` in `sub_824044B8` / `sub_82404708`): 16 bytes on a
+/// frame below the guest stack, r1 lowered past it, `fn` called with r3 = the record.
+template <typename Fn>
+void CallWithPlayerRecord(PPCContext& ctx, uint8_t* base, uint32_t player, Fn fn) {
+  const PPCContext saved = ctx;
+  const uint32_t frame = (ctx.r1.u32 - 0x80u) & ~0xFu;
+  const uint32_t record = frame + 0x60u;
+  StoreGuestU32(base, record + 0u, 0u);
+  StoreGuestU32(base, record + 4u, 0u);
+  StoreGuestU32(base, record + 8u, 0u);
+  StoreGuestU32(base, record + 12u, player);
+  ctx.r1.u32 = frame;
+  ctx.r3.u32 = record;
+  fn(ctx, base);
+  ctx = saved;
+}
+
+/// RB's toggle byte, as GameActions 40 / 41 read it: the input map's `GUIQuickAccessMenuOnToggle`
+/// (`lhInputMap_LoadFromGameData` 0x82882CF0 stores it at map+16), reached as
+/// `*(*(*(*(dword_83496AB8)+0xC)+0x7C)+0x48)+0x10` — TU1 0x82404198..0x824041A8 (case 40) and
+/// 0x824041F8.. (case 41), disc `dword_83496920` 0x823B53D8..0x823B53E8.
+bool QuickWheelToggles(uint8_t* base) {
+  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
+  const uint32_t root = LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
+  const uint32_t game = plausible(root) ? LoadGuestU32(base, root + 0xCu) : 0u;
+  const uint32_t input = plausible(game) ? LoadGuestU32(base, game + 0x7Cu) : 0u;
+  const uint32_t map = plausible(input) ? LoadGuestU32(base, input + 0x48u) : 0u;
+  return plausible(map) && LoadGuestU8(base, map + 0x10u) != 0u;
+}
+
 /// The expression wheel's three levers — see kActionQuickWheelPrefix.
 ///
 /// QM is `*(GUI+28)`; the controller W is `*(*(GUI+32)+60)`; the player object is the one
@@ -5641,6 +5962,41 @@ bool DispatchQuickWheel(PPCContext& ctx, uint8_t* base, const std::string& lever
     return true;
   }
 
+  // RB, GameAction 40 (press) and 41 (release) as `sub_824040B8` runs them (TU1 0x82404180..0x824041F4
+  // and 0x824041F8..; disc 0x823B53C0..): 40 with the wheel up closes it only in toggle mode, with it
+  // down opens it through CanPlayerOpenQuickMenu; 41 closes it only in hold mode. The wheel a lever
+  // closes is its own player's (the other levers' rule).
+  if (verb == "rb:press" || verb == "rb:release") {
+    const bool toggles = QuickWheelToggles(base);
+    const bool up = LoadGuestU8(base, quick + refii::guest::GuiOwnerField(35u)) != 0u;
+    const bool own = up && owner == (two ? 2u : LoadGuestU32(base, player + 36u));
+    const char* did = "nothing";
+    if (verb == "rb:press" && !up) {
+      ctx.r3.u32 = quick;
+      ctx.r4.u32 = player;
+      rex_lhGuiManager_CanPlayerOpenQuickMenu(ctx, base);
+      const bool may = (ctx.r3.u32 & 0xFFu) != 0u;
+      ctx = saved;
+      if (may) {
+        ctx.r3.u32 = quick;
+        ctx.r4.u32 = player;
+        rex_lhGuiManager_OpenExpressionWheel(ctx, base);
+        ctx = saved;
+        did = LoadGuestU8(base, quick + refii::guest::GuiOwnerField(35u)) != 0u ? "opened" : "refused by sub_8236F110";
+      } else {
+        did = "refused by sub_8236F400";
+      }
+    } else if (own && (verb == "rb:press") == toggles) {
+      ctx.r3.u32 = quick;
+      ctx.r4.u32 = 1u;
+      rex_lhGuiManager_CloseExpressionWheel(ctx, base);
+      ctx = saved;
+      did = "closed";
+    }
+    REXLOG_INFO("Refii guest-tick pump: QuickWheel:{} — {} ({} mode)", lever, did, toggles ? "toggle" : "hold");
+    return true;
+  }
+
   if (verb == "close") {
     if (open) {
       ctx.r3.u32 = quick;
@@ -5655,6 +6011,15 @@ bool DispatchQuickWheel(PPCContext& ctx, uint8_t* base, const std::string& lever
 
   if (verb == "select") {
     if (open) {
+      // The A press's play consumer runs too, as GameAction 36 runs it beside the wheel's accept:
+      // `sub_824044B8` / `sub_823B56F8` posts MESSAGE_EVENT_EXPRESSION_MENU_OPENED (32,
+      // `messageeventenum.lua`) at the hero with the wheel up (`lbz QM+35` 0x824046D4 → `bl sub_82404708`
+      // 0x824046E4; disc QM+34 0x823B5914 → 0x823B5924), which villagers' NoticeExpression
+      // (`aibase.lua`, `behaviourbaby.lua`) read to keep watching. A joiner's A is not masked from
+      // its guest, which runs it itself.
+      if (!IsCoopJoiner(base)) {
+        CallWithPlayerRecord(ctx, base, player, [](PPCContext& c, uint8_t* b) { rex_lhGuiInput_PlayAPress(c, b); });
+      }
       ctx.r3.u32 = wheel;
       ctx.r4.u32 = owner == 1u ? 1u : 0u;
       rex_lhGuiExpressionWheel_Accept(ctx, base);
@@ -5716,6 +6081,14 @@ bool DispatchQuickWheel(PPCContext& ctx, uint8_t* base, const std::string& lever
       ctx.r4.u64 = (static_cast<uint64_t>(xBits) << 32) | yBits;
       rex_lhGuiExpressionWheel_SetCursorFromStick(ctx, base);
       ctx = saved;
+      // The left stick's play consumer `sub_82404C50` / `sub_823B5E90` posts message 32 for every
+      // stick record while QM+0x28 is 1 or 5 and the wheel is up (0x82404C7C..0x82404D14; disc
+      // 0x823B5EBC..0x823B5F54); the stick is the lever's under the wheel, so the post is made here.
+      const uint32_t mode = LoadGuestU32(base, quick + 0x28u);
+      if (!IsCoopJoiner(base) && (mode == 1u || mode == 5u)) {
+        CallWithPlayerRecord(ctx, base, player,
+                             [](PPCContext& c, uint8_t* b) { rex_lhGuiInput_PostExpressionMenuOpened(c, b); });
+      }
     }
 
     return true;
@@ -5977,10 +6350,11 @@ bool DispatchMenuEventDirect(PPCContext& ctx, uint8_t* base, const std::string& 
 
   // Furniture/decoration (26/27) and options (18) do not act on the event at all: their choice
   // is made in the input handler's 36 arm from the highlighted row (`sub_826B6A18`,
-  // `sub_826B7550`, `sub_826DA228` @0x826da3ec), which `sub_826C1B50` answers from Godot's stated
-  // row. The host commits 27 and 18 with `ScreenAction:36` (Engine_UiScreenTemplate.CommitsByHighlight)
-  // and 26 with `Furniture:upgrade:<level>` (DispatchFurnitureAction); an event pushed at them
-  // answers only the scroll sounds, as the guest's switch says.
+  // `sub_826B7550`, `sub_826DA228` @0x826da3ec). The host commits 26 with
+  // `Furniture:<p>:upgrade:<level>` (DispatchFurnitureAction) and 27 with
+  // `Decoration:<p>:mount:<ticket>` (DispatchDecoration); an event pushed at them answers only the
+  // scroll sounds, as the guest's switch says. Real estate's rows (28) are committed by their event
+  // alone, `RealEstate:<p>:event:<type>` (DispatchRealEstateEvent).
 
   switch (refii::guest::ToTu1(slot)) {
     case 0x826C2660u: case 0x826A26E8u: case 0x826D1800u: case 0x826D4D58u:
@@ -6273,8 +6647,10 @@ bool DispatchCoopLeave(PPCContext& ctx, uint8_t* base) {
 /// THE ONLINE HOST KICKS PLAYER TWO, as the guest's own "Kick" box does on "yes" (`sub_826A2950`
 /// case 0x1C, 0x826A2A04..0x826A2A44): `sub_8233AC68(net)` queues message 0x121 (the joiner's
 /// "kicked" flag, net+321 → GUI_SCREEN_COOP_KICKED), `sub_822C3F50(net, 1)` and
-/// `sub_82182C30(net, 1)` flush the reliable and unreliable lists, and five ticks later
-/// `sub_8233E668(net, 0)` drops the connection (the pause screen's countdown, OnGuestTick here).
+/// `sub_82182C30(net, 1)` flush the reliable and unreliable lists, and the pause root's countdown
+/// is armed, h+280 = 5 (`stw r9, 0x118(r30)` 0x826A2A3C / disc 0x8240EDF4). The root's ported Update counts it down and at 0 leaves the
+/// session and the book (`LeaveSession(net, 0)` + `ExitScreen(QM, 1)`, 0x826A26A0 / 0x826A26B0); its
+/// OnExit leaves the session at once if the book closes first (0x826A2A90). Only with the root up.
 bool DispatchCoopKick(PPCContext& ctx, uint8_t* base) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
   const uint32_t root = LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
@@ -6286,31 +6662,20 @@ bool DispatchCoopKick(PPCContext& ctx, uint8_t* base) {
     REXLOG_INFO("Refii guest-tick pump: CoopKick — not an online host with a peer; ignored");
     return true;
   }
+  const bool up = refii_bridge_stated_pause(nullptr, nullptr, nullptr) != 0u && refii_bridge_stated_screen_now() == 0u;
+  const uint32_t pause = up ? InGameScreenHandler(ctx, base, 0u) : 0u;
+  if (pause == 0u || LoadGuestU32(base, pause) != refii::guest::Address(0x820CDE18u)) {
+    REXLOG_INFO("Refii guest-tick pump: CoopKick — the pause root is not the screen up; ignored");
+    return true;
+  }
   const PPCContext saved = ctx;
   const uint32_t frame = (saved.r1.u32 - 0x200u) & ~0xFu;
   CallGuestAt(ctx, base, saved, frame, refii::guest::Address(0x8233AC68u), net);
   CallGuestAt(ctx, base, saved, frame, refii::guest::Address(0x822C3F50u), net, 1u);
   CallGuestAt(ctx, base, saved, frame, refii::guest::Address(0x82182C30u), net, 1u);
-  g_coop_kick_ticks = 5;
-  REXLOG_INFO("Refii guest-tick pump: CoopKick — player two told; dropping them in 5 ticks");
+  StoreGuestU32(base, pause + 280u, 5u);
+  REXLOG_INFO("Refii guest-tick pump: CoopKick — player two told; the pause root's countdown armed (h+280 = 5)");
   return true;
-}
-
-/// The kick's disconnect, `g_coop_kick_ticks` guest ticks after the message.
-void RunCoopKickCountdown(PPCContext& ctx, uint8_t* base) {
-  if (g_coop_kick_ticks <= 0 || --g_coop_kick_ticks > 0) {
-    return;
-  }
-  const uint32_t root = LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
-  const uint32_t game = root >= 0x10000u && root < 0xC0000000u ? LoadGuestU32(base, root + 12u) : 0u;
-  const uint32_t net = game >= 0x10000u && game < 0xC0000000u ? LoadGuestU32(base, game + 140u) : 0u;
-  if (net < 0x10000u || net >= 0xC0000000u) {
-    return;
-  }
-  const PPCContext saved = ctx;
-  const uint32_t frame = (saved.r1.u32 - 0x200u) & ~0xFu;
-  CallGuestAt(ctx, base, saved, frame, refii::guest::Address(0x8233E668u), net, 0u);
-  REXLOG_INFO("Refii guest-tick pump: CoopKick — player two dropped");
 }
 
 /// LOCAL CO-OP, AND PLAYER TWO OWNS THE OPEN PAUSE: the menus are player two's. The guest states
@@ -6523,6 +6888,13 @@ void SampleSpellDamage(uint8_t* base, uint32_t hero, HeroDerived& sampled) {
 /// skipped a Cyrillic label ("Русский", units 0x0420 0x0443), loaded those two units as the
 /// pointer 0x04200443 and faulted on the Windows reserved arena. `ReadGuestLhString` is the
 /// ASCII reader for the same two hops and would return the high bytes as text.
+///
+/// The length is the string's own (`block + 4`). A display box's body is one of these: tutorial 65,
+/// raised by the wedding movie's end (`sub_822A9D60` 0x822A9F04..0x822A9F14), is 327 units, and a
+/// reader that refused anything past 256 stated that box with no body — up, undrawn, and holding the
+/// game until A (GitHub #69). The bound is only a guard against a wild length.
+constexpr uint32_t kStatedWideLhStringMaxUnits = 16384u;
+
 std::string ReadStatedWideLhString(uint8_t* base, uint32_t handle) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
   if (base == nullptr || !plausible(handle)) {
@@ -6538,12 +6910,12 @@ std::string ReadStatedWideLhString(uint8_t* base, uint32_t handle) {
   uint32_t length = 0;
   if (!TryLoadGuestU32(base, block, &chars) ||
       !TryLoadGuestU32(base, block + 4u, &length) ||
-      !plausible(chars) || length == 0u || length > 256u) {
+      !plausible(chars) || length == 0u || length > kStatedWideLhStringMaxUnits) {
     return std::string();
   }
 
-  uint8_t raw[512];
-  const size_t readable = TryCopyGuestBytes(base, chars, raw, length * 2u);
+  std::vector<uint8_t> raw(static_cast<size_t>(length) * 2u);
+  const size_t readable = TryCopyGuestBytes(base, chars, raw.data(), raw.size());
   if (readable < 2u) {
     return std::string();
   }
@@ -7418,20 +7790,20 @@ void SampleShopPrice(PPCContext& ctx, uint8_t* base) {
 
 /// SCREEN 28'S ONE BUILDING — the real estate page's data, called rather than reproduced.
 ///
-/// The screen's left column is a list of COMMANDS, not of properties: one building, resolved
-/// when the screen opens, no selection-change event. So this samples a single record while the
-/// screen stands and the host draws both pages off it.
+/// The screen's left column is a list of COMMANDS, not of properties: one building, bound when the
+/// screen opens, no selection-change event. The binding `sub_826B1A08` (disc `sub_82596CB8`), run by
+/// OnEnter (0x826B19B0), stores the household every commit acts on:
 ///
-/// The chain is the shipped filler's own (`sub_82998FB0`, verified instruction by instruction
-/// rather than taken on report):
+///     826B1A6C stw r6,0x90(r30)               the buyer (hero one; player two's: RefiiCoopEstateBuyer)
+///     826B1CD4 stw r3,0x9C(r30)               the sale sign, buyer comp77 `vf+0x44`
+///     826B1CD8 lwz r9,0x34(r3) ; 826B1CDC extrwi r8,r9,1,17 ; 826B1CE4 beq   sign comp142 present?
+///     826B1DE8 bl sub_8229EE78 ; 826B1DEC stw r3,0xA4(r30)                the building ENTITY
+///     826B1DFC extrwi r10,r11,1,28 ; 826B1ED4 stw r11,0xA8(r30)           its component 67
 ///
-///     lwz r10, 0x34(r11) ; extrwi r9, r10, 1,17   -> hero-object component 142
-///     bl  sub_8229EE78                            -> the building ENTITY
-///     lwz r11, 0x2C(r29) ; extrwi r10, r11, 1,28  -> its component 67, the CECBuilding
-///
-/// (`entity+0x34` with bit 14 is id 128+14 = 142; `BE+0x2C` with bit 3 is 64+3 = 67 — the same
-/// presence bitmap `HeroComponent` already implements.) Neither filler reads `screen+164` or
-/// `screen+168`: both re-derive from globals every call, and the ctor only zeroes those fields.
+/// (disc 0x82596D1C, 0x82596F84, 0x82596F8C, 0x8259709C, 0x82597184.) Buy, Sell, Clear, MaritalHome
+/// and Confirm read +0x90 / +0xA4 and nothing else (0x826B32C8.., 0x826B3458.., disc 0x82598560..,
+/// 0x825986F0..), so the page states that household — `PublishBoundRealEstate`, from the screen's
+/// own Update.
 ///
 /// EVERY NUMBER IS THE GUEST'S ANSWER. Value, economy, income, the sale floor, the purchase
 /// price and the three not-owned deltas each walk something we have no business reproducing —
@@ -7568,64 +7940,32 @@ bool FillRealEstate(PPCContext& ctx, uint8_t* base, uint32_t hero, uint32_t buil
   return true;
 }
 
-void SampleRealEstate(PPCContext& ctx, uint8_t* base) {
-  constexpr uint32_t kRealEstateScreenId = 28u;
-  constexpr uint32_t kSiteComponent = 77u;         // the "what am I standing at" component
+void PublishBoundRealEstate(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   constexpr uint32_t kBuildingHandleComponent = 142u;
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
-
-  uint32_t screen_id = 0;
-  if (!StatedInGameScreen(&screen_id) ||
-      screen_id != kRealEstateScreenId) {
-    return;
-  }
-
-  RealEstate estate;
-
-  const uint32_t hero = HeroEntity(base);
-  const uint32_t site = HeroComponent(base, hero, kSiteComponent);
-  if (!plausible(site)) {
-    PublishRealEstate(estate);
-    return;
-  }
-
-  // Claimed low so a callee's frame cannot land on an out-parameter it is handed.
-  const uint32_t sp = ctx.r1.u32;
-  const uint32_t frame = (sp - 0x200u) & ~0xFu;
-  const PPCContext saved = ctx;
-
-  const auto call = [&](PPCFunc* fn, uint32_t r3, uint32_t r4) -> uint32_t {
-    if (fn == nullptr) {
-      return 0u;
-    }
-    ctx = saved;
-    ctx.r1.u32 = frame;
-    ctx.r3.u32 = r3;
-    ctx.r4.u32 = r4;
-    fn(ctx, base);
-    const uint32_t result = ctx.r3.u32;
-    ctx = saved;
-    return result;
+  const auto live = [&](uint32_t entity) {
+    return plausible(entity) && (LoadGuestU8(base, entity + 0x90u) & 0x40u) != 0u;
   };
 
-  // `comp77->vtbl[0x44]()` — the site's own "which entity is this" accessor. Indirect because
-  // the concrete class is chosen at runtime; the slot is not.
-  const uint32_t site_vtable = LoadGuestU32(base, site);
-  const uint32_t accessor = plausible(site_vtable) ? LoadGuestU32(base, site_vtable + 0x44u) : 0u;
-  const uint32_t entity = call(FindGuestFunction(accessor), site, 0u);
-  if (!plausible(entity) || (LoadGuestU8(base, entity + 0x90u) & 0x40u) == 0u) {
-    PublishRealEstate(estate);
-    return;
+  // The binding writes +0xA0..+0xA8 only behind the sign's comp142 bit (0x826B1CDC / disc
+  // 0x82596F8C); with it clear they are a previous opening's, so that test says whether +0xA4 is
+  // this opening's building. A sign without comp142 binds none — the guest's rows skip it too
+  // (`sub_82998300`, 0x829984EC).
+  RealEstate estate;
+  const uint32_t hero = plausible(screen) ? LoadGuestU32(base, screen + 0x90u) : 0u;
+  const uint32_t sign = plausible(screen) ? LoadGuestU32(base, screen + 0x9Cu) : 0u;
+  const uint32_t building_entity =
+      live(hero) && live(sign) && HeroComponent(base, sign, kBuildingHandleComponent) != 0u
+          ? LoadGuestU32(base, screen + 0xA4u)
+          : 0u;
+  if (live(building_entity)) {
+    FillRealEstate(ctx, base, hero, building_entity, estate);
   }
-
-  const uint32_t handle = HeroComponent(base, entity, kBuildingHandleComponent);
-  const uint32_t building_entity = call(FindGuestFunction(refii::guest::Address(0x8229EE78u)), handle, 0u);
-  FillRealEstate(ctx, base, hero, building_entity, estate);
   PublishRealEstate(estate);
 }
 
 /// THE UPGRADE-FURNITURE PIECE — see `Furniture`. Sampled while screen 26 stands: the targeted
-/// entity through hero component 77's `vtbl[0x44]` (as `SampleRealEstate`), its component 68,
+/// entity through hero component 77's `vtbl[0x44]` (as the page fillers take it), its component 68,
 /// and the building multiplier by plain reads behind the one handle call `sub_8229EE78`.
 void SampleFurniture(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kFurnitureScreenId = 26u;
@@ -7658,8 +7998,7 @@ void SampleFurniture(PPCContext& ctx, uint8_t* base) {
     ctx = saved;
     ctx.r1.u32 = frame;
     ctx.r3.u32 = r3;
-    fn(ctx, base);
-    const uint32_t result = ctx.r3.u32;
+    const uint32_t result = SafeInvokeGuestCall(fn, ctx, base) ? ctx.r3.u32 : 0u;
     ctx = saved;
     return result;
   };
@@ -8736,6 +9075,18 @@ bool DispatchQueryAnswer(PPCContext& ctx, uint8_t* base, uint32_t code, bool add
     return true;
   }
 
+  // 32/33 release the adjuster's increment/decrement. The router hands any code to the screen's
+  // vf+28, which in mode 5 passes it to the widget's input `sub_826B8EB0` (disc `sub_8240CD98`,
+  // e.g. real estate 0x826B2624); its direction gate `sub_828818E8(widget+0x44)` (disc
+  // `sub_82841730`) zeroes the held direction on 32..35 (`stw r9, 0(r31)` 0x82881A8C / disc
+  // 0x828418D4). Without it `*(widget+0x44)` keeps the last press and the hold acceleration
+  // `sub_822CF9A0` fires on every hold clock with nothing held, after the box closed too.
+  if ((code == 32u || code == 33u) && mode != 5u) {
+    REXLOG_INFO("Refii guest-tick pump: QueryAnswer:{} — a release with no adjuster up (mode {}) — dropped", code,
+                mode);
+    return true;
+  }
+
   const PPCContext saved = ctx;
   ctx.r3.u32 = owner;
   ctx.r4.u32 = code;
@@ -9083,7 +9434,7 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
 
     const bool input_action = IsInputAction(name);
     const bool ui_action = IsInGameUiAction(name);
-    if ((ui_action || input_action) && !gui_up) {
+    if ((ui_action || input_action) && !gui_up && !IsCoopScreenInput(name)) {
       REXLOG_INFO("Refii guest-tick pump: '{}' posted with no in-game GUI up — dropped", name);
       GuestTickPumpNoteRan();
       continue;
@@ -9430,9 +9781,29 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
     } else if (name.rfind(kActionCoopSplitScreenPrefix, 0) == 0) {
       const bool on = name.substr(std::strlen(kActionCoopSplitScreenPrefix)) == "1";
       if (on != g_coop_split_screen.exchange(on, std::memory_order_relaxed)) {
-        REXLOG_INFO("Refii guest-tick pump: local co-op on {} screen", on ? "split" : "a shared");
+        REXLOG_INFO("Refii guest-tick pump: local co-op on {} screen{}", on ? "split" : "a shared",
+                    on && RefiiCoopPlayerTwoNode() != 0 && RefiiCoopSplitScreen() == 0
+                        ? " wanted; player two's camera comes with their next join"
+                        : "");
       }
       ran = true;
+    } else if (IsCoopScreenInput(name)) {
+      // `CoopAction:<code>:<player>`.
+      const std::string rest = name.substr(name.find(':') + 1u);
+      const std::size_t colon = rest.find(':');
+      const std::string first = colon == std::string::npos ? rest : rest.substr(0, colon);
+      const std::string second = colon == std::string::npos ? std::string() : rest.substr(colon + 1u);
+      char* first_end = nullptr;
+      char* second_end = nullptr;
+      const unsigned long a = std::strtoul(first.c_str(), &first_end, 10);
+      const unsigned long b = std::strtoul(second.c_str(), &second_end, 10);
+      const bool parsed = !first.empty() && *first_end == '\0' && !second.empty() && *second_end == '\0';
+      if (!parsed || a < 28u || a > 39u || (b != 1u && b != 2u)) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' is not a co-op screen press — dropped", name);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      ran = DispatchCoopAction(ctx, base, static_cast<uint32_t>(a), static_cast<uint32_t>(b));
     } else if (name.rfind(kActionCoopPickSavePrefix, 0) == 0) {
       ran = DispatchCoopPick(ctx, base, name.substr(std::strlen(kActionCoopPickSavePrefix)), true);
     } else if (name.rfind(kActionCoopPickCursorPrefix, 0) == 0) {
@@ -9515,6 +9886,19 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
       refii_bridge_ui_data_changed();
     } else if (name.rfind(kActionFurniturePrefix, 0) == 0) {
       ran = DispatchFurnitureAction(ctx, base, name.substr(std::strlen(kActionFurniturePrefix)));
+    } else if (name.rfind(kActionDecorationPrefix, 0) == 0 || name.rfind(kActionRealEstatePrefix, 0) == 0) {
+      ran = DispatchHouseScreenLever(ctx, base, name, name.rfind(kActionRealEstatePrefix, 0) == 0);
+    } else if (name.rfind(kActionCrimePrefix, 0) == 0 || name.rfind(kActionQueryPrefix, 0) == 0) {
+      ran = DispatchCardScreenLever(ctx, base, name, name.rfind(kActionCrimePrefix, 0) == 0);
+    } else if (name.rfind(kActionSafetyTogglePrefix, 0) == 0 || name.rfind(kActionTargetQueryPrefix, 0) == 0) {
+      ran = DispatchHudLever(ctx, base, name, name.rfind(kActionSafetyTogglePrefix, 0) == 0);
+    } else if (name.rfind(refii::vfs::kKeyboardAnswerAction, 0) == 0) {
+      // `keyboard:<text>` — the platform keyboard's answer, everything after the colon the text.
+      refii::vfs::AnswerKeyboardUi(base, name.c_str() + std::strlen(refii::vfs::kKeyboardAnswerAction));
+      ran = true;
+    } else if (name == refii::vfs::kKeyboardCancelAction) {
+      refii::vfs::AnswerKeyboardUi(base, nullptr);
+      ran = true;
       refii_bridge_ui_data_changed();
     } else if (name == kActionRegisterPlayer) {
       ran = DispatchRegisterPlayer(ctx, base);
@@ -9545,12 +9929,14 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
       ran = refii::vfs::DispatchPauseClose(ctx, base, player);
     } else if (name == "PauseBack" || name.rfind("PauseCycle:", 0) == 0) {
       // `PauseBack` / `PauseCycle:<player>:prev|next` — a ported book's B at its root and its LB /
-      // RB, the spine calls its handler made (gui_screen_stub_book_levers.cpp). Only on a ported book with no
+      // RB, the spine calls its handler made (gui_screen_stub_book_levers.cpp). Only on a ported book (14..18,
+      // the world map 23) with no
       // box up; the root (0) takes the cycle only — its B is `PauseClose:`.
       uint32_t modal = 0u;
       const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
       const uint32_t screen = refii_bridge_stated_screen_now();
-      if (!up || modal != 0u || ((screen < 14u || screen > 18u) && (screen != 0u || name == "PauseBack"))) {
+      if (!up || modal != 0u ||
+          ((screen < 14u || screen > 18u) && screen != 23u && (screen != 0u || name == "PauseBack"))) {
         REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name, screen, modal);
         GuestTickPumpNoteRan();
         continue;
@@ -9648,6 +10034,21 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
         continue;
       }
       ran = refii::vfs::DispatchPauseSaving(ctx, base, player, static_cast<uint32_t>(index[0] - '0'));
+    } else if (name.rfind(kActionPauseHenchmanQuitPrefix, 0) == 0) {
+      // As PauseSaving: on the pause root with no box up.
+      std::string rest = name.substr(std::strlen(kActionPauseHenchmanQuitPrefix));
+      const uint32_t player = rest.size() == 1u && (rest[0] == '1' || rest[0] == '2')
+                                  ? static_cast<uint32_t>(rest[0] - '0')
+                                  : 0u;
+      uint32_t modal = 0u;
+      const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
+      if (player == 0u || !up || modal != 0u || refii_bridge_stated_screen_now() != 0u) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name,
+                    refii_bridge_stated_screen_now(), modal);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      ran = refii::vfs::DispatchPauseHenchmanQuit(ctx, base, player);
     } else if (name.rfind(kActionQueryAnswerPrefix, 0) == 0) {
       // `QueryAnswer:<player>:<code>[@<modal id>]` — the id names the box the surface drew.
       std::string codeText = name.substr(std::strlen(kActionQueryAnswerPrefix));
@@ -9662,9 +10063,9 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
       char* end = nullptr;
       const unsigned long code = std::strtoul(codeText.c_str(), &end, 10);
       // Only the codes the taxonomy's handlers answer — see the dispatcher. 28/29 are the
-      // numeric adjuster's increment/decrement.
+      // numeric adjuster's increment/decrement, 32/33 their releases (adjuster only, below).
       if (player == 0u || end == codeText.c_str() || *end != '\0' ||
-          (code != 28u && code != 29u && code != 36u && code != 37u &&
+          (code != 28u && code != 29u && code != 32u && code != 33u && code != 36u && code != 37u &&
            code != 39u && code != 46u && code != 47u && code != 75u)) {
         REXLOG_INFO("Refii guest-tick pump: '{}' has no answer code — dropped", name);
         GuestTickPumpNoteRan();
@@ -9672,6 +10073,34 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
       }
 
       ran = DispatchQueryAnswer(ctx, base, static_cast<uint32_t>(code), addressed, modal_id, player);
+    } else if (name.rfind(kActionShopPrefix, 0) == 0 || name.rfind(kActionGiftPrefix, 0) == 0) {
+      // Only on the screen the lever names. A box over it takes its own answer (QueryAnswer), not these.
+      const bool gift = name.rfind(kActionGiftPrefix, 0) == 0;
+      std::string rest = name.substr(std::strlen(gift ? kActionGiftPrefix : kActionShopPrefix));
+      const uint32_t player = TakeActingPlayer(rest);
+      unsigned long ticket = 0ul;
+      unsigned long record = 0ul;
+      const bool item = gift && std::sscanf(rest.c_str(), "item:%lu:%lu", &ticket, &record) == 2 && record != 0ul;
+      if (player == 0u || (rest != "close" && !item)) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' is not {} — dropped", name,
+                    gift ? "Gift:<p>:close or Gift:<p>:item:<ticket>:<record>" : "Shop:<p>:close");
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      uint32_t modal = 0u;
+      const bool up = refii_bridge_stated_pause(nullptr, &modal, nullptr) != 0u;
+      if (!up || modal != 0u || refii_bridge_stated_screen_now() != (gift ? 25u : 22u)) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' refused (screen {}, modal {})", name,
+                    refii_bridge_stated_screen_now(), modal);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+      if (item) {
+        ran = DispatchInventoryAction(ctx, base, "gift:" + std::to_string(record), 0, static_cast<uint32_t>(ticket));
+        refii_bridge_ui_data_changed();
+      } else {
+        ran = gift ? refii::vfs::DispatchGiftClose(ctx, base, player) : refii::vfs::DispatchShopClose(ctx, base, player);
+      }
     } else if (name.rfind(kActionCardPrefix, 0) == 0) {
       // Only while the card is the stated screen with no box over it.
       std::string verb = name.substr(std::strlen(kActionCardPrefix));
@@ -9776,16 +10205,35 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
     } else if (name == kActionLoadFanBack) {
       ran = DispatchLoadFanBack(ctx, base);
     } else if (name.rfind(kActionFrontEndDialogPrefix, 0) == 0) {
-      char* end = nullptr;
+      // `<pad>:<code>`: the pad 0..3 that pressed, the code 36 or 37.
       const char* digits = name.c_str() + std::strlen(kActionFrontEndDialogPrefix);
-      const unsigned long value = std::strtoul(digits, &end, 10);
-      if (end == digits || *end != '\0' || (value != 36u && value != 37u)) {
-        REXLOG_INFO("Refii guest-tick pump: '{}' is not a dialog answer — dropped", name);
+      char* end = nullptr;
+      const unsigned long pad = std::strtoul(digits, &end, 10);
+      char* code_end = nullptr;
+      const unsigned long value =
+          end != digits && *end == ':' ? std::strtoul(end + 1, &code_end, 10) : 0ul;
+      if (end == digits || *end != ':' || code_end == end + 1 || *code_end != '\0' || pad > 3u ||
+          (value != 36u && value != 37u)) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' is not pad:code of a dialog answer — dropped", name);
         GuestTickPumpNoteRan();
         continue;
       }
 
-      ran = DispatchFrontEndDialog(ctx, base, static_cast<uint32_t>(value));
+      ran = DispatchFrontEndDialog(ctx, base, static_cast<uint32_t>(pad), static_cast<uint32_t>(value));
+    } else if (name.rfind(kActionTitleStartPrefix, 0) == 0 || name.rfind(kActionFrontEndBackPrefix, 0) == 0) {
+      const bool start = name.rfind(kActionTitleStartPrefix, 0) == 0;
+      const char* digits =
+          name.c_str() + std::strlen(start ? kActionTitleStartPrefix : kActionFrontEndBackPrefix);
+      char* end = nullptr;
+      const unsigned long pad = std::strtoul(digits, &end, 10);
+      if (end == digits || *end != '\0' || pad > 3u) {
+        REXLOG_INFO("Refii guest-tick pump: '{}' has no pad 0..3 — dropped", name);
+        GuestTickPumpNoteRan();
+        continue;
+      }
+
+      ran = start ? DispatchTitleStart(ctx, base, static_cast<uint32_t>(pad))
+                  : DispatchFrontEndBack(ctx, base, static_cast<uint32_t>(pad));
     } else if (name == "SubtitlesOn" || name == "SubtitlesOff" ||
                name == "Downloadable Content") {
       // Through the guest's own dispatcher: its id-2 branch compares the item name and does the
@@ -10396,8 +10844,8 @@ void DrivePlayerTwoDrunk(PPCContext& ctx, uint8_t* base) {
   RefiiCoopLocalPlayerTwoCall(0);
 }
 
-/// Who owns the open in-game GUI, for the host (split screen routes that player's pad to the menu
-/// and seats it in their half). The guest's own test is `sub_8236E400(owner)`: the game-flow gate
+/// Who owns the open in-game GUI, for the host (local co-op routes that player's pad to the menu
+/// and names them on it; the menu fills the window as in single player). The guest's own test is `sub_8236E400(owner)`: the game-flow gate
 /// `sub_821ECA30()` (the top command is the GUI mode) and the pause root handler's player being 1
 /// (0x8236e430). The player is the handler's setter's own argument (StatedPausePlayerTwo,
 /// gui_stated_screens.cpp); the game-flow gate is asked of the guest, as it asks it.
@@ -10417,7 +10865,6 @@ void StateMenuOwner(PPCContext& ctx, uint8_t* base) {
 
 void OnGuestTick(PPCContext& ctx, uint8_t* base) {
   g_guest_base.store(base, std::memory_order_relaxed);
-  RunCoopKickCountdown(ctx, base);
 
   const uint64_t tick = GuestTickPumpObserveTick();
 
@@ -10443,6 +10890,7 @@ void OnGuestTick(PPCContext& ctx, uint8_t* base) {
   // instead — the in-game lists never call `UpdateAfterSpawning`.
   refii_bridge_menu_settle();
   StateMenuOwner(ctx, base);
+  refii_bridge_note_coop_split_in_effect(RefiiCoopSplitScreen());
 
   DrainOnGuestThread(ctx, base, DrainPass::kTick);
 
@@ -10560,9 +11008,6 @@ REX_EXTERN(rex_lhGuiManager_TickUpdate) {
         case 26u:
           refii::vfs::SampleFurniture(ctx, base);
           break;
-        case 28u:
-          refii::vfs::SampleRealEstate(ctx, base);
-          break;
         default:
           break;
       }
@@ -10592,6 +11037,9 @@ constexpr uint32_t kWorldHeld = 19u;
 REX_EXTERN(rex_lhGameFlow_Tick) {
   REX_FUNC_PROLOGUE();
   refii::vfs::DrainOnGuestThread(ctx, base, refii::vfs::DrainPass::kInput);
+  // A Start drained just now opened its player's book (the opener's vf+32 stated the owner):
+  // the host reads the owner of THIS open, not the tick-start one, before it draws the list.
+  refii::vfs::StateMenuOwner(ctx, base);
   t_world_ticked = false;
   __imp__rex_lhGameFlow_Tick(ctx, base);
   refii_bridge_stated_value(kWorldHeld, t_world_ticked ? 0u : 1u);
@@ -10861,10 +11309,13 @@ int32_t refii_bridge_dpad_query_two(void) {
   return refii::vfs::g_dpad_two_querying.load(std::memory_order_relaxed) ? 1 : 0;
 }
 
-/// Split screen, and LOCAL co-op (game+0x11C == 2). The host states the switch whatever the
-/// session; an online joiner's Player must not take player two's split-screen camera — that
-/// ticked a second manager on the joiner and redirected its own camera's activations.
-int RefiiCoopSplitScreen(void) {
+extern "C" int RefiiCoopSplitCameraBuilt(void);
+
+/// Split screen WANTED: the host's switch, and LOCAL co-op (game+0x11C == 2). The host states the
+/// switch whatever the session; an online joiner's Player must not take player two's split-screen
+/// camera — that ticked a second manager on the joiner and redirected its own camera's
+/// activations. Only the Player constructor asks this (coop_hero_hooks.cpp).
+int RefiiCoopSplitScreenWanted(void) {
   if (!refii::vfs::g_coop_split_screen.load(std::memory_order_relaxed)) {
     return 0;
   }
@@ -10875,6 +11326,15 @@ int RefiiCoopSplitScreen(void) {
   const uint32_t root = refii::vfs::LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
   const uint32_t game = root >= 0x10000u && root < 0xC0000000u ? refii::vfs::LoadGuestU32(base, root + 12u) : 0u;
   return game >= 0x10000u && game < 0xC0000000u && refii::vfs::LoadGuestU32(base, game + 0x11Cu) == 2u ? 1 : 0;
+}
+
+/// Split screen IN EFFECT: wanted, and player two's current Player was built with a camera of
+/// its own. The constructor reads the switch once, in the drop-in before the co-op screen opens,
+/// so a split chosen on that screen (or later) reaches player two's next Player; until then every
+/// reader — the second camera tick, the peer view, the listeners, the camera Lua's own-cameras
+/// and free-roam rules (Refii.split_screen), the host — keeps the shared screen's rules.
+int RefiiCoopSplitScreen(void) {
+  return RefiiCoopSplitScreenWanted() != 0 && RefiiCoopSplitCameraBuilt() != 0 ? 1 : 0;
 }
 
 /// The joiner's pending exit use, if it is not older than 300 guest frames: its guest position.

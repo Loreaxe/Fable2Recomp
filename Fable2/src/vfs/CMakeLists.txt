@@ -115,21 +115,33 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/screen_fade_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/spell_widget_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/hud_expression_meter_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/hud_levers.cpp
+    ${REFII_VFS_ROOT}/src/hooks/keyboard_ui.cpp
     ${REFII_VFS_ROOT}/src/hooks/slow_time_dial_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/crime_screen_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/cutscene_movie_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/frontend_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_input_proof.cpp
     ${REFII_VFS_ROOT}/src/hooks/logbook_stats_stated.cpp
     # The ported screens (S7): handler slots replaced, keeping the guest's statements and game calls.
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_abilities.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_book_levers.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_clothing.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_crime.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_decoration.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_furniture.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_gift.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_items.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_logbook.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_options.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_pause_root.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_query.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_real_estate.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_receive_items.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_shop.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_small_screens.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_support.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_world_map.cpp
     ${REFII_VFS_ROOT}/src/hooks/preview_figures_stated.cpp
     # The shopkeeper, the previewed item, the pending weapons and the experience counter's
     # visibility, stated from the calls that set them.

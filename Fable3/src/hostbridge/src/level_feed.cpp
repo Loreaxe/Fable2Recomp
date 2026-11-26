@@ -387,18 +387,6 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetCurrentCulture(char* out, uint32_t ca
     return refii_bridge_culture_code_read(out, capacity);
 }
 
-/// The camera the guest last rendered the world with, as its hook stated it
-/// (Fable3/src/hooks/src/view_feed.cpp): position, up, forward, horizontal FOV in radians, snap.
-REFII_HOST_ABI_EXPORT int RefiiHostGetCamera(float* out) {
-    return refii_bridge_camera_read(out);
-}
-
-/// The two cameras the guest blends for the presented world each step, as its hook on the blend
-/// stated them (Fable3/src/hooks/src/view_feed.cpp): 22 floats, the live camera then the previous.
-REFII_HOST_ABI_EXPORT int RefiiHostGetCameraPair(float* out) {
-    return refii_bridge_camera_pair_read(out);
-}
-
 /// Holds the guest in its own loading screen while Godot builds: its hook on the 3D Engine's
 /// preload gate answers "still preloading" while this is set. Clear it when the build lands,
 /// failure included.

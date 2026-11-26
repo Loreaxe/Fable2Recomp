@@ -101,6 +101,12 @@ public static class Fable3UiStatements
 	/// <summary>The interaction list's cursor, count and last scroll (0 refresh, 1 down, 2 up).</summary>
 	public static (int Cursor, int Count, int Scroll) InteractionList { get; private set; }
 
+	/// <summary>
+	/// `@Interaction.ListUp(up)`: a list the guest is writing rows for (its row writer ran on it),
+	/// until its hide or its mode's set, clear or close (interaction_list_step.cpp).
+	/// </summary>
+	public static bool InteractionListUp { get; private set; }
+
 	/// <summary>The dye bar's colour, value and range as ShowDyingBar stated them.</summary>
 	public static (float R, float G, float B, float Value, float Min, float Max)? DyeBar { get; private set; }
 
@@ -165,6 +171,7 @@ public static class Fable3UiStatements
 		Add("@Interaction.Button", call => Button(
 			Fable3Elements.DocumentOfKey(call.Argument(0).Text), call.Argument(1).Text,
 			call.Argument(2).Text, call.Argument(3).Text, call.Argument(4).Boolean));
+		Add("@Interaction.ListUp", call => ListUp(call.Argument(0).Boolean));
 		Add("@Interaction.List", call =>
 			List((int)call.Argument(0).Number, (int)call.Argument(1).Number, (int)call.Argument(2).Number));
 		Add("@Interaction.DyeBar", call => Said(() => DyeBar = (call.Argument(0).Number, call.Argument(1).Number,
@@ -280,6 +287,7 @@ public static class Fable3UiStatements
 		SaveMenuRow = 0;
 		OptionsQuery = null;
 		InteractionList = (0, 0, 0);
+		InteractionListUp = false;
 		DyeBar = null;
 		SidePanel = 0;
 		System.Array.Clear(Money);
@@ -327,6 +335,12 @@ public static class Fable3UiStatements
 			element.Visible = true;
 			element.MarkOpacity();
 		});
+		++Generation;
+	}
+
+	public static void ListUp(bool up)
+	{
+		InteractionListUp = up;
 		++Generation;
 	}
 

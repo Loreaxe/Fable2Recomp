@@ -161,11 +161,11 @@ public static class ModSaveStamp
 
 	// ---------------------------------------------------------------- the words
 
-	/// <summary>The page title of the notice put before a stamped save loads.</summary>
-	public const string NoticeTitle = "Mods in this save";
+	/// <summary>The page title of the notice put before a stamped save loads, in the game's language.</summary>
+	public static string NoticeTitle => Refii.Text.Engine_OwnWords.Say("REFII_MODS_IN_SAVE");
 
-	/// <summary>The line a missing mod carries in the notice.</summary>
-	public const string NotEnabledMark = " — not enabled, its items are left out";
+	/// <summary>The line a missing mod carries in the notice, in the game's language.</summary>
+	public static string NotEnabledMark => Refii.Text.Engine_OwnWords.Say("REFII_MODS_NOT_ENABLED");
 
 	/// <summary>
 	/// The notice put before a STAMPED save loads: one heading line, the save's own mods one per
@@ -208,7 +208,7 @@ public static class ModSaveStamp
 		var text = new StringBuilder();
 		if (own != 0)
 		{
-			text.Append("This save was made with these mods:\n");
+			text.Append(Refii.Text.Engine_OwnWords.Say("REFII_MODS_SAVE_MADE_WITH")).Append('\n');
 		}
 
 		foreach (SaveSidecar.ModEntry mod in stamp.Set)
@@ -229,7 +229,7 @@ public static class ModSaveStamp
 
 		if (missing.Count != 0)
 		{
-			text.Append("\nWhat a mod not enabled left in the save is kept with it and comes back when that mod is enabled again.\n");
+			text.Append('\n').Append(Refii.Text.Engine_OwnWords.Say("REFII_MODS_KEPT_FOR_LATER")).Append('\n');
 		}
 
 		if (external is not null && external.Notice.Length != 0)

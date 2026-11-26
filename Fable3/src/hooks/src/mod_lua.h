@@ -202,7 +202,7 @@ bool Up();
 }  // namespace refii::fable3::splash
 
 namespace refii::fable3::view {
-/// The horizontal FOV at 4:3, in radians, of the camera the presented game last rendered with
-/// (View_SetRenderCamera's block +0x30, view_feed.cpp); 0 before the first.
+/// The horizontal FOV at 4:3, in radians, of the camera the shell draws the presented game with (the
+/// rebuilt block's +0x30, stated back by RefiiHostStateCamera); 0 before the first.
 float StatedFovRadians();
 }  // namespace refii::fable3::view

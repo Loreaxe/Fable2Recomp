@@ -143,14 +143,14 @@ public partial class Fable3HostOptions : Fable3ListScreen
 		var rows = new List<Fable3ScreenPage.Row>(page.Count);
 		for (int row = 0; row < page.Count; ++row)
 		{
-			string caption = row == _cursor && Engine_UiInputCapture.Armed is not null ? "Press an input…" : page.Caption(row, _indices[row]);
+			string caption = row == _cursor && Engine_UiInputCapture.Armed is not null ? Refii.Text.Engine_OwnWords.Say("REFII_PRESS_AN_INPUT") : page.Caption(row, _indices[row]);
 			rows.Add(new Fable3ScreenPage.Row("row" + row, page.RowTitle(row) + (caption.Length > 0 ? "    " + caption : string.Empty)));
 		}
 
 		var prompts = new[]
 		{
-			new Fable3ScreenPage.Prompt("A", page is Fable3SettingsHub ? "Open" : "Save"),
-			new Fable3ScreenPage.Prompt("B", "Back"),
+			new Fable3ScreenPage.Prompt("A", Refii.Text.Engine_OwnWords.Say(page is Fable3SettingsHub ? "REFII_OPEN" : "REFII_SAVE")),
+			new Fable3ScreenPage.Prompt("B", Refii.Text.Engine_OwnWords.Say("REFII_BACK")),
 		};
 		return new Fable3ScreenPage(page.Title, rows, _cursor, string.Empty, prompts, true);
 	}
@@ -208,7 +208,7 @@ public partial class Fable3HostOptions : Fable3ListScreen
 		}
 	}
 
-	/// <summary>The page's cursor is ours: a hover moves it, a click on the cursor row steps the row on.</summary>
+	/// <summary>The page's cursor is ours: a click moves it to the row, a click on the cursor row steps the row on.</summary>
 	protected override void PointAt(int row, bool clicked)
 	{
 		if (Engine_UiHostOptionsPage.Current is not { } page || row < 0 || row >= _indices.Length)

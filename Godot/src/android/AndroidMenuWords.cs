@@ -12,15 +12,16 @@ public static class AndroidMenuWords
     /// <summary>Fable 2's host rows (Fable2UiTemplates: the front end's and the pause menu's quit rows).</summary>
     public static readonly IReadOnlyDictionary<string, string> Fable2 = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["Quit to Desktop"] = "Quit Game",
-        ["Save and Quit to Desktop"] = "Save and Quit Game",
-        ["Quit to Desktop and Don't Save"] = "Quit Game and Don't Save",
+        ["REFII_QUIT_TO_DESKTOP"] = "REFII_F2_QUIT_GAME",
+        ["REFII_F2_SAVE_QUIT_DESKTOP"] = "REFII_F2_SAVE_QUIT_GAME",
+        ["REFII_F2_QUIT_DESKTOP_NO_SAVE"] = "REFII_F2_QUIT_GAME_NO_SAVE",
     };
 
     /// <summary>A title with no such rows.</summary>
     public static readonly IReadOnlyDictionary<string, string> None = new Dictionary<string, string>();
 
-    /// <summary>The label a phone shows for the unresolved host label <paramref name="tag"/>.</summary>
+    /// <summary>The label key a phone shows for the unresolved host label key <paramref name="tag"/>; our own
+    /// words (Refii.Text.Engine_OwnWords) say it in the language in force.</summary>
     public static string ForPhone(string tag) =>
         ForPhone(tag, Refii.Core.Engine_Platform.IsAndroid, Refii.Core.Engine_Title.Active);
 

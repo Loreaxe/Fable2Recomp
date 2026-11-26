@@ -3834,7 +3834,8 @@ public partial class GameDebugServer : Node
 				if (root.TryGetProperty("trace", out JsonElement ct) && ct.ValueKind == JsonValueKind.Number)
 				{
 					world?.BeginCameraTrace(ct.GetInt32());
-					return Ok(new Dictionary<string, object?> { ["tracing"] = world is not null });
+					Refii.Camera.Engine_CameraFeed.ArmGate();
+					return Ok(new Dictionary<string, object?> { ["tracing"] = world is not null, ["gateArmed"] = true });
 				}
 
 				// The camera, bodies and live effects share one timeline type (Engine_TickTimeline):
@@ -3867,6 +3868,10 @@ public partial class GameDebugServer : Node
 					["marginTicks"] = Refii.Entities.Engine_DrawnFrame.Playhead.MarginTicks,
 					["latenessTicks"] = Refii.Entities.Engine_DrawnFrame.Playhead.LatenessTicks,
 					["cameraCarried"] = GameWorld.CarriedCameras,
+					// THE C1 GATE: every block the guest's getter built beside the camera rebuilt from
+					// the statements at that point (Engine_CameraGate); the kept rows go to
+					// camera_gate.csv in the title's log folder. Armed with `trace` like the drawn trace.
+					["stated"] = Refii.Camera.Engine_CameraFeed.Report(Refii.Core.Engine_Title.Active.LogsDirectory),
 				});
 			}
 
@@ -4491,9 +4496,13 @@ public partial class GameDebugServer : Node
 
 			bool met = wait.Until switch
 			{
-				// The title's armed byte — the press that "does not land" is this being false.
+				// The title's armed byte — the press that "does not land" is this being false — outside
+				// its idle attract: in mode 8 the title's input slot takes A as the movie's skip alone
+				// (TU1 0x826E301C `cmpwi r11,8` .. 0x826E3064, disc 0x826C62B0 .. 0x826C62F8).
 				"frontend-armed" => Refii.Host.HostBridge.TryGetFrontEnd(
-					out _, out _, out bool canPressA, out _) && canPressA,
+					out Engine_UiModel.FrontEndScreen armedScreen, out uint armedState, out bool canPressA, out _) &&
+					canPressA &&
+					!(armedScreen == Engine_UiModel.FrontEndScreen.Title && armedState == Refii.Host.HostBridge.TitleAttractMode),
 
 				// The front end exists at all (title or menu).
 				"frontend" => Refii.Host.HostBridge.TryGetFrontEnd(out _, out _, out _, out _),

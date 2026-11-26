@@ -308,20 +308,19 @@ public static class Fable3OptionsState
 /// from its stated state (<see cref="Fable3OptionsState"/>) and the stated levels: the rows are
 /// the page's (<see cref="Fable3OptionsModel"/>), the highlight the screen's selected row, the title
 /// and the highlighted row's description over it. Godot owns its pad: each press is one game
-/// action into the screen's own handler (`options:<action>`, options_hooks.cpp) — up/down move,
-/// left/right step its sliders and toggles (sub_825CAA98 / sub_825CB028, applying them live), A
-/// enters a page or commits one, B goes back, Y restores the defaults.
+/// action into the screen's own handler (`options:<p>:<action>`, options_hooks.cpp; the handler
+/// takes its own hero's player alone) — up/down move, left/right step its sliders and toggles
+/// (sub_825CAA98 / sub_825CB028, applying them live), A enters a page or commits one, B goes back,
+/// Y restores the defaults. The pointer states the row itself (`options-row:<p>:<row>[:accept]`):
+/// the guest's own row setter takes it at once, and the two settings pages, which have none, are
+/// stepped to it natively at the guest's own rate; there a click places the cursor and the wheel
+/// steps the value (the row's own left and right setters).
 /// </summary>
 public partial class Fable3Options : Fable3ListScreen
 {
 	private const double RepeatDelay = 0.35;
 	private const double RepeatEvery = 0.2;
 	private const int StickDeadZone = 16000;
-
-	/// <summary>The pause between two walked steps: past the screen's own repeat gate (five
-	/// updates between moves, sub_825CA980's `+56 <= +40 + 4`, 0x825CA9A8).</summary>
-	private const double StepPace = 0.25;
-	private const double GiveUp = 4.0;
 
 	private readonly List<string> _languages = new();
 	private double _languagesAge = double.MaxValue;
@@ -330,14 +329,16 @@ public partial class Fable3Options : Fable3ListScreen
 	private uint _wasDown;
 	private int _held;
 	private double _repeat;
-	private int _walkTarget = -1;
-	private bool _walkAccept;
-	private double _walkWait;
-	private double _walkAge;
 
 	protected override string LogTag => "fable3-options";
 
 	protected override string LogContext => $"page {_page} ";
+
+	/// <summary>The Options sections author their arrows; nothing writes them (<see cref="Fable3ListCursor.OptionsArrows"/>).</summary>
+	protected override (bool Top, bool Bottom) Arrows(int highlight, int total) => Fable3ListCursor.OptionsArrows(_page);
+
+	/// <summary>Options (1), Save Management (2) and Multiplayer (5) centre their choices; Game Settings (3, 4) keeps its rows left.</summary>
+	protected override bool RowsOnCentreLine => Fable3ListCursor.RowsCentred(_page);
 
 	/// <summary>
 	/// Whether the guest's Game Settings page is up with nothing over it, so X opens the host's
@@ -350,7 +351,6 @@ public partial class Fable3Options : Fable3ListScreen
 		OffersControls = false;
 		if (!HostBridge.IsGuestUp || Fable3OptionsState.Current is not { } words || Fable3HostOptions.IsOpen)
 		{
-			_walkTarget = -1;
 			return null;
 		}
 
@@ -388,7 +388,7 @@ public partial class Fable3Options : Fable3ListScreen
 		OffersControls = query is null &&
 			snapshot.Page is Fable3OptionsModel.PageGameSettings or Fable3OptionsModel.PageGameSettingsLite;
 
-		Drive(delta, rows.Count);
+		Drive(delta);
 
 		Fable3ScreenPage.Prompt[] prompts = OffersControls
 			? new[] { new Fable3ScreenPage.Prompt("X", Fable3SettingsHub.Page.Title) }
@@ -398,7 +398,7 @@ public partial class Fable3Options : Fable3ListScreen
 	}
 
 	/// <summary>The pad, as game actions into the screen's handler; held directions repeat.</summary>
-	private void Drive(double delta, int rowCount)
+	private void Drive(double delta)
 	{
 		uint down = GameInput.Pad0.Buttons;
 		uint pressed = down & ~_wasDown;
@@ -410,7 +410,6 @@ public partial class Fable3Options : Fable3ListScreen
 			false, false, false, false);
 		if (Fable3BoxAnswers.OptionsAction(press) is { } button)
 		{
-			_walkTarget = -1;
 			Send(button);
 			Refii.Core.Engine_TitleGame.Active.Input.HoldUntilReleased();
 			return;
@@ -426,7 +425,6 @@ public partial class Fable3Options : Fable3ListScreen
 			_repeat = RepeatDelay;
 			if (held != 0)
 			{
-				_walkTarget = -1;
 				Send(held);
 			}
 		}
@@ -435,61 +433,45 @@ public partial class Fable3Options : Fable3ListScreen
 			_repeat = RepeatEvery;
 			Send(held);
 		}
-
-		Walk(delta, rowCount);
 	}
 
-	/// <summary>The pointer's pick, walked one stated row at a time (the screen takes no row from outside).</summary>
-	private void Walk(double delta, int rowCount)
-	{
-		if (_walkTarget < 0)
-		{
-			return;
-		}
+	private static void Send(int action) =>
+		HostBridge.PostFrontEndAction(Fable3BoxAnswers.Options(action, Fable3ActingPlayer.OfPad(0)));
 
-		_walkAge += delta;
-		if (_walkAge > GiveUp || _walkTarget >= rowCount)
-		{
-			_walkTarget = -1;
-			return;
-		}
-
-		if ((_walkWait -= delta) > 0.0)
-		{
-			return;
-		}
-
-		_walkWait = StepPace;
-		if (_selected == _walkTarget)
-		{
-			if (_walkAccept)
-			{
-				Send(Fable3BoxAnswers.ActionA);
-			}
-
-			_walkTarget = -1;
-			return;
-		}
-
-		Send(_selected < _walkTarget ? Fable3BoxAnswers.ActionDown : Fable3BoxAnswers.ActionUp);
-	}
-
-	private static void Send(int action) => HostBridge.PostFrontEndAction(Fable3BoxAnswers.Options(action));
-
-	/// <summary>A hover walks the screen's cursor to the row; a click there is its A.</summary>
+	/// <summary>
+	/// The cursor is the pointer's to state: a click puts the screen's cursor on the row and, on a
+	/// list page, accepts it in one action (<see cref="Fable3BoxAnswers.OptionsRow"/>); on a settings
+	/// page a click only places the cursor (A there commits the page), and the wheel steps the
+	/// cursor row's value (<see cref="PointWheel"/>). The mouse is player one's.
+	/// </summary>
 	protected override void PointAt(int row, bool clicked)
 	{
-		if (row < 0)
+		bool accept = clicked && Fable3BoxAnswers.OptionsClickAccepts(_page);
+		if ((accept || row != _selected) &&
+			Fable3BoxAnswers.OptionsRow(row, accept, Fable3ActingPlayer.One) is { } action)
 		{
-			return;
+			HostBridge.PostFrontEndAction(action);
+		}
+	}
+
+	/// <summary>
+	/// The wheel over a settings page's cursor row steps its value through its own setters, as the
+	/// pad's left and right do (<see cref="Fable3BoxAnswers.OptionsWheelSteps"/>); anywhere else it
+	/// moves the cursor, as on every list.
+	/// </summary>
+	protected override bool PointWheel(int steps, int row)
+	{
+		if (row != _selected || _page is not (Fable3OptionsModel.PageGameSettings or Fable3OptionsModel.PageGameSettingsLite))
+		{
+			return false;
 		}
 
-		if (row != _walkTarget || clicked)
+		foreach (int action in Fable3BoxAnswers.OptionsWheelSteps(steps))
 		{
-			_walkTarget = row;
-			_walkAccept = clicked;
-			_walkAge = 0.0;
+			HostBridge.PostFrontEndAction(Fable3BoxAnswers.Options(action, Fable3ActingPlayer.One));
 		}
+
+		return true;
 	}
 
 	private const string QueryRoot = "Options.Sections.QueryBox";

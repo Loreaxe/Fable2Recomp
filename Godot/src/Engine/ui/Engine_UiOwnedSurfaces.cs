@@ -45,7 +45,10 @@ public sealed class Engine_UiMenuBoxSurface : Engine_UiModalSurface<Engine_UiMen
 	{
 		_joins = Engine_UiMenuBox.Resolve(document);
 		_rootHash = document.Nodes.Length > 0 ? document.Nodes[0].Element.NameHash : 0u;
+		_document = document;
 	}
+
+	private Engine_UiScreen? _document;
 
 	/// <summary>The document root's name hash — how told statements key this presentation.</summary>
 	private uint _rootHash;
@@ -139,7 +142,7 @@ public sealed class Engine_UiMenuBoxSurface : Engine_UiModalSurface<Engine_UiMen
 		}
 
 		View.ShowStated(title, labels, _box.Count, _box.Selected,
-			_box.EnabledMask, _box.Cancelable, gamerTag, gamerName, gamerScore);
+			_box.EnabledMask, _box.Cancelable, gamerTag, gamerName, gamerScore, _document?.Document);
 		GD.Print($"[game-ui] menu box up — '{title}', {_box.Count} option(s), " +
 			$"selected {_box.Selected}, enabled 0x{_box.EnabledMask:X} (populate of 0x{stated.Address:X8})" +
 			(gamerTag ? $", card '{gamerName}' (stated) score '{gamerScore}' (told)" : string.Empty));
@@ -422,25 +425,25 @@ public sealed class Engine_UiQuerySurface : Engine_UiModalSurface<Engine_UiQuery
 
 	private Engine_UiScreen? _document;
 
+	/// <summary>The file's slide numbered <paramref name="number"/> on the box's root; null when the
+	/// art carries none (the box then stands its row by name).</summary>
+	private BgfSlide? RootSlide(int number) =>
+		Engine_UiCloneSlide.Numbered(_document?.Document, Engine_BgfDocument.SceneOwnerElement, number);
+
 	/// <summary>
-	/// The row the opener stands up, by modal id: the router's `sub_8236FA68` slides the root for
-	/// two ids only — 20 to slide 3, `XAChoices` (0x8236fb00..18), 13 to slide 5, `ReloadChoices`
-	/// (0x8236fb28..40) — and every other box, and the display query (`sub_823CF228`, slide 1),
-	/// keeps the default `Choices` pair. No code writes a caption: each row's are the file's.
+	/// The row the slide stands: the one whose root it switches on. No code writes a caption: each
+	/// row's are the file's. Without the slide, the default `Choices` pair.
 	/// </summary>
-	private Engine_UiQueryBox.RowJoin RowFor(uint modalId)
+	private Engine_UiQueryBox.RowJoin RowFor(BgfSlide? slide)
 	{
-		string wanted = _display is not null ? Engine_UiQueryBox.ChoiceRows[0].Row : modalId switch
-		{
-			20u => Engine_UiQueryBox.ChoiceRows[1].Row,
-			13u => Engine_UiQueryBox.ChoiceRows[2].Row,
-			_ => Engine_UiQueryBox.ChoiceRows[0].Row,
-		};
 		foreach (Engine_UiQueryBox.RowJoin row in _joins!.Rows)
 		{
-			if (row.Name == wanted)
+			foreach (BgfSlideEntry entry in slide?.Entries ?? System.Array.Empty<BgfSlideEntry>())
 			{
-				return row;
+				if (entry.ElementOrdinal == row.Row && entry.Active)
+				{
+					return row;
+				}
 			}
 		}
 
@@ -513,7 +516,8 @@ public sealed class Engine_UiQuerySurface : Engine_UiModalSurface<Engine_UiQuery
 		string? cancel = _notice ? null : Engine_UiHostBoxes.CancelCaption;
 		if (Changed($"host:{(_notice ? "N" : "Q")}\u0001{body}\u0001{accept}\u0001{cancel}"))
 		{
-			View!.ShowStated(body, _joins.Rows[0].Name, accept, cancel, single: _notice);
+			View!.ShowStated(body, _joins.Rows[0].Name, accept, cancel, single: _notice,
+				slide: RootSlide(Engine_UiBoxConstants.QueryBoxIntroSlide));
 			GD.Print($"[game-ui] host {(_notice ? "notice" : "query")} up — {View.LastReport}");
 		}
 
@@ -535,7 +539,9 @@ public sealed class Engine_UiQuerySurface : Engine_UiModalSurface<Engine_UiQuery
 			return false;
 		}
 
-		Engine_UiQueryBox.RowJoin row = RowFor(_modalId);
+		int number = Engine_UiBoxConstants.QueryBoxSlideFor(_modalId, _display is not null);
+		BgfSlide? slide = RootSlide(number);
+		Engine_UiQueryBox.RowJoin row = RowFor(slide);
 		string? first = Authored(row.First);
 		string? second = Authored(row.Second);
 		if (!Changed($"{_display?.Address:X8}\u0001{_modalId}\u0001{row.Name}\u0001{body}\u0001{first}\u0001{second}"))
@@ -543,11 +549,11 @@ public sealed class Engine_UiQuerySurface : Engine_UiModalSurface<Engine_UiQuery
 			return true;
 		}
 
-		View.ShowStated(body, row.Name, first, second);
+		View.ShowStated(body, row.Name, first, second, slide: slide);
 		GD.Print((_display is { } shown
 				? $"[game-ui] display query 0x{shown.Address:X8} up "
 				: $"[game-ui] query box {_modalId} up over screen {_screenId} ") +
-			$"({row.Name}) — {View.LastReport}");
+			$"({row.Name}, slide {number}{(slide is null ? " not in the art" : $" {slide.Name}")}) — {View.LastReport}");
 		return true;
 	}
 
@@ -895,8 +901,13 @@ public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_
 	protected override Engine_UiReceiveItems Build(Engine_UiTheme? art) =>
 		Engine_UiReceiveItems.FromPatternBook(art);
 
-	protected override void Join(Engine_UiScreen document) =>
+	protected override void Join(Engine_UiScreen document)
+	{
 		_joins = Engine_UiReceiveItems.Resolve(document);
+		_document = document;
+	}
+
+	private Engine_UiScreen? _document;
 
 	/// <summary>Open while the guest's set-item has stated a card and its leave has not taken it
 	/// down, and the card is the current screen: a latch over it (a box) does not close it.</summary>
@@ -948,7 +959,8 @@ public sealed class Engine_UiReceiveItemsSurface : Engine_UiModalSurface<Engine_
 		};
 
 		View.BackClip = _joins?.BackClip;
-		View.ShowStated(title, name, back, s.Icon, icon, up: true, reverse: !s.Front, usable: s.Usable, labels);
+		View.ShowStated(title, name, back, s.Icon, icon, up: true, reverse: !s.Front, usable: s.Usable, labels,
+			_document?.Document);
 		GD.Print($"[game-ui] received-item card up — '{title}' " +
 			$"(icon {(icon is null ? $"0x{s.Icon:X8} unresolved" : "resolved")}, " +
 			$"{(s.Front ? "front" : "back")}, {(s.Usable ? "usable" : "NOT usable")})");

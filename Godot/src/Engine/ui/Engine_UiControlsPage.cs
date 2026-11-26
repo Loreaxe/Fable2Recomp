@@ -23,6 +23,10 @@ namespace Refii.Ui;
 /// inputs press the game's X"; a key row is the existing keyboard table's. A caption names the
 /// input in the player's glyph style (Cross, not A, on a PlayStation pad) and says what else the
 /// same input is bound to.</para>
+/// <para>The one exception is a key action that declares itself pad-bindable
+/// (<c>GameInput.KeyAction.PadBindable</c>): it gets a controller row under its key row
+/// (<see cref="PadActionLine"/>), unbound by default, whose capture takes a chord. Both rows store
+/// into the one <c>key_*</c> setting.</para>
 /// </remarks>
 public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 {
@@ -274,7 +278,7 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 		public override int IndexOfStored(Func<string, string> read)
 		{
 			_extra = null;
-			string stored = read(SettingKey).Trim().Trim('"').Trim();
+			string stored = Engine_PadActionBinding.KeysOf(read(SettingKey));
 			if (stored.Length == 0 || string.Equals(stored, defaults, StringComparison.OrdinalIgnoreCase) ||
 				isDefault?.Invoke(stored) == true)
 			{
@@ -351,6 +355,137 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 			}
 
 			return false;
+		}
+	}
+
+	/// <summary>
+	/// The controller row of a pad-bindable key action: the chord of the game's buttons that also
+	/// presses it (the <c>Pad:</c> tokens of <c>key_&lt;action&gt;</c>, <see cref="Engine_PadActionBinding"/>).
+	/// Unbound is its default. It stores after its key row, into the same setting.
+	/// </summary>
+	public sealed class PadActionLine(string action, Func<GlyphStyle> style, Func<bool> ps5) : Line
+	{
+		public const int CaptureIndex = 0;
+		public const int UnboundIndex = 1;
+		public const int FirstInput = 2;
+
+		/// <summary>Stored chords the steps cannot spell (a chord of several inputs, or several chords), as the last position.</summary>
+		private IReadOnlyList<ushort>? _extra;
+
+		public string Action => action;
+		public string SettingKey => "key_" + action;
+
+		public override string Label
+		{
+			get
+			{
+				string spaced = action.Replace('_', ' ');
+				return (spaced.Length == 0 ? spaced : char.ToUpperInvariant(spaced[0]) + spaced[1..]) + " (controller)";
+			}
+		}
+
+		public override int DefaultIndex => UnboundIndex;
+		public override Engine_UiInputCapture.Kind? Captures => Engine_UiInputCapture.Kind.PadChord;
+		public override int Choices => FirstInput + Engine_PadRemap.Count + (_extra is null ? 0 : 1);
+
+		/// <summary>The chords the row binds at <paramref name="index"/>.</summary>
+		public IReadOnlyList<ushort> Chords(int index) => index switch
+		{
+			CaptureIndex or UnboundIndex => Array.Empty<ushort>(),
+			_ when index - FirstInput < Engine_PadRemap.Count => new[] { (ushort)(1 << (index - FirstInput)) },
+			_ => _extra ?? Array.Empty<ushort>(),
+		};
+
+		public override string Caption(int index)
+		{
+			if (index == CaptureIndex)
+			{
+				return "Press a button, or hold several...";
+			}
+
+			IReadOnlyList<ushort> chords = Chords(index);
+			if (chords.Count == 0)
+			{
+				return "Unbound";
+			}
+
+			var text = new StringBuilder();
+			foreach (ushort chord in chords)
+			{
+				text.Append(text.Length == 0 ? string.Empty : ", ");
+				bool first = true;
+				foreach (PadInput input in Engine_PadActionBinding.Inputs(chord))
+				{
+					text.Append(first ? string.Empty : " + ").Append(Engine_ControllerFamily.Label(style(), input, ps5()));
+					first = false;
+				}
+			}
+
+			return text.ToString();
+		}
+
+		private int IndexOf(IReadOnlyList<ushort> chords)
+		{
+			_extra = null;
+			if (chords.Count == 0)
+			{
+				return UnboundIndex;
+			}
+
+			if (chords.Count == 1 && Engine_PadActionBinding.Inputs(chords[0]) is { Count: 1 } one)
+			{
+				return FirstInput + (int)one[0];
+			}
+
+			_extra = chords;
+			return FirstInput + Engine_PadRemap.Count;
+		}
+
+		public override int IndexOfStored(Func<string, string> read) => IndexOf(Engine_PadActionBinding.Chords(read(SettingKey)));
+
+		/// <summary>The key row stored the setting's keys just before (null for the default); the chords join them.</summary>
+		public override void Store(int index, IDictionary<string, string?> values)
+		{
+			values.TryGetValue(SettingKey, out string? keys);
+			values[SettingKey] = Engine_PadActionBinding.Combine(
+				Engine_PadActionBinding.KeysOf(keys), Engine_PadActionBinding.Format(Chords(index)));
+		}
+
+		/// <summary>
+		/// A captured chord's physical inputs as the GAME buttons they press for player one — the
+		/// chord names the game's buttons, as a mod's pad binding does. −1 for an input that presses none.
+		/// </summary>
+		public override int IndexOfCaptured(string name)
+		{
+			ushort chord = 0;
+			foreach (string part in name.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			{
+				if (!Engine_PadRemap.TryParse(part, out PadInput physical))
+				{
+					return -1;
+				}
+
+				IReadOnlyList<PadInput> targets = Engine_PadRemap.For(1).Targets(physical);
+				if (targets.Count == 0)
+				{
+					return -1;
+				}
+
+				chord |= (ushort)(1 << (int)targets[0]);
+			}
+
+			return chord == 0 ? -1 : IndexOf(new[] { chord });
+		}
+
+		public override IReadOnlyList<string> Bound(int index)
+		{
+			var names = new List<string>();
+			foreach (ushort chord in Chords(index))
+			{
+				names.Add("padaction:" + Engine_PadActionBinding.ChordName(chord));
+			}
+
+			return names;
 		}
 	}
 
@@ -596,6 +731,10 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 		foreach (Refii.Game.GameInput.KeyAction action in Refii.Game.GameInput.KeyActions)
 		{
 			Add("keys", new KeyLine(action.Name, action.Defaults, candidates, action.IsDefault));
+			if (action.PadBindable)
+			{
+				Add("keys", new PadActionLine(action.Name, () => StyleOf(1), () => Ps5Of(1)));
+			}
 		}
 
 		foreach (Refii.Mods.ModInputUi.Section mod in mods)

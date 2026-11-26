@@ -1,18 +1,14 @@
-// refii - Fable 3's world view, stated to the host: the camera the guest renders with, each new
-// guest frame, and its preload gate, which waits while Godot builds the level.
-//
-// THE CAMERA (Fable 3 TU3 IDB). sub_822607C8(V, block) fills the view's render camera from the final
-// blended camera block, every high-frequency step (0x82255D74, after the blend sub_821A8E58) and
-// on a region transition (0x82351968, the live block unblended); it skips a view whose +0xC is -1
-// (`cmpwi r11,-1` at 0x822607E8). The block is the camera manager's 0x40-byte layout:
-//   +0x00 position, +0x10 up, +0x20 forward (vec4 each, w unused), +0x30 horizontal FOV at 4:3 in
-//   radians (`lfs f30,0x30(r4)` at 0x822607F4), +0x34 snap byte (the blend forces alpha 1 on it).
-// Scripted cameras (Lua ActivateCamera, the manager's override slot) reach the same call.
+// refii - Fable 3's world view, stated to the host: each new guest frame, and its preload gate,
+// which waits while Godot builds the level. The camera itself is stated by its setters and easing
+// step (camera_statements.cpp); the shell rebuilds it and states the drawn camera back
+// (RefiiHostStateCamera), which StatedFovRadians and the mouse look read.
 //
 // ONE VIEW PER GAME, AND ONLY THE PRESENTED ONE IS FOLLOWED. The front end keeps two games standing
-// (presented_world.h in the host bridge); each fills its own view, V = *(*(game+0x10)+4) (the
-// high-frequency caller: `mr r31,r3` at 0x82255D10, `lwz r30,0x10(r31)` / `lwz r3,4(r30)` before
-// the call). The camera stated is the one whose game was last made current, *0x83597030.
+// (presented_world.h in the host bridge); each runs its own high-frequency pass sub_82255CF0(game,
+// step), which asks the getter for its own camera manager's block (`lwz r30,0x40(r31)`,
+// sub_82208EA0, `bl sub_821CB2E0` at 0x82255D50). The game last made current is *0x83597030; while
+// its pass runs, InPresentedPass() holds, and camera_statements.cpp names the manager it asks for
+// as the presented one.
 //
 // THE PRELOAD GATE. sub_822E13B8(engine) answers "the 3D Engine is still preloading": 1 while
 // engine+0xC8 < 5 or engine+0x264 is set (0x822E13DC / 0x822E13E8). The level-change command
@@ -20,7 +16,6 @@
 // command in its state 4, and the game tick's loading-screen fade holds on it. Answering 1 while
 // the host builds keeps the guest in its own loading screen, the hold Fable 2's bridge makes.
 
-#include <atomic>
 #include <cstdint>
 #include <cstring>
 
@@ -29,8 +24,6 @@
 #include "core/payload_bridge.h"
 #include "../../vfs/include/fable3_guest_build.h"
 
-REX_EXTERN(__imp__rex_View_SetRenderCamera);
-REX_EXTERN(__imp__rex_Camera_Blend);
 REX_EXTERN(__imp__rex_GameLoop_HighFrequencyUpdate);
 REX_EXTERN(__imp__rex_Engine_IsPreLoading);
 
@@ -38,8 +31,9 @@ namespace {
 
 const refii::guest::Addr kPresentedGame{0x83597030u};
 
-/// The presented view's last stated horizontal FOV at 4:3, radians (block +0x30); 0 before the first.
-std::atomic<float> g_stated_fov{0.0f};
+/// Inside the presented game's high-frequency pass, on this thread (camera_statements.cpp names the
+/// manager that pass asks the getter for as the presented one).
+thread_local bool t_presented_pass = false;
 
 uint32_t LoadGuestU32(const uint8_t* base, uint32_t address) {
   uint32_t value = 0;
@@ -47,91 +41,29 @@ uint32_t LoadGuestU32(const uint8_t* base, uint32_t address) {
   return __builtin_bswap32(value);
 }
 
-float LoadGuestF32(const uint8_t* base, uint32_t address) {
-  const uint32_t bits = LoadGuestU32(base, address);
-  float value = 0.0f;
-  std::memcpy(&value, &bits, sizeof(value));
-  return value;
-}
-
-void LoadGuestVec3(const uint8_t* base, uint32_t address, float* out) {
-  for (uint32_t i = 0; i < 3u; ++i) {
-    out[i] = LoadGuestF32(base, address + (i * 4u));
-  }
-}
-
-/// One 0x40-byte camera block in the stated 11-float layout.
-void ReadCameraBlock(const uint8_t* base, uint32_t block, float* out) {
-  LoadGuestVec3(base, block + 0x00u, out);
-  LoadGuestVec3(base, block + 0x10u, out + 3);
-  LoadGuestVec3(base, block + 0x20u, out + 6);
-  out[9] = LoadGuestF32(base, block + 0x30u);
-  out[10] = base[block + 0x34u] != 0u ? 1.0f : 0.0f;
-}
-
-/// The view of the game last made current (sub_8234BFC0: `stw r26,disc dword_83556534` at disc 0x82344C90).
-uint32_t PresentedView(const uint8_t* base) {
-  const uint32_t game = LoadGuestU32(base, kPresentedGame);
-  const uint32_t holder = game == 0u ? 0u : LoadGuestU32(base, game + 0x10u);
-  return holder == 0u ? 0u : LoadGuestU32(base, holder + 4u);
-}
-
 }  // namespace
 
 namespace refii::fable3::view {
-float StatedFovRadians() { return g_stated_fov.load(std::memory_order_relaxed); }
+float StatedFovRadians() {
+  float drawn[11];
+  return refii_bridge_camera_read(drawn) != 0 ? drawn[9] : 0.0f;
+}
+bool InPresentedPass() { return t_presented_pass; }
 }  // namespace refii::fable3::view
 
-REX_EXTERN(rex_View_SetRenderCamera) {
-  const uint32_t view = ctx.r3.u32;
-  const uint32_t block = ctx.r4.u32;
-  if (view != 0u && block != 0u && view == PresentedView(base) &&
-      LoadGuestU32(base, view + 0xCu) != 0xFFFFFFFFu) {
-    float position[3];
-    float up[3];
-    float forward[3];
-    LoadGuestVec3(base, block + 0x00u, position);
-    LoadGuestVec3(base, block + 0x10u, up);
-    LoadGuestVec3(base, block + 0x20u, forward);
-    const float fov = LoadGuestF32(base, block + 0x30u);
-    g_stated_fov.store(fov, std::memory_order_relaxed);
-    refii_bridge_camera_stated(position, up, forward, fov, base[block + 0x34u] != 0u ? 1 : 0);
-  }
-
-  __imp__rex_View_SetRenderCamera(ctx, base);
-}
-
-// THE PAIR. sub_821A8E58(out, previous, live, alpha) is the high-frequency blend: called at
-// 0x82255D68 with r4 = game+0xD0 (the camera latched last step, `addi r4,r31,0xD0` at
-// 0x82255D58) and r5 = the camera manager's block copied this step (sub_821CB2E0 at 0x82255D50),
-// f1 the alpha; the live block's +0x34 byte forces alpha 1 (a cut). The shell blends the two on
-// its own clock, as it does for Fable 2's pair, so only the presented game's call is stated —
-// sub_8256B908 also blends, for something else.
-REX_EXTERN(rex_Camera_Blend) {
-  const uint32_t previous = ctx.r4.u32;
-  const uint32_t live = ctx.r5.u32;
-  const uint32_t presented = LoadGuestU32(base, kPresentedGame);
-  if (presented != 0u && previous == presented + 0xD0u && live != 0u) {
-    float stated_live[11];
-    float stated_previous[11];
-    ReadCameraBlock(base, live, stated_live);
-    ReadCameraBlock(base, previous, stated_previous);
-    refii_bridge_camera_pair_stated(stated_live, stated_previous);
-  }
-
-  __imp__rex_Camera_Blend(ctx, base);
-}
-
 // THE GUEST FRAME. sub_82255CF0(game, f1 step time) is the main loop's high-frequency pass (its
-// one caller, sub_821CB7B0 at disc 0x821CBEE8): the camera blend and publish above, the posed
-// state of the step. The guest keeps no counter of it, so this is where the host learns a new frame
+// one caller, sub_821CB7B0 at disc 0x821CBEE8): the camera blend and the view's render-camera
+// fill, the posed state of the step. The guest keeps no counter of it, so this is where the host learns a new frame
 // of guest state is in memory — what Fable 2's rex_lhGameLoop_HighFrequencyUpdate states. f1 is
 // the step's time (lhGameLoop_Tick's gameloop+0xC0, QPC seconds; `fmr f31,f1` at 0x82255D0C), the
 // stamp it gives the render queue's batch (sub_82195F88(dword_835A0270, f31) at 0x82255D28): kept
 // with the frame, it turns a render-side time back into a guest frame (cloth_hooks.cpp).
 REX_EXTERN(rex_GameLoop_HighFrequencyUpdate) {
   const double step_time = ctx.f1.f64;
+  const bool presented = ctx.r3.u32 != 0u && ctx.r3.u32 == LoadGuestU32(base, kPresentedGame);
+  t_presented_pass = presented;
   __imp__rex_GameLoop_HighFrequencyUpdate(ctx, base);
+  t_presented_pass = false;
   refii_bridge_note_guest_frame();
   refii_bridge_note_guest_step_time(step_time);
 }

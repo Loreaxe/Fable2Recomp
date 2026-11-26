@@ -104,8 +104,14 @@ public partial class GameUi
 			}
 		}
 
-		if (_coopNotices.Tick(delta, PartnerName(), inGame) is { } text)
+		if (_coopNotices.Tick(delta, PartnerName(), inGame) is { } due)
 		{
+			// A text key is shown as the game's string book has it, else in our own words.
+			string text = !Engine_UiCoopNotices.IsTextKey(due) ? due
+				: Engine_UiInventorySource.Strings is { } strings && strings.TryGetString(due, out string own) &&
+					own.Length != 0
+					? own
+					: Refii.Text.Engine_OwnWords.Say(due);
 			GD.Print($"[coop-notice] {text}");
 			Engine_UiNotices.Post(0u, 0, string.Empty, text, Engine_UiCoopNotices.Seconds, Engine_UiCoopNotices.BoxName);
 		}

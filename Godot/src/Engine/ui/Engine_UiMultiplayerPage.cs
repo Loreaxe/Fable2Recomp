@@ -79,12 +79,12 @@ public static class Engine_UiMultiplayerPage
 		return new Dictionary<string, string>
 		{
 			// THE ROW'S LABEL, not its name. `Name` is the identity the commands are keyed on
-			// ("MyCode"); `TextTag` is what the row draws, and for a host-authored row that is
-			// the literal already.
+			// ("MyCode"); `TextTag` is what the row draws — the game's key or one of our own,
+			// said as the running book, then our own words, have it.
 			[Title] = row.StatedLabel is { Length: > 0 } stated
 				? stated
 				: row.TextTag is { Length: > 0 } tag && tag != "_no tag_"
-					? tag
+					? Engine_UiGuiText.Resolve(tag, Refii.Core.Engine_TitleGame.Active.Strings)
 					: row.Name,
 			// AN OUTCOME FIRST. A press answers on this same page, never in a box (a box draws
 			// under the book and blocks it); the plain page returns once it fades.

@@ -1,12 +1,13 @@
 namespace Refii.Titles.Fable3;
 
 /// <summary>
-/// The mouse on a guest menu: the row the pointer picked, reached by the guest's own cursor.
+/// The mouse on a box-manager screen: the row the pointer picked, reached by the guest's own cursor.
 /// </summary>
 /// <remarks>
-/// NO FABLE 3 LIST TAKES A ROW FROM OUTSIDE. Each screen moves its cursor on its own input, behind
-/// its own repeat gate — Options five updates between moves (sub_825CA980 / sub_825CA858, +56 against
-/// +40/+44), the quest summary eight (0x82974800), the stats pages four ticks (0x8296e5ec), the menu
+/// THE BOX MANAGER'S SCREENS TAKE NO ROW FROM OUTSIDE (Options and the save menu are stated a row
+/// and reach it natively: <see cref="Fable3BoxAnswers.OptionsRow"/>, <see cref="Fable3BoxAnswers.SaveMenuRow"/>).
+/// Each moves its cursor inside its own pad handler, behind its own repeat gate — the quest
+/// summary eight updates (0x82974800), the stats pages four ticks (0x8296e5ec), the menu
 /// box 0.3 s between any two inputs (+36, 0x825fa118) — and three of them read only the LEFT STICK
 /// (the quest summary 0x829745f8, the stats pages 0x8296dc3c, the interaction list 0x829644e4), while
 /// every one of them takes it: sub_82B3F6F0 turns a stick past 0.6 into GUI up/down (29/30, y first

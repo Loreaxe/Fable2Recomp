@@ -57,7 +57,9 @@ public class CoopNoticesTests
 			told: true, refused: false);
 		joiner.Session(CoopSession.Phase.PeerJoined, CoopSession.Phase.PeerLost, CoopSession.Role.Solo,
 			told: true, refused: false);
-		AssertThat(joiner.Tick(0.0, string.Empty, inGame: true)).IsEqual(Engine_UiCoopNotices.JoinerLost);
+		// The joiner's guest raises its own box for the loss (KICKED / DISCONNECTED / FAILED); nothing of ours.
+		AssertThat(joiner.Tick(0.0, string.Empty, inGame: true)).IsNull();
+		AssertThat(joiner.Queued).IsEqual(0);
 
 		var refused = new Engine_UiCoopNotices();
 		refused.Session(CoopSession.Phase.Hosting, CoopSession.Phase.PeerJoined, CoopSession.Role.Host,
@@ -65,6 +67,23 @@ public class CoopNoticesTests
 		refused.Session(CoopSession.Phase.PeerJoined, CoopSession.Phase.PeerLost, CoopSession.Role.Host,
 			told: true, refused: true);
 		AssertThat(refused.Tick(0.0, string.Empty, inGame: true)).IsNull();
+	}
+
+	[TestCase]
+	public void TestTheHostIsToldTheGamesOwnKeyHoweverThePartnerWent()
+	{
+		var host = new Engine_UiCoopNotices();
+		host.Session(CoopSession.Phase.Hosting, CoopSession.Phase.PeerJoined, CoopSession.Role.Host,
+			told: true, refused: false);
+		host.Session(CoopSession.Phase.PeerJoined, CoopSession.Phase.PeerLost, CoopSession.Role.Solo,
+			told: true, refused: false);
+		AssertThat(host.Tick(0.0, string.Empty, inGame: true)).IsEqual("GUI_NET_DROPPED_CLIENT");
+
+		// The host's loss is the game's text key and our own notices are our keys, both resolved by the shell;
+		// a join notice is said already, with the partner's name in it.
+		AssertThat(Engine_UiCoopNotices.IsTextKey(Engine_UiCoopNotices.HostLost)).IsTrue();
+		AssertThat(Engine_UiCoopNotices.IsTextKey(Engine_UiCoopNotices.Progression)).IsTrue();
+		AssertThat(Engine_UiCoopNotices.IsTextKey(Engine_UiCoopNotices.HostJoined("Sparrow"))).IsFalse();
 	}
 
 	[TestCase]

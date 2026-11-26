@@ -3160,10 +3160,18 @@ public sealed partial class Engine_UiOwnedBook : Node3D
 	/// down to a floor. Measured in the unspread 16:9 layout, before the wide layout rides the
 	/// pages out, and from the transform this frame stands at — a line already fitted
 	/// measures as fitting, so nothing compounds.
+	///
+	/// A PAGE THAT ENDS SHORT OF THE COVER states its own extent
+	/// (<see cref="Engine_UiScreenTemplate.PageSpan"/>), and a line anchored inside it is kept
+	/// inside it, on the side or sides its alignment leaves free: shrinking about the anchor
+	/// moves the far end of a left-aligned line, the near end of a right-aligned one, and both
+	/// ends of a centred one. The extent follows its page when the wide layout holds it out
+	/// (<see cref="RideOf"/>).
 	/// </summary>
 	private void FitTextToPage()
 	{
 		float edge = Engine_UiSceneBuilder.DesignHalfWidth - PageEdgeMargin;
+		Vector2? span = Template?.PageSpan;
 		Transform3D toBook = GlobalTransform.AffineInverse();
 		foreach (MeshInstance3D mesh in _textMeshes)
 		{
@@ -3193,6 +3201,28 @@ public sealed partial class Engine_UiOwnedBook : Node3D
 				fit = Mathf.Min(fit, (origin + edge) / (origin - box.Position.X));
 			}
 
+			if (span is { } page)
+			{
+				float ride = RideOf(mesh);
+				float inner = page.X + ride;
+				float outer = page.Y + ride;
+				// Inclusive: the page's own lines are anchored ON its limits (labels at the inner, values
+				// at the outer), and each is kept inside by the end its alignment leaves free.
+				if (origin >= inner - 0.5f && origin <= outer + 0.5f)
+				{
+					int align = mesh.HasMeta("text_halign") ? (int)mesh.GetMeta("text_halign") : 0;
+					if (align != 2 && box.End.X > outer && box.End.X - origin > 1f)
+					{
+						fit = Mathf.Min(fit, (outer - origin) / (box.End.X - origin));
+					}
+
+					if (align != 0 && box.Position.X < inner && origin - box.Position.X > 1f)
+					{
+						fit = Mathf.Min(fit, (origin - inner) / (origin - box.Position.X));
+					}
+				}
+			}
+
 			// At the floor a line can still measure long; one this pass already shrank and
 			// nothing restated since is left alone.
 			if (fit < 0.999f &&
@@ -3205,6 +3235,24 @@ public sealed partial class Engine_UiOwnedBook : Node3D
 				_textFitted[mesh] = mesh.Scale;
 			}
 		}
+	}
+
+	/// <summary>
+	/// The canvas distance the wide layout holds <paramref name="node"/>'s page out by right now:
+	/// the amount of the nearest ancestor piece it rode, while that piece still stands where the
+	/// ride left it; 0 for a piece the binding has restated since, or when nothing rode.
+	/// </summary>
+	private float RideOf(Node3D node)
+	{
+		for (Node? at = node; at is Node3D piece && at != this; at = at.GetParent())
+		{
+			if (_spreadAt.TryGetValue(piece, out var ride))
+			{
+				return piece.Transform.IsEqualApprox(ride.To) ? ride.Amount : 0f;
+			}
+		}
+
+		return 0f;
 	}
 
 	/// <summary>What the wide layout last did to a node: the transform it started from, the

@@ -34,31 +34,48 @@ public sealed class Engine_UiCoopNotices
 	/// <summary>How long an online join notice waits for the peer's name.</summary>
 	public const double NameWaitSeconds = 10.0;
 
-	public const string LocalJoined = "Player Two has joined the game.";
+	public const string LocalJoined = "REFII_F2_COOP_LOCAL_JOINED";
 
-	public const string LocalLeft = "Player Two has left the game.";
+	public const string LocalLeft = "REFII_F2_COOP_LOCAL_LEFT";
 
 	/// <summary>
 	/// Told once per run on the first join of either kind. Refii gives each player their own
 	/// progression (Fable 3's rule), which is why the co-op screen has no share sliders.
 	/// </summary>
-	public const string Progression = "Each Hero keeps their own gold and experience.";
+	public const string Progression = "REFII_F2_COOP_PROGRESSION";
 
-	/// <summary>Fable 3's TEXT_TUTORIAL_COOP.</summary>
-	public const string PressStart = "Press START on a second controller to join.";
+	/// <summary>Fable 3's TEXT_TUTORIAL_COOP, in our own words (Fable 2's book has none).</summary>
+	public const string PressStart = "REFII_F2_COOP_PRESS_START";
 
-	public const string HostLost = "Your connection with your co-op partner has been lost.";
+	/// <summary>
+	/// The host's notice when player two is gone, however they went: the game's own text KEY for it.
+	/// The original has one path on the host for a leave, a kick and a dropped link — its
+	/// lost-connection handler raises this key for five seconds and never asks why (TU1
+	/// 0x8232DE34 `"GUI_NET_DROPPED_CLIENT"` then `sub_8230B560(…, 5000.0)`; disc 0x8231080C) —
+	/// so one text for all three is its behaviour. A key, not a sentence: the shell shows what
+	/// the game's string book holds for it, in the player's language (<see cref="IsTextKey"/>).
+	/// </summary>
+	public const string HostLost = "GUI_NET_DROPPED_CLIENT";
 
-	/// <summary>The joiner's guest saves on a lost connection, so the joiner is told so.</summary>
-	public const string JoinerLost =
-		"Your connection with your co-op partner has been lost. Your progress has been saved.";
+	/// <summary>
+	/// Whether a notice is a text key — one of the game's, shown as its string book has it, or one of our
+	/// own (Refii.Text.Engine_OwnWords) for the lines its book has none for.
+	/// </summary>
+	public static bool IsTextKey(string notice) =>
+		notice.StartsWith("GUI_", System.StringComparison.Ordinal) ||
+		notice.StartsWith(Refii.Text.Engine_OwnWords.KeyPrefix, System.StringComparison.Ordinal);
 
+	/// <summary>The host's join notice, said in the language in force with the peer's name.</summary>
 	public static string HostJoined(string peer) =>
-		$"{(peer.Length == 0 ? "Your co-op partner" : peer)} has joined your game.";
+		peer.Length == 0
+			? Refii.Text.Engine_OwnWords.Say("REFII_F2_COOP_PARTNER_JOINED")
+			: Refii.Text.Engine_OwnWords.Say("REFII_F2_COOP_HOST_JOINED", peer);
 
+	/// <summary>The joiner's join notice, said in the language in force with the host's name.</summary>
 	public static string JoinerJoined(string host) =>
-		host.Length == 0 ? "Successfully connected to your partner's game!"
-			: $"Successfully connected to {host}'s game!";
+		host.Length == 0
+			? Refii.Text.Engine_OwnWords.Say("REFII_F2_COOP_JOINED_PARTNER")
+			: Refii.Text.Engine_OwnWords.Say("REFII_F2_COOP_JOINED_HOST", host);
 
 	private readonly Queue<string> _queue = new();
 
@@ -111,12 +128,18 @@ public sealed class Engine_UiCoopNotices
 		}
 
 		// The peer is gone. A join notice still waiting for a name is moot now.
+		//
+		// THE JOINER IS TOLD BY ITS GUEST, never here: the joiner's LeaveSession (TU1 `sub_8233E7F8`, disc
+		// `sub_82321268`) raises its own box for every way out of a game it joined (`net+0x34 && net+0x36`,
+		// 0x8233E814..0x8233E82C / 0x82321284..0x8232129C) — KICKED when `net+0x141` is set (0x8233E978 /
+		// 0x823213E8), else DISCONNECTED / DISCONNECTED_NOSAVE / FAILED — as a message box
+		// (`sub_8230FE48` 0x8233EA5C / `sub_82303AA0` 0x823214A0), quiet only on the joiner's own leave.
 		_nameWait = -1.0;
 		CoopSession.Role joinedAs = _joinedAs;
 		_joinedAs = CoopSession.Role.Solo;
-		if (told && !refused)
+		if (told && !refused && joinedAs != CoopSession.Role.Client)
 		{
-			Enqueue(joinedAs == CoopSession.Role.Client ? JoinerLost : HostLost);
+			Enqueue(HostLost);
 		}
 	}
 

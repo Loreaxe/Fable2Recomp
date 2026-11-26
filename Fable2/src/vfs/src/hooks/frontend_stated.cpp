@@ -2,7 +2,22 @@
 // screen's mode, the title's press-A latch and the Load Game card the cursor is on, kept here from
 // the guest's own calls and published as one word (stated value 13, kFrontEnd): bit 0 up, bits 1-2
 // the screen (0 none, 1 title, 2 main menu), bit 3 press-A, bits 4-5 the screen whose warning is
-// raised (0 none), bits 8-15 the title's mode, 16-23 the main menu's, 24-31 the card. Nothing here reads a screen object. Addresses are TU1 / disc.
+// raised (0 none), bits 6-7 the pad the title took A from, bits 8-15 the title's mode, 16-23 the
+// main menu's, 24-31 the card. Nothing here reads a screen object. Addresses are TU1 / disc.
+//
+// THE PAD. The title's input slot `sub_826E2F18` / `sub_826C61B8` (r3 title, r4 code, r5 pad) on
+// its accept arm stores r5 (`mr r29,r5` 0x826e2f30 / 0x826c61d0) into the session's pad: `stw r29,dword_83496AF8`
+// 0x826e30dc / `stw r29,dword_83496934` 0x826c6370, after the latch clear and the root's slide 3.
+// The main menu's slot takes only that pad (`lwz r4,dword_83496AF8; cmpw cr6,r5,r4; bne default`
+// 0x826dee5c / 0x826c72c4). Stated here from the call's r5 when that arm ran.
+//
+// THE PAD ROUTE. The front end's input `sub_826E39C0` / `sub_826C5B88` (r5 = the record's pad,
+// `lwz r5,0x28(r29)` 0x826e39e8 / 0x826c5bb0) turns a press into 28..31 D-pad, 7 Start, 36 A, 37
+// B, 38 X, 39 Y, a release into 32/33 D-pad up/down and 75 X, the left stick into 28..35, and
+// hands each to the active screen's slot +12 (`lwz r3,0xBC(r10)` .. `bctrl` 0x826e3ae8..0x826e3af8 /
+// 0x826c5cc0). Every call into the two slots made outside a pump lever (FrontEndLeverCall) is
+// that route, and is logged with its code: the proof that a button Godot owns no longer reaches
+// the guest's slot.
 //
 // UP. The front-end GUI's constructor `sub_82378230(this)` / `sub_82378CD0` (`*(_DWORD *)a1 =
 // off_820A924C` 0x82378250, title into +180, menu into +184, `*(a1 + 188) = *(a1 + 180)`
@@ -22,8 +37,16 @@
 //   rex_lhGui_FrontendTitle_OnScreenAction: the two arms that act each play one slide — in 12 on
 //   36 `GoToSlideAndRestart(dialog, 2)` then 1 (0x826e2f9c), else on 36 with the latch set the
 //   latch clears and `GoToSlideAndRestart(root, 3)` then 10 (0x826e308c .. 0x826e30e0).
-//   The idle attract (0 -> 8 -> 0, inline in the title's tick 0x826e3248 / 0x826e3510) has no
-//   call and is not carried: the title reads 0 through it.
+//   THE IDLE ATTRACT, 0 -> 8 -> 0, from the calls the title's Update (`sub_826E3150` / `sub_826C63D8`)
+//   makes around its two inline stores. In: mode 0 for more than dbl_83319630 (30 s) since the +72
+//   stamp (disc +64) with no warning raised (+57) -> `stw 8,0x18(r31)` (0x826e3248 / 0x826c64d4), then
+//   `lhFrontEnd_BindScrollingElement(mode+0x50)` (0x826e3268 / 0x826c64f4) and, with no movie held,
+//   the movie open (0x826e32c0 / 0x826c654c). The bind's other caller is lhFrontEnd_Enter (0x82378db0
+//   / 0x82379850), outside any title Update. Out: the movie done (+0xE9) or skipped (+0xF4) or gone
+//   (0x826e348c .. 0x826e34d0) -> `stw 0,0x18(r31)` (0x826e3510 / 0x826c679c), the stamp, then
+//   `sub_826D5DA8(title+28)` (0x826e3520 / `sub_82583608` 0x826c67ac), that function's only caller
+//   on each build. In 8 the title's input slot takes A and B as the movie's skip alone
+//   (0x826e3030 .. 0x826e3064), never the latch.
 //
 // THE MAIN MENU'S MODE:
 //   events — choosecard BOY_ACTIVE 3, GIRL_ACTIVE 4, UNFREEZE 0 (0x826e0d84 ..); loadgame
@@ -106,6 +129,7 @@ struct Model {
     uint32_t title = 0u;
     uint32_t menu = 0u;
     uint32_t card = 0u;
+    uint32_t pad = 0u;       // r5 of the title's accept arm (THE PAD)
     uint32_t over = 0u;      // the menu's mode when its warning opened
     uint32_t dialog = kScreenNone;  // the screen whose warning is raised
     bool up = false;
@@ -119,6 +143,29 @@ Model g_model;
 /// main menu); never reset, so a front end made again does not repeat an earlier count.
 uint32_t g_activation = 0u;
 uint32_t g_published = 0u;
+
+/// Inside the title's Update on this thread: the attract's bind is the one made there.
+thread_local int t_title_update = 0;
+
+/// Inside a pump lever's call into a front-end input slot on this thread (FrontEndLeverCall).
+thread_local int t_lever = 0;
+
+/// Calls into the two input slots that came from the pad route, with a non-zero code, since start.
+/// Never reset: a run total, each call logged with its running count.
+uint64_t g_pad_route_calls = 0u;
+
+/// One pad-route call into a front-end input slot (THE PAD ROUTE): logged with the screen, its
+/// mode, the code and the pad. Code 0 (a press the route has no code for, every stick record)
+/// acts in no arm of either slot and is not logged. The caller holds no lock.
+void NotePadRoute(const char* screen, uint32_t mode, uint32_t code, uint32_t pad) {
+    if (t_lever != 0 || code == 0u) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_lock);
+    const uint64_t n = ++g_pad_route_calls;
+    REXLOG_INFO("Refii front end: the pad route reached the {}'s input slot — code {}, pad {}, mode {} (#{})",
+                screen, code, pad, mode, n);
+}
 
 // One guest call in flight on this thread and what it has done so far. A nested call that states
 // itself (the activates, the screen switch, OpenDialog, the card move) opens its own frame, so its
@@ -152,14 +199,15 @@ Frame Leave() {
 void Publish(const char* why) {
     const Model& m = g_model;
     const uint32_t word = (m.up ? 1u : 0u) | (m.screen << 1) | (m.can_press_a ? 8u : 0u) | (m.dialog << 4) |
-                          ((m.title & 0xFFu) << 8) | ((m.menu & 0xFFu) << 16) | ((m.card & 0xFFu) << 24);
+                          ((m.pad & 3u) << 6) | ((m.title & 0xFFu) << 8) | ((m.menu & 0xFFu) << 16) |
+                          ((m.card & 0xFFu) << 24);
     if (word == g_published) {
         return;
     }
     g_published = word;
     refii_bridge_stated_value(kFrontEnd, word);
-    REXLOG_INFO("Refii front end: {} — up {}, screen {}, title {}, menu {}, press-A {}, card {}, warning {}", why,
-                m.up ? 1 : 0, m.screen, m.title, m.menu, m.can_press_a ? 1 : 0, m.card, m.dialog);
+    REXLOG_INFO("Refii front end: {} — up {}, screen {}, title {}, menu {}, press-A {}, card {}, warning {}, pad {}",
+                why, m.up ? 1 : 0, m.screen, m.title, m.menu, m.can_press_a ? 1 : 0, m.card, m.dialog, m.pad);
 }
 
 void Post(const char* name, std::initializer_list<std::string> arguments) {
@@ -326,6 +374,22 @@ bool FrontEndUp() {
     return g_model.up;
 }
 
+bool FrontEndTitleState(uint32_t* mode, bool* armed) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    const bool up = g_model.up && g_model.screen == kScreenTitle && g_model.title_screen != 0u;
+    if (mode != nullptr) *mode = up ? g_model.title : 0u;
+    if (armed != nullptr) *armed = up && g_model.can_press_a;
+    return up;
+}
+
+uint32_t FrontEndPad() {
+    std::lock_guard<std::mutex> lock(g_lock);
+    return g_model.pad;
+}
+
+FrontEndLeverCall::FrontEndLeverCall() { ++t_lever; }
+FrontEndLeverCall::~FrontEndLeverCall() { --t_lever; }
+
 uint32_t FrontEndMenuMode() {
     std::lock_guard<std::mutex> lock(g_lock);
     return g_model.up && g_model.screen == kScreenMenu ? g_model.menu : 0u;
@@ -394,9 +458,42 @@ REX_EXTERN(rex_lhGuiFrontEndTitle_Activate) {
     Publish("the title activated");
 }
 
+REX_EXTERN(rex_lhGuiFrontEndTitle_Update) {
+    REX_FUNC_PROLOGUE();
+    ++t_title_update;
+    __imp__rex_lhGuiFrontEndTitle_Update(ctx, base);
+    --t_title_update;
+}
+
+REX_EXTERN(rex_lhFrontEnd_BindScrollingElement) {
+    REX_FUNC_PROLOGUE();
+    __imp__rex_lhFrontEnd_BindScrollingElement(ctx, base);
+    if (t_title_update == 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_lock);
+    g_model.title = 8u;
+    Publish("the title's attract began");
+}
+
+REX_EXTERN(rex_lhGuiFrontEndTitle_AttractExitClear) {
+    REX_FUNC_PROLOGUE();
+    __imp__rex_lhGuiFrontEndTitle_AttractExitClear(ctx, base);
+    std::lock_guard<std::mutex> lock(g_lock);
+    g_model.title = 0u;
+    Publish("the title's attract ended");
+}
+
 REX_EXTERN(rex_lhGui_FrontendTitle_OnScreenAction) {
     REX_FUNC_PROLOGUE();
     const uint32_t action = ctx.r4.u32;
+    const uint32_t pad = ctx.r5.u32;
+    uint32_t mode = 0u;
+    {
+        std::lock_guard<std::mutex> lock(g_lock);
+        mode = g_model.title;
+    }
+    NotePadRoute("title", mode, action, pad);
     Enter();
     __imp__rex_lhGui_FrontendTitle_OnScreenAction(ctx, base);
     const Frame frame = Leave();
@@ -409,6 +506,7 @@ REX_EXTERN(rex_lhGui_FrontendTitle_OnScreenAction) {
     } else {
         g_model.can_press_a = false;
         g_model.title = 10u;
+        g_model.pad = pad & 3u;
     }
     Publish("the title took A");
 }
@@ -421,6 +519,7 @@ REX_EXTERN(rex_lhGui_FrontendRoot_OnScreenAction) {
         std::lock_guard<std::mutex> lock(g_lock);
         mode = g_model.menu;
     }
+    NotePadRoute("main menu", mode, action, ctx.r5.u32);
     Enter();
     __imp__rex_lhGui_FrontendRoot_OnScreenAction(ctx, base);
     const Frame frame = Leave();

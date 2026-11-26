@@ -108,6 +108,9 @@ int32_t FrontEndSubtitles();
 /// tick. Bit N = tab N available, N in 2..8; 0 means not sampled yet.
 uint32_t PauseTabsMask();
 
+/// Local co-op split screen in effect, as the pump last stated it (guest_tick_pump_state.cpp).
+int32_t CoopSplitInEffect();
+
 /// The pause minimap's quest markers the guest stated this open (gui_pause_hooks.cpp).
 uint32_t PauseMarkers(uint32_t* out_tokens, float* out_world, uint32_t capacity);
 
@@ -1300,8 +1303,8 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldMapRegion(uint32_t* out_index,
 /// SCREEN 28'S ONE BUILDING — the real estate page, as data.
 ///
 /// One record rather than a list: the screen's left column is a list of COMMANDS and there is a
-/// single building, resolved when it opens. The pump samples it on the GUI tick while the screen
-/// stands (`SampleRealEstate`); this only reads the shared store.
+/// single building, bound when it opens. The screen's own Update states it from that binding
+/// (`PublishBoundRealEstate`); this only reads the shared store.
 ///
 /// The numbers arrive already answered by the guest — value, economy, income, sale price and the
 /// three not-owned price deltas each average or walk something the host has no business
@@ -9359,9 +9362,8 @@ static uint32_t RefiiHostReadEntityRig(uint32_t entity, float* out_transforms,
     // payload is worse than no marker, because it reports confidence it has not earned.
     //
     // So: read the payload twice and require the two to agree, which assumes nothing about
-    // either marker. This is what `RefiiHostGetCamera` already does for the same reason. An
-    // idle character memcpy'd back to identical values compares equal, and that is correct —
-    // identical bytes are not torn in any sense that matters.
+    // either marker. An idle character memcpy'd back to identical values compares equal, and
+    // that is correct — identical bytes are not torn in any sense that matters.
     constexpr uint32_t kMaxSnapshotBones = 256u;
     if (bones > kMaxSnapshotBones) {
         bones = kMaxSnapshotBones;
@@ -12935,477 +12937,6 @@ REFII_HOST_ABI_EXPORT int RefiiHostGetPubGameProfile(uint32_t* out,
     return 1;
 }
 
-/// The camera manager, whose block at manager+0x90 is the live camera the guest renders with.
-///
-/// The guest's chain is three hops past the entry:
-///
-///   `sub_82264230(*(game+0x9C), key)`  returns *(entry+4)   -- the PLAYER
-///   `sub_821F87C8`                     returns *(player+4)  -- the view
-///   `sub_821DD3B0` (`lwz r3, 4(r4)`)   takes  *(view+4)     -- the MANAGER
-///
-/// mode = *(0x83496AB8) -> game = *(mode+0x0C) -> the container *(game+0x9C), whose 12-byte
-/// {key, value, _} entries run from *(container+8) to *(container+0x0C); take the one keyed 1
-/// (2 on an online joiner, when *(game+0x8C)+0x34 and +0x36 — in a session, the joiner — are both
-/// set: the joiner's own player, whose camera manager is the one that machine runs). 0 when the chain is not
-/// up yet — the ordinary case out of game, and why the caller keeps the pull cache as a
-/// fallback. Every hop is a guarded read, so a half-built chain reads back 0 rather than faults.
-static uint32_t resolve_camera_manager(const uint8_t* base) {
-    const auto u32 = [base](uint32_t at) { return GuestWordAt(base, at); };
-    const auto plausible = [](uint32_t pointer) {
-        return pointer >= 0x10000u && pointer < 0xC0000000u;
-    };
-
-    const uint32_t mode = u32(refii::guest::Address(0x83496AB8u));
-    if (!plausible(mode)) {
-        return 0;
-    }
-    const uint32_t game = u32(mode + 0x0Cu);
-    if (!plausible(game)) {
-        return 0;
-    }
-
-    uint32_t key = 1u;
-    const uint32_t split = u32(game + 0x8Cu);
-    if (plausible(split) && GuestByteAt(base, split + 0x34u) != 0 &&
-        GuestByteAt(base, split + 0x36u) != 0) {
-        key = 2u;
-    }
-
-    const uint32_t container = u32(game + 0x9Cu);
-    if (!plausible(container)) {
-        return 0;
-    }
-    const uint32_t begin = u32(container + 0x08u);
-    const uint32_t end = u32(container + 0x0Cu);
-    // Bounded so a torn read of either pointer cannot walk a runaway range.
-    if (!plausible(begin) || end <= begin || (end - begin) > 0x1000u) {
-        return 0;
-    }
-
-    for (uint32_t entry = begin; entry + 12u <= end; entry += 12u) {
-        if (u32(entry) != key) {
-            continue;
-        }
-        const uint32_t player = u32(entry + 4u);
-        if (!plausible(player)) {
-            return 0;
-        }
-        const uint32_t view = u32(player + 4u);
-        if (!plausible(view)) {
-            return 0;
-        }
-        const uint32_t manager = u32(view + 4u);
-        return plausible(manager) ? manager : 0u;
-    }
-    return 0;
-}
-
-/// Where the guest keeps the two cameras it blends between, and the offset of the live one.
-///
-/// The guest blends a camera pair as it does bodies: `sub_82278DD0` calls
-/// `sub_8228FEF0(dest, game+0x10, live, alpha)` at `0x82278e2c`-`0x82278e40`, and the alpha in
-/// `f1` is the same `f28` (the `fdivs` at `0x822771e4`) that `sub_822112D8` gets for every
-/// renderable.
-///
-/// Prev is latched into `game+0x10` by five inlined stores at `0x82277234`-`0x8227725c`, only
-/// when a new game tick starts (`beq cr6, loc_82277298` at `0x82277200`) — position to
-/// `game+0x10`, the two basis vectors to `+0x20`/`+0x30`, the fov to `+0x40`, the snap byte to
-/// `+0x44`.
-///
-/// Live is what `sub_82265F90` returns: `manager+0x90`. Shipped, an online joiner
-/// (`*(game+0x11C) == 1` with `*(game+0x8C)+0x34` and `+0x36` set) got `manager+0x130`, the host's
-/// streamed camera; each machine now runs its own and the getter always returns `+0x90`. It is memoised
-/// against KeTickCount at `manager+0xD0` (at most once a millisecond), unlike the pull cache at
-/// 0x8331A230, which refreshes only when a Lua frustum native runs.
-///
-/// Both blocks are the same 0x38 layout: pos +0x00, up +0x10, forward +0x20, horizontal fov
-/// +0x30, snap byte +0x34. Returns false when the chain is not up.
-static bool resolve_camera_pair(const uint8_t* base, uint32_t* out_prev, uint32_t* out_live) {
-    const auto u32 = [base](uint32_t at) { return GuestWordAt(base, at); };
-    const auto plausible = [](uint32_t pointer) {
-        return pointer >= 0x10000u && pointer < 0xC0000000u;
-    };
-
-    const uint32_t mode = u32(refii::guest::Address(0x83496AB8u));
-    if (!plausible(mode)) {
-        return false;
-    }
-    const uint32_t game = u32(mode + 0x0Cu);
-    if (!plausible(game)) {
-        return false;
-    }
-
-    const uint32_t manager = resolve_camera_manager(base);
-    if (!plausible(manager)) {
-        return false;
-    }
-
-    // The live block is +0x90 on every machine. The guest's getter returned +0x130 — the host's
-    // camera, streamed as net message 0xBD — on an online joiner; each machine now runs its own
-    // camera and the getter always takes its +0x90 path (coop_hero_hooks.cpp, 0x82265FB0).
-    *out_prev = game + 0x10u;
-    *out_live = manager + 0x90u;
-    return true;
-}
-
-/// The guest's camera, for Godot to render through.
-///
-/// Reads the snapshot at 0x8331A230. Layout is IDA-proven, and two details are not what a
-/// reasonable guess would give:
-///
-///   +0x00  position   16-byte lanes, NOT 12 — three separate stvx128 at 0x8221161C,
-///   +0x10  up         0x82211628 and 0x82211630. A packed-12 reader is wrong from the
-///   +0x20  forward    second vector on. Only xyz is ever read by the guest (vmsum3fp128).
-///   +0x30  HORIZONTAL field of view, radians (the "vertical" reading is wrong —
-///          sub_82293820 derives vfov from it at 0x822938A8)
-///   +0x34  a boolean whose meaning is UNPROVEN
-///
-/// World basis is right-handed with X right, Y FORWARD, Z up — proven from sub_821B0068
-/// building [cross(fwd,up), fwd, up] as a proper rotation, and from the defaults
-/// (fwd = +Y, up = +Z).
-///
-/// It is a PULL CACHE: sub_82211598 rewrites it only when the sim generation counter
-/// dword_83319650 has moved. Whether any of its callers still run headless was the open
-/// question; it is now SETTLED and the answer is yes. All ten are Lua natives
-/// ("IsPositionInCameraFrustrum", "IsSphereInCameraFrustrum",
-/// "IsEntityInCameraFrustrumWithMultiplier"), Kynapse path-object distance gates, effect
-/// ticks and animation-LOD classifiers. None contains a device call, so none of them needs
-/// the render path. dword_83319650 is a SIMULATION tick counter — incremented at the tail
-/// of sub_821D4628 and sub_823D9898, both world updates — not a present counter.
-///
-/// It is still a copy of a copy. sub_82211598 reads through sub_821DD3B0 -> sub_82265F90,
-/// and that one's own memo at cameraManager+0xD0 is stamped with KeTickCount, so the whole
-/// chain refreshes at most once a millisecond. The camera manager's PUSHED block is the
-/// better source and is laid out the same way, measured from the CAMERA MANAGER base:
-/// +0xE0 position, +0xF0 up, +0x100 forward, +0x110 fov, +0x114 bool. sub_821B8FD8 writes
-/// it — stvx128 at 0x821B917C for the position, sub_822BDD10 for up and forward, stfs/stb
-/// at 0x821B91DC/0x821B91C4 — and sub_8233B6B0 drives it with force=1 once per sim tick.
-/// Resolving the manager needs no guest call: Game = *(0x83496AB8+12), binary-search the
-/// 12-byte entries between *(Game+0x9C)+8 and +12 for key 1 (key 2 when *(Game+0x8C)+0x34
-/// and +0x36 are both set), take *(entry+4), then *(view+4).
-///
-/// Fills 8 floats: pos xyz, up xyz... actually 11: pos[3], up[3], fwd[3], hfov, flag.
-/// Returns 1 on a coherent read, 0 if the two reads disagreed or the guest is absent.
-REFII_HOST_ABI_EXPORT int RefiiHostGetCamera(float* out) {
-    if (out == nullptr) {
-        return 0;
-    }
-
-    auto* memory = SafeKernelMemory();
-    if (memory == nullptr) {
-        return 0;
-    }
-
-    uint8_t* base = memory->virtual_membase();
-    if (base == nullptr) {
-        return 0;
-    }
-
-    // PREFER THE CAMERA MANAGER'S PUSHED BLOCK. `sub_8233B6B0` writes it force=1 once per SIM
-    // tick (manager+0xE0 pos, +0xF0 up, +0x100 fwd, +0x110 hfov, +0x114 flag — same 0x38-byte
-    // layout as the cache), so it is live the moment the world is up. The pull cache below only
-    // refreshes when a Lua frustum native runs, and in game none has yet, so it reads the default
-    // pose and the world renders through nothing. Coherent double-read, same unsynchronised
-    // stores as the cache; used only when it resolves to a real forward vector, else fall through.
-    // On by default; the live block is the one `sub_82265F90` returns (`manager+0x90`,
-    // `manager+0x130` split screen). `REFII_CAMERA_PUSHED_BLOCK=0` falls back to the pull cache,
-    // and `REFII_CAMERA_DEBUG=1` dumps the walk and a float window.
-    static const bool use_pushed_camera = [] {
-        const char* value = std::getenv("REFII_CAMERA_PUSHED_BLOCK");
-        return value == nullptr || value[0] != '0';
-    }();
-    uint32_t prev_block = 0;
-    uint32_t live_block = 0;
-    const bool pair_up = use_pushed_camera && resolve_camera_pair(base, &prev_block, &live_block);
-    const uint32_t manager = pair_up ? live_block : 0u;
-    if (manager != 0u) {
-        static const bool debug_camera = [] {
-            const char* value = std::getenv("REFII_CAMERA_DEBUG");
-            return value != nullptr && value[0] == '1';
-        }();
-        if (debug_camera) {
-            static std::atomic<uint32_t> dumped{0};
-            if (dumped.fetch_add(1, std::memory_order_relaxed) < 3u) {
-                const auto f = [base](uint32_t at) {
-                    uint32_t bits = __builtin_bswap32(GuestWordAt(base, at));
-                    float v = 0.0f;
-                    std::memcpy(&v, &bits, sizeof(v));
-                    return v;
-                };
-                std::string floats;
-                for (uint32_t off = 0u; off <= 0x38u; off += 4u) {
-                    char buf[32];
-                    std::snprintf(buf, sizeof(buf), "%02X:%.3f ", off, f(manager + off));
-                    floats += buf;
-                }
-                REXLOG_INFO("Refii camera block 0x{:08X} (prev 0x{:08X}) floats {}", manager,
-                            prev_block, floats);
-            }
-        }
-
-        uint8_t a[0x38];
-        uint8_t b[0x38];
-        bool coherent = false;
-        for (int attempt = 0; attempt < 4 && !coherent; ++attempt) {
-            CopyGuest(base, manager, a, sizeof(a));
-            CopyGuest(base, manager, b, sizeof(b));
-            coherent = std::memcmp(a, b, sizeof(a)) == 0;
-        }
-
-        if (coherent) {
-            const auto rf = [&a](uint32_t offset) {
-                uint32_t bits = 0;
-                std::memcpy(&bits, a + offset, sizeof(bits));
-                bits = __builtin_bswap32(bits);
-                float value = 0.0f;
-                std::memcpy(&value, &bits, sizeof(value));
-                return value;
-            };
-
-            float cam[11];
-            for (int lane = 0; lane < 3; ++lane) {
-                cam[lane] = rf(0x00u + lane * 4u);
-                cam[3 + lane] = rf(0x10u + lane * 4u);
-                cam[6 + lane] = rf(0x20u + lane * 4u);
-            }
-            cam[9] = rf(0x30u);
-            cam[10] = a[0x34u] != 0 ? 1.0f : 0.0f;
-
-            bool finite = true;
-            for (int i = 0; i < 10; ++i) {
-                finite = finite && cam[i] == cam[i] && cam[i] > -1e18f && cam[i] < 1e18f;
-            }
-            const float fwd2 = cam[6] * cam[6] + cam[7] * cam[7] + cam[8] * cam[8];
-            if (finite && fwd2 > 1e-4f) {
-                for (int i = 0; i < 11; ++i) {
-                    out[i] = cam[i];
-                }
-                static std::atomic<uint32_t> logged{0};
-                const uint32_t n = logged.fetch_add(1, std::memory_order_relaxed);
-                if (n < 8u || (n % 256u) == 0u) {
-                    REXLOG_INFO("Refii host camera [pushed] mgr=0x{:08X} pos=({:.2f},{:.2f},"
-                                "{:.2f}) fwd=({:.2f},{:.2f},{:.2f}) hfov={:.3f}",
-                                manager, cam[0], cam[1], cam[2], cam[6], cam[7], cam[8], cam[9]);
-                }
-                return 1;
-            }
-        }
-    }
-
-    const uint32_t kCamera = refii::guest::Address(0x8331A230u);
-
-    // Five unsynchronised stores with no barrier and no sequence counter, and the
-    // "cached" memo is published BEFORE the payload (0x82211600, ahead of the vectors at
-    // 0x8221161C onward) — so watching that memo for freshness is the worst available
-    // signal. Reading twice and requiring agreement is the cheapest correct thing: the
-    // window is nine instructions wide, so a retry almost never happens.
-    auto snapshot = [&](uint8_t* into) {
-        CopyGuest(base, kCamera, into, 0x38u);
-    };
-
-    uint8_t first[0x38];
-    uint8_t second[0x38];
-    bool coherent = false;
-    for (int attempt = 0; attempt < 4 && !coherent; ++attempt) {
-        snapshot(first);
-        snapshot(second);
-        coherent = std::memcmp(first, second, sizeof(first)) == 0;
-    }
-
-    if (!coherent) {
-        return 0;
-    }
-
-    auto read_float = [&](uint32_t offset) {
-        uint32_t bits = 0;
-        std::memcpy(&bits, first + offset, sizeof(bits));
-        bits = __builtin_bswap32(bits);
-        float value = 0.0f;
-        std::memcpy(&value, &bits, sizeof(value));
-        return value;
-    };
-
-    for (int lane = 0; lane < 3; ++lane) {
-        out[lane] = read_float(0x00u + lane * 4u);       // position
-        out[3 + lane] = read_float(0x10u + lane * 4u);   // up
-        out[6 + lane] = read_float(0x20u + lane * 4u);   // forward
-    }
-
-    out[9] = read_float(0x30u);          // horizontal FOV, radians
-    out[10] = first[0x34u] != 0 ? 1.0f : 0.0f;
-    return 1;
-}
-
-/// The two cameras the guest blends between, so the host blends them by the same alpha it
-/// uses for bodies (`sub_8228FEF0` and `sub_822112D8` take the same alpha register).
-///
-/// Fills 22 floats: live pos[3], up[3], forward[3], horizontal fov, snap flag, then the same
-/// eleven for the previous camera. The snap flag is the guest's override: `lbz r11, 0x34(r30)`
-/// on the live block at `0x8228ff40` forces alpha to 1.0 (a cut). Returns 1 when both blocks
-/// read coherently, 0 otherwise, and the caller falls back to `RefiiHostGetCamera`.
-/// The camera manager of the player keyed `key` in the guest's player map (1 or 2), or 0 — the
-/// same hops as resolve_camera_manager with the key stated rather than chosen.
-static uint32_t resolve_player_camera_manager(const uint8_t* base, uint32_t key) {
-    const auto u32 = [base](uint32_t at) { return GuestWordAt(base, at); };
-    const auto plausible = [](uint32_t pointer) {
-        return pointer >= 0x10000u && pointer < 0xC0000000u;
-    };
-    const uint32_t mode = u32(refii::guest::Address(0x83496AB8u));
-    const uint32_t game = plausible(mode) ? u32(mode + 0x0Cu) : 0u;
-    const uint32_t container = plausible(game) ? u32(game + 0x9Cu) : 0u;
-    if (!plausible(container)) {
-        return 0;
-    }
-    const uint32_t begin = u32(container + 0x08u);
-    const uint32_t end = u32(container + 0x0Cu);
-    if (!plausible(begin) || end <= begin || (end - begin) > 0x1000u) {
-        return 0;
-    }
-    for (uint32_t entry = begin; entry + 12u <= end; entry += 12u) {
-        if (u32(entry) != key) {
-            continue;
-        }
-        const uint32_t player = u32(entry + 4u);
-        const uint32_t view = plausible(player) ? u32(player + 4u) : 0u;
-        const uint32_t manager = plausible(view) ? u32(view + 4u) : 0u;
-        return plausible(manager) ? manager : 0u;
-    }
-    return 0;
-}
-
-/// One player's own live camera — `manager+0x90` of the camera manager their Player owns — as
-/// 11 floats (position, up, forward, horizontal fov, snap), or 0 when that player has no camera
-/// manager or the block is not a camera yet. Split screen draws player two's view from this.
-REFII_HOST_ABI_EXPORT int RefiiHostGetPlayerCamera(int key, float* out) {
-    if (out == nullptr || (key != 1 && key != 2)) {
-        return 0;
-    }
-    auto* memory = SafeKernelMemory();
-    uint8_t* base = memory != nullptr ? memory->virtual_membase() : nullptr;
-    if (base == nullptr) {
-        return 0;
-    }
-    const uint32_t manager = resolve_player_camera_manager(base, static_cast<uint32_t>(key));
-    if (manager == 0u) {
-        return 0;
-    }
-    const uint32_t live_at = manager + 0x90u;
-    uint8_t first[0x38];
-    uint8_t second[0x38];
-    bool coherent = false;
-    for (int attempt = 0; attempt < 4 && !coherent; ++attempt) {
-        CopyGuest(base, live_at, first, sizeof(first));
-        CopyGuest(base, live_at, second, sizeof(second));
-        coherent = std::memcmp(first, second, sizeof(first)) == 0;
-    }
-    if (!coherent) {
-        return 0;
-    }
-    const auto read_float = [&first](uint32_t offset) {
-        uint32_t bits = 0;
-        std::memcpy(&bits, first + offset, sizeof(bits));
-        bits = __builtin_bswap32(bits);
-        float value = 0.0f;
-        std::memcpy(&value, &bits, sizeof(value));
-        return value;
-    };
-    for (uint32_t lane = 0; lane < 3u; ++lane) {
-        out[lane] = read_float(0x00u + lane * 4u);
-        out[3u + lane] = read_float(0x10u + lane * 4u);
-        out[6u + lane] = read_float(0x20u + lane * 4u);
-    }
-    out[9] = read_float(0x30u);
-    out[10] = first[0x34u] != 0 ? 1.0f : 0.0f;
-    const float forward2 = out[6] * out[6] + out[7] * out[7] + out[8] * out[8];
-    return forward2 > 1e-4f ? 1 : 0;
-}
-
-REFII_HOST_ABI_EXPORT int RefiiHostGetCameraPair(float* out) {
-    if (out == nullptr) {
-        return 0;
-    }
-
-    auto* memory = SafeKernelMemory();
-    if (memory == nullptr) {
-        return 0;
-    }
-
-    uint8_t* base = memory->virtual_membase();
-    if (base == nullptr) {
-        return 0;
-    }
-
-    uint32_t prev_at = 0;
-    uint32_t live_at = 0;
-    if (!resolve_camera_pair(base, &prev_at, &live_at)) {
-        return 0;
-    }
-
-    // Unsynchronised stores with no sequence counter, same as the pull cache: read twice and
-    // require agreement. Both blocks in one pass, so a tick boundary between them cannot hand
-    // back a prev from one tick and a live from another.
-    uint8_t first[0x70];
-    uint8_t second[0x70];
-    bool coherent = false;
-    for (int attempt = 0; attempt < 4 && !coherent; ++attempt) {
-        CopyGuest(base, live_at, first, 0x38u);
-        CopyGuest(base, prev_at, first + 0x38u, 0x38u);
-        CopyGuest(base, live_at, second, 0x38u);
-        CopyGuest(base, prev_at, second + 0x38u, 0x38u);
-        coherent = std::memcmp(first, second, sizeof(first)) == 0;
-    }
-
-    if (!coherent) {
-        return 0;
-    }
-
-    const auto read_float = [&first](uint32_t offset) {
-        uint32_t bits = 0;
-        std::memcpy(&bits, first + offset, sizeof(bits));
-        bits = __builtin_bswap32(bits);
-        float value = 0.0f;
-        std::memcpy(&value, &bits, sizeof(value));
-        return value;
-    };
-
-    for (uint32_t half = 0; half < 2u; ++half) {
-        const uint32_t at = half * 0x38u;
-        const uint32_t into = half * 11u;
-        for (uint32_t lane = 0; lane < 3u; ++lane) {
-            out[into + lane] = read_float(at + 0x00u + lane * 4u);       // position
-            out[into + 3u + lane] = read_float(at + 0x10u + lane * 4u);  // up
-            out[into + 6u + lane] = read_float(at + 0x20u + lane * 4u);  // forward
-        }
-        out[into + 9u] = read_float(at + 0x30u);                          // horizontal FOV
-        out[into + 10u] = first[at + 0x34u] != 0 ? 1.0f : 0.0f;           // snap
-    }
-
-    // A forward vector is the cheapest thing that tells a real camera from a zeroed block, and
-    // the previous one is zero for the whole first tick of a level.
-    const float live2 = out[6] * out[6] + out[7] * out[7] + out[8] * out[8];
-    const float prev2 = out[17] * out[17] + out[18] * out[18] + out[19] * out[19];
-    if (!(live2 > 1e-4f)) {
-        return 0;
-    }
-    if (!(prev2 > 1e-4f)) {
-        // Nothing latched yet: hand the live camera back as both halves so the caller blends
-        // between identical endpoints rather than through the origin.
-        for (uint32_t i = 0; i < 11u; ++i) {
-            out[11u + i] = out[i];
-        }
-    }
-
-    for (uint32_t i = 0; i < 22u; ++i) {
-        if (!(out[i] == out[i]) || out[i] < -1e18f || out[i] > 1e18f) {
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
-
-
 /// The chosen co-op hero save's name, or 0 bytes when none is chosen.
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetCoopHeroSaveName(char* out, uint32_t capacity) {
     if (out != nullptr && capacity != 0) out[0] = '\0';
@@ -13591,11 +13122,14 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetCoopSession(uint32_t* out_words, uint
     // [6] peer count, [7] player one entity, [8] player two entity, [9] game+140 copy present,
     // [10] game+284 — 0 front end, 1 game, 2 LOCAL co-op (the guest's own `IsLocalCoopGame`,
     // `sub_82340300`; set by `Coop_SetSharedScreenMode` 0x8233c34c), [11] player two's pad or
-    // 0xFFFFFFFF. Words 10-11 are written only for a caller that asks for them.
+    // 0xFFFFFFFF, [12] split screen IN EFFECT (guest_tick_pump.cpp `RefiiCoopSplitScreen`: the
+    // switch, local co-op, and player two's Player built with its own camera; the pump states it
+    // each tick through refii_bridge_note_coop_split_in_effect). Words 10-12 are written only for
+    // a caller that asks for them.
     constexpr uint32_t kWords = 10u;
-    constexpr uint32_t kLocalWords = 12u;
+    constexpr uint32_t kLocalWords = 13u;
     if (out_words == nullptr || capacity < kWords) return 0;
-    const uint32_t written = capacity >= kLocalWords ? kLocalWords : kWords;
+    const uint32_t written = capacity >= kLocalWords ? kLocalWords : capacity >= 12u ? 12u : kWords;
     for (uint32_t i = 0; i < written; ++i) out_words[i] = 0u;
     auto* memory = SafeKernelMemory();
     if (memory == nullptr) return 0;
@@ -13618,9 +13152,12 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetCoopSession(uint32_t* out_words, uint
     const uint32_t root = GuestWordAt(base, refii::guest::Address(0x83496AB8u));
     const uint32_t game = plausible(root) ? GuestWordAt(base, root + 12u) : 0u;
     out_words[9] = plausible(game) && plausible(GuestWordAt(base, game + 140u)) ? 1u : 0u;
-    if (written == kLocalWords) {
+    if (written >= 12u) {
         out_words[10] = plausible(game) ? GuestWordAt(base, game + 284u) : 0u;
         out_words[11] = PlayerPadForKey(base, 2u);
+    }
+    if (written == kLocalWords) {
+        out_words[12] = refii::vfs::CoopSplitInEffect() != 0 ? 1u : 0u;
     }
     return written;
 }

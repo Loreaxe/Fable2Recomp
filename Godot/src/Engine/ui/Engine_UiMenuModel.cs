@@ -794,7 +794,11 @@ public sealed class Engine_UiMenuModel
 	/// </summary>
 	private static void Spawn(Menu menu, Engine_UiModel.MenuChunk chunk)
 	{
-		string name = chunk.Attribute("String1");
+		// A real-estate row is its EVENT (110..120, `sub_826CE848`'s r8): its String1 is the localised
+		// label cut to one byte a character (`sub_82B3F898`), which is empty, colliding or full of
+		// separators outside Latin text.
+		string name = Engine_UiMenuConstants.RealEstateRowName((int)chunk.Number("Float3")) ??
+			chunk.Attribute("String1");
 		if (name.Length == 0)
 		{
 			return;

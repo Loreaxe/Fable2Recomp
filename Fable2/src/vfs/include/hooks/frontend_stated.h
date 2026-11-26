@@ -41,6 +41,24 @@ uint32_t FrontEndDialogOwner(bool* title);
 /// Whether the front-end GUI exists (its constructor ran and its destructor has not).
 bool FrontEndUp();
 
+/// The title's stated mode (9 legal, 0 idle, 8 attract, 10/11 start, 12 dialog, 1 dialog closing)
+/// and its press-A latch; false while the title is not the active screen.
+bool FrontEndTitleState(uint32_t* mode, bool* armed);
+
+/// The pad the title's A was taken from: r5 of the title's input slot on the arm that writes
+/// `dword_83496AF8` (TU1 0x826E30DC / disc 0x826C6370). 0 until a title has taken A.
+uint32_t FrontEndPad();
+
+/// Held around every call a pump lever makes into the front end's two input slots, so the
+/// slots' hooks can tell the lever's calls from the pad route's (`sub_826E39C0` / disc
+/// `sub_826C5B88`, the front end's only other caller of slot +12).
+struct FrontEndLeverCall {
+    FrontEndLeverCall();
+    ~FrontEndLeverCall();
+    FrontEndLeverCall(const FrontEndLeverCall&) = delete;
+    FrontEndLeverCall& operator=(const FrontEndLeverCall&) = delete;
+};
+
 /// The main menu's stated mode (`screen+24`: 0 the list, 2-4 the gender card, 5 the load fan, 6 a
 /// warning), as the model above keeps it; 0 when the front end is not up.
 uint32_t FrontEndMenuMode();

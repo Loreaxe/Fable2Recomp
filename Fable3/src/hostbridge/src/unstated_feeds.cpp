@@ -77,10 +77,6 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMenuScreenId(void) {
     return 0;
 }
 
-REFII_HOST_ABI_EXPORT int RefiiHostGetPlayerCamera(int /*key*/, float* /*out*/) {
-    return 0;
-}
-
 REFII_HOST_ABI_EXPORT int RefiiHostGetPlayerTwoHoldPrompt(float* /*out_at*/, char* /*title*/, uint32_t /*capacity*/) {
     return 0;
 }

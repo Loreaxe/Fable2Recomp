@@ -19,6 +19,20 @@ public sealed class SettingsPanelTabsAndPlatformFilterTests
 	public void RestorePlatform() => GraphicsPresets.Offered = Refii.Core.Engine_Platform.IsAndroid;
 
 	[TestCase]
+	public void EveryExplicitPresentationNamesADefinedSetting()
+	{
+		// A presentation is looked up by the cvar's own name, so a key that names no cvar never
+		// applies and the setting falls to the default classification (coop_split_orientation).
+		var defined = RuntimeCVarSet.All.Select(d => d.Name)
+			.Concat(RuntimeCVarsAndroid.AllKeys)
+			.ToHashSet(StringComparer.Ordinal);
+		var unmatched = DesktopSettingMetadata.ExplicitNames.Where(name => !defined.Contains(name)).ToList();
+		AssertThat(unmatched.Count)
+			.OverrideFailureMessage("presentations naming no setting: " + string.Join(", ", unmatched))
+			.IsEqual(0);
+	}
+
+	[TestCase]
 	public void DesktopHidesEveryMobileOnlyCVarAndExposesMatchWindowResolution()
 	{
 		GraphicsPresets.Offered = false;

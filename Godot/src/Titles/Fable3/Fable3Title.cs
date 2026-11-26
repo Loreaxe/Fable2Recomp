@@ -181,8 +181,14 @@ public sealed class Fable3Title : Engine_TitleGame
 		_splash = new Fable3Splash { Name = "Splash" };
 		layer.AddChild(_splash);
 		layer.AddChild(new Fable3Culture { Name = "Culture" });
+		// The interaction list in the PC arrangement, Godot's own drawing of the guest's stated rows.
+		layer.AddChild(new Fable3InteractionList { Name = "InteractionList" });
 		// After every screen has read the pointer: its leftovers are the pad's.
 		layer.AddChild(new Fable3PointerLeftovers { Name = "PointerLeftovers" });
+		// The PC's lite pause: the host's own, with its notice.
+		layer.AddChild(new Fable3LitePause { Name = "LitePause" });
+		// The menu pointer's picture: the game's own cursor.
+		layer.AddChild(new Fable3MenuCursor { Name = "MenuCursor" });
 
 		var loading = new Godot.CanvasLayer { Name = "Fable3Loading", Layer = LoadingLayer };
 		loading.AddChild(new Fable3LoadingScreen { Name = "LoadingScreen" });

@@ -566,7 +566,7 @@ public static class Fable2Bridge
 	public readonly record struct CoopSessionWords(
 		bool ManagerPresent, bool Session, bool Host, bool Client, bool Lost, bool ClientJoined,
 		uint PeerCount, uint PlayerOne, uint PlayerTwo, bool GameCopyPresent,
-		uint GameMode, uint PlayerTwoPad)
+		uint GameMode, uint PlayerTwoPad, bool SplitInEffect)
 	{
 		/// <summary>`game+284 == 2` — the guest's own `IsLocalCoopGame` (`sub_82340300`).</summary>
 		public bool LocalCoop => GameMode == 2u;
@@ -579,7 +579,7 @@ public static class Fable2Bridge
 			return null;
 		}
 
-		_coopSessionWords ??= new uint[12];
+		_coopSessionWords ??= new uint[13];
 		uint count = RefiiHostGetCoopSession(_coopSessionWords, (uint)_coopSessionWords.Length);
 		if (count == 0)
 		{
@@ -590,7 +590,8 @@ public static class Fable2Bridge
 		return new CoopSessionWords(
 			w[0] != 0, w[1] != 0, w[2] != 0, w[3] != 0, w[4] != 0, w[5] != 0, w[6], w[7], w[8],
 			w[9] != 0,
-			count >= 12 ? w[10] : 0u, count >= 12 ? w[11] : 0xFFFFFFFFu);
+			count >= 12 ? w[10] : 0u, count >= 12 ? w[11] : 0xFFFFFFFFu,
+			count >= 13 && w[12] != 0);
 	}
 
 	/// <summary>

@@ -86,12 +86,42 @@
 0x82319C38 = { name = "rex_Splash_Accept" }
 0x82534560 = { name = "rex_Splash_BackToPrompt" }
 0x82534500 = { name = "rex_Splash_GoOn" }
-# The world view (Fable3/src/hooks/src/view_feed.cpp): the render camera's fill from the final
-# camera block, and the 3D Engine's preload gate the level load waits on.
-0x822607C8 = { name = "rex_View_SetRenderCamera" }
-0x821A8E58 = { name = "rex_Camera_Blend" }
+# The world view (Fable3/src/hooks/src/view_feed.cpp): the 3D Engine's preload gate the level load
+# waits on, and the high-frequency pass that marks a new guest frame.
 0x822E13B8 = { name = "rex_Engine_IsPreLoading" }
 0x82255CF0 = { name = "rex_GameLoop_HighFrequencyUpdate" }
+# The camera, stated (Fable3/src/hooks/src/camera_statements.cpp): the component's setters (the
+# direction bodies for SetDirection / SetTarget and their Cut form), the easing step and its
+# repulsion answer, the manager's block getter, push, settle pass and ActivateCamera.
+0x82177338 = { name = "rex_Camera_MoveTo" }
+0x826A02A8 = { name = "rex_Camera_MoveToCut" }
+0x82179AF8 = { name = "rex_Camera_SetDirection" }
+0x826A0578 = { name = "rex_Camera_SetDirectionCut" }
+0x826A0498 = { name = "rex_Camera_SetTarget" }
+0x826A0508 = { name = "rex_Camera_SetTargetCut" }
+0x826A0328 = { name = "rex_Camera_SetAngles" }
+0x826A03E8 = { name = "rex_Camera_SetAnglesCut" }
+0x82179BD8 = { name = "rex_Camera_SetFov" }
+0x826A0028 = { name = "rex_Camera_SetFovCut" }
+0x8217A0D0 = { name = "rex_Camera_SetRoll" }
+0x826A0060 = { name = "rex_Camera_SetRollCut" }
+0x82293C20 = { name = "rex_Camera_SetZoomLevel" }
+0x82293C98 = { name = "rex_Camera_SetDof" }
+0x826A0080 = { name = "rex_Camera_SetDofCut" }
+0x8218B200 = { name = "rex_Camera_AddShake" }
+0x826A0B68 = { name = "rex_Camera_SetShake", size = 0x8 }
+0x826A0B70 = { name = "rex_Camera_StopShake" }
+0x826A0A68 = { name = "rex_Camera_InterpolateFor" }
+0x8284EBB8 = { name = "rex_Camera_SetCutThisFrame" }
+0x82863A88 = { name = "rex_Camera_SetBlur" }
+0x826A0298 = { name = "rex_Camera_SetBlurCut" }
+0x826A0AA0 = { name = "rex_Camera_SetRepulsion" }
+0x821A2E70 = { name = "rex_Camera_Ease" }
+0x822895B8 = { name = "rex_Camera_Repulsion" }
+0x8224F510 = { name = "rex_CameraManager_Block" }
+0x82252778 = { name = "rex_CameraManager_Push" }
+0x8256C3D8 = { name = "rex_CameraManager_Snap" }
+0x8256AE48 = { name = "rex_CameraManager_ActivateCamera" }
 # The Bink object's open (B, source, audio, poolAlloc), rect setter (B, int rect[4], ...) and
 # close, every movie player's; and the startup logo player's constructor (P, owner, blob).
 # Fable3/src/hooks/src/movie_player.cpp states them for the host's native playback.
@@ -154,7 +184,22 @@
 0x8287A1B0 = { name = "rex_NumericAdjuster_HandleInput" }
 0x8287A8E8 = { name = "rex_QuestBox_HandleInput" }
 0x824C13F0 = { name = "rex_TutorialBox_HandleInput" }
-0x8287A3A0 = { name = "rex_NumericAdjuster_Answer" }
+# The info card (CAcceptHoldBox) and the button box: their pad handlers (box, ev*, player), Godot's
+# alone; the card's update (box), replaced without its hold step (the hold is Godot's clock); the
+# answer both post through, PostButtonAnswer (code). The intermission box's show, hide and update
+# (box), replaced without their element work and read-backs (display_box_stubs.cpp), and what they
+# keep calling: the info box's update (box), the base update (box), BoxShown and BoxHidden (box).
+0x82B8BD28 = { name = "rex_AcceptHoldBox_HandleInput" }
+0x82B8BC50 = { name = "rex_AcceptHoldBox_Update" }
+0x82B93850 = { name = "rex_ButtonBox_HandleInput" }
+0x824D1BC0 = { name = "rex_Box_PostButtonAnswer" }
+0x82B93580 = { name = "rex_IntermissionBox_Show" }
+0x82B93678 = { name = "rex_IntermissionBox_Hide" }
+0x82B93710 = { name = "rex_IntermissionBox_Update" }
+0x82B93500 = { name = "rex_InfoBox_Update" }
+0x82958160 = { name = "rex_DisplayBox_Update" }
+0x82958550 = { name = "rex_DisplayBox_Shown" }
+0x82958710 = { name = "rex_DisplayBox_Hidden" }
 0x825F9408 = { name = "rex_GuiManager_ScreenInput" }
 0x825FA150 = { name = "rex_GuiManager_ModalReset" }
 0x826220A8 = { name = "rex_MenuBox_Open" }
@@ -182,6 +227,12 @@
 0x822F62B8 = { name = "rex_Profile_WriteSettings" }
 0x825F4408 = { name = "rex_OptionsBox_Show" }
 0x825F4F30 = { name = "rex_OptionsBox_HandleInput" }
+# The Options screen's row setters its own steps call: (screen, row) for pages 1 and 5, and for
+# page 2 (Fable3/src/hooks/src/options_hooks.cpp, the row lever).
+0x825F68A0 = { name = "rex_OptionsBox_SetListRow" }
+0x825F69B8 = { name = "rex_OptionsBox_SetSaveRow" }
+# The Options screen's row writer (screen), which its update runs after a move.
+0x825F4DE8 = { name = "rex_OptionsBox_Redraw" }
 # The Options screen's per-frame update (screen; vtable slot 5).
 0x825F4958 = { name = "rex_OptionsBox_Update" }
 # The epilogue's show (E, title, description, gold, image CCharString, flag) and hide (E), and the
@@ -665,6 +716,10 @@
 0x82BDC5D8 = { name = "rex_InfoPane_SetText" }
 0x8296FF98 = { name = "rex_InteractionButton_Show" }
 0x82972A70 = { name = "rex_InteractionList_Write" }
+# The interaction list's input (list, ev*, player), run by the pointer's step lever with event 26, and
+# its hide (list), after which the lever holds no list (Fable3/src/hooks/src/interaction_list_step.cpp).
+0x82972ED8 = { name = "rex_InteractionList_Input" }
+0x82972920 = { name = "rex_InteractionList_Hide" }
 0x8296C650 = { name = "rex_InteractionMode_TitleDescription" }
 0x8296C150 = { name = "rex_InteractionMode_DyeBar" }
 0x8296BD10 = { name = "rex_InteractionMode_SidePanel" }
@@ -749,6 +804,10 @@
 0x824D0CC8 = { name = "rex_TopBox_Post" }
 0x824D0470 = { name = "rex_TopBox_RemoveFromChannel" }
 0x824D14C0 = { name = "rex_TopBox_Clear" }
+# The TopBox's pad input (M, ev*, player) and its press answer, which acts for Godot's presses
+# alone (Fable3/src/hooks/src/topbox_answer.cpp).
+0x824D0A18 = { name = "rex_TopBox_HandleInput" }
+0x824D1B08 = { name = "rex_TopBox_PressAnswer" }
 # Screens and HUD widgets by their values (Fable3/src/hooks/src/screen_stated_hooks.cpp): the HUD
 # root's hide (H) and show (force) and the cutscene rules (rules, a2, a3); the save menu's open
 # (menu, allowed, entity), row writer (menu) and close (menu); the Options query (box, tag); the
@@ -762,7 +821,23 @@
 0x823A5558 = { name = "rex_CutsceneRules_Apply" }
 0x829B4E18 = { name = "rex_SaveMenu_Open" }
 0x829B5350 = { name = "rex_SaveMenu_Row" }
+# The save menu's input (menu, ev*, player), run by the row lever with 72, and its two cursor
+# steps (menu) the lever calls (Fable3/src/hooks/src/save_menu_row.cpp).
+0x829B5160 = { name = "rex_SaveMenu_Input" }
+0x829B5480 = { name = "rex_SaveMenu_StepUp" }
+0x829B5540 = { name = "rex_SaveMenu_StepDown" }
 0x829B50A0 = { name = "rex_SaveMenu_Close" }
+# The save menu's accept (SV) and its per-tick answer poll (SV) (Fable3/src/hooks/src/save_menu_confirm.cpp):
+# the poll is replaced: the yes of a box the accept pushed runs that box's row, and no event record is read.
+0x829B55F8 = { name = "rex_SaveMenu_Accept" }
+0x82291780 = { name = "rex_SaveMenu_Poll" }
+# What the save menu's rows run once their confirmation says yes (the poll's own calls, made by
+# save_menu_confirm.cpp in its place): SaveGame (mgr, force, a3, a4, playerSave[, fromNet]), the quit
+# to the front end (GAME), the GUI cue (&handle, GUI, &id) and the cue handle's release (&handle).
+0x822F8940 = { name = "rex_SaveGame" }
+0x8234F698 = { name = "rex_QuitToFrontEnd" }
+0x823333B0 = { name = "rex_GuiSound_Play" }
+0x82E02BE8 = { name = "rex_SoundHandle_Release" }
 0x825F6D30 = { name = "rex_OptionsBox_Query" }
 0x8287C2C8 = { name = "rex_MoneyAlert_Change" }
 0x8287BFD8 = { name = "rex_MoneyAlert_Show" }

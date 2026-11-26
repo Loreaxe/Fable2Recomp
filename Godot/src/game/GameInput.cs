@@ -793,6 +793,7 @@ public partial class GameInput : Node
 			state.Merge(joypad, PhysicalButtons(joypad));
 		}
 
+		ApplyPadActions(pad, joypad, ref state);
 		bool connected = joypad >= 0 || GameDebugServer.PadConnected(pad);
 		// A MOD'S CLAIMED ACTIONS leave this pad before the guest reads it (ModInput.Withhold),
 		// and its presses join it (ModInput.Press), for the player the title says the pad is.
@@ -922,6 +923,7 @@ public partial class GameInput : Node
 			state.RightY = replay.Ry;
 		}
 
+		ApplyPadActions(0, _padDevice[0], ref state);
 		PadState seen = state;
 		Pad0 = seen;
 		uint buttons = state.Buttons;

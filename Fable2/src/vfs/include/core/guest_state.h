@@ -109,6 +109,12 @@ std::string ReadStatedLhBytes(uint8_t* base, uint32_t handle);
 /// accented character reads as itself and no two byte strings share a text.
 std::string Latin1ToUtf8(const std::string& bytes);
 
+/// A stated narrow string parameter in UTF-8. Two producers state them: the guest's UTF-8 converter
+/// `sub_823DF4B0` (`WideCharToMultiByte(65001, …)` 0x823DF508 / 0x823DF540 — a menu row's String2, its
+/// label, at 0x826CE950) and the one-byte cut of a row's name (String1, see ReadStatedLhBytes). Bytes
+/// that are well-formed UTF-8 are kept as stated; any other byte string is the cut, read as Latin-1.
+std::string StatedBytesToUtf8(const std::string& bytes);
+
 /// The same handle shape read as WIDE UTF-16 — the guest's display-text class. See the
 /// implementation for why reading one with the other returns an empty string rather than noise.
 std::string ReadGuestWideString(uint8_t* base, uint32_t handle);

@@ -383,6 +383,9 @@ public partial class Engine_FrontEndMenuView : Node3D
 	/// <summary>The truncate width each label was last laid out against.</summary>
 	private readonly float[] _labelTruncate = new float[Slots.Length];
 
+	/// <summary>Whether each label was last laid out centred (<see cref="LabelCanvasX"/>).</summary>
+	private readonly bool[] _labelCentred = new bool[Slots.Length];
+
 	/// <summary>
 	/// The label's depth WITHIN its row — the authored z of the template's own <c>Icon.Title</c>,
 	/// read before the clone is stripped of it. Must not be 0: the row is alpha-blended with no
@@ -516,7 +519,7 @@ public partial class Engine_FrontEndMenuView : Node3D
 	{
 		if (_cursor is not null && GodotObject.IsInstanceValid(_cursor))
 		{
-			bool show = _cursorShown && _cursorPlaced && CursorForDevice;
+			bool show = _cursorShown && _cursorPlaced && CursorDrawnOn(OneArrangement, Engine_UiInputMode.Keycaps);
 			if (_cursor.Visible != show)
 			{
 				_cursor.Visible = show;
@@ -529,7 +532,23 @@ public partial class Engine_FrontEndMenuView : Node3D
 	/// and mouse do not. Touch lays the menu out as the PC's, but the on-screen A the player
 	/// presses is the pad's, and the ring's A is what says which row it will choose.
 	/// </summary>
-	internal static bool CursorForDevice => !Engine_UiInputMode.Keycaps;
+	internal static bool CursorForDevice => CursorDrawnOn(false, Engine_UiInputMode.Keycaps);
+
+	/// <summary>
+	/// ONE ARRANGEMENT: nothing this list draws follows the device in use. The cursor stands on
+	/// the highlighted row under the keyboard and mouse as under the pad, and the mouse's scroll
+	/// bar is never drawn, so a device switch moves nothing (prompt glyphs and the pointer are not
+	/// the list's). For a title whose list has one look on every device (Fable 3: the PC build's
+	/// documents hold no scroll bar and mark the row for the mouse and the pad alike). False keeps
+	/// the two device looks: the pad's ring cursor, the mouse's scroll bar.
+	/// </summary>
+	public bool OneArrangement { get; set; }
+
+	/// <summary>Whether the cursor is drawn for a device: always under one arrangement, else for the pad and touch only.</summary>
+	public static bool CursorDrawnOn(bool oneArrangement, bool keycaps) => oneArrangement || !keycaps;
+
+	/// <summary>Whether the scroll bar may be drawn for a device: never under one arrangement, else for the mouse only.</summary>
+	public static bool ScrollBarOn(bool oneArrangement, bool keyboardMouse) => !oneArrangement && keyboardMouse;
 
 	private Node3D? _cursor;
 
@@ -576,6 +595,7 @@ public partial class Engine_FrontEndMenuView : Node3D
 		System.Array.Clear(_rowRating);
 		System.Array.Clear(_labelSize);
 		System.Array.Clear(_labelTruncate);
+		System.Array.Clear(_labelCentred);
 		Theme = theme;
 		RowTemplate = rowTemplate;
 		CursorTemplate = cursorTemplate;
@@ -846,11 +866,12 @@ public partial class Engine_FrontEndMenuView : Node3D
 		GlobalTransform * Engine_UiSeats.LayoutTransform(this).AffineInverse() * laidOut;
 
 	/// <summary>
-	/// Whether the scroll bar is up: the mouse is the device and the list has more rows than the
-	/// carousel draws at once (<see cref="Engine_UiCarouselBar.Shown"/>).
+	/// Whether the scroll bar is up: the mouse is the device, the list keeps its device looks
+	/// (<see cref="OneArrangement"/> false) and it has more rows than the carousel draws at once
+	/// (<see cref="Engine_UiCarouselBar.Shown"/>).
 	/// </summary>
 	public bool Scrollable =>
-		Engine_UiInputMode.KeyboardMouse && Menu is not null &&
+		ScrollBarOn(OneArrangement, Engine_UiInputMode.KeyboardMouse) && Menu is not null &&
 		Engine_UiCarouselBar.Shown(Menu.Visible.Count, Engine_UiCarouselBar.Capacity(FadesTopEnd, FadesBottomEnd));
 
 	/// <summary>The 1-based row a 0..1 place on the bar names.</summary>
@@ -1364,6 +1385,71 @@ public partial class Engine_FrontEndMenuView : Node3D
 	/// </summary>
 	public Transform3D? CursorPose { get; set; }
 
+	/// <summary>
+	/// The cursor template's pose against the highlighted row's LABEL ORIGIN — the string's left
+	/// edge on its vertical centre, where <see cref="SetLabel"/> stands it — in the canvas units
+	/// of a label of <see cref="CursorLabelSize"/> points: for cursor art authored on a text row
+	/// rather than parked on the canvas (Fable 3's selection bar, drawn on the box screens' rows
+	/// about each row text's origin). The cursor then takes the highlighted row's pose and
+	/// the slot's point size (<see cref="CursorOnRow"/>). Null keeps <see cref="CursorPose"/>.
+	/// </summary>
+	public Transform3D? CursorOnLabel { get; set; }
+
+	/// <summary>The point size of the text <see cref="CursorOnLabel"/>'s art was authored against.</summary>
+	public float CursorLabelSize { get; set; } = 18f;
+
+	/// <summary>
+	/// The canvas x a label-relative cursor (<see cref="CursorOnLabel"/>) is centred on, in place
+	/// of the label's: for cursor art that spans its box on the box's centre line (Fable 3's
+	/// selection bar, 1024 units wide about its box's centre) rather than hugging the string. The
+	/// row still gives the height and the lift, and its scale and point size grow the art's height
+	/// only: the art keeps its authored width, which is the box's, not the text's
+	/// (<see cref="CursorAtCanvasX"/>). Null stands the art on the label.
+	/// </summary>
+	public float? CursorCanvasX { get; set; }
+
+	/// <summary>
+	/// <paramref name="placed"/> (<see cref="CursorOnRow"/>'s pose) moved along x to a canvas place,
+	/// for a view anchored at <paramref name="anchorX"/>, with its x axis back at
+	/// <paramref name="onLabel"/>'s authored width: art across its box is as wide as the box
+	/// whatever the row's scale and point size, which still grow its height.
+	/// </summary>
+	public static Transform3D CursorAtCanvasX(Transform3D placed, Transform3D onLabel, float canvasX, float anchorX)
+	{
+		Basis basis = placed.Basis;
+		basis.X = onLabel.Basis.X;
+		return new Transform3D(basis, new Vector3(canvasX - anchorX, placed.Origin.Y, placed.Origin.Z));
+	}
+
+	/// <summary>
+	/// The canvas x every row label is CENTRED on, in place of the slot's left-aligned label origin:
+	/// for a list whose rows stand on their box's centre line (Fable 3's box screens: every row text
+	/// is authored centred, halign 1, at its box's x 0, with the selection bar's `Selection` on the
+	/// row text's origin). The slot still gives the row's height, scale and opacity. Null keeps the
+	/// left-aligned label on the slot (<see cref="ChildLabelX"/>, <see cref="HeadingLabelX"/>).
+	/// </summary>
+	public float? LabelCanvasX { get; set; }
+
+	/// <summary>
+	/// The label's x inside a row resting at <paramref name="rowX"/> with <paramref name="rowScale"/>
+	/// that puts the label's origin on canvas x <paramref name="canvasX"/>, for a view anchored at
+	/// <paramref name="anchorX"/>.
+	/// </summary>
+	public static float LabelAtCanvasX(float canvasX, float anchorX, float rowX, float rowScale) =>
+		(canvasX - anchorX - rowX) / (rowScale != 0f ? rowScale : 1f);
+
+	/// <summary>
+	/// Where label-relative cursor art stands in view space: the row's pose (its origin and
+	/// scale), then the label's place in the row, then the art grown by the ratio of the row's
+	/// point size to the art's (<paramref name="textScale"/>), so it keeps its authored proportion
+	/// to the string it marks.
+	/// </summary>
+	public static Transform3D CursorOnRow(
+		float rowX, float rowY, float rowScale, float labelX, float labelLift, float textScale, Transform3D onLabel) =>
+		new Transform3D(Basis.Identity.Scaled(new Vector3(rowScale, rowScale, 1f)), new Vector3(rowX, rowY, 0f)) *
+		new Transform3D(Basis.Identity.Scaled(new Vector3(textScale, textScale, 1f)), new Vector3(labelX, 0f, labelLift)) *
+		onLabel;
+
 	private static int CountQuads(Node root)
 	{
 		int n = root is MeshInstance3D { Mesh: not null } ? 1 : 0;
@@ -1463,6 +1549,15 @@ public partial class Engine_FrontEndMenuView : Node3D
 		}
 
 		RowPose at = PoseFor(slot, item);
+		if (CursorOnLabel is { } onLabel && CursorTemplate is not null && CursorLabelSize > 0f)
+		{
+			Transform3D placed = CursorOnRow(
+				at.X, at.Y, at.Scale, item.IsHeading ? HeadingLabelX : ChildLabelX, _labelLift,
+				Styles[Slots[slot - 1].StyleIndex - 1].FontSize / CursorLabelSize, onLabel);
+			_cursor.Transform = CursorCanvasX is { } canvasX ? CursorAtCanvasX(placed, onLabel, canvasX, Anchor.X) : placed;
+			return;
+		}
+
 		RowPose home = PoseFor(HighlightSlot, item);
 		float k = home.Scale != 0f ? at.Scale / home.Scale : 1f;
 		var move =
@@ -1919,7 +2014,14 @@ public partial class Engine_FrontEndMenuView : Node3D
 	{
 		bool heading = IsHeading(item);
 		MeshInstance3D label = _labels[row];
-		label.Position = new Vector3(heading ? HeadingLabelX : ChildLabelX, 0f, _labelLift);
+		float labelX = heading ? HeadingLabelX : ChildLabelX;
+		if (LabelCanvasX is { } labelCanvasX)
+		{
+			RowPose resting = PoseFor(System.Math.Clamp(slot, 1, Slots.Length), item);
+			labelX = LabelAtCanvasX(labelCanvasX, Anchor.X, resting.X, resting.Scale);
+		}
+
+		label.Position = new Vector3(labelX, 0f, _labelLift);
 
 		// The guest's own string wins: its rows carry more than the tag resolves to — an unspent
 		// ability count, the new-item marker — composed at spawn time.
@@ -1949,8 +2051,9 @@ public partial class Engine_FrontEndMenuView : Node3D
 		int size = rowStyle.FontSize;
 		float truncate = rowStyle.Truncate;
 
+		bool centred = LabelCanvasX is not null;
 		if (_labelText[row] == display && _labelSize[row] == size &&
-			_labelTruncate[row] == truncate)
+			_labelTruncate[row] == truncate && _labelCentred[row] == centred)
 		{
 			return;
 		}
@@ -1958,6 +2061,7 @@ public partial class Engine_FrontEndMenuView : Node3D
 		_labelText[row] = display;
 		_labelSize[row] = size;
 		_labelTruncate[row] = truncate;
+		_labelCentred[row] = centred;
 
 		// Built opaque; ApplyPoses carries the slot's opacity every frame. Engine_UiSceneBuilder
 		// forces authored text alpha to 1 because the engine overwrites the .fac's own alpha.
@@ -1966,11 +2070,12 @@ public partial class Engine_FrontEndMenuView : Node3D
 		// Left-aligned and vertically centred on the slot: the row's x offsets are negative and its
 		// truncate width positive, so the string runs rightward from the anchor. Icon.Title's own
 		// alignment is in the .fac rather than the scripts, so this placement is inferred.
+		// Centred instead on a list whose rows stand on a centre line (LabelCanvasX).
 		// Wrap mode 0 is the engine's single-line, truncate-don't-fold mode; the truncate width
 		// itself is not applied.
 		bool drew = Theme?.Paint(
 			label, display, size, opaque,
-			horizontalAlign: 0, verticalAlign: 1,
+			horizontalAlign: centred ? 1 : 0, verticalAlign: 1,
 			boxWidth: truncate, boxHeight: 0f, wrapMode: 0) ?? false;
 
 		if (!drew)

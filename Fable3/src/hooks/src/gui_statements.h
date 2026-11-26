@@ -213,6 +213,8 @@ void ForgetPresentationReaders(uint32_t presentation);
 void ForgetHudRoot();
 /// The save menu freed with its screen manager: `@SaveMenu.Row` states the next menu's first write.
 void ForgetSaveMenu();
+/// The save menu its open last stated and no close or free has ended, or 0.
+uint32_t OpenSaveMenu();
 /// The path setter (SetStateAt / RestartStateAt) running on this thread names the owner its
 /// GuiElement_SetState reaches.
 class StatedPathScope {

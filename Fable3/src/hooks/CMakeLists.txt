@@ -20,6 +20,8 @@ set(REFIII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/splash_screen.cpp
     # The camera the guest renders the world with, and its preload gate held while Godot builds.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/view_feed.cpp
+    # The camera component's setters, activation, easing step and push, stated in the guest's order.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/camera_statements.cpp
     # The UI cut's seam: the `GUI.*` natives the game VM calls, with their arguments, for the host.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui_natives.cpp
     # The Gameface elements the guest writes (resolver + state/opacity/text setters), stated by path.
@@ -45,6 +47,13 @@ set(REFIII_HOOK_SOURCES
     # The display boxes, the pause screen's message box and the menu box, stated at their push,
     # show, drop and close; Godot owns their pad and its answers run their own answer functions.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/display_box_hooks.cpp
+    # The boxes' methods that draw (the intermission's show, hide and update, the card's update),
+    # replaced by their game side alone; the TopBox's press answered from Godot through its own input.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/display_box_stubs.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/topbox_answer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/save_menu_confirm.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/save_menu_row.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_extras.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/box_answers.h
     # The options: the appliers' values and the saved settings' read and write, stated to the
     # table the host bridge's options feed reads; the Options screen's state, its pad Godot's.
@@ -120,6 +129,7 @@ set(REFIII_HOOK_SOURCES
     # The interaction mode's set and close and its info panel id, stated for Godot's interaction
     # document; the mode, its objects and its pad stay the guest's.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interaction_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interaction_list_step.cpp
     # The game mode stacks (push, pop, run), the GUI screen id's writers and the culture table
     # (build, rebuild, switch), stated to the table the host bridge's level and options feeds read.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/game_state_hooks.cpp

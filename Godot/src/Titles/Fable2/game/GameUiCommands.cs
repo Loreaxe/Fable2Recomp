@@ -65,6 +65,15 @@ public partial class GameUi
 			return Engine_UiCommandResult.Done;
 		});
 
+		// Player two's Quit: the guest's own henchman arm opens its box (26 / 27) for the acting player.
+		Engine_UiCommands.Register(Fable2UiVerbs.PauseHenchmanQuit, (_, context) =>
+		{
+			string lever = Fable2PortedScreens.HenchmanQuit(Engine_UiSource.Current.ActingPlayer);
+			HostBridge.PostFrontEndAction(lever);
+			GD.Print($"[game-ui] pause row '{context.Row}' posted '{lever}' to the guest tick pump");
+			return Engine_UiCommandResult.Done;
+		});
+
 		// Fable 3's Leave / Kick: the pump runs the guest's own answer on its tick thread.
 		Engine_UiCommands.Register(Fable2UiVerbs.PauseCoop, (argument, context) =>
 		{

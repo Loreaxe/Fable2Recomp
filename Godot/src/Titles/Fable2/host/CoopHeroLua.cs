@@ -3831,7 +3831,9 @@ public static class CoopHeroLua
 	/// distance every frame in <c>SACCamera:SetMaxCoopDistance</c>. That method now states the
 	/// switch every frame: free (and no distance) where players roam freely — online — else the
 	/// shipped leash, which a shared screen needs. Local co-op on split screen counts as "own
-	/// cameras" too: player two's manager runs the same scripts with player two as its player.</para>
+	/// cameras" too: player two's manager runs the same scripts with player two as its player.
+	/// After free roam ends with the heroes beyond the leash's distance they stay free until they
+	/// are within it (<c>C.Reuniting</c>): the leash holds every step that ends beyond it.</para>
 	/// </remarks>
 	public const string CameraKey = "refii/core_camera.lua";
 
@@ -3855,7 +3857,8 @@ public static class CoopHeroLua
 
 		-- Every player follows their own hero: an online game, or local co-op on split screen
 		-- (player two's camera manager is built by coop_hero_hooks.cpp; Refii.split_screen() is
-		-- the host's coop_split_screen switch).
+		-- split IN EFFECT: the host's coop_split_screen switch AND player two's Player built with
+		-- that camera — a split chosen after the drop-in keeps the shared rules until it is).
 		-- Online is "a partner and not local co-op" (game+284 1 vs 2, `sub_82340300`) on BOTH machines:
 		-- the shipped IsMultiplayerGame (`sub_8245B410`) answers only on the session HOST
 		-- (CM+52 && CM+53), so a joiner read it false and framed both heroes in one camera.
@@ -4371,12 +4374,52 @@ public static class CoopHeroLua
 			C.RouteWrapAll("SACCamera")
 		end
 
+		-- THE PAIR WALKS BACK INTO THE LEASH. The leash (sub_821A0298, disc sub_821A0340) zeroes every
+		-- step that ends farther from the partner than the stated distance (flt_8331914C, disc
+		-- flt_833190F8; 30 m as the binary starts, written by Debug.SetLimitCharacterDistance):
+		-- `fcmpu cr6, f31, f0` 0x821A0AEC, then `stvx128 v0` (zero) into the move 0x821A0B40 (disc
+		-- 0x821A0B94, 0x821A0BE8). Free roam has no such limit, so a change from free roam to the
+		-- shared screen with the heroes farther apart than that held both where they stood; they roam
+		-- free, under the shared camera, until they are within it again.
+		C.LeashMetres = C.LeashMetres or 30
+		if Debug ~= nil and Debug.SetLimitCharacterDistance ~= nil and
+				Debug.SetLimitCharacterDistance ~= C.SetLimitCharacterDistance then
+			local shipped = Debug.SetLimitCharacterDistance
+			C.SetLimitCharacterDistance = C.Permanent(function(distance, ...)
+				if type(distance) == "number" then
+					C.LeashMetres = distance
+				end
+				return shipped(distance, ...)
+			end, "SetLimitCharacterDistance")
+			Debug.SetLimitCharacterDistance = C.SetLimitCharacterDistance
+		end
+
+		function C.Reuniting(free)
+			if free then
+				C.WasFree = true
+				return false
+			end
+			if not C.WasFree then
+				return false
+			end
+			local hero = GetPlayerHero ~= nil and GetPlayerHero() or nil
+			local henchman = C.ShippedGetPlayerHenchman or GetPlayerHenchman
+			local partner = henchman ~= nil and henchman() or nil
+			if hero == nil or partner == nil or GetDistanceBetweenEntities == nil or
+					GetDistanceBetweenEntities(hero, partner) <= C.LeashMetres then
+				C.WasFree = false
+				return false
+			end
+			return true
+		end
+
 		if SACCamera.SetMaxCoopDistance ~= C.SetMaxCoopDistance then
 			local shipped = SACCamera.SetMaxCoopDistance
 			C.SetMaxCoopDistance = C.Permanent(function(self, ...)
 				local free = C.FreeRoam()
+				local reuniting = C.Reuniting(free)
 				if Debug ~= nil and Debug.SetMultiPlayerHeroFree ~= nil then
-					Debug.SetMultiPlayerHeroFree(free)
+					Debug.SetMultiPlayerHeroFree(free or reuniting)
 				end
 				if free then
 					return

@@ -1049,35 +1049,20 @@ public sealed class Engine_UiSceneBuilder
 	}
 
 	/// <summary>
-	/// The detail map, keyed by the <c>.fac</c> record's secondary-texture slot. The slot is an
-	/// index into a theme table, not a texture name: `sub_8286F578` reads `[[0x83496B08+48]+36]`
-	/// as a row selector into a 3-theme by 3-slot table, and row 0 ships. Any slot but 1/2/3
-	/// takes the default, as the guest does.
-	/// </summary>
-	private static string DetailMapPath(int slot) => slot switch
-	{
-		1 => @"art\gui\frames\buttondetailmap.tex",
-		2 => @"art\gui\frames\frames_01.tex",
-		3 => @"art\gui\persistant\frame_tiled_background.tex",
-		_ => @"art\gui\frames\framedetailmap.tex",
-	};
-
-	/// <summary>
-	/// Points a quad's material at its detail map, when the record asks for one. Mode 4 is the
-	/// only value that acts — `if (v17 == 4)` at 0x8286E4B4; 0/1/2/3 fall through. That branch's
-	/// write of `buttondetailmap`'s hash to `+0x20C` is a dead store overwritten by
-	/// `sub_8286F578`, so the slot alone chooses the texture.
+	/// Points a quad's material at its detail map, when the record asks for one — the rule, the
+	/// same on both titles, is <see cref="Engine_UiDetailMaps"/>. That branch's write of
+	/// `buttondetailmap`'s hash to `+0x20C` is a dead store overwritten by the theme pick, so the
+	/// slot alone chooses the texture.
 	/// </summary>
 	private void ApplyDetailMap(ShaderMaterial mat, UiQuad q, UiNode n)
 	{
-		const int DetailMapped = 4;
-		if (q.Source.DetailMapMode != DetailMapped)
+		if (!Engine_UiDetailMaps.Asks(q.Source.DetailMapMode))
 		{
 			mat.SetShaderParameter(DetailMappedName, false);
 			return;
 		}
 
-		string path = DetailMapPath(q.Source.SecondaryTexture);
+		string path = Engine_UiDetailMaps.PathFor(q.Source.SecondaryTexture);
 		if (!_detailMaps.TryGetValue(path, out Texture2D? detail))
 		{
 			detail = TextureResolver?.Invoke(path);

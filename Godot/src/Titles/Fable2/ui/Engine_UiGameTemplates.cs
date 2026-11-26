@@ -52,7 +52,7 @@ public static class Engine_UiGameTemplates
             },
             {
               "name": "DynamicSkyAndWeather",
-              "tag": "Dynamic Sky and Weather",
+              "tag": "REFII_F2_DYNAMIC_SKY",
               "command": "options:weather",
               "hostOnly": true,
               "icon": "Art\\GUI\\WheelIcons\\Abilities\\icon_logbook.tga",
@@ -62,7 +62,7 @@ public static class Engine_UiGameTemplates
         },
         {
           "name": "ModSettings",
-          "tag": "Mods",
+          "tag": "REFII_MODS",
           "source": "mod-settings",
           "hostOnly": true,
           "icon": "Art\\GUI\\WheelIcons\\Abilities\\icon_logbook.tga",
@@ -637,23 +637,23 @@ public static class Engine_UiGameTemplates
             },
             {
               "name": "SaveAndQuit",
-              "tag": "Save and Quit to Title",
+              "tag": "GUI_SCREEN_PAUSE_SAVE_AND_QUIT",
               "command": "PauseSaving:1"
             },
             {
               "name": "SaveAndQuitToDesktop",
-              "tag": "Save and Quit to Desktop",
+              "tag": "REFII_F2_SAVE_QUIT_DESKTOP",
               "command": "PauseQuit:1",
               "hostOnly": true
             },
             {
               "name": "QuitDontSave",
-              "tag": "Quit to Title and Don't Save",
+              "tag": "GUI_SCREEN_PAUSE_QUIT_DONT_SAVE",
               "command": "PauseSaving:2"
             },
             {
               "name": "QuitToDesktopDontSave",
-              "tag": "Quit to Desktop and Don't Save",
+              "tag": "REFII_F2_QUIT_DESKTOP_NO_SAVE",
               "command": "PauseQuit:2",
               "hostOnly": true
             }
@@ -751,13 +751,13 @@ public static class Engine_UiGameTemplates
         },
         {
           "name": "Achievements",
-          "tag": "Achievements",
+          "tag": "REFII_ACHIEVEMENTS",
           "command": "Screen:open:1013",
           "hostOnly": true
         },
         {
           "name": "Multiplayer",
-          "tag": "Multiplayer",
+          "tag": "REFII_MULTIPLAYER",
           "command": "Screen:open:1014",
           "hostOnly": true
         },
@@ -770,13 +770,13 @@ public static class Engine_UiGameTemplates
         },
         {
           "name": "Kick",
-          "tag": "Kick",
+          "tag": "GUI_NET_PAUSED_KICK_CLIENT",
           "when": "!player-two",
           "hostOnly": true,
           "children": [
             {
               "name": "KickConfirm",
-              "tag": "Kick the other Hero out of your game (they lose unsaved progress)",
+              "tag": "REFII_F2_KICK_CONFIRM",
               "command": "PauseCoop:kick",
               "hostOnly": true
             }
@@ -784,28 +784,10 @@ public static class Engine_UiGameTemplates
         },
         {
           "name": "HenchmanQuit",
-          "tag": "Leave or Quit",
+          "tag": "GUI_SCREEN_PAUSE_HENCHMAN_QUIT",
+          "command": "PauseHenchmanQuit",
           "when": "player-two",
-          "hostOnly": true,
-          "children": [
-            {
-              "name": "LeaveGame",
-              "tag": "Leave this co-op game (your Hero is saved)",
-              "command": "PauseCoop:leave",
-              "hostOnly": true
-            },
-            {
-              "name": "QuitDontSave",
-              "tag": "Quit to Title",
-              "command": "PauseSaving:2"
-            },
-            {
-              "name": "QuitToDesktopDontSave",
-              "tag": "Quit to Desktop",
-              "command": "PauseQuit:2",
-              "hostOnly": true
-            }
-          ]
+          "hostOnly": true
         }
       ]
     },
@@ -817,43 +799,43 @@ public static class Engine_UiGameTemplates
       "entries": [
         {
           "name": "Hosting",
-          "tag": "My game",
+          "tag": "REFII_F2_MP_MY_GAME",
           "source": "hosting",
           "hostOnly": true
         },
         {
           "name": "AddFriend",
-          "tag": "Add a friend (paste code)",
+          "tag": "REFII_F2_MP_ADD_FRIEND",
           "command": "Net:paste",
           "hostOnly": true
         },
         {
           "name": "MyCode",
-          "tag": "My friend code",
+          "tag": "REFII_F2_MP_MY_CODE",
           "command": "Net:code",
           "hostOnly": true
         },
         {
           "name": "Friends",
-          "tag": "Friends",
+          "tag": "REFII_MP_FRIENDS",
           "source": "friends",
           "hostOnly": true
         },
         {
           "name": "Friend Requests",
-          "tag": "Friend Requests",
+          "tag": "REFII_MP_FRIEND_REQUESTS",
           "source": "requests",
           "hostOnly": true
         },
         {
           "name": "Invitations",
-          "tag": "Invitations",
+          "tag": "REFII_MP_INVITATIONS",
           "source": "invites",
           "hostOnly": true
         },
         {
           "name": "Games",
-          "tag": "Games",
+          "tag": "REFII_MP_GAMES",
           "source": "games",
           "hostOnly": true
         }
@@ -861,7 +843,7 @@ public static class Engine_UiGameTemplates
     },
     "mods-root": {
       "highlight": "",
-      "title": "Active Mods",
+      "title": "REFII_ACTIVE_MODS",
       "source": "mods",
       "rowCommand": "",
       "entries": []
@@ -874,13 +856,13 @@ public static class Engine_UiGameTemplates
       "entries": [
         {
           "name": "Continue",
-          "tag": "Continue",
+          "tag": "REFII_CONTINUE",
           "command": "HostBox:accept",
           "hostOnly": true
         },
         {
           "name": "Back",
-          "tag": "Back",
+          "tag": "REFII_BACK",
           "command": "HostBox:cancel",
           "hostOnly": true
         }
@@ -894,7 +876,7 @@ public static class Engine_UiGameTemplates
       "entries": [
         {
           "name": "Achievements",
-          "tag": "Achievements",
+          "tag": "REFII_ACHIEVEMENTS",
           "hostOnly": true,
           "eventType": 150
         }
@@ -922,7 +904,7 @@ public static class Engine_UiGameTemplates
           "children": [
             {
               "name": "Mods",
-              "tag": "Active Mods",
+              "tag": "REFII_ACTIVE_MODS",
               "command": "Net:mods",
               "hostOnly": true
             }
@@ -930,7 +912,7 @@ public static class Engine_UiGameTemplates
         },
         {
           "name": "Multiplayer",
-          "tag": "Multiplayer",
+          "tag": "REFII_MULTIPLAYER",
           "command": "Net:book",
           "hostOnly": true
         },
@@ -954,7 +936,7 @@ public static class Engine_UiGameTemplates
         },
         {
           "name": "QuitToDesktop",
-          "tag": "Quit to Desktop",
+          "tag": "REFII_QUIT_TO_DESKTOP",
           "command": "QuitToDesktop",
           "hostOnly": true
         }
@@ -1234,10 +1216,10 @@ public static class Engine_UiGameTemplates
       "ownsList": true,
       "restFromFile": true,
       "purse": true,
-      "commitsByHighlight": true,
+      "rowAction": "Decoration:mount:{id}",
       "previewAnchor": "Foreground.Book.Pages.Page1.Contents.ModelHider.model_proxy.model",
       "provider": "item-book",
-      "flipAction": "screen:unlearn",
+      "flipAction": "Decoration:takedown",
       "scrollContent": "Foreground.Book.Pages.Page2.Contents.ItemDescription",
       "scrollMask": "Mask",
       "scrollBar": "Foreground.Book.Pages.Page2.Contents.Scrollbar",
@@ -1305,6 +1287,10 @@ public static class Engine_UiGameTemplates
       "wideRight": [
         "Foreground.Book",
         "Foreground.Mask"
+      ],
+      "pageSpan": [
+        50,
+        387
       ],
       "statFields": [
         {
@@ -1736,6 +1722,7 @@ public static class Engine_UiGameTemplates
       "ownsList": true,
       "restFromFile": true,
       "purse": true,
+      "rowAction": "Crime:choice",
       "provider": "crime",
       "scrollContent": "Foreground.Book.Pages.Page1.Contents.Text|Foreground.Book.Pages.Page2.Contents.Text|Foreground.Book.Pages.Page3.Contents.Text",
       "scrollMask": "Mask|Mask|Mask",
@@ -1901,6 +1888,7 @@ public static class Engine_UiGameTemplates
       "ownsList": true,
       "restFromFile": true,
       "purse": true,
+      "rowAction": "RealEstate:event",
       "provider": "realestate",
       "scrollContent": "Foreground.Book.Pages.Page1.Group|Foreground.Book.Pages.Page2.Contents.Group",
       "scrollMask": "Mask|Mask",
@@ -2050,7 +2038,8 @@ public static class Engine_UiGameTemplates
       "name": "query",
       "restFromFile": true,
       "ownsRevealedInput": true,
-      "revealedBack": "screen:back",
+      "revealedBack": "Query:close",
+      "xAction": "Query:rename",
       "presentation": "queryscreen",
       "chrome": [
         "elements"
@@ -2129,6 +2118,10 @@ public static class Engine_UiGameTemplates
       "wideRight": [
         "Foreground.Book",
         "Foreground.Mask"
+      ],
+      "pageSpan": [
+        50,
+        387
       ]
     },
     "1015": {
@@ -2154,6 +2147,10 @@ public static class Engine_UiGameTemplates
       "wideRight": [
         "Foreground.Book",
         "Foreground.Mask"
+      ],
+      "pageSpan": [
+        50,
+        387
       ]
     },
     "1016": {
@@ -2179,6 +2176,10 @@ public static class Engine_UiGameTemplates
       "wideRight": [
         "Foreground.Book",
         "Foreground.Mask"
+      ],
+      "pageSpan": [
+        50,
+        387
       ]
     },
     "1013": {
@@ -2205,6 +2206,10 @@ public static class Engine_UiGameTemplates
       "wideRight": [
         "Foreground.Book",
         "Foreground.Mask"
+      ],
+      "pageSpan": [
+        50,
+        387
       ]
     },
     "8": {

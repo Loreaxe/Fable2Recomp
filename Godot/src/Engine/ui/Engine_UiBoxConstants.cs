@@ -103,6 +103,26 @@ public static class Engine_UiBoxConstants
 
 	public const int QueryBoxOutroSlide = 2;
 
+	/// <summary>The router's slide for box 20 (`IntroXA`) and box 13 (`IntroReload`).</summary>
+	public const int QueryBoxXASlide = 3;
+
+	public const int QueryBoxReloadSlide = 5;
+
+	/// <summary>
+	/// The root slide a query box's opener stands, by modal id: the router's `lhGuiManager_OpenModal`
+	/// (`sub_8236FA68`) slides the root for two ids only — 20 to slide 3 (TU1 0x8236FB00 `cmpwi
+	/// r28,0x14`, 0x8236FB10 `li r5,3`, 0x8236FB18 `bl lhGuiElement_GoToSlide`; disc 0x82337CFC /
+	/// 0x82337D0C / 0x82337D14), 13 to slide 5 (0x8236FB28 / 0x8236FB38 / 0x8236FB40; disc 0x82337D24
+	/// / 0x82337D34 / 0x82337D3C) — and every other box keeps `QueryBox.Open`'s slide 1, as the
+	/// display query does (`CQueryBox_vf1` 0x823CF284 `li r5,1`).
+	/// </summary>
+	public static int QueryBoxSlideFor(uint modalId, bool display) => display ? QueryBoxIntroSlide : modalId switch
+	{
+		20u => QueryBoxXASlide,
+		13u => QueryBoxReloadSlide,
+		_ => QueryBoxIntroSlide,
+	};
+
 	/// <summary>`page.lua` — which axes a page scrolls on.</summary>
 	public enum PageType
 	{

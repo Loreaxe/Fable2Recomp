@@ -116,7 +116,8 @@ public class PauseScreensCutTests
 
 	/// <summary>
 	/// The gift list's Gold row stands only while the giver has gold (`ble` at 0x82430A80), and
-	/// decoration's Y is the guest's own code 39 (`sub_826B7770` case 13).
+	/// decoration's Y is the take-down of the guest's own code 39 arm (`sub_826B7770` case 13), posted
+	/// as the ported screen's lever.
 	/// </summary>
 	[TestCase]
 	public void GiftGoldAndDecorationRemoveFollowTheGuest()
@@ -131,8 +132,21 @@ public class PauseScreensCutTests
 		AssertThat(Engine_UiRowConditions.Holds(gold.When,
 			new Dictionary<string, bool> { [Engine_UiRowConditions.HasGold] = true })).IsTrue();
 
-		AssertThat(authored.Screens[27].FlipAction).IsEqual(Engine_UiScreenActions.ScreenUnlearn);
+		AssertThat(authored.Screens[27].FlipAction).IsEqual(Fable2UiVerbs.DecorationTakeDownAction);
 		AssertThat(authored.Screens[25].FlipAction).IsEqual(string.Empty);
+	}
+
+	/// <summary>
+	/// The villager card renames on X — the guest's code 38 (`sub_826CCBA8`, `cmpwi r4, 0x26`), the
+	/// card's authored "Set Nickname" prompt — and Y does nothing there; the JSON form round-trips it.
+	/// </summary>
+	[TestCase]
+	public void VillagerCardRenamesOnX()
+	{
+		Engine_UiTemplateSet authored = Fable2UiTemplates.AuthoredDefaults();
+		AssertThat(authored.Screens[10].XAction).IsEqual(Fable2UiVerbs.QueryRenameAction);
+		AssertThat(authored.Screens[10].FlipAction).IsEqual(string.Empty);
+		AssertThat(authored.Screens[10].RevealedBack).IsEqual(Fable2UiVerbs.QueryCloseAction);
 	}
 
 	/// <summary>

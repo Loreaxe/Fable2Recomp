@@ -85,6 +85,7 @@ REX_EXTERN(rex_lhGuiOptionsScreen_OnEnter) {
   Call(ctx, base, s.frame, 0x826B8348u, {LoadU32(base, g + 76u), 8u});
   StoreU32(base, h + 552u, LoadU32(base, h + 4u) != 0u ? 2u : 1u);
   Call(ctx, base, s.frame, 0x8246B5E8u, {pres, Address(0x8349B4D8u), 1u});
+  RestatePurseForPlayerTwo(ctx, base, s.frame, pres, 0x8349B4D8u);
   DropString(ctx, base, s.frame, text);
   const uint32_t storage = LoadU32(base, pages + 4u);
   if (storage != 0u) {

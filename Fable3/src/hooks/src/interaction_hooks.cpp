@@ -73,6 +73,7 @@
 #include <rex/logging.h>
 #include <rex/ppc.h>
 
+#include "box_answers.h"
 #include "gui_statements.h"
 #include "mod_lua.h"
 #include "mod_seam.h"
@@ -188,6 +189,8 @@ REX_EXTERN(rex_InteractionMode_Set) {
   const bool was_open = readable && base[im + kImOpenFlag] != 0u;
   const int32_t previous = readable ? static_cast<int32_t>(LoadGuestU32(base, im + kImMode)) : -1;
   const uint32_t clears = g_im_clears;
+  // The old mode's object goes with the set: its list takes no more steps (interaction_list_step.cpp).
+  ForgetInteractionList();
   __imp__rex_InteractionMode_Set(ctx, base);
   if (base == nullptr || !Plausible(im)) {
     return;
@@ -211,6 +214,7 @@ REX_EXTERN(rex_InteractionMode_Close) {
   const uint32_t hero = raise ? seam::Deref(base, im + kImHeroRef) : 0u;
   const uint32_t target = raise ? seam::Deref(base, im + kImTargetRef) : 0u;
   const int32_t mode = raise ? static_cast<int32_t>(LoadGuestU32(base, im + kImMode)) : -1;
+  ForgetInteractionList();
   __imp__rex_InteractionMode_Close(ctx, base);
   if (open) {
     REXLOG_INFO("Refii interaction mode: mode {} closed", LoadGuestU32(base, im + kImMode));
@@ -311,6 +315,7 @@ REX_EXTERN(rex_InteractionMode_Tick) {
 REX_EXTERN(rex_InteractionMode_Clear) {
   ++g_im_clears;
   const uint32_t im = ctx.r3.u32;
+  ForgetInteractionList();
   __imp__rex_InteractionMode_Clear(ctx, base);
   if (base == nullptr || !Plausible(im)) {
     return;

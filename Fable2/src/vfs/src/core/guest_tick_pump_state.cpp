@@ -79,6 +79,9 @@ std::atomic<int32_t> g_subtitles{-1};
 /// skipped.
 std::atomic<uint32_t> g_pause_tabs{0};
 
+/// See CoopSplitInEffect().
+std::atomic<int32_t> g_coop_split_in_effect{0};
+
 /// Set to ask for a fresh sample. Starts true so the first front-end tick takes one, and is set
 /// again whenever the host knows the answer has changed — after a game is started, say.
 ///
@@ -177,6 +180,12 @@ int32_t FrontEndSubtitles() { return g_subtitles.load(std::memory_order_relaxed)
 /// Which pause tabs the guest's own predicate said it would offer, as the pump last sampled
 /// them. Bit N = tab N available for N in 2..8; 0 until the first sample.
 uint32_t PauseTabsMask() { return g_pause_tabs.load(std::memory_order_relaxed); }
+
+/// Local co-op split screen IN EFFECT as the pump last stated it (guest_tick_pump.cpp
+/// `RefiiCoopSplitScreen`): 1 when the switch is on, the game is local co-op and player two's
+/// Player was built with its own camera manager. The pump's state is the payload's; this is
+/// the copy the host bridge reads.
+int32_t CoopSplitInEffect() { return g_coop_split_in_effect.load(std::memory_order_relaxed); }
 
 /// The saved-game count as last sampled, or -1 if it has not been sampled yet.
 int32_t GuestSavedGameCount() { return g_save_count.load(std::memory_order_relaxed); }
@@ -908,6 +917,10 @@ void refii_bridge_front_end_note_subtitles(int32_t state) {
 
 void refii_bridge_note_pause_tabs(uint32_t mask) {
   refii::vfs::g_pause_tabs.store(mask, std::memory_order_relaxed);
+}
+
+void refii_bridge_note_coop_split_in_effect(int32_t in_effect) {
+  refii::vfs::g_coop_split_in_effect.store(in_effect, std::memory_order_relaxed);
 }
 
 void refii_bridge_menu_spawn_begin_for(uint32_t screen_id) {

@@ -6,7 +6,12 @@
 // state; what only these calls state is that the screen is up, which presentation is it, and the
 // epilogue's image.
 //
-// EPILOGUE E = SM[6] (28 bytes, vtable off_820A0BE0). Show sub_827A24D0(E, title, description,
+// EPILOGUE E = SM[6] (28 bytes; vtable TU3 off_820A0BE0, stored by the SM ctor sub_825F8F60 at
+// 0x825F9318, disc off_8209D2FC, stored by sub_825CDEE0 at 0x825CE294 — 0x820A0BE0 is string data
+// in the disc image). Its pad is slot 5, Input(E, action, player) (TU3 sub_827A2480 / disc
+// 0x8276B410), called for the open screen object by sub_826019F0 (`lwz r10,0x14(r11)` / `bctrl`,
+// TU3 0x82601C58..0x82601C60 / disc 0x825D6C70..0x825D6C78), not by the modal input sub_825F9408.
+// Show sub_827A24D0(E, title, description,
 // renown, image, flag) — QuestTracker.ShowEpilogueScreen through sub_82511020 (0x825111C4) and the
 // co-op net handler sub_82377E80 (disc 0x82373E54) — returns at once unless E+0x14 is clear
 // (`lbz r11,0x14(r3)` 0x827A24DC), sets it (0x827A2508), loads the screen (sub_825F26E8(*(GUI+0x38),

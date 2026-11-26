@@ -692,6 +692,34 @@ int XSocket::SendTo(uint8_t* buf, uint32_t buf_len, uint32_t flags, N_XSOCKADDR_
     const bool directed_broadcast = is_virtual && (dst_ip & 0xFFu) == 0xFFu;
     const bool is_broadcast = limited_broadcast || directed_broadcast;
 
+    // LOOPBACK. A datagram to 127.0.0.0/8, or to this console's own address, is
+    // received by the socket bound to the destination port on this console,
+    // from the sender's own port. Under RexNet a guest UDP port exists only in
+    // bound_udp_sockets (Bind gives the native socket an ephemeral port), so
+    // the host's loopback has nothing listening on the guest port and the
+    // native sendto below reports success for a datagram nobody reads; the
+    // delivery is made here instead. As on a console the send succeeds
+    // whether or not a socket is bound there: an unclaimed datagram is dropped.
+    //
+    // Fable 2 depends on it: after a lost link the session host tells itself
+    // that the member left, as a member update sent to 127.0.0.1:1001 from its
+    // own port-1001 socket, and frees the member's slot when it reads that
+    // update back (the receiver takes only datagrams whose source port is
+    // 1001). Without the delivery the slot stays filled and every later join
+    // is refused as "session full".
+    if (auto* rexnet = rex::net::RexNet::shared()) {
+      const bool loopback = (dst_ip >> 24) == 127u;
+      const bool own_address = is_virtual && !is_broadcast &&
+                               (dst_ip == rexnet->local_vip() || dst_ip == rex::net::RexNet::kLocalVip);
+      if (loopback || own_address) {
+        const uint16_t dst_port = to->sin_port;
+        if (auto socket = FindBoundUdp(dst_port)) {
+          socket->QueuePacket(loopback ? 0x7F000001u : dst_ip, bound_port_, buf, buf_len);
+        }
+        return (int)buf_len;
+      }
+    }
+
     // System Link is a *local* facility: a title broadcasts to its LAN and
     // plays with whoever answers. Carrying that over RexNet turns a LAN-only
     // game into an internet-capable one -- a deliberate choice, not a default,

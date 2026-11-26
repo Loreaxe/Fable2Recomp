@@ -1,10 +1,13 @@
 // The ported screens' shared helpers (hooks/gui_screen_stub_support.h).
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include <rex/logging.h>
 
@@ -17,6 +20,8 @@
 
 PPC_EXTERN_FUNC(rex_lhGuiManager_FindScreenHandler);
 PPC_EXTERN_FUNC(rex_lhGuiMenu_GetHighlightedItemData);
+PPC_EXTERN_FUNC(rex_lhGuiTabStrip_Show);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiTabStrip_Show);
 
 namespace refii::vfs::stub {
 
@@ -57,6 +62,22 @@ uint32_t BookPresentation(uint8_t* base) {
   return Plausible(set) ? LoadU32(base, set + refii::guest::ScreenManagerField(156u)) : 0u;
 }
 
+/// Says once which host function `Call` reaches for a hooked guest address: the indirect table's
+/// entry for `lhGuiTabStrip_Show` (TU1 0x826B8348) against the hook and the recompiled original.
+void StateCallTarget(uint32_t tu1) {
+  static std::atomic<bool> said{false};
+  if (tu1 != 0x826B8348u || said.exchange(true)) {
+    return;
+  }
+  const auto target = reinterpret_cast<uintptr_t>(refii_bridge_rex_resolve_indirect_function(Address(tu1)));
+  const auto hook = reinterpret_cast<uintptr_t>(&rex_lhGuiTabStrip_Show);
+  const auto original = reinterpret_cast<uintptr_t>(&__imp__rex_lhGuiTabStrip_Show);
+  REXLOG_INFO("Refii screen stub: Call 0x{:08X} resolves to host 0x{:X} — {} (rex_lhGuiTabStrip_Show 0x{:X}, "
+              "__imp__ 0x{:X})",
+              Address(tu1), target, target == hook ? "the hook" : target == original ? "THE ORIGINAL" : "neither",
+              hook, original);
+}
+
 /// One guest call on a scratch frame below `ctx`; r3 back.
 uint32_t Call(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t tu1, std::initializer_list<uint32_t> args) {
   PPCContext work = ctx;
@@ -67,6 +88,7 @@ uint32_t Call(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t tu1, std:
   for (uint32_t value : args) {
     *regs[i++] = value;
   }
+  StateCallTarget(tu1);
   if (!refii::mods::CallGuest(work, base, Address(tu1))) {
     REXLOG_WARN("Refii screen stub: 0x{:08X} (TU1 0x{:08X}) is not a known guest function — not called",
                 Address(tu1), tu1);
@@ -114,8 +136,35 @@ Scratch Claim(const PPCContext& ctx) {
   return {top, top + 0x200u};
 }
 
+namespace {
+struct InputSaid {
+  uint32_t handler;
+  uint32_t code;
+  uint32_t player;
+};
+std::mutex g_input_said_lock;
+std::unordered_map<std::string, InputSaid> g_input_said;  // per screen, since its activation
+
+bool InputSlot(const char* slot) {
+  return std::strcmp(slot, "OnScreenAction") == 0 || std::strcmp(slot, "HandleAction") == 0;
+}
+}  // namespace
+
 void Said(const char* screen, const char* slot, uint32_t handler, uint32_t a, uint32_t b) {
+  if (InputSlot(slot)) {
+    std::lock_guard<std::mutex> lock(g_input_said_lock);
+    const auto [at, first] = g_input_said.try_emplace(screen, InputSaid{handler, a, b});
+    if (!first && at->second.handler == handler && at->second.code == a && at->second.player == b) {
+      return;
+    }
+    at->second = InputSaid{handler, a, b};
+  }
   REXLOG_INFO("Refii screen stub: {} {} ran on 0x{:08X} ({} {})", screen, slot, handler, a, b);
+}
+
+void SaidAnew() {
+  std::lock_guard<std::mutex> lock(g_input_said_lock);
+  g_input_said.clear();
 }
 
 /// The element a static name handle names in `pres`: `sub_821F0240` copies the handle into `slot`
@@ -181,6 +230,19 @@ void HighlightedRow(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t row
   *id = LoadU32(base, row + 4u);
   DropString(ctx, base, frame, row + 12u);
   DropString(ctx, base, frame, row + 8u);
+}
+
+void RestatePurseForPlayerTwo(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t pres, uint32_t key,
+                              bool shopping) {
+  const uint32_t g = Gui(base);
+  const uint32_t qm = Plausible(g) ? LoadU32(base, g + 28u) : 0u;
+  if (!Plausible(qm) || !Plausible(pres)) {
+    return;
+  }
+  if (!shopping && (Call(ctx, base, frame, 0x8236E400u, {qm}) & 0xFFu) == 0u) {
+    return;
+  }
+  Call(ctx, base, frame, 0x8246B5E8u, {pres, Address(key), 0u});
 }
 
 }  // namespace refii::vfs::stub

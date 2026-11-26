@@ -192,6 +192,37 @@ public sealed class PauseMenuActivationTests
         AssertThat(menu.Activate()).IsEqual("PauseTab:8");
     }
 
+    /// <summary>The guest's ghost on its two Save rows reaches Godot's three by place under Saving, in any language, and lifts again.</summary>
+    [TestCase]
+    public void StatedSaveGhostsJoinByPlaceUnderSaving()
+    {
+        Engine_FrontEndMenu menu = PauseFixture();
+        var stated = new List<Engine_UiMenuModel.Row>
+        {
+            new() { Name = "Saving", Label = "Save" },
+            new() { Name = "Ulozit a pokracovat", Parent = "Saving", Id = 0u, Ghosted = true },
+            new() { Name = "Ulozit a ukoncit", Parent = "Saving", Id = 1u, Ghosted = true },
+            new() { Name = "Ukoncit bez ulozeni", Parent = "Saving", Id = 2u },
+            new() { Name = "Map", Id = 0u, Ghosted = true },
+        };
+        AssertThat(Engine_PauseMenu.ApplyStatedSaveGhosts(menu, stated)).IsTrue();
+        AssertThat(menu.Find("SaveAndContinue")!.Ghosted).IsTrue();
+        AssertThat(menu.Find("SaveAndQuit")!.Ghosted).IsTrue();
+        AssertThat(menu.Find("Map")!.Ghosted).IsFalse();
+        AssertThat(Engine_PauseMenu.ApplyStatedSaveGhosts(menu, stated)).IsFalse();
+
+        menu.Highlight("Saving");
+        menu.Activate();
+        AssertThat(menu.Highlighted!.Name).IsEqual("SaveAndContinue");
+        AssertThat(menu.Activate()).IsNull();
+
+        stated[1].Ghosted = false;
+        stated[2].Ghosted = false;
+        AssertThat(Engine_PauseMenu.ApplyStatedSaveGhosts(menu, stated)).IsTrue();
+        AssertThat(menu.Find("SaveAndQuit")!.Ghosted).IsFalse();
+        AssertThat(menu.Activate()).IsEqual("PauseSaving:0");
+    }
+
     /// <summary>An empty capture changes no label, and a row the guest's population drops loses the one it had.</summary>
     [TestCase]
     public void StatedLabelsJoinByNameOnly()

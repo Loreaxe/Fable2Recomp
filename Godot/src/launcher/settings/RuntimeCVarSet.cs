@@ -807,13 +807,14 @@ public static class RuntimeCVarsGodot
                 "and free to move outside the window (convenient for multi-monitor setups or while developing)."),
             new(Refii.Game.GameSplitView.SwitchKey, MultiplayerCategory, RuntimeCVarType.Bool, "true",
                 "Local co-op on split screen: each player gets their own camera and their own half "
-                + "of the screen, HUD and menus. Off shares one screen and one camera, as the "
-                + "original game does. Read at launch.",
+                + "of the screen and HUD; menus open over the whole screen and name their player. "
+                + "Off shares one screen and one camera, as the original game does. Changing it to "
+                + "split takes effect when player two next joins.",
                 OwnerTitle: Fable2LocalCoop),
             new(Refii.Game.GameSplitView.OrientationKey, MultiplayerCategory, RuntimeCVarType.String, "vertical",
                 "How split screen divides the window. Vertical puts player one on the left and "
                 + "player two on the right; horizontal puts player one on top and player two "
-                + "below. Read at launch.",
+                + "below. Takes effect at once.",
                 "vertical|Vertical (side by side),horizontal|Horizontal (top and bottom)",
                 OwnerTitle: Fable2LocalCoop),
             new("discord_presence", PresenceCategory, RuntimeCVarType.Bool, "true",

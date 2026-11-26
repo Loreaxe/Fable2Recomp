@@ -484,11 +484,15 @@ public sealed class Engine_UiTheme
 			: System.Array.Empty<Node3D>();
 
 	/// <summary>
-	/// A tag to its display string, through the game's own book. An unresolved tag is returned
-	/// VERBATIM rather than blanked, as the engine does (<see cref="Engine_UiScreen"/>).
+	/// A tag to its display string, through the game's own book, then our own words for the rows the
+	/// book has no line for (<see cref="Refii.Text.Engine_OwnWords"/>, asked after it so the game's lines
+	/// always win). An unresolved tag is returned VERBATIM rather than blanked, as the engine does
+	/// (<see cref="Engine_UiScreen"/>).
 	/// </summary>
 	public string Resolve(string tag) =>
-		Strings is not null && Strings.TryGetString(tag, out string value) ? value : Refii.AndroidRuntime.AndroidMenuWords.ForPhone(tag);
+		Strings is not null && Strings.TryGetString(tag, out string value)
+			? value
+			: Refii.Text.Engine_OwnWords.Say(Refii.AndroidRuntime.AndroidMenuWords.ForPhone(tag));
 
 	/// <summary>
 	/// Builds a text mesh in the game's own fonts, as a node ready to parent.

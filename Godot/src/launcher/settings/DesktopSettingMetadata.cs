@@ -335,6 +335,9 @@ public static class DesktopSettingMetadata
         return set;
     }
 
+    /// <summary>The names <see cref="Explicit"/> presents; each must be a cvar's own name to match it.</summary>
+    internal static IEnumerable<string> ExplicitNames => Explicit.Keys;
+
     private static readonly Dictionary<string, SettingPresentation> Explicit =
         new(StringComparer.Ordinal)
         {
@@ -642,11 +645,11 @@ public static class DesktopSettingMetadata
                 "Displays the current game and region on your Discord profile.",
                 Order: 40),
 
-            ["coop_split_screen"] = new(
+            [Refii.Game.GameSplitView.SwitchKey] = new(
                 SettingsTab.Gameplay, "Co-op & Online Multiplayer", SettingTier.Essential, "Split-Screen Local Co-op",
                 "Gives each local player an independent camera and half of the screen.",
                 Order: 110),
-            ["coop_split_orientation"] = new(
+            [Refii.Game.GameSplitView.OrientationKey] = new(
                 SettingsTab.Gameplay, "Co-op & Online Multiplayer", SettingTier.Essential, "Split-Screen Orientation",
                 Order: 120),
             ["rexnet"] = new(

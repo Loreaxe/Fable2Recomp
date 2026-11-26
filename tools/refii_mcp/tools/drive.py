@@ -73,7 +73,8 @@ def press_payload(args):
     "names NOW, so a press cannot land in a previous run. Names: "
     + ", ".join(sorted(BUTTONS))
     + ". Several may be given at once. A press that appears not to land on the title is "
-      "usually the armed byte being false — check `refii_frontend`'s canPressA first. "
+      "usually the armed byte being false, or the title in its attract movie (state 8, A only "
+      "skips it) — check `refii_frontend`'s canPressA and state first. "
       "mode='scripted' (default) ORs the buttons into the guest pad directly: it is not a device, "
       "so the prompts keep whatever device was last used. mode='joypad' raises the press as real "
       "joypad events (InputEventJoypadButton / InputEventJoypadMotion through Input.ParseInputEvent) "
@@ -241,7 +242,8 @@ def mouse(args):
 @tool(
     "refii_wait",
     "Block until the RUNNING game reaches a named state, answered by the game itself the "
-    "frame it holds: 'frontend' (title or menu exists), 'frontend-armed' (the title takes A), "
+    "frame it holds: 'frontend' (title or menu exists), 'frontend-armed' (the title takes A: armed "
+    "and not in its idle attract movie, title state 8, where A only skips the movie), "
     "'world' (the in-game screen manager exists), 'gameplay' (no screen up), or 'screen' with "
     "a screen id (0 = the pause root). Replaces polling loops that could not see what they "
     "waited for.",

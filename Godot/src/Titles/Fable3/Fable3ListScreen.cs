@@ -32,7 +32,9 @@ public readonly record struct Fable3ScreenPage(
 /// <summary>
 /// THE ONE MENU TEMPLATE for Fable 3's box-manager screens: the list is the SHARED
 /// <see cref="Engine_FrontEndMenuView"/> (layout, padding, carousel and cursor all live there),
-/// its rows the page's lines and its highlight the guest's cursor row; the title, the cursor row's
+/// its rows the page's lines, its highlight the guest's cursor row and its cursor Fable 3's own
+/// list cursor (<see cref="Fable3ListCursor"/>) on every screen, the save menu's four rows
+/// included (its own `SaveMenu.bgf` ships in no build); the title, the cursor row's
 /// description and the button prompts are drawn over it at the canvas's 720-unit scale, so the
 /// screen adapts to any window as every other shared surface does. A screen supplies its page
 /// (<see cref="Compose"/>); the pad reaches the guest unchanged, so a screen draws and never decides.
@@ -71,6 +73,7 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 	private Fable3ScreenPage.QueryBox? _query;
 	private string _querySignature = string.Empty;
 	private bool _probed;
+	private bool _cursorTried;
 
 	/// <summary>The log tag of the screen, `[tag] …`.</summary>
 	protected abstract string LogTag { get; }
@@ -87,6 +90,19 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 	/// </summary>
 	protected virtual bool Framed => false;
 
+	/// <summary>The selection bar's arrows for the cursor on 1-based <paramref name="highlight"/> of <paramref name="total"/> rows: the guest's run-time rule unless the screen has its own.</summary>
+	protected virtual (bool Top, bool Bottom) Arrows(int highlight, int total) => Fable3ListCursor.Arrows(highlight, total);
+
+	/// <summary>
+	/// Whether this page's rows are choices its box centres on its centre line — the selection
+	/// bar's line — as 360 `options.bgf` and the PC's author `Options`, `SaveManagement` and
+	/// `Multiplayer` (every row text halign 1 at the box's x 0, the bar's `Selection` on it). A
+	/// settings page's rows stand left in its box (`GameSettings.Content.SelectionText` at x −332,
+	/// halign 0; `bedmenubox` `Sleep.Title` at −330), under the same centred bar. Left by default:
+	/// a screen says which of its pages centre.
+	/// </summary>
+	protected virtual bool RowsOnCentreLine => false;
+
 	/// <summary>Whether the screen is up in the guest this frame.</summary>
 	public bool IsOpen => _open;
 
@@ -97,6 +113,7 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 	{
 		_view = Engine_FrontEndMenuView.Dressed(Name + "List", null, false, null, Theme);
 		_view.GuestCursor = true;
+		_view.OneArrangement = true;
 		_view.Visible = false;
 		_view.Bind(_menu);
 		Root.AddChild(_view);
@@ -117,13 +134,36 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 	/// </summary>
 	protected override void ThemeChanged()
 	{
-		_view.Redress(Theme, null, null, null);
-		_shown = string.Empty;
+		Dress();
 		QueueRedraw();
+	}
+
+	/// <summary>
+	/// Rebuilds the view's rows and cursor: the rows text-only in the theme's fonts, the cursor
+	/// the box screens' selection bar on the row's label, once the document it is taken from
+	/// stands (the HUD host indexes the banks in the background; until then the view keeps its
+	/// stand-in).
+	/// </summary>
+	private void Dress()
+	{
+		Engine_UiTheme? book = Fable3Hud.Book(Fable3ListCursor.Document);
+		_cursorTried = book is not null;
+		Fable3ListCursor.Dressing? cursor = Fable3ListCursor.Build(book, LogTag);
+		_view.CursorOnLabel = cursor?.OnLabel;
+		_view.CursorLabelSize = Fable3ListCursor.LabelSize;
+		_view.CursorCanvasX = cursor is null ? null : Fable3ListCursor.CentreLine;
+		_view.Redress(Theme, null, cursor?.Template, null);
+		_shown = string.Empty;
 	}
 
 	protected override void Frame(double delta)
 	{
+		// Once, when the cursor's document first stands: the cursor's art comes from its book.
+		if (!_cursorTried && Fable3Hud.Book(Fable3ListCursor.Document) is not null)
+		{
+			Dress();
+		}
+
 		Fable3ScreenPage? composed = Compose(delta);
 		bool open = composed is not null;
 		if (open != _open)
@@ -153,9 +193,13 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 			return;
 		}
 
+		// The rows stand where this page's box puts them; a change rebuilds them (the signature).
+		bool centred = RowsOnCentreLine;
+		_view.LabelCanvasX = centred ? Fable3ListCursor.CentreLine : null;
+
 		// The list is rebuilt only when a line changed; the highlight follows every frame.
 		var signature = new System.Text.StringBuilder();
-		signature.Append(page.Title).Append('|');
+		signature.Append(centred ? "centred|" : "left|").Append(page.Title).Append('|');
 		foreach (Fable3ScreenPage.Row row in page.Rows)
 		{
 			signature.Append(row.Name).Append('=').Append(row.Line).Append(row.Ghosted ? "-|" : "|");
@@ -218,6 +262,8 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 			}
 
 			_view.Refresh();
+			(bool above, bool below) = Arrows(selected + 1, page.Rows.Count);
+			Fable3ListCursor.ShowArrows(_view, above, below);
 			string description = selected >= 0 ? page.Rows[selected].Description : page.Description;
 			description = description.Length == 0 ? page.Description : description;
 			description = description.StartsWith("GUI_", System.StringComparison.Ordinal) ||
@@ -259,9 +305,16 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 
 	/// <summary>
 	/// THE MOUSE ON THE LIST: the pointer resolved through this canvas's camera (the open screen's),
-	/// a hovered row picked when the pointer moves, a click picking and accepting it, the wheel stepping
-	/// the cursor. Where the guest owns the cursor the pick is walked (<see cref="PointAt"/>).
+	/// a click picking and accepting the row under it, the wheel stepping the cursor. Where the guest
+	/// owns the cursor the pick is walked (<see cref="PointAt"/>).
 	/// </summary>
+	/// <remarks>
+	/// A HOVER PICKS NOTHING. The list is the carousel (<see cref="Engine_FrontEndMenuView.Window"/>):
+	/// the cursor row is pinned to its slot, so moving the cursor to a hovered row slides that row
+	/// out from under the pointer and the next click lands on another row or none. Fable 2's lists and
+	/// Fable 3's interaction list take the same rule: only the click, the wheel or an arrow moves
+	/// the cursor.
+	/// </remarks>
 	private void Point(Fable3ScreenPage page, double delta)
 	{
 		Engine_UiPointer.Resolve(CanvasCamera, CanvasViewport, GetViewportRect().Size);
@@ -280,13 +333,18 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 				}
 			}
 
-			bool clicked = Engine_UiPointer.TakeLeft();
-			if (row >= 0 && (Engine_UiPointer.Moved || clicked))
+			// A click is the row's only when it lands on one: elsewhere it stays for the prompts.
+			if (row >= 0 && Engine_UiPointer.TakeLeft())
 			{
-				PointAt(row, clicked);
+				PointAt(row, true);
 			}
 
 			int wheel = Engine_UiPointer.TakeWheel();
+			if (wheel != 0 && row >= 0 && PointWheel(wheel, row))
+			{
+				wheel = 0;
+			}
+
 			if (wheel != 0 && page.Rows.Count > 0)
 			{
 				int from = page.Selected >= 0 ? page.Selected : 0;
@@ -297,11 +355,19 @@ public abstract partial class Fable3ListScreen : Fable3Canvas
 		Fable3PointerSteps.Tick(page.Selected, delta);
 	}
 
+	/// <summary>
+	/// The wheel's <paramref name="steps"/> over <paramref name="row"/>: true when the screen took them
+	/// itself (a settings page stepping its cursor row's value), false to step the cursor as every
+	/// list does.
+	/// </summary>
+	protected virtual bool PointWheel(int steps, int row) => false;
+
 	/// <summary>The pointer picked <paramref name="row"/>; <paramref name="clicked"/> when it was a click. The guest's screens walk their own cursor to it.</summary>
 	protected virtual void PointAt(int row, bool clicked) => Fable3PointerSteps.Toward(row, clicked);
 
 	public override void _Draw()
 	{
+		Fable3Prompts.Begin(this);
 		if (!_open || Theme?.Fonts is null || Theme.Fonts.Get(UiFontBucket.Normal) is not { } font)
 		{
 			return;

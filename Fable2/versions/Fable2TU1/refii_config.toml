@@ -29,13 +29,13 @@
 0x82174768 = { size = 0x44 }
 0x82174A78 = { size = 0x2C }
 0x82174B78 = { size = 0x8 }
-0x82174E40 = { size = 0xC }
-0x82175EE8 = { size = 0xD0 }
-0x82175FB8 = { size = 0x14 }
+0x82174E40 = { name = "rex_Camera_MoveTo", size = 0xC }
+0x82175EE8 = { name = "rex_Camera_SetDof", size = 0xD0 }
+0x82175FB8 = { name = "rex_Camera_SetFov", size = 0x14 }
 0x82175FD0 = { size = 0xC }
 0x82175FE0 = { size = 0x30 }
-0x82176078 = { size = 0x14 }
-0x82176240 = { size = 0x8 }
+0x82176078 = { name = "rex_Camera_SetRoll", size = 0x14 }
+0x82176240 = { name = "rex_Camera_SetZoomLevel", size = 0x8 }
 0x82176248 = { name = "rex_lhHeightfieldManager_ResetGrid", size = 0x78 }
 0x821762C0 = { name = "rex_lhGameFlow_Tick", size = 0x218 }
 0x8217B080 = { name = "rex_wcslen", size = 0x24 }
@@ -317,7 +317,7 @@
 0x822BF530 = { size = 0xD0 }
 0x822BF600 = { size = 0x8C }
 0x822BF720 = { size = 0x1DC }
-0x822BFC68 = { size = 0x10 }
+0x822BFC68 = { name = "rex_Camera_AddShake", size = 0x10 }
 0x822BFF90 = { size = 0x64 }
 0x822C2630 = { name = "rex_lhGfx_FlushBuffer", size = 0x128 }
 0x822C3F10 = { size = 0x3C }
@@ -339,8 +339,8 @@
 0x822CD0A8 = { name = "rex_strncpy", size = 0x5C }
 0x822D01B8 = { size = 0x8 }
 0x822D0348 = { size = 0x2C }
-0x822D04A0 = { size = 0x8 }
-0x822D0788 = { size = 0x8 }
+0x822D04A0 = { name = "rex_Camera_SetBlur", size = 0x8 }
+0x822D0788 = { name = "rex_Camera_SetCutThisFrame", size = 0x8 }
 0x822D0B50 = { size = 0xC }
 0x822D0EF8 = { size = 0x8 }
 0x822D1A30 = { size = 0x14 }
@@ -1652,7 +1652,7 @@
 0x824812C0 = { size = 0x58 }
 0x82481318 = { size = 0xC }
 0x82481328 = { name = "rex_lhCameraManager_Create", size = 0x348 }
-0x82482EB0 = { name = "rex_lhEntity_UpdateTransform", size = 0x420 }
+0x82482EB0 = { name = "rex_lhCameraManager_Snap", size = 0x420 }
 0x824835D0 = { size = 0x38 }
 0x82483608 = { size = 0x44 }
 0x82483650 = { size = 0x2AC }
@@ -1815,34 +1815,34 @@
 0x824B5048 = { size = 0x90 }
 0x824B50D8 = { size = 0xBC }
 0x824B5770 = { size = 0x14 }
-0x824B5788 = { size = 0x18 }
+0x824B5788 = { name = "rex_Camera_SetFovCut", size = 0x18 }
 0x824B57A0 = { size = 0x14 }
-0x824B57B8 = { size = 0x18 }
+0x824B57B8 = { name = "rex_Camera_SetRollCut", size = 0x18 }
 0x824B57D0 = { size = 0x8 }
-0x824B57D8 = { size = 0xF4 }
+0x824B57D8 = { name = "rex_Camera_SetDofCut", size = 0xF4 }
 0x824B58D0 = { size = 0x8 }
 0x824B58D8 = { size = 0xC }
 0x824B58E8 = { size = 0xDC }
 0x824B59C8 = { size = 0xC }
 0x824B59D8 = { size = 0x14 }
 0x824B59F0 = { size = 0x8 }
-0x824B59F8 = { size = 0xC }
-0x824B5A08 = { size = 0x20 }
+0x824B59F8 = { name = "rex_Camera_SetBlurCut", size = 0xC }
+0x824B5A08 = { name = "rex_Camera_MoveToCut", size = 0x20 }
 0x824B5A28 = { size = 0x10 }
 0x824B5A38 = { size = 0xC }
 0x824B5A48 = { size = 0x10 }
 0x824B5A58 = { size = 0x10 }
-0x824B5A68 = { size = 0xD4 }
-0x824B5B40 = { size = 0x12C }
-0x824B5C70 = { size = 0x6C }
-0x824B5CE0 = { size = 0x6C }
+0x824B5A68 = { name = "rex_Camera_SetAngles", size = 0xD4 }
+0x824B5B40 = { name = "rex_Camera_SetAnglesCut", size = 0x12C }
+0x824B5C70 = { name = "rex_Camera_SetTarget", size = 0x6C }
+0x824B5CE0 = { name = "rex_Camera_SetTargetCut", size = 0x6C }
 0x824B5FD0 = { size = 0x5C }
 0x824B6030 = { size = 0x50 }
 0x824B6180 = { size = 0xE0 }
 0x824B6260 = { size = 0xE0 }
-0x824B6340 = { size = 0x30 }
-0x824B6370 = { size = 0x8 }
-0x824B6378 = { size = 0x10 }
+0x824B6340 = { name = "rex_Camera_InterpolateFor", size = 0x30 }
+0x824B6370 = { name = "rex_Camera_SetShake", size = 0x8 }
+0x824B6378 = { name = "rex_Camera_StopShake", size = 0x10 }
 0x824B7928 = { size = 0x248 }
 0x824B7B70 = { size = 0xF8 }
 0x824B7C68 = { size = 0x10 }
@@ -11504,6 +11504,9 @@
 # The crime screen's opener, the logbook's stats view and the preview scene's figures
 # (crime_screen_stated.cpp, logbook_stats_stated.cpp, preview_figures_stated.cpp).
 0x823C4128 = { name = "rex_lhGuiCrimeScreen_Open" }
+# XamShowKeyboardUI's one guest thunk (`b XamShowKeyboardUI`), called by the villager card's rename;
+# keyboard_ui.cpp leaves the request pending for the host to answer.
+0x82CC2E90 = { name = "rex_Xam_ShowKeyboardUI", size = 0x4 }
 0x823C48D8 = { name = "rex_lhGuiLogbookScreen_OpenOnPlayer" }
 0x829BAEB8 = { name = "rex_lhGuiLogbookStatsPage_Fill" }
 0x82436548 = { name = "rex_lhCoopScreen_Open" }
@@ -11599,10 +11602,12 @@
 0x826A2A60 = { name = "rex_lhGuiPauseRootScreen_OnExit" }
 0x826A92D8 = { name = "rex_lhGuiCrimeScreen_OnMenuEvent" }
 0x826A96B8 = { name = "rex_lhGuiCrimeScreen_OnScreenAction" }
+0x826A8E28 = { name = "rex_lhGuiCrimeScreen_Update" }
 0x826AA060 = { name = "rex_lhGuiExpressionWheel_SetCursorFromStick" }
 0x826AA230 = { name = "rex_lhGuiExpressionWheel_Accept" }
 0x826AA510 = { name = "rex_lhGuiExpressionWheel_Back" }
 0x826AA5D8 = { name = "rex_lhGuiExpressionWheel_EndHeldExpression" }
+0x826AE270 = { name = "rex_lhGuiShopScreen_Update" }
 0x826AE5C0 = { name = "rex_lhGuiShopScreen_OnMenuEvent" }
 0x826AE760 = { name = "rex_lhGuiShopScreen_OnScreenAction" }
 0x826B2210 = { name = "rex_lhGuiRealEstateScreen_OnMenuEvent" }
@@ -11616,6 +11621,8 @@
 0x826B65F0 = { name = "rex_lhGuiScreen_OnMenuEventNavSoundsOnly" }
 0x826B6D98 = { name = "rex_lhGuiSelectionScreen_OnScreenAction" }
 0x826B7770 = { name = "rex_lhGuiDecorationScreen_OnScreenAction" }
+0x826B65B0 = { name = "rex_lhGuiSelectionScreen_Update" }
+0x826B7510 = { name = "rex_lhGuiDecorationScreen_Update" }
 0x826B83D0 = { name = "rex_lhGuiPauseMenu_IsTabAvailable" }
 0x826B9210 = { name = "rex_lhGuiPresentation_GetFloatParam" }
 0x826B92D0 = { name = "rex_lhGuiPresentation_GetStringParam" }
@@ -11624,8 +11631,10 @@
 0x826B9510 = { name = "rex_lhGuiPresentation_SetStringParam" }
 0x826C2660 = { name = "rex_lhGuiAbilitiesScreen_OnMenuEvent" }
 0x826C2958 = { name = "rex_lhGuiAbilitiesScreen_OnScreenAction" }
+0x826C4568 = { name = "rex_lhGuiGiftGivingScreen_Update" }
 0x826C45C8 = { name = "rex_lhGuiGiftGivingScreen_OnMenuEvent" }
 0x826C4BC0 = { name = "rex_lhGuiGiftGivingScreen_OnScreenAction" }
+0x826C5E70 = { name = "rex_lhGuiWorldMapScreen_Update" }
 0x826C6110 = { name = "rex_lhGuiWorldMapScreen_OnMenuEvent" }
 0x826C63C8 = { name = "rex_lhGuiWorldMapScreen_OnScreenAction" }
 0x826C6EE8 = { name = "rex_lhWorldMapSaleVector_Destroy" }
@@ -11798,6 +11807,15 @@
 0x827C1190 = { name = "rex_CECCreatureGenerator_InCreateRange" }
 0x827C12C0 = { name = "rex_CECCreatureGenerator_OutOfDestroyRange" }
 0x821B9258 = { name = "rex_lhCameraManager_Update" }
+# The camera, stated (Fable2/src/hooks/src/camera_statements.cpp): the easing step, its random shake
+# of position and rows, the manager's block getter and push. The Lua setters are named in place.
+0x82182D60 = { name = "rex_Camera_SetDirection" }
+0x824B5D50 = { name = "rex_Camera_SetDirectionCut" }
+0x822A4A00 = { name = "rex_Camera_Ease" }
+0x822CBAA8 = { name = "rex_Camera_ShakePosition" }
+0x8217B468 = { name = "rex_Camera_ShakeRotation" }
+0x82265F90 = { name = "rex_lhCameraManager_Block" }
+0x821B8FD8 = { name = "rex_lhCameraManager_Push" }
 0x821ED378 = { name = "rex_CECLevelExit_Update" }
 0x8283BEF8 = { name = "rex_CECLevelExit_Fire" }
 0x82821E88 = { name = "rex_CECOnActionUse_Update" }
@@ -11856,6 +11874,8 @@
 0x828731A8 = { name = "rex_CECShopkeeper_Greet" }
 0x82789BB0 = { name = "rex_CECOpinionReaction_Copy" }
 0x822EF760 = { name = "rex_CXboxLive_PartnerName" }
+0x82D00E90 = { name = "rex_XSessionLeaveRemote" }
+0x82D00DE8 = { name = "rex_XSessionLeaveLocal" }
 0x82560590 = { name = "rex_NLivePresence_PlayerName" }
 0x823A1248 = { name = "rex_NLivePresence_GiftAccepted" }
 0x8235A500 = { name = "rex_lhCoopText_DonationRecipient" }
@@ -11970,6 +11990,10 @@
 0x8243AEF8 = { name = "rex_lhGuiCoopScreen_CommitPickedSave" }
 0x8243B390 = { name = "rex_lhGuiCoopScreen_ClosePicker" }
 0x82439630 = { name = "rex_lhGuiCoopScreen_OwnSaveIndex" }
+0x824389D0 = { name = "rex_lhGuiCoopScreen_OnScreenAction", size = 0x30 }
+0x82403350 = { name = "rex_lhGuiInput_RawPass" }
+0x824044B8 = { name = "rex_lhGuiInput_PlayAPress" }
+0x82404708 = { name = "rex_lhGuiInput_PostExpressionMenuOpened" }
 # B7 UI cut: entries whose arguments state what the headless stamps and told texts used to catch.
 0x826E1408 = { name = "rex_lhGui_FrontendRoot_StampSaveCard" }
 # Ten saves (guest_tick_pump.cpp StartNewGame, frontend_stated.cpp): the New Game guard's own count and
@@ -11978,11 +12002,14 @@
 0x82667F50 = { name = "rex_lhUserDeviceMap_Erase" }
 0x824714E8 = { name = "rex_lhSaveRecord_ScreenshotTexture" }
 # The front end's stated model (frontend_stated.cpp): the front-end GUI's constructor and scalar
-# destructor, its screen switch, the title's activate, the Load Game card move and the save texts.
+# destructor, its screen switch, the title's activate, the Load Game card move and the save texts;
+# the title's Update and its attract's exit call (`sub_826D5DA8`, one caller, 0x826E3520).
 0x82378230 = { name = "rex_lhFrontEndGui_Ctor" }
 0x823783B8 = { name = "rex_lhFrontEndGui_ScalarDtor", size = 0x50 }
 0x82379488 = { name = "rex_lhFrontEndGui_SetActiveScreen" }
 0x826E30F0 = { name = "rex_lhGuiFrontEndTitle_Activate" }
+0x826E3150 = { name = "rex_lhGuiFrontEndTitle_Update" }
+0x826D5DA8 = { name = "rex_lhGuiFrontEndTitle_AttractExitClear" }
 0x826E0BE0 = { name = "rex_lhGuiFrontEndRoot_SelectCard" }
 0x826E14F8 = { name = "rex_lhGuiFrontEndRoot_BuildSaveTexts" }
 0x82447160 = { name = "rex_lhSaveManager_ReadSaveHeader" }
@@ -11993,12 +12020,10 @@
 0x823DB850 = { name = "rex_lhGuiGamerCard_SetName" }
 0x82370178 = { name = "rex_lhGuiManager_ExitGuiModeQuiet" }
 # B7 UI cut, told values to their calls (gui_headless_presentation.cpp): the pause legend row
-# (r5 row, r6 tag, r7 &hash), the pickbox's Init (r5 path) and SetIndex (r4 index), the logbook's
-# expression fill (its writes untold).
+# (r5 row, r6 tag, r7 &hash), the pickbox's Init (r5 path) and SetIndex (r4 index).
 0x826A3AC8 = { name = "rex_lhGuiPauseRootScreen_SetMapKey" }
 0x82881FD0 = { name = "rex_lhGuiPickBox_Init" }
 0x828821D0 = { name = "rex_lhGuiPickBox_SetIndex" }
-0x829BCDF0 = { name = "rex_lhGuiLogbookScreen_FillExpression" }
 # The options screen, stated (gui_headless_presentation.cpp, options_levels_stated.cpp): the row
 # widget's base Init (r5 path) and SetSelected (r4 flag), the slider's SetValue (f1), the
 # profile's gamma getter (returns f1) and setter (f1), and the audio manager's four level setters.
@@ -12281,6 +12306,26 @@ registers = ["r3"]
 name = "RefiiCoopEstateBuyer"
 address = 0x826B1A6C
 registers = ["r6"]
+
+# The crime screen (gui_screen_stub_crime.cpp): the arrest's statement of whose screen it opens, r4 =
+# the criminal is hero two (the pause root's owner call in VillageCrimeManager.DisplayCrimeScreen), and
+# the sender of the choice's world message, r6, just after it is taken from the local player's hero.
+[[midasm_hook]]
+name = "RefiiCrimeArrested"
+address = 0x827D0078
+registers = ["r4"]
+
+[[midasm_hook]]
+name = "RefiiCrimeSender"
+address = 0x826A94E4
+registers = ["r6"]
+
+# The numeric adjuster's hold acceleration writes its value with no test against the limits
+# (display_box_hooks.cpp, GitHub #57): r3 the value about to be stored, r31 the widget.
+[[midasm_hook]]
+name = "RefiiNumericAdjusterHeldValue"
+address = 0x822CFA4C
+registers = ["r3", "r31"]
 
 # Player two's own expression wheel, and a joiner's own tutorials (coop_ui_hooks.cpp).
 [[midasm_hook]]

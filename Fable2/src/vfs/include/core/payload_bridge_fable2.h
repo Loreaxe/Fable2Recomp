@@ -34,6 +34,11 @@ void refii_bridge_front_end_note_subtitles(int32_t state);
 /// the host bridge, so it has to cross here rather than by C++ symbol.
 void refii_bridge_note_pause_tabs(uint32_t mask);
 
+/// Local co-op split screen IN EFFECT (the switch, local co-op, and player two's Player built
+/// with its own camera manager), stated by the pump each guest tick; read by the host bridge's
+/// RefiiHostGetCoopSession word [12].
+void refii_bridge_note_coop_split_in_effect(int32_t in_effect);
+
 /// The pause minimap's quest markers as the guest states them (hooks/gui_pause_hooks.cpp): the
 /// pass begins (the table empties), then one note per marker — `token` 0 Quest, 1 QuestExit,
 /// 2 QuestGiver (`Foreground.ReusableTokens.<name>`), and the world point it projects.

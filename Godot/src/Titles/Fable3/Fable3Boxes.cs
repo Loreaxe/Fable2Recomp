@@ -93,6 +93,11 @@ public partial class Fable3Boxes : Control
 			Answer(boxes, delta);
 		}
 
+		// The router gives the pad to a showing box (not an intermission) before the TopBox, and the
+		// menu box takes A; the hook checks the guest's own queues again (PadTakenAheadOfTopBox).
+		DriveTopBox(Refii.Game.GameInput.Pad0.Buttons, !RefiiUp && !menuUp && _natives.FrontOwned is null &&
+			boxes.Menu is null && Refii.Host.HostBridge.IsGuestUp && !Fable3HostOptions.IsOpen);
+
 		string shown = RefiiUp ? RefiiShown() ?? string.Empty : string.Empty;
 		if (boxes.Generation != _drawn || shown != _refiiDrawn)
 		{
@@ -205,7 +210,28 @@ public partial class Fable3Boxes : Control
 		uint pressedBits = down & ~_wasDown;
 		_wasDown = down;
 		_answeredAge += delta;
-		if (pressedBits == 0u || !Refii.Host.HostBridge.IsGuestUp || Fable3HostOptions.IsOpen)
+		if (boxes.Menu is { } pointed && Refii.Host.HostBridge.IsGuestUp && !Fable3HostOptions.IsOpen && PointMenu(pointed))
+		{
+			return;
+		}
+
+		if (!Refii.Host.HostBridge.IsGuestUp || Fable3HostOptions.IsOpen)
+		{
+			return;
+		}
+
+		// The presses are guest pad 0's (GameInput.Pad0): player one's.
+		int player = Fable3ActingPlayer.OfPad(0);
+		if (boxes.Menu is null && _natives.FrontOwned is { Kind: "card", Box.Buttons: { ShowA: true, HoldA: true } } held)
+		{
+			HoldCard(held, (down & Refii.Game.GameInput.ButtonA) != 0 || PointerHolds("A"), delta, player);
+		}
+		else
+		{
+			_holding = 0u;
+		}
+
+		if (pressedBits == 0u)
 		{
 			return;
 		}
@@ -223,13 +249,13 @@ public partial class Fable3Boxes : Control
 				menu.Highlight = Fable3BoxAnswers.MenuStep(menu.Highlight, menu.Options.Count, press.Down);
 				QueueRedraw();
 			}
-			else if (press.A && menu.Options.Count > 0)
+			else if (press.A && menu.Options.Count > 0 && Fable3BoxAnswers.MenuPick(menu.Highlight, player) is { } pick)
 			{
-				Post(Fable3BoxAnswers.MenuPick(menu.Highlight), 0u);
+				Post(pick, 0u);
 			}
 			else if (press.B && menu.Cancelable)
 			{
-				Post(Fable3BoxAnswers.MenuCancel, 0u);
+				Post(Fable3BoxAnswers.MenuCancel(player), 0u);
 			}
 
 			return;
@@ -256,11 +282,137 @@ public partial class Fable3Boxes : Control
 			return;
 		}
 
-		string? action = Fable3BoxAnswers.ForBox(front.Kind, front.Address, press, boxes.Adjusting?.Value ?? 0, front.Download);
+		string? action = Fable3BoxAnswers.ForBox(front.Kind, front.Address, press, boxes.Adjusting?.Value ?? 0, front.Download, player,
+			front.Box.Buttons is { HoldA: true });
 		if (action is not null)
 		{
 			Post(action, front.Address);
 		}
+	}
+
+	// ---------------------------------------------------------------- the held info card
+	// A card whose A must be held fills on Godot's clock (Fable3BoxAnswers.CardHoldSeconds) while
+	// the pad's A, its key, or the mouse on the drawn A prompt is held, and drains when let go, as
+	// the guest's own fill did; the step it reaches full posts the accept once
+	// (display_box_hooks.cpp: PostButtonAnswer(1)). The card stays until its script removes it.
+
+	private readonly Engine_UiHoldMeter _cardHold = new(Fable3BoxAnswers.CardHoldSeconds);
+	private uint _holding;
+
+	private void HoldCard(Fable3GuiNatives.OwnedBox card, bool held, double delta, int player)
+	{
+		if (_holding != card.Address)
+		{
+			_holding = card.Address;
+			_cardHold.Reset();
+		}
+
+		float before = _cardHold.Progress;
+		if (_cardHold.Step(delta, held))
+		{
+			Post(Fable3BoxAnswers.CardHold(card.Address, player), 0u);
+		}
+
+		if (_cardHold.Progress != before)
+		{
+			QueueRedraw();
+		}
+	}
+
+	/// <summary>The fill of the held card <paramref name="box"/> as drawn, or -1 for a box with no hold.</summary>
+	private float HoldShown(Engine_UiGuiBoxes.Box box)
+	{
+		if (box.Buttons is not { ShowA: true, HoldA: true })
+		{
+			return -1f;
+		}
+
+		return _natives.FrontOwned is { } front && ReferenceEquals(front.Box, box) && _holding == front.Address ? _cardHold.Progress : 0f;
+	}
+
+	/// <summary>The left button held down on this surface's drawn <paramref name="button"/> prompt, the menus' pointer free.</summary>
+	private bool PointerHolds(string button) =>
+		Engine_UiPointer.Free && Engine_UiInputMode.KeyboardMouse && Input.IsMouseButtonPressed(MouseButton.Left) &&
+		Fable3Prompts.ButtonAt(_prompts, GetLocalMousePosition()) == button;
+
+	/// <summary>The prompts as last drawn, in this control's space.</summary>
+	private readonly List<(Rect2 Rect, string Button)> _prompts = new();
+
+	// ---------------------------------------------------------------- the TopBox's A and Y
+	// The TopBox's buttons are its own input's (topbox_answer.cpp): their going down and up is handed
+	// to it, and it decides — the message it shows, player one's pad, press or hold, the moving hero.
+	// Only while the message up shows that button and nothing of Godot's or the guest's ahead of the
+	// TopBox has the pad; a button handed down is always handed up.
+
+	private readonly bool[] _topBoxDown = new bool[2];
+
+	private void DriveTopBox(uint down, bool open)
+	{
+		Fable3UiStatements.TopBoxMessage? up = Fable3UiStatements.TopBox.Current;
+		for (int i = 0; i < 2; ++i)
+		{
+			bool a = i == 0;
+			bool held = (down & (a ? Refii.Game.GameInput.ButtonA : Refii.Game.GameInput.ButtonY)) != 0;
+			if (held && !_topBoxDown[i] && open && up is { } message && (a ? message.ShowA : message.ShowY))
+			{
+				_topBoxDown[i] = true;
+				Refii.Host.HostBridge.PostFrontEndAction(Fable3BoxAnswers.TopBox(a, true, Fable3ActingPlayer.OfPad(0)));
+			}
+			else if (!held && _topBoxDown[i])
+			{
+				_topBoxDown[i] = false;
+				Refii.Host.HostBridge.PostFrontEndAction(Fable3BoxAnswers.TopBox(a, false, Fable3ActingPlayer.OfPad(0)));
+			}
+		}
+	}
+
+	/// <summary>The menu box's rows as last drawn, top to bottom, in this control's space.</summary>
+	private readonly List<Rect2> _menuRows = new();
+	private Vector2 _pointerAt;
+
+	/// <summary>
+	/// THE POINTER ON THE MENU BOX. Its highlight is Godot's and its pick is a stated row
+	/// (<see cref="Fable3BoxAnswers.MenuPick"/>: the guest's own highlight then select), so the
+	/// pointer needs no walk: moving onto a row highlights it, a click on a row picks that row.
+	/// A pointer at rest sets nothing, so the pad's steps stand until the mouse moves again.
+	/// Player one's, as the mouse is. True when a click picked.
+	/// </summary>
+	private bool PointMenu(Engine_UiGuiBoxes.MenuBoxModel menu)
+	{
+		if (!Engine_UiPointer.Free || !Engine_UiInputMode.KeyboardMouse)
+		{
+			return false;
+		}
+
+		Vector2 at = GetLocalMousePosition();
+		bool moved = at.DistanceSquaredTo(_pointerAt) > 4f;
+		if (moved)
+		{
+			_pointerAt = at;
+		}
+
+		int row = Fable3BoxAnswers.RowAt(_menuRows, at);
+		if (row < 0 || row >= menu.Options.Count)
+		{
+			return false;
+		}
+
+		if (Engine_UiPointer.LeftPressed && Fable3BoxAnswers.MenuPick(row, Fable3ActingPlayer.One) is { } pick)
+		{
+			Engine_UiPointer.TakeLeft();
+			menu.Highlight = row;
+			Post(pick, 0u);
+			QueueRedraw();
+			return true;
+		}
+
+		if (moved && menu.Highlight != row)
+		{
+			menu.Highlight = row;
+			QueueRedraw();
+		}
+
+		return false;
 	}
 
 	private void Post(string action, uint address)
@@ -275,6 +427,9 @@ public partial class Fable3Boxes : Control
 
 	public override void _Draw()
 	{
+		Fable3Prompts.Begin(this);
+		_menuRows.Clear();
+		_prompts.Clear();
 		if (_font is null)
 		{
 			return;
@@ -337,6 +492,25 @@ public partial class Fable3Boxes : Control
 	private void DrawFront(Engine_UiGuiBoxes.Box box, Vector2 size, float scale, Engine_BabelDatabase? strings)
 	{
 		var buttons = new List<(string Button, string Label)>();
+		if (_natives.OwnedKind(box) is "card" or "buttons" && box.Buttons is { } stated)
+		{
+			// The info card and the button box: the title and the labels they state (the button box
+			// states none: GUI_ACCEPTANCE_BOX, its script's accept and help), each behind its button.
+			if (stated.ShowA)
+			{
+				buttons.Add(("A", Label(stated.AcceptText, "GUI_DIALOG_ACCEPT", strings)));
+			}
+
+			if (stated.ShowY)
+			{
+				buttons.Add(("Y", Label(stated.HelpText, "GUI_DIALOG_HELP", strings)));
+			}
+
+			string heading = box.Title.Length == 0 ? string.Empty : Label(box.Title, box.Title, strings);
+			DrawPanel(heading, box.Text, buttons, size, scale, HoldShown(box));
+			return;
+		}
+
 		if (box.Kind == Engine_UiGuiBoxes.BoxKind.Question)
 		{
 			buttons.Add(("A", Label(box.Buttons?.AcceptText, "GUI_YES", strings)));
@@ -373,7 +547,8 @@ public partial class Fable3Boxes : Control
 	}
 
 	/// <summary>The front box's panel: the title, the body and the prompts right-aligned on the last line.</summary>
-	private void DrawPanel(string title, string body, List<(string Button, string Label)> buttons, Vector2 size, float scale)
+	private void DrawPanel(string title, string body, List<(string Button, string Label)> buttons, Vector2 size, float scale,
+		float hold = -1f)
 	{
 		float width = Mathf.Min(BoxWidth * scale, size.X - (2f * Padding * scale));
 		float inner = width - (2f * Padding * scale);
@@ -400,8 +575,18 @@ public partial class Fable3Boxes : Control
 		float y = rect.End.Y - (Padding * scale) - lineHeight;
 		foreach ((string button, string label) in buttons)
 		{
-			x -= Fable3Prompts.Measure(_font, label, scale);
+			float promptWidth = Fable3Prompts.Measure(_font, label, scale);
+			x -= promptWidth;
 			Fable3Prompts.Draw(this, _font, button, label, new Vector2(x, y), scale, Colors.White);
+			_prompts.Add((new Rect2(new Vector2(x, y), new Vector2(promptWidth, lineHeight)), button));
+			if (button == "A" && hold >= 0f)
+			{
+				// The hold's fill under its prompt, Fable 3's gold on the panel's dark.
+				var track = new Rect2(new Vector2(x, y + lineHeight + (2f * scale)), new Vector2(promptWidth, 3f * scale));
+				DrawRect(track, new Color(1f, 1f, 1f, 0.2f));
+				DrawRect(new Rect2(track.Position, new Vector2(promptWidth * hold, track.Size.Y)), TitleColour);
+			}
+
 			x -= ButtonGap * scale;
 		}
 	}
@@ -464,6 +649,7 @@ public partial class Fable3Boxes : Control
 				DrawRect(new Rect2(pen - new Vector2(6f * scale, 2f * scale), new Vector2(inner + (12f * scale), rowHeight)), new Color(1f, 1f, 1f, 0.15f));
 			}
 
+			_menuRows.Add(new Rect2(pen - new Vector2(6f * scale, 2f * scale), new Vector2(inner + (12f * scale), rowHeight)));
 			Engine_UiCanvasText.DrawLine(this, _font, option.Label, pen, scale, option.Enabled ? Colors.White : Disabled);
 			pen.Y += rowHeight;
 		}
@@ -486,6 +672,8 @@ public partial class Fable3Boxes : Control
 		{
 			"GUI_DIALOG_BACK" => "Back",
 			"GUI_DIALOG_ACCEPT" => "Accept",
+			"GUI_DIALOG_HELP" => "Help",
+			"GUI_ACCEPTANCE_BOX" => "Accept",
 			"GUI_YES" => "Yes",
 			"GUI_NO" => "No",
 			_ => text,

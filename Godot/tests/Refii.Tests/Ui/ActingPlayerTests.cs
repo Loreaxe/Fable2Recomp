@@ -43,6 +43,15 @@ public class ActingPlayerTests
 	}
 
 	[TestCase]
+	public void PlayerTwoAnswersEveryBoxWhileTheyOwnTheGui()
+	{
+		AssertThat(Fable2ActingPlayer.Answerer(statedOwner: 2, modalMode: 1u)).IsEqual(2);
+		AssertThat(Fable2ActingPlayer.Answerer(statedOwner: 2, modalMode: 3u)).IsEqual(2);
+		AssertThat(Fable2ActingPlayer.Answerer(statedOwner: 1, modalMode: 1u)).IsEqual(1);
+		AssertThat(Fable2ActingPlayer.Answerer(statedOwner: 1, modalMode: 3u)).IsEqual(0);
+	}
+
+	[TestCase]
 	public void TheCoopScreensBoxesAreAnsweredByGodot()
 	{
 		static Engine_UiModalTemplate Row(uint id, bool dismissal)

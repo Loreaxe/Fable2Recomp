@@ -145,9 +145,9 @@ public static class Fable2PageProviders
 			// what lights them: the gamertag block is authored at 100 and slid to 0 by the guest,
 			// whose own text there is its stub profile name.
 			values["Foreground.LeftPage.ProfileSelector.gamertag.gamertag"] =
-				CoopPlayerOneName.Length != 0 ? CoopPlayerOneName : "Player 1";
+				CoopPlayerOneName.Length != 0 ? CoopPlayerOneName : Refii.Text.Engine_OwnWords.Say("REFII_PLAYER_1");
 			values["Foreground.RightPage.ProfileSelector.gamertag.gamertag"] =
-				CoopPlayerTwoName.Length != 0 ? CoopPlayerTwoName : "Player 2";
+				CoopPlayerTwoName.Length != 0 ? CoopPlayerTwoName : Refii.Text.Engine_OwnWords.Say("REFII_PLAYER_2");
 
 			// X ON THE RIGHT PAGE IS THE HERO-FROM-SAVE PROMPT.
 			//

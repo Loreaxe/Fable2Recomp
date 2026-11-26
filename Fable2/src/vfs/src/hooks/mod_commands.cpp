@@ -1742,7 +1742,7 @@ std::atomic<int32_t> g_camera_held[2] = {0, 0};
 
 /// The camera manager of the player keyed `player` (1 or 2) in the guest's player map: game+0x9C
 /// ({key, Player, _} from container+8 to +0xC), Player+4 the holder, holder+4 the manager — the
-/// hops RefiiHostGetPlayerCamera and the split-screen tick take. 0 when there is none.
+/// hops the split-screen tick takes. 0 when there is none.
 uint32_t CameraManagerOf(uint8_t* base, int32_t player) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
   const uint32_t root = refii::mods::LoadU32(base, refii::guest::Address(0x83496AB8u));

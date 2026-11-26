@@ -677,18 +677,12 @@ public partial class GameSession : Node
 	}
 
 	/// <summary>
-	/// Logs the guest camera when it moves. The snapshot at 0x8331A230 is a pull cache refreshed
-	/// by sub_82211598 when dword_83319650 (sim generation) moves, via sub_821DD3B0 ->
-	/// sub_82265F90 whose memo at cameraManager+0xD0 is KeTickCount-stamped (at most once per ms).
-	/// Preferred source is the camera manager's pushed block:
-	/// cameraManager+0xE0 position, +0xF0 up, +0x100 forward, +0x110 fov, +0x114 bool, written by
-	/// sub_821B8FD8 once per sim tick from sub_8233B6B0. Manager pointer: Game = *(0x83496AB8+12),
-	/// binary-search the 12-byte entries between *(Game+0x9C)+8 and +12 for key 1 (key 2 when
-	/// *(Game+0x8C)+0x34 and +0x36 say an online joiner), then *(entry+4), then *(view+4).
+	/// Logs the drawn camera when it moves: the block rebuilt from the guest's camera statements for
+	/// the manager this machine draws (Refii.Camera.Engine_CameraFeed).
 	/// </summary>
 	private void TraceCamera()
 	{
-		if (HostBridge.GetCamera() is not { } camera)
+		if (Refii.Camera.Engine_CameraFeed.AsGuestCamera(Refii.Camera.Engine_CameraFeed.Drawn?.Live) is not { } camera)
 		{
 			return;
 		}

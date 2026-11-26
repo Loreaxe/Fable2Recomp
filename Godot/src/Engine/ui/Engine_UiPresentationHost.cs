@@ -86,8 +86,8 @@ public partial class Engine_UiPresentationHost : Node3D
 
 	/// <summary>
 	/// The parent of every menu node — the in-game screens, the pause list and book, the info
-	/// panel. Identity on the whole window; <see cref="SeatMenus"/> moves it into the opener's
-	/// half on split screen. Built on first use.
+	/// panel. The whole window, on split screen too: a menu is drawn as in single player. Built on
+	/// first use.
 	/// </summary>
 	public Node3D MenuLayer
 	{
@@ -101,83 +101,6 @@ public partial class Engine_UiPresentationHost : Node3D
 			}
 
 			return _menuLayer;
-		}
-	}
-
-	private Vector4 _menuSeat = new(1f, 1f, 0f, 0f);
-
-	private bool _watchingAdds;
-
-	/// <summary>
-	/// Seats the menus: <paramref name="scale"/> about the canvas origin, then moved to
-	/// <paramref name="centre"/>. (1, origin) is the whole window. Every UI material under the
-	/// layer carries the seat as its <c>clip_seat</c>, so its clip compares in laid-out space; a
-	/// mesh added later takes it as it enters the tree. A material parameter, not an instance
-	/// uniform: those crash this engine's separate render thread on Node.duplicate (see
-	/// ui_quad.gdshader). The menu books are clones of their own templates, so their materials
-	/// are theirs and the HUD's (another book) are never touched.
-	/// </summary>
-	public void SeatMenus(float scale, Vector2 centre)
-	{
-		var seat = new Vector4(scale, scale, centre.X, centre.Y);
-		Node3D layer = MenuLayer;
-		if (seat == _menuSeat)
-		{
-			return;
-		}
-
-		_menuSeat = seat;
-		layer.Transform = new Transform3D(
-			Basis.Identity.Scaled(new Vector3(scale, scale, 1f)), new Vector3(centre.X, centre.Y, 0f));
-		StampSeat(layer);
-
-		if (!_watchingAdds && IsInsideTree())
-		{
-			_watchingAdds = true;
-			GetTree().NodeAdded += OnNodeAdded;
-		}
-	}
-
-	/// <summary>A mesh entering the seated layer takes the seat once its material is on (a
-	/// builder may assign it right after adding the node, so the stamp waits a frame). Unseated,
-	/// the shader's default is the seat.</summary>
-	private void OnNodeAdded(Node node)
-	{
-		if (node is not GeometryInstance3D || _menuSeat == new Vector4(1f, 1f, 0f, 0f) ||
-			_menuLayer is not { } layer || !GodotObject.IsInstanceValid(layer) || !layer.IsAncestorOf(node))
-		{
-			return;
-		}
-
-		Callable.From(() =>
-		{
-			if (GodotObject.IsInstanceValid(node))
-			{
-				StampSeat(node);
-			}
-		}).CallDeferred();
-	}
-
-	private static readonly StringName ClipSeatParamName = "clip_seat";
-	private static readonly Vector4 IdentitySeat = new(1f, 1f, 0f, 0f);
-
-	private void StampSeat(Node node)
-	{
-		if (node is MeshInstance3D mesh && mesh.MaterialOverride is ShaderMaterial existing &&
-			Engine_UiSceneBuilder.IsUiShader(existing.Shader))
-		{
-			Variant current = existing.GetShaderParameter(ClipSeatParamName);
-			Vector4 currentSeat = current.VariantType == Variant.Type.Vector4 ? current.AsVector4() : IdentitySeat;
-			if (!currentSeat.IsEqualApprox(_menuSeat) &&
-				Engine_UiSceneBuilder.EnsureOwnedMaterial(mesh) is { } material)
-			{
-				material.SetShaderParameter(ClipSeatParamName, _menuSeat);
-			}
-		}
-
-		foreach (Node child in node.GetChildren())
-		{
-			StampSeat(child);
 		}
 	}
 
@@ -827,6 +750,16 @@ public partial class Engine_UiPresentationHost : Node3D
 		{
 			Theme.Strings = Strings;
 		}
+
+		// A view keeps the book it was built from (the pause list across opens), so every book
+		// already handed out takes the new language too, not only the next hand-out.
+		if (Templates is not null)
+		{
+			Templates.Strings = Strings;
+		}
+
+		foreach (Engine_UiTheme book in _patternBooks.Values)
+			book.Strings = Strings;
 
 		GD.Print($"[ui] Loaded string database {source} ({Strings.Count} strings)");
 		StringsChanged?.Invoke(Strings);
@@ -1584,12 +1517,6 @@ public partial class Engine_UiPresentationHost : Node3D
 
 	public override void _ExitTree()
 	{
-		if (_watchingAdds && IsInsideTree())
-		{
-			GetTree().NodeAdded -= OnNodeAdded;
-			_watchingAdds = false;
-		}
-
 		if (_mountWatched is { } assets && GodotObject.IsInstanceValid(assets))
 		{
 			assets.Mounted -= OnMountChanged;

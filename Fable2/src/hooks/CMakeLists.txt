@@ -11,8 +11,10 @@ set(REFII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/unlock_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_player_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_hero_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/camera_statements.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_dog_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_ui_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/xsession_leave_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/property_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/character_morph_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_world_hooks.cpp

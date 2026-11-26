@@ -826,6 +826,15 @@ public sealed class Engine_UiScreenTemplate
 	public List<string> WideGround = new();
 
 	/// <summary>
+	/// THE TEXT PAGE'S EXTENT, when it ends short of the 16:9 edge: the x of its inner and outer
+	/// limits in the presentation's canvas units, 16:9 layout. A single-line field anchored
+	/// between them is kept between them (<see cref="Engine_UiOwnedBook"/>, "text stays on its
+	/// page": drawn smaller about its anchor, down to the floor), where the default keeps a line
+	/// inside the covers at the 16:9 edges only. Null: the page reaches the cover.
+	/// </summary>
+	public Vector2? PageSpan;
+
+	/// <summary>
 	/// Elements INSIDE a cloned unit that a Godot-owned view already draws, by element name — not
 	/// the same statement as leaving a unit out of <see cref="ChromeUnits"/>, since these are
 	/// nested (`Book` carries the page stack, which carries `loadgame`). The subtree is dropped
@@ -877,6 +886,12 @@ public sealed class Engine_UiScreenTemplate
 	/// shipped abilities screen has none: its Y is the unlearn by type, GameUi.
 	/// </summary>
 	public string FlipAction = string.Empty;
+
+	/// <summary>
+	/// The action X runs on this screen (`xAction`): the guest's code 38 — the villager card's
+	/// rename (`sub_826CCBA8`: `cmpwi r4, 0x26` → `sub_826CDCD8`), its authored prompt "Set Nickname X".
+	/// </summary>
+	public string XAction = string.Empty;
 
 	/// <summary>Whether this screen carries the spell-assignment blade.</summary>
 	public bool HasSpellBlade;

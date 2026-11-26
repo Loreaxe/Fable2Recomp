@@ -204,7 +204,7 @@ public static class Engine_UiScreenActions
 	/// Accept is checked before Back because no shipped screen states both, and a screen that
 	/// stated both would want the affirmative to win.
 	/// </summary>
-	public static void RunRevealed(uint screenId, bool accept, bool back)
+	public static void RunRevealed(uint screenId, bool accept, bool back, bool flip = false, bool x = false)
 	{
 		if (Engine_UiTemplates.Screen(screenId) is not { } screen)
 		{
@@ -220,6 +220,20 @@ public static class Engine_UiScreenActions
 		if (back && screen.RevealedBack.Length != 0)
 		{
 			Run(screen.RevealedBack, Engine_UiCommandList.Revealed);
+			return;
+		}
+
+		// The screen's Y, where it states one (`flipAction`).
+		if (flip && screen.FlipAction.Length != 0)
+		{
+			Run(screen.FlipAction, Engine_UiCommandList.Revealed);
+			return;
+		}
+
+		// The screen's X, where it states one (`xAction`): the villager card's rename.
+		if (x && screen.XAction.Length != 0)
+		{
+			Run(screen.XAction, Engine_UiCommandList.Revealed);
 		}
 	}
 }

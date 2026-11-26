@@ -370,6 +370,7 @@ public static class Engine_UiTemplateJson
 		screen.RevealedAccept = TextOr(record, "revealedAccept", screen.RevealedAccept);
 		screen.RevealedBack = TextOr(record, "revealedBack", screen.RevealedBack);
 		screen.FlipAction = TextOr(record, "flipAction", screen.FlipAction);
+		screen.XAction = TextOr(record, "xAction", screen.XAction);
 		screen.RowAction = TextOr(record, "rowAction", screen.RowAction);
 		screen.ScrollContent = TextOr(record, "scrollContent", screen.ScrollContent);
 		screen.ScrollMask = TextOr(record, "scrollMask", screen.ScrollMask);
@@ -404,6 +405,13 @@ public static class Engine_UiTemplateJson
 		Strings(record, "wideRight", ref screen.WideRight);
 		Strings(record, "wideGround", ref screen.WideGround);
 		Strings(record, "wideStretch", ref screen.WideStretch);
+		if (record.TryGetPropertyValue("pageSpan", out JsonNode? spanNode))
+		{
+			screen.PageSpan = spanNode is JsonArray { Count: 2 } span
+				? new Vector2(Single(span[0]), Single(span[1]))
+				: null;
+		}
+
 		Strings(record, "flowMoved", ref screen.FlowMoved);
 		Strings(record, "flowTailMoved", ref screen.FlowTailMoved);
 
@@ -552,6 +560,7 @@ public static class Engine_UiTemplateJson
 		copy.WideRight = new List<string>(screen.WideRight);
 		copy.WideStretch = new List<string>(screen.WideStretch);
 		copy.WideGround = new List<string>(screen.WideGround);
+		copy.PageSpan = screen.PageSpan;
 		copy.OwnedElsewhere = new List<string>(screen.OwnedElsewhere);
 		copy.GuestTextUnits = new List<string>(screen.GuestTextUnits);
 		copy.StatFields = new List<(int Id, string Path)>(screen.StatFields);
@@ -650,6 +659,7 @@ public static class Engine_UiTemplateJson
 		Put("revealedAccept", screen.RevealedAccept);
 		Put("revealedBack", screen.RevealedBack);
 		Put("flipAction", screen.FlipAction);
+		Put("xAction", screen.XAction);
 		PutFlag("hasSpellBlade", screen.HasSpellBlade, false);
 		Put("scrollContent", screen.ScrollContent);
 		Put("scrollMask", screen.ScrollMask);
@@ -680,6 +690,10 @@ public static class Engine_UiTemplateJson
 		PutList("wideRight", screen.WideRight);
 		PutList("wideGround", screen.WideGround);
 		PutList("wideStretch", screen.WideStretch);
+		if (screen.PageSpan is Vector2 pageSpan)
+		{
+			record["pageSpan"] = new JsonArray { pageSpan.X, pageSpan.Y };
+		}
 
 		if (full || screen.PanelFields.Count != 0)
 		{

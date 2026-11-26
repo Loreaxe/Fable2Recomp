@@ -136,8 +136,10 @@ void DebugCall(PPCContext& ctx, uint8_t* base, const char* args) {
 }
 
 /// Actions the host posted (core/guest_tick_queue.h): the keyboard's answer (keyboard_ui.cpp),
-/// a box's and the menu box's answers (display_box_hooks.cpp), the Options screen's actions
-/// (options_hooks.cpp) and the debug channel's `debug-gamelua:` / `debug-call:`. Any other is
+/// a box's and the menu box's answers (display_box_hooks.cpp), the TopBox's presses
+/// (topbox_answer.cpp), the Options screen's actions
+/// and row (options_hooks.cpp), the save menu's row (save_menu_row.cpp), the PC build's extras
+/// (pc_extras.cpp) and the debug channel's `debug-gamelua:` / `debug-call:`. Any other is
 /// named in the log and dropped, never deferred, so the queue cannot hold a name forever. `ctx`
 /// is the tick's, the frame the answers call the guest below.
 void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
@@ -164,6 +166,26 @@ void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
       std::vector<char> whole(needed + 1u, '\0');
       refii_bridge_guest_tick_pump_taken_action(i, whole.data(), whole.size());
       refii::fable3::AnswerUiReaderAction(whole.data());
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kTopBoxAction, sizeof(refii::fable3::kTopBoxAction) - 1u) == 0) {
+      refii::fable3::AnswerTopBox(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kPcExtraAction, sizeof(refii::fable3::kPcExtraAction) - 1u) == 0) {
+      refii::fable3::AnswerPcExtra(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kInteractionListAction, sizeof(refii::fable3::kInteractionListAction) - 1u) == 0) {
+      refii::fable3::AnswerInteractionListStep(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kSaveMenuRowAction, sizeof(refii::fable3::kSaveMenuRowAction) - 1u) == 0) {
+      refii::fable3::AnswerSaveMenuRow(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kOptionsRowAction, sizeof(refii::fable3::kOptionsRowAction) - 1u) == 0) {
+      refii::fable3::AnswerOptionsRow(ctx, base, name);
       continue;
     }
     if (std::strncmp(name, refii::fable3::kOptionsAction, sizeof(refii::fable3::kOptionsAction) - 1u) == 0) {
@@ -272,6 +294,8 @@ REX_EXTERN(rex_App_TickInput) {
   refii_bridge_ensure_alternate_signal_stack();
 
   DrainPostedActions(ctx, base);
+  refii::fable3::PumpSaveMenuRow(ctx, base);
+  refii::fable3::PumpTopBox(ctx, base);
   refii::fable3::modlua::Tick(ctx, base);
 
   const Clock::time_point before = Clock::now();

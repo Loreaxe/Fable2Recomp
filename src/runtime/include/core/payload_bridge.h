@@ -387,7 +387,7 @@ uint32_t refii_bridge_stated_pause(uint32_t* modal_mode, uint32_t* modal_id, uin
 // mode, 12 which of 7..11 are stated (bit 0 gamma .. bit 4 speaker).
 // The front end (Fable 2): 13, one word — bit 0 the front-end GUI exists, bits 1-2 its active
 // screen (0 none, 1 title, 2 main menu), bit 3 the title takes A, bits 4-5 the screen whose
-// warning is raised (0 none), bits 8-15 the title's mode,
+// warning is raised (0 none), bits 6-7 the pad the title took A from, bits 8-15 the title's mode,
 // 16-23 the main menu's, 24-31 the Load Game card.
 // The rumble switch (Fable 2): 14 — bit 1 the setter has run, bit 0 the switch it set.
 // The weapon switches the menu has pending (Fable 2): 15 the melee item, 16 the ranged item (record
@@ -399,9 +399,9 @@ uint32_t refii_bridge_stated_pause(uint32_t* modal_mode, uint32_t* modal_id, uin
 void refii_bridge_stated_value(uint32_t key, uint32_t value);
 uint32_t refii_bridge_stated_value_now(uint32_t key);
 
-// THE VIEW A TITLE STATES (src/runtime/src/core/stated_view.cpp). A title whose hook sees the
-// camera the guest renders the world with states it here, every step; its host bridge reads it
-// back for the shell.
+// THE VIEW THE SHELL DRAWS (src/runtime/src/core/stated_view.cpp): the camera the shell rebuilt
+// from the statements below, stated back every frame (RefiiHostStateCamera) for a title's hooks
+// that read it natively.
 // - position, up and forward (the guest's world axes) and the horizontal field of view in
 //   radians, `snap` non-zero when the guest cut rather than blended;
 void refii_bridge_camera_stated(const float* position, const float* up, const float* forward,
@@ -409,14 +409,24 @@ void refii_bridge_camera_stated(const float* position, const float* up, const fl
 // - the last stated camera, 11 floats (position, up, forward, horizontal fov, snap); 0 before
 //   any was stated.
 int32_t refii_bridge_camera_read(float* out);
-// - the two cameras the guest blends each step, both in the stated 11-float layout: `live` the
-//   camera this step and `previous` the one latched last step; read back as 22 floats, live first.
-void refii_bridge_camera_pair_stated(const float* live, const float* previous);
-int32_t refii_bridge_camera_pair_read(float* out);
 // THE HOST'S WORLD BUILD: set while Godot builds the level the guest is loading; a title's hook
 // on the guest's own preload gate reads it, so the guest waits in its loading screen.
 void refii_bridge_set_world_build_pending(int32_t pending);
 int32_t refii_bridge_world_build_pending(void);
+
+// THE CAMERA A TITLE STATES (src/runtime/include/core/camera_statements.h for the record and the
+// call ids): its hooks state each camera setter, activation, easing step and push in the guest's
+// order; the shell reads them back by sequence.
+// - one record of refii::camera::kRecordWords words; the runtime writes word 0 (the sequence) and
+//   word 22 (the guest frame), the rest is copied;
+void refii_bridge_camera_statement(const uint32_t* words);
+// - the depth of the camera hook the calling thread is inside (0 outside any), raised by enter and
+//   lowered by leave; a statement made inside another names the outer's depth plus one;
+uint32_t refii_bridge_camera_enter(void);
+void refii_bridge_camera_leave(void);
+// - up to `max_records` records whose sequence is after `after`, oldest first, into `out_words`;
+//   returns how many. A first record more than one past `after` means older ones were overwritten.
+uint32_t refii_bridge_camera_statements_read(uint32_t after, uint32_t* out_words, uint32_t max_records);
 
 // THE WORLD A TITLE STATES (src/runtime/src/core/stated_world.cpp): what its hooks see the guest's
 // own entry points called with; its host bridge reads each back for the shell.

@@ -26,9 +26,11 @@ public abstract class Fable2UiSource : Engine_UiSource
 
 	/// <summary>
 	/// The front end's own `dialog` box, raised by the guest (`sub_826E40E0`): whether its owner
-	/// takes the answer yet. What it says is the owner's statement (Engine_FrontEndStated.Dialog).
+	/// takes the answer yet, and whether the title raised it (the title takes A from any pad, the main
+	/// menu from the pad the title took A from). What it says is the owner's statement
+	/// (Engine_FrontEndStated.Dialog).
 	/// </summary>
-	public readonly record struct FrontEndDialogState(bool Accepting);
+	public readonly record struct FrontEndDialogState(bool Accepting, bool Title);
 
 	/// <summary>The front-end dialog that is up, or null.</summary>
 	public virtual FrontEndDialogState? GetFrontEndDialog() => null;

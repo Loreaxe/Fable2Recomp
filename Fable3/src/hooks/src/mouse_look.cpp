@@ -1105,9 +1105,9 @@ void AfterCameraUpdate(PPCContext& ctx, uint8_t* base, uint32_t manager) {
 
     if (update.draw == kModeOrbit) {
       // The camera looks at RollingFocalPos from its placed position: the turn's vertical axis
-      // lies on the level line of sight, this far out. The position is the camera the view feed
-      // last stated (view_feed.cpp, the manager's final block each high-frequency step); the
-      // focus moves metres per second, so last step's camera places the pivot to within the
+      // lies on the level line of sight, this far out. The position is the camera the shell last
+      // drew (its rebuild of the manager's block, stated back by RefiiHostStateCamera); the
+      // focus moves metres per second, so last frame's camera places the pivot to within the
       // frame's motion.
       float stated[11];
       float focus[3] = {0.0f, 0.0f, 0.0f};

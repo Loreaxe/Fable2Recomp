@@ -31,7 +31,8 @@ public static class Engine_UiFurniturePage
 {
 	public const uint ScreenId = 26;
 
-	/// <summary>The verb prefix the guest-tick pump answers — see `DispatchFurnitureAction`.</summary>
+	/// <summary>The verb prefix; posted with the acting player as the pump's `Furniture:&lt;p&gt;:…`
+	/// (<see cref="Fable2PortedScreens.RowLever"/>, `DispatchFurnitureAction`).</summary>
 	public const string FurnitureAction = "Furniture:";
 
 	/// <summary>

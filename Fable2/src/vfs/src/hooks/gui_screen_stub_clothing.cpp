@@ -179,6 +179,7 @@ void ClothingScreenOnEnter(PPCContext& ctx, uint8_t* base) {
   DropString(ctx, base, s.frame, name);
 
   Call(ctx, base, s.frame, 0x8246B5E8u, {pres, Address(0x8349B28Cu), 1u});
+  RestatePurseForPlayerTwo(ctx, base, s.frame, pres, 0x8349B28Cu);
   CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
   Call(ctx, base, s.frame, 0x826B8348u, {LoadU32(base, g + 76u), 6u});
   StoreU32(base, h + 0x124u, 0xFFFFFFFFu);

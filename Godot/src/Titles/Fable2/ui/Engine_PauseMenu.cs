@@ -70,6 +70,12 @@ public static class Engine_PauseMenu
 	/// </summary>
 	public const string CoopCommandPrefix = "PauseCoop:";
 
+	/// <summary>
+	/// Player two's Quit row: the verb posts "PauseHenchmanQuit:&lt;player&gt;", whose pump runs the
+	/// guest's own henchman arm `sub_826A6610` (gui_screen_stub_pause_root.cpp): its box 26 or 27.
+	/// </summary>
+	public const string HenchmanQuitCommand = "PauseHenchmanQuit";
+
 	/// <summary>The host's Kick row, offered only while an online partner stands.</summary>
 	public const string KickRow = "Kick";
 
@@ -131,6 +137,39 @@ public static class Engine_PauseMenu
 		changed |= menu.SetGhosted("Clothing", (mask & (1u << (int)TabClothing)) == 0);
 		changed |= menu.SetGhosted("Logbook", (mask & (1u << (int)TabLogbook)) == 0);
 		changed |= menu.SetGhosted("Options", (mask & (1u << (int)TabOptions)) == 0);
+		return changed;
+	}
+
+	/// <summary>
+	/// The Save rows' ghost, as the guest's pause list states it on every tick it is up: its vf+8
+	/// (`sub_8298DEF0`, disc 0x828427B8) ends in `sub_8298F578(list, sub_82448900(SaveMgr))`, which is
+	/// `SetItemGhosting(name, held == 0)` for "Save and Continue" and "Save and Quit" (0x8298F5D8 /
+	/// 0x8298F61C). The guest names those rows by their localised text, so they are joined by their
+	/// place under "Saving" (ids 0 and 1, `sub_8298DF98`), never by name. Both of Godot's Save and
+	/// Quit rows take the guest's one. True when anything changed.
+	/// </summary>
+	public static bool ApplyStatedSaveGhosts(
+		Engine_FrontEndMenu menu, System.Collections.Generic.IReadOnlyList<Engine_UiMenuModel.Row> stated)
+	{
+		bool changed = false;
+		foreach (Engine_UiMenuModel.Row row in stated)
+		{
+			if (row.Parent != "Saving")
+			{
+				continue;
+			}
+
+			if (row.Id == 0u)
+			{
+				changed |= menu.SetGhosted("SaveAndContinue", row.Ghosted);
+			}
+			else if (row.Id == 1u)
+			{
+				changed |= menu.SetGhosted("SaveAndQuit", row.Ghosted);
+				changed |= menu.SetGhosted("SaveAndQuitToDesktop", row.Ghosted);
+			}
+		}
+
 		return changed;
 	}
 }

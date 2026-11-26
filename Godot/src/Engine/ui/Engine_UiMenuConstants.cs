@@ -226,6 +226,17 @@ public static class Engine_UiMenuConstants
 	// ---------------------------------------------------------------------------------------
 
 	/// <summary>
+	/// The name a real-estate row is keyed by: its event's own name (`RealEstateBuy` .. `RealEstateBack`,
+	/// 110..120), the identity the guest's row builder states (`sub_82998300`: each row is
+	/// `sub_826CE848(list, tag, icon, "Root", 0, event, …)`). Null for any other event type: that row
+	/// keeps its stated name.
+	/// </summary>
+	public static string? RealEstateRowName(int eventType) =>
+		eventType is >= (int)EventType.RealEstateSell and <= (int)EventType.RealEstateBack
+			? ((EventType)eventType).ToString()
+			: null;
+
+	/// <summary>
 	/// `g_Menu.EventConst`, complete — half the row's identity. `SelectMenuItem` commits
 	/// `PushButtonEvent(Name, EventType, IDLow, IDHigh)` and the receiving screen switches on
 	/// this alone (`sub_826C2660` reads `*(event+4)`).

@@ -22,6 +22,14 @@ public static class Fable2UiVerbs
 		"buys one level of an ability through the guest's own purchase, or gives one back through its own unlearn (the row's Y asks first)", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb Furniture = new(Engine_UiFurniturePage.FurnitureAction, "Furniture:upgrade:<level>",
 		"upgrades the targeted furniture to a level through the furniture screen's own transaction (unlock card, value, properties)", Engine_UiVerbs.Anywhere);
+	public static readonly Engine_UiVerb Decoration = new(DecorationAction, "Decoration:mount:<ticket>|takedown",
+		"the decoration screen's own answers: mounts the trophy a row's ticket names, or takes down what the mount holds; both leave the screen", Engine_UiVerbs.Anywhere);
+	public static readonly Engine_UiVerb Crime = new(CrimeAction, "Crime:choice",
+		"answers the crime screen with the pressed row (pay the fine, resist arrest, community service) through the screen's own handler; a choice the guest does not allow leaves the screen up", Engine_UiVerbs.Anywhere);
+	public static readonly Engine_UiVerb Query = new(QueryAction, "Query:close|rename",
+		"the villager card's own buttons: closes it, or asks to rename its target (the platform keyboard opens when the target takes a name)", Engine_UiVerbs.Anywhere);
+	public static readonly Engine_UiVerb RealEstate = new(RealEstateAction, "RealEstate:event",
+		"commits the pressed real-estate row by its event (110 sell .. 120 back) through the screen's own handler, which asks its own confirm or opens its own numeric box", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb Shop = new(Fable2MenuSources.ShopAction, "Shop:buy|sell:<ticket>",
 		"a shop row's transaction: the row pushed at the shop screen's own handler by its ticket (30 buys, 31 sells), which asks its own confirm", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb PropertyRepair = new(Engine_UiPropertySource.RepairAction, "PropertyRepair:<uid>",
@@ -42,10 +50,30 @@ public static class Fable2UiVerbs
 		"the saving answer, then leaves the app when the guest reaches its title", Engine_UiVerbs.PauseOnly);
 	public static readonly Engine_UiVerb PauseCoop = new(Engine_PauseMenu.CoopCommandPrefix, "PauseCoop:<leave|kick>",
 		"player two leaves the co-op game, or the online host kicks them", Engine_UiVerbs.PauseOnly);
+	public static readonly Engine_UiVerb PauseHenchmanQuit = new(Engine_PauseMenu.HenchmanQuitCommand, Engine_PauseMenu.HenchmanQuitCommand,
+		"player two's Quit: the guest's own henchman box (with a save, their hero is saved; without one, their experience and gold go to the hero)", Engine_UiVerbs.PauseOnly);
 	public static readonly Engine_UiVerb PauseOwned = new(Engine_PauseMenu.OwnedCommandPrefix, "PauseOwned:<id>",
 		"the old spelling of Screen:open:<id>", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb MiniGameConfirm = new(MiniGameConfirmCommand, MiniGameConfirmCommand,
 		"A on the minigame tally: its rows finish counting, and the press goes on to the tally's own handler, which closes it once its rows have", Engine_UiVerbs.GuestScreen);
+
+	/// <summary>The decoration screen's (27) verbs: a row's A with its ticket, and the list's Y.</summary>
+	public const string DecorationAction = "Decoration:";
+	public const string DecorationMountAction = DecorationAction + "mount:" + Engine_UiScreenTemplate.RowIdToken;
+	public const string DecorationTakeDownAction = DecorationAction + "takedown";
+
+	/// <summary>The crime screen's (21) row verb: the pressed row's own event type is the argument.</summary>
+	public const string CrimeAction = "Crime:";
+	public const string CrimeChoiceAction = CrimeAction + "choice";
+
+	/// <summary>The villager card's (10) verbs: its B and its Y.</summary>
+	public const string QueryAction = "Query:";
+	public const string QueryCloseAction = QueryAction + "close";
+	public const string QueryRenameAction = QueryAction + "rename";
+
+	/// <summary>The real-estate screen's (28) row verb: the pressed row's own event type is the argument.</summary>
+	public const string RealEstateAction = "RealEstate:";
+	public const string RealEstateEventAction = RealEstateAction + "event";
 
 	/// <summary>The options rows' command prefix: the page by the name the row carries.</summary>
 	public const string OptionsPageAction = "OptionsPage:";
@@ -56,9 +84,22 @@ public static class Fable2UiVerbs
 	/// <summary>Every verb Fable 2 adds to the shell's.</summary>
 	public static readonly IReadOnlyList<Engine_UiVerb> All = new[]
 	{
-		Inventory, Quest, Sale, Ability, Furniture, Shop, PropertyRepair, PropertyRepairAll, Partner, ModBuy,
-		OptionsPage, PauseTab, PauseSaving, PauseQuit, PauseCoop, PauseOwned, MiniGameConfirm,
+		Inventory, Quest, Sale, Ability, Furniture, Decoration, RealEstate, Crime, Query, Shop, PropertyRepair,
+		PropertyRepairAll, Partner, ModBuy,
+		OptionsPage, PauseTab, PauseSaving, PauseQuit, PauseCoop, PauseHenchmanQuit, PauseOwned, MiniGameConfirm,
 	};
+
+	/// <summary>Posts a lever; a verb with none for this row (a malformed command) is left unposted.</summary>
+	private static Engine_UiCommandResult Post(string? lever)
+	{
+		if (lever is null)
+		{
+			return Engine_UiCommandResult.From(false, "names no lever of its screen");
+		}
+
+		Engine_UiSource.Current.PostFrontEndAction(lever);
+		return Engine_UiCommandResult.Done;
+	}
 
 	/// <summary>The handlers for the rows' verbs; the pause levers are registered by the pause book.</summary>
 	public static void RegisterHandlers(Engine_UiCommandSet set)
@@ -126,7 +167,7 @@ public static class Fable2UiVerbs
 				return Engine_UiCommandResult.Done;
 			}
 
-			// On a ported item book (items 15, clothing 16) the row's consequence is its lever, with
+			// On a ported item screen (items 15, clothing 16, gift 25) the row's consequence is its lever, with
 			// the acting player and the ticket the guest spawned the row with (Fable2PortedScreens).
 			uint screen = Engine_UiSource.Current.GetPauseState() is { } pause ? pause.ScreenId : 0u;
 			Refii.Host.HostBridge.PostFrontEndAction(
@@ -155,7 +196,29 @@ public static class Fable2UiVerbs
 				Fable2PortedScreens.Ability(Engine_UiSource.Current.ActingPlayer, context.Command) ?? context.Command);
 			return Engine_UiCommandResult.Done;
 		});
-		set.Register(Fable2UiVerbs.Furniture, pump);
+
+		// The two furniture screens and real estate are ported (gui_screen_stub_*.cpp): a row's verb is
+		// posted as its screen's lever with the acting player — `Furniture:<p>:upgrade:<level>`,
+		// `Decoration:<p>:mount:<ticket>|takedown`, and `RealEstate:<p>:event:<type>` with the type the
+		// pressed row was spawned with.
+		set.Register(Fable2UiVerbs.Furniture, (_, context) =>
+			Post(Fable2PortedScreens.RowLever(Fable2PortedScreens.Furniture, Engine_UiSource.Current.ActingPlayer,
+				context.Command, context.RowEventType)));
+		set.Register(Fable2UiVerbs.Decoration, (_, context) =>
+			Post(Fable2PortedScreens.RowLever(Fable2PortedScreens.Decoration, Engine_UiSource.Current.ActingPlayer,
+				context.Command, context.RowEventType)));
+		set.Register(Fable2UiVerbs.RealEstate, (_, context) =>
+			Post(Fable2PortedScreens.RowLever(Fable2PortedScreens.RealEstate, Engine_UiSource.Current.ActingPlayer,
+				context.Command, context.RowEventType)));
+
+		// The crime screen's rows and the villager card's buttons, the same way: `Crime:<p>:pay|resist|service`
+		// from the pressed row's event (50 / 51 / 52), `Query:<p>:close|rename`.
+		set.Register(Fable2UiVerbs.Crime, (_, context) =>
+			Post(Fable2PortedScreens.RowLever(Fable2PortedScreens.Crime, Engine_UiSource.Current.ActingPlayer,
+				context.Command, context.RowEventType)));
+		set.Register(Fable2UiVerbs.Query, (_, context) =>
+			Post(Fable2PortedScreens.RowLever(Fable2PortedScreens.Query, Engine_UiSource.Current.ActingPlayer,
+				context.Command, context.RowEventType)));
 
 		// `OptionsPage:<page>` — the options screen's ported handler takes no page input
 		// (gui_screen_stub_options.cpp), so its page level is Godot's record, seeded from what the guest's

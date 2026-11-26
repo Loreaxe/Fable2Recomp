@@ -222,7 +222,8 @@ public class CoopLuaSaveSafeTests
 
 	/// <summary>
 	/// The chunk compiled with the game's compiler and its debug info. Null with an empty reason
-	/// when no compiler is reachable; null with the reason when the text does not compile.
+	/// only outside a Linux source tree (a packaged run); null with the reason when the text does
+	/// not compile or a source tree holds no compiler.
 	/// </summary>
 	private static byte[]? Compile(string lua, string name, out string why)
 	{
@@ -252,6 +253,9 @@ public class CoopLuaSaveSafeTests
 			: null;
 		if (tool == null)
 		{
+			// A source tree on Linux always has the compiler (the native build makes it): its absence
+			// is a broken check, never a pass.
+			why = $"no game compiler in this source tree ({Path.Combine(builds, "*", "tools", "refii-luac32")})";
 			return null;
 		}
 

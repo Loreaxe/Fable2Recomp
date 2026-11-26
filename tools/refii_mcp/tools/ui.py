@@ -25,7 +25,8 @@ def rows(_args):
 
 @tool(
     "refii_frontend",
-    "The FRONT END's state — title vs main menu, its state word, whether A is armed, the "
+    "The FRONT END's state — title vs main menu, its state word (title: 9 legal, 0 idle, 8 the "
+    "attract movie, 10/11 starting, 12 a warning), whether A is armed, the "
     "cursor row, and the scene slide (slide 1 on the main menu is PressStart, before the row "
     "list is up). `refii_state` cannot see this: the front end is a different GUI object from "
     "the in-game screen manager, so a run parked on the title or the gender card shows only "

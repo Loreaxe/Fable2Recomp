@@ -37,13 +37,16 @@ public static class Engine_UiNetworkSource
 	/// <summary>The hosting toggle, as its own source so its label tracks the state.</summary>
 	public const string HostingSource = "hosting";
 
-	/// <summary>The four subjects that get a page of their own, in list order.</summary>
-	public static readonly (string Source, string Title)[] Pages =
+	/// <summary>
+	/// The four subjects that get a page of their own, in list order: the row's name (its identity,
+	/// never shown: <see cref="IsGroupName"/>) and the key its label is drawn from (<see cref="Refii.Text.Engine_OwnWords"/>).
+	/// </summary>
+	public static readonly (string Source, string Title, string Tag)[] Pages =
 	{
-		(FriendsSource, "Friends"),
-		(RequestsSource, "Friend Requests"),
-		(InvitesSource, "Invitations"),
-		(GamesSource, "Games"),
+		(FriendsSource, "Friends", "REFII_MP_FRIENDS"),
+		(RequestsSource, "Friend Requests", "REFII_MP_FRIEND_REQUESTS"),
+		(InvitesSource, "Invitations", "REFII_MP_INVITATIONS"),
+		(GamesSource, "Games", "REFII_MP_GAMES"),
 	};
 
 	private const string FriendsGroup = "Friends";
@@ -248,7 +251,7 @@ public static class Engine_UiNetworkSource
 		}
 
 
-		Placeholder(rows, "friends", "No Friends");
+		Placeholder(rows, "friends", Refii.Text.Engine_OwnWords.Say("REFII_MP_NO_FRIENDS"));
 		return rows;
 	}
 
@@ -324,7 +327,7 @@ public static class Engine_UiNetworkSource
 		}
 
 
-		Placeholder(rows, "requests", "No Requests");
+		Placeholder(rows, "requests", Refii.Text.Engine_OwnWords.Say("REFII_MP_NO_REQUESTS"));
 		return rows;
 	}
 
@@ -343,7 +346,7 @@ public static class Engine_UiNetworkSource
 		}
 
 
-		Placeholder(rows, "invites", "No Invitations");
+		Placeholder(rows, "invites", Refii.Text.Engine_OwnWords.Say("REFII_MP_NO_INVITATIONS"));
 		return rows;
 	}
 
@@ -394,7 +397,7 @@ public static class Engine_UiNetworkSource
 		}
 
 
-		Placeholder(rows, "games", "No Games");
+		Placeholder(rows, "games", Refii.Text.Engine_OwnWords.Say("REFII_MP_NO_GAMES"));
 		return rows;
 	}
 

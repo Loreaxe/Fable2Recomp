@@ -988,7 +988,7 @@ public partial class Engine_FrontEndSaveCards : Node3D
 	/// the game's own bumper glyphs, which the glyph proxies redraw for the pad style or the keys
 	/// bound (<see cref="Engine_UiKeyGlyphs.Wrap"/>). Set by the caller from its localised text.
 	/// </summary>
-	public string PageTemplate { get; set; } = "Page {0} / {1}";
+	public string PageTemplate { get; set; } = Refii.Text.Engine_OwnWords.Say("REFII_PAGE_OF");
 
 	/// <summary>A line above the description — the caller's (the replace pick's "Choose a save to
 	/// replace"); empty for none. A marked save shows <see cref="MarkText"/> there instead.</summary>

@@ -25,14 +25,16 @@ public sealed class Fable2Input : GameTitleInput
 			// THE SPELLS MENU'S HOLD — GameAction 42 on press, 43 on release, which the shipped
 			// scheme binds to XboxButton 16: the RIGHT TRIGGER. The 30/255 threshold is the XInput
 			// convention. Read after the mods withhold theirs.
-			bool spells = guest.RightTrigger > 30;
-			SpellsMenuPressed = spells && !_spellsWasDown;
-			SpellsMenuReleased = !spells && _spellsWasDown;
-			SpellsMenuHeld = spells;
-			_spellsWasDown = spells;
+			SpellsMenuHeld = guest.RightTrigger > 30;
 		}
 
 		Published published = SetMasked(pad, connected, guest);
+
+		// The platform keyboard has every pad while it is open, as the console's does.
+		if (Engine_UiPlatformKeyboard.IsOpen)
+		{
+			published = new(new GameControllerPacket(pad, connected, 0u, 0u, 0u, 0, 0, 0, 0), guest.Buttons, 0u, 0u);
+		}
 
 		if (pad == 0)
 		{
@@ -102,7 +104,7 @@ public sealed class Fable2Input : GameTitleInput
 				ModalBoxOwnsInput || MenuBoxOwnsInput ||
 				ReceiveItemsOwnsInput || DisplayMessageBoxUp || HostBridge.FrontEndGuiIsUp ||
 				GamePubGames.Showing.Length != 0;
-			return HostBridge.IsInGame && !menuOwns && !MaskPauseInput &&
+			return HostBridge.IsInGame && !menuOwns && !MaskPauseInput && !Engine_UiPlatformKeyboard.IsOpen &&
 				HostBridge.GetPauseState() is not { ModalMode: not 1 };
 		}
 	}
@@ -116,7 +118,13 @@ public sealed class Fable2Input : GameTitleInput
 	}
 
 	/// <summary>The expression wheel and the spell blade are pointed at while held.</summary>
-	public override bool PointerOverlay => QuickWheelHeld || SpellsMenuHeld;
+	public override bool PointerOverlay => QuickWheelHeld || WheelOpenStated || SpellsMenuHeld || Engine_UiPlatformKeyboard.IsOpen;
+
+	/// <summary>
+	/// The guest states player one's expression wheel open (`RefiiHostGetExpressionWheelPlayer` = 1),
+	/// whatever opened it — RB in toggle mode leaves it up after the release. Set by <c>GameUi</c>.
+	/// </summary>
+	public static bool WheelOpenStated { get; set; }
 
 	/// The player whose menu is open, as the guest states it: 0 not stated, 1 player one, 2
 	/// player two. Set by <c>GameUi</c> every frame, and only ever non-zero on split screen.
@@ -138,13 +146,40 @@ public sealed class Fable2Input : GameTitleInput
 	/// <summary>Local player two's guest pad (1..3) while local co-op runs, else −1. Set by <c>GameUi</c>.</summary>
 	public static int PlayerTwoPad { get; set; } = -1;
 
-	/// <summary>The pad of the player <see cref="MenuOwner"/> names, or −1 while none is stated.</summary>
-	private static int MenuPad => MenuOwner switch
+	/// <summary>
+	/// The pad of the player <see cref="MenuOwner"/> names, or −1 while none is stated. On the front
+	/// end it is the pad the title took A from (<see cref="HostBridge.FrontEndPad"/>): the main menu
+	/// answers that pad alone (`cmpw cr6,r5,r4` TU1 0x826DEE60 / disc 0x826C72C8).
+	/// </summary>
+	private static int MenuPad => FrontEndHoldsPads ? HostBridge.FrontEndPad : MenuOwner switch
 	{
 		1 => 0,
 		2 when PlayerTwoPad is >= 1 and < MaxControllers => PlayerTwoPad,
 		_ => -1,
 	};
+
+	/// <summary>The front-end GUI is up with no world: the front end's own pad rule holds.</summary>
+	private static bool FrontEndHoldsPads => HostBridge.FrontEndGuiIsUp && !HostBridge.IsInGame;
+
+	/// <summary>
+	/// THE TITLE'S A IS A LEVER. The title's input slot (TU1 `sub_826E2F18` / disc `sub_826C61B8`)
+	/// acts on A alone outside its dialog's marketplace X (38 under `+56`) and the attract's skip
+	/// (Start 7 in mode 8, as A is): Godot posts A from every pad as `TitleStart:&lt;pad&gt;`, or as the
+	/// dialog's `FrontEndDialog:&lt;pad&gt;:36` while the title's own dialog takes it, and the guest's
+	/// pad route never sees A here. Every other button still reaches the guest: the title has no
+	/// arm for them but the two above, and any press skips a playing movie through the type-12
+	/// handler (TU1 0x82377DC8, `stb r10,0xF4(r11)`).
+	/// </summary>
+	private static bool TitleTakesA =>
+		FrontEndHoldsPads &&
+		HostBridge.TryGetFrontEnd(out Engine_UiModel.FrontEndScreen screen, out _, out _, out _) &&
+		screen == Engine_UiModel.FrontEndScreen.Title;
+
+	/// <summary>Per pad: A was down last frame on the title — its press edge posts the title's A.</summary>
+	private static readonly bool[] _titleAWasDown = new bool[MaxControllers];
+
+	/// <summary>Per pad: B was down last frame under the menu mask — its press edge posts `FrontEndBack:`.</summary>
+	private static readonly bool[] _menuBWasDown = new bool[MaxControllers];
 
 	/// <summary>The pad the host-owned menus read: the owner's, or pad 0 while no owner is stated.</summary>
 	private static int HostMenuPad => MenuPad < 0 ? 0 : MenuPad;
@@ -163,6 +198,11 @@ public sealed class Fable2Input : GameTitleInput
 	/// <summary>Per pad: buttons still held since a mask over them lifted — hidden from the
 	/// guest until released. See <see cref="SetMasked"/>.</summary>
 	private static readonly uint[] _heldAcrossUnmask = new uint[MaxControllers];
+
+	/// <summary>Each pad's trigger held since a surface masked it (SetMasked); published as 0 until let go.</summary>
+	private static readonly bool[] _leftTriggerAcross = new bool[MaxControllers];
+
+	private static readonly bool[] _rightTriggerAcross = new bool[MaxControllers];
 
 	/// <summary>Per pad: Start was down last frame — its press edge posts `Start:`.</summary>
 	private static readonly bool[] _startWasDown = new bool[MaxControllers];
@@ -184,15 +224,27 @@ public sealed class Fable2Input : GameTitleInput
 			MaskMenuBoxInput;
 		bool listMasked = owned && !masked && !pauseMasked && !queryMasked && !cardMasked &&
 			!boxMasked && MaskScreenMenuInput;
-		bool menuMask = goldenMenu || masked || pauseMasked || queryMasked || boxMasked || listMasked;
+		// THE CO-OP SCREEN'S PADS ARE GODOT'S (CoopPresses): each player's own pad, with no box over the
+		// screen — a box answers through the modal router, never the screen's slot.
+		int coopPlayer = !goldenMenu && !masked && !pauseMasked && !queryMasked && !cardMasked && !boxMasked &&
+			!listMasked && CoopScreenOwnsInput && HostBridge.GetPauseState() is not { ModalMode: not 1 } &&
+			ModPlayer(pad) is var padPlayer and not 0
+				? Fable2ActingPlayer.OfPad(CoopSession.IsClient, padPlayer)
+				: 0;
+		CoopPresses(pad, coopPlayer, buttons, state.LeftX, state.LeftY);
+		bool coopMasked = coopPlayer != 0;
+
+		// THE WHOLE PAD UNDER A SURFACE GODOT OWNS (S8): the pause book, the owned lists and screens,
+		// every box Godot answers, the menu box and the co-op screen. Every consequence there is a
+		// lever, and the guest's handlers for these buttons are stubs or answered by levers; Start
+		// stays in the filter only so its press can be posted as `Start:` below.
+		bool wholePad = pauseMasked || queryMasked || boxMasked || listMasked || coopMasked;
+		bool menuMask = goldenMenu || masked || wholePad;
 		System.Func<uint, uint> filter =
 			goldenMenu ? (Refii.Mods.ModScreen.Owned ? static held => held & Start : static _ => 0u)
+			: wholePad ? static held => held & Start
 			: masked ? WithoutMenuInput
-			: pauseMasked ? WithoutPauseInput
-			: queryMasked ? WithoutQueryInput
 			: cardMasked ? WithoutCardInput
-			: boxMasked ? WithoutQueryInput
-			: listMasked ? WithoutListInput
 			: static b => b;
 
 		// A MASK LIFTING NEVER HANDS THE GUEST A PRESS. The guest edge-detects against its last
@@ -225,18 +277,36 @@ public sealed class Fable2Input : GameTitleInput
 			wheelBits |= ButtonA | ButtonB | ButtonX | ButtonY | LeftShoulder | RightShoulder;
 		}
 
-		// PLAYER TWO'S SAVE PICKER PAST THE GUEST'S SIX: what Engine_CoopSavePicker withholds of
-		// player two's left, right and A. The stick emits the same 30/31 the D-pad does, so its X is
-		// held back on the withheld side.
-		int leftX = state.LeftX;
-		if (pad == CoopPickerPad && CoopPickerWithheld != Engine_CoopSavePicker.Press.None)
+		// IN PLAY: RB, the WHEEL AND THE BLADE (S8). RB's only bindings are the wheel's open and close
+		// (GameActions 40 RB press / 41 RB release, 73) — Godot holds the wheel on it as on Back
+		// (PublishHolds) and the guest's own open (`sub_824040B8` case 40, `OpenExpressionWheel`
+		// 0x824041E8 / 0x823B5428) no longer runs beside it. While the guest states the expression
+		// wheel open for this pad's player, its A (accept), B (back), D-pad and left stick (cursor)
+		// are Godot's `QuickWheel:` levers (the guest's own route: `sub_82405190` 36 / 37,
+		// SetCursorFromStick 0x82403EB0); X, Y, the triggers and the right stick stay the guest's, as
+		// combat stays live under the wheel. While player one's spells menu stands, its D-pad, left
+		// stick and A are Godot's `SpellBlade:` levers (`lhGuiWillAssignWidget_OnScreenAction` from
+		// `sub_82405190`); the right trigger stays the guest's: its press opens the menu (42), its
+		// hold sucks orbs (55), its release closes it (43, 56), one trigger for all four.
+		bool playStick = false;
+		int handPlayer = ModPlayer(pad);
+		if (HostBridge.IsInGame && handPlayer != 0)
 		{
-			wheelBits |= ((CoopPickerWithheld & Engine_CoopSavePicker.Press.Left) != 0 ? DpadLeft : 0u) |
-				((CoopPickerWithheld & Engine_CoopSavePicker.Press.Right) != 0 ? DpadRight : 0u) |
-				((CoopPickerWithheld & Engine_CoopSavePicker.Press.Accept) != 0 ? ButtonA : 0u);
-			leftX = (CoopPickerWithheld & Engine_CoopSavePicker.Press.Left) != 0 ? System.Math.Max(leftX, 0) : leftX;
-			leftX = (CoopPickerWithheld & Engine_CoopSavePicker.Press.Right) != 0 ? System.Math.Min(leftX, 0) : leftX;
+			wheelBits |= RightShoulder;
+			if (!CoopSession.IsClient && Fable2Bridge.GetExpressionWheelPlayer() == handPlayer)
+			{
+				wheelBits |= ButtonA | ButtonB | DpadUp | DpadDown | DpadLeft | DpadRight;
+				playStick = true;
+			}
+
+			if (!CoopSession.IsClient && pad == 0 && SpellsMenuPlayer == 1)
+			{
+				wheelBits |= ButtonA | DpadUp | DpadDown | DpadLeft | DpadRight;
+				playStick = true;
+			}
 		}
+
+		int leftX = state.LeftX;
 
 		// START IS A LEVER IN GAME: the guest's only consumer is the GUI input's raw pass, which
 		// hands it to `sub_82371B10(G, player, 0)` (`CGUIInput_vf6`, 0x82403D50) — open the book,
@@ -262,20 +332,70 @@ public sealed class Fable2Input : GameTitleInput
 			_startWasDown[pad] = (buttons & Start) != 0;
 		}
 
+		// THE MAIN MENU'S B IS A LEVER where the guest would have taken it: under the menu mask
+		// with no host panel answering B (FrontEndSwallowsBack), the root's 37 (`sub_826DEE40`) —
+		// back to the title from the list (mode 7, 0x826dfbb0 / disc 0x826c8004), the load fan's
+		// close in mode 5 (0x826dfb7c / 0x826c7fd0) — is posted as `FrontEndBack:<pad>`, and B never
+		// reaches the guest here.
+		if (masked)
+		{
+			bool bDown = (buttons & ~_heldAcrossUnmask[pad] & ButtonB) != 0;
+			if (bDown && !_menuBWasDown[pad] && !FrontEndSwallowsBack)
+			{
+				string lever = Fable2FrontEndLevers.Back(pad);
+				HostBridge.PostFrontEndAction(lever);
+				GD.Print($"[input] pad {pad} B on the main menu posted '{lever}'");
+			}
+
+			_menuBWasDown[pad] = bDown;
+		}
+		else
+		{
+			_menuBWasDown[pad] = (buttons & ButtonB) != 0;
+		}
+
+		if (TitleTakesA)
+		{
+			bool aDown = (filter(buttons) & ~wheelBits & ~_heldAcrossUnmask[pad] & ButtonA) != 0;
+			if (aDown && !_titleAWasDown[pad])
+			{
+				bool raised = HostBridge.TryGetFrontEndDialog(out bool accepting, out bool byTitle) && byTitle;
+				if (Fable2FrontEndLevers.TitleA(pad, raised, accepting) is { } lever)
+				{
+					HostBridge.PostFrontEndAction(lever);
+					GD.Print($"[input] pad {pad} A on the title posted '{lever}'");
+				}
+			}
+
+			_titleAWasDown[pad] = aDown;
+			wheelBits |= ButtonA;
+		}
+		else
+		{
+			_titleAWasDown[pad] = (buttons & ButtonA) != 0;
+		}
+
 		uint maskBits = ~filter(uint.MaxValue) | wheelBits;
 		_heldAcrossUnmask[pad] |= _maskBits[pad] & ~maskBits & buttons;
 		_heldAcrossUnmask[pad] &= buttons;
 		_maskBits[pad] = maskBits;
 
+		// The triggers likewise: the guest makes LT / RT presses (buttons 15 / 16) from their analog
+		// values against the 30/255 threshold, so a trigger held while a surface masks it stays hidden
+		// after the mask lifts until it is let go.
+		bool triggersMasked = goldenMenu || wholePad;
+		_leftTriggerAcross[pad] = state.LeftTrigger > 30 && (triggersMasked || _leftTriggerAcross[pad]);
+		_rightTriggerAcross[pad] = state.RightTrigger > 30 && (triggersMasked || _rightTriggerAcross[pad]);
+
 		// The shell publishes it (GameInput.Deliver): the transport is the shell's, the mask the title's.
 		return new Published(new GameControllerPacket(
 			pad, connected,
 			filter(buttons) & ~wheelBits & ~_heldAcrossUnmask[pad],
-			goldenMenu ? (byte)0 : state.LeftTrigger, goldenMenu ? (byte)0 : state.RightTrigger,
+			_leftTriggerAcross[pad] ? (byte)0 : state.LeftTrigger, _rightTriggerAcross[pad] ? (byte)0 : state.RightTrigger,
 			// The stick is masked with the buttons: `sub_826E39C0` dead-zones the left stick
 			// against ±0.75 and emits the same codes the D-pad does — 28/29 for Y at
 			// 0x826E3C04/0x826E3C58, 30/31 for X at 0x826E3B50/0x826E3BAC.
-			menuMask ? 0 : leftX, menuMask ? 0 : state.LeftY,
+			menuMask || playStick ? 0 : leftX, menuMask || playStick ? 0 : state.LeftY,
 			// The card takes the right stick — it turns the model on the front and scrolls the
 			// description on the back — so the camera does not swing under it. The left stick
 			// stays live: the card does not pause the game.
@@ -283,8 +403,8 @@ public sealed class Fable2Input : GameTitleInput
 			// Invert X is ours: the guest has a vertical invert (CameraLookInverted, record33+0x2A,
 			// negated at 0x825ADD28) and nothing for the horizontal. Applied only while the stick
 			// is the camera's — never under a menu, which reads it as a direction.
-			goldenMenu || cardMasked ? 0 : (InvertCameraX && !menuMask ? -state.RightX : state.RightX),
-			goldenMenu || cardMasked ? 0 : state.RightY),
+			goldenMenu || cardMasked || wholePad ? 0 : (InvertCameraX && !menuMask ? -state.RightX : state.RightX),
+			goldenMenu || cardMasked || wholePad ? 0 : state.RightY),
 			maskBits,
 			filter(state.PhysicalButtons) & ~wheelBits & ~_heldAcrossUnmask[pad],
 			filter(state.OtherButtons) & ~wheelBits & ~_heldAcrossUnmask[pad]);
@@ -293,11 +413,9 @@ public sealed class Fable2Input : GameTitleInput
 	/// <summary>
 	/// Whether the guest's own front-end menu should be shielded from this frame's input.
 	/// True while the guest's active screen is MainMenu in a substate the host draws over; the
-	/// title keeps every button (A there is the guest's contract, `a2 == 36 &amp;&amp;
-	/// *(BYTE*)(a1+80)` at 0x826E3078). `screen+24` is 0 for the menu list; 1 is the guest's own
-	/// input lock, 2/3/4 the gender card, 5 the load-game carousel, 6/7 a modal. 1 and 6/7 are
-	/// never masked: a modal parks the screen in substate 1 until an A press, and
-	/// `sub_826DEE40` answers the dialog itself in mode 6 (36 at 0x826df9c0, 37 at 0x826dfc98).
+	/// title's A is its own lever (<see cref="TitleTakesA"/>). `screen+24` is 0 for the menu list; 1
+	/// is the guest's own input lock, 2/3/4 the gender card, 5 the load-game carousel, 6 the
+	/// warning, 7 leaving for the title. 1 and 6 are masked while the host's warning box stands.
 	/// The screen and its mode are the guest's own statements (HostBridge.TryGetFrontEnd).
 	/// </summary>
 	private static bool MaskMenuInput
@@ -399,8 +517,14 @@ public sealed class Fable2Input : GameTitleInput
 		ReceiveItemsOwnsInput &&
 		HostBridge.GetPauseState() is { ScreenId: 8, ModalMode: 1 };
 
-	/// <summary>A (done), Y (flip) and X (equip, code 75): each is posted as the card's own action, so the guest must not read the pad for it as well.</summary>
-	private static uint WithoutCardInput(uint buttons) => buttons & ~(ButtonA | ButtonY | ButtonX);
+	/// <summary>
+	/// The card's buttons: A (done), Y (flip), X (equip, code 75) are posted as the card's own levers,
+	/// and its slot takes nothing from the pad (ported, S7 B6), so B, the bumpers and the D-pad go too.
+	/// The left stick and the triggers stay live: the card does not pause the game.
+	/// </summary>
+	private static uint WithoutCardInput(uint buttons) =>
+		buttons & ~(ButtonA | ButtonB | ButtonX | ButtonY | LeftShoulder | RightShoulder |
+			DpadUp | DpadDown | DpadLeft | DpadRight);
 
 	/// <summary>
 	/// Set by <c>GameUi.DriveMenuBox</c> while the owned option list is standing. Its whole
@@ -421,30 +545,58 @@ public sealed class Fable2Input : GameTitleInput
 	public static bool ScreenMenuOwnsInput { get; set; }
 
 	/// <summary>
-	/// Set by <c>GameUi</c> while the co-op screen stands. The guest reads that screen's pad
-	/// itself, so nothing is masked; it only stops counting as play — the cursor is free for its
-	/// buttons and rows, and B is back, not magic.
+	/// Set by <c>GameUi</c> while the co-op screen stands: each player's pad is Godot's there and
+	/// its presses go to the screen's own input slot as `CoopAction:` (<see cref="CoopPresses"/>);
+	/// it stops counting as play — the cursor is free for its buttons and rows, and B is back, not
+	/// magic.
 	/// </summary>
 	public static bool CoopScreenOwnsInput { get; set; }
 
-	private static bool MaskScreenMenuInput =>
-		ScreenMenuOwnsInput && HostBridge.GetPauseState() is { ModalMode: 1, ScreenId: not 0 };
+	/// <summary>Per pad: the co-op screen's press edges, and whether the pad was the screen's last frame.</summary>
+	private static readonly Fable2CoopScreenPresses.PadEdges[] _coopEdges = new Fable2CoopScreenPresses.PadEdges[MaxControllers];
+
+	private static readonly bool[] _coopEngaged = new bool[MaxControllers];
 
 	/// <summary>
-	/// The buttons with the owned list's WHOLE vocabulary taken out. Godot owns the cursor and
-	/// every press on it: A and the directions are its own levers, B is forwarded as the screen's
-	/// own back, LB/RB as the tab cycle (72/73), Y is the ability unlearn or a mod's row action,
-	/// X a mod's row action. The guest's input router `sub_824047E8` would otherwise answer the
-	/// same pad press against ITS highlight — Y arms the abilities discard (`sub_826C2958` code
-	/// 39 → `+198 = 0`) for the guest's row, and a shoulder would cycle the tab twice.
+	/// THE CO-OP SCREEN'S PRESSES. Both pads reach screen 24 on the console (the per-player filter
+	/// exempts it, TU1 `sub_824047E8` table 0x82404898 / disc 0x823B5AD8), each for its own player
+	/// (vf4: player one's GUI input 1, 2 on an online joiner; player two's 2). Here each player's
+	/// press edges are posted as `CoopAction:&lt;code&gt;:&lt;player&gt;` to the screen's own slot and the pad
+	/// is masked; <see cref="Fable2CoopScreenPresses.Forwarded"/> keeps what Godot answers itself.
+	/// A pad newly the screen's hands no press: what is down then is taken as held.
 	/// </summary>
-	private static uint WithoutListInput(uint buttons) =>
-		WithoutQueryInput(buttons) & ~(ButtonX | ButtonY | LeftShoulder | RightShoulder);
+	private static void CoopPresses(int pad, int player, uint buttons, int leftX, int leftY)
+	{
+		if (player == 0)
+		{
+			_coopEngaged[pad] = false;
+			return;
+		}
 
-	/// <summary>The buttons with the owned query box's whole vocabulary taken out — A and B
-	/// both, unlike the pause root where B is the guest's resume.</summary>
-	private static uint WithoutQueryInput(uint buttons) =>
-		buttons & ~(DpadUp | DpadDown | DpadLeft | DpadRight | ButtonA | ButtonB);
+		System.Collections.Generic.List<int> codes = _coopEdges[pad].Feed(
+			(buttons & DpadUp) != 0, (buttons & DpadDown) != 0, (buttons & DpadLeft) != 0,
+			(buttons & DpadRight) != 0, (buttons & ButtonA) != 0, (buttons & ButtonB) != 0,
+			(buttons & ButtonX) != 0, (buttons & ButtonY) != 0, leftX, leftY);
+		if (!_coopEngaged[pad])
+		{
+			_coopEngaged[pad] = true;
+			return;
+		}
+
+		Engine_CoopSavePicker.Press withheld = pad == CoopPickerPad ? CoopPickerWithheld : Engine_CoopSavePicker.Press.None;
+		foreach (int code in codes)
+		{
+			if (Fable2CoopScreenPresses.Forwarded(code, player, withheld))
+			{
+				string lever = Fable2CoopScreenPresses.Lever(code, player);
+				HostBridge.PostFrontEndAction(lever);
+				GD.Print($"[input] pad {pad} on the co-op screen posted '{lever}'");
+			}
+		}
+	}
+
+	private static bool MaskScreenMenuInput =>
+		ScreenMenuOwnsInput && HostBridge.GetPauseState() is { ModalMode: 1, ScreenId: not 0 };
 
 	/// <summary>
 	/// Whether the guest's own pause menu should be shielded from this frame's input. Gated on
@@ -460,23 +612,15 @@ public sealed class Fable2Input : GameTitleInput
 
 	/// <summary>
 	/// The buttons a standing list's ROW ACTIONS bind this frame (GameUi.DriveRowActionsOn),
-	/// withheld from the guest. Re-derived every frame: reset before the drives, set by the one
-	/// that stands a list with row actions.
+	/// withheld from the guest where the rest of the pad is not (the front end's menu: every
+	/// in-game list holds the whole pad). Re-derived every frame: reset before the drives, set by
+	/// the one that stands a list with row actions.
 	/// </summary>
 	public static uint RowActionHolds { get; set; }
 
 	public const uint PadButtonX = ButtonX;
 
 	public const uint PadButtonY = ButtonY;
-
-	/// <summary>
-	/// The buttons with the pause book's vocabulary taken out: the root is ported (S7,
-	/// gui_screen_stub_pause_root.cpp), so its list, B (`PauseClose:`) and LB/RB (`PauseCycle:`) are Godot's
-	/// levers and the guest's input slot for them no longer runs.
-	/// </summary>
-	private static uint WithoutPauseInput(uint buttons) =>
-		buttons & ~(DpadUp | DpadDown | DpadLeft | DpadRight | ButtonA | ButtonB | LeftShoulder | RightShoulder |
-			RowActionHolds);
 
 	/// <summary>
 	/// `screen+24` while the menu LIST is the thing on screen — see <see cref="MaskMenuInput"/>.
@@ -493,36 +637,32 @@ public sealed class Fable2Input : GameTitleInput
 
 	/// <summary>
 	/// Whether the host draws its own panel over this substate, so the guest's handler for the
-	/// same press must not run. Root: the host's row list. Carousel: the host's load fan posts
+	/// same press must not run. The warning: the host's box posts `FrontEndDialog:&lt;pad&gt;:36|37`
+	/// (GameUi.DriveGuestDialog) in every mode it stands over, so the owner's slot (36 at
+	/// 0x826df9c0 / disc 0x826c7e14, 37 under `+206` at 0x826dfc90 / 0x826c80e4) is answered once.
+	/// Root: the host's row list. Carousel: the host's load fan posts
 	/// `LoadSave:N` by its own cursor, while `sub_826DEE40` would commit the guest's cursor
 	/// `+72` on A (0x826df880) and move it on 30/31 (0x826df170, 0x826df2bc). Card: the host's
-	/// card posts "New Game" / "New Game Female" itself, so only while it stands. B stays
-	/// through on the carousel (<see cref="WithoutMenuInput"/>): leaving it is the guest's own
-	/// `+24 = 0` at 0x826dfb7c, and the host's fan follows that substate.
+	/// card posts "New Game" / "New Game Female" itself, so only while it stands. B on the
+	/// carousel is the guest's own exit, posted as `FrontEndBack:` (`+24 = 0` at 0x826dfb7c), and
+	/// the host's fan follows that substate.
 	/// </summary>
 	private static bool HostDrawsOver(uint state) =>
 		state == MenuRootState ||
 		state == LoadCarouselState ||
-		(state >= CardFirstState && state <= CardLastState && FrontEndDrive.CardUp);
+		(state >= CardFirstState && state <= CardLastState && FrontEndDrive.CardUp) ||
+		FrontEndDrive.WarningUp;
 
 	/// <summary>
 	/// The buttons with the front end's navigation taken out. Godot owns the main menu and
 	/// dispatches by name, but the guest never stopped running its own: `sub_826DEE40` still
 	/// forwards A and B to `g_Menu` through `OnPressA`/`OnPressB` while `screen+24` is 0, and
-	/// the two highlights are different objects. B is left through at the root, where it is the
-	/// guest's own path to the title, and on the carousel, where it is the guest's own exit;
-	/// <see cref="FrontEndSwallowsBack"/> masks it while a host panel answers B itself.
+	/// the two highlights are different objects. B is the guest's own path to the title at the
+	/// root and its exit from the carousel: <see cref="SetMasked"/> posts it as `FrontEndBack:`
+	/// unless a host panel answers B itself (<see cref="FrontEndSwallowsBack"/>).
 	/// </summary>
-	private static uint WithoutMenuInput(uint buttons)
-	{
-		uint filtered = buttons & ~(DpadUp | DpadDown | DpadLeft | DpadRight | ButtonA);
-		if (FrontEndSwallowsBack)
-		{
-			filtered &= ~ButtonB;
-		}
-
-		return filtered;
-	}
+	private static uint WithoutMenuInput(uint buttons) =>
+		buttons & ~(DpadUp | DpadDown | DpadLeft | DpadRight | ButtonA | ButtonB | RowActionHolds);
 
 	/// <summary>
 	/// The same frame's input, in the terms a host-owned menu needs. Reuses the buttons already
@@ -634,6 +774,17 @@ public sealed class Fable2Input : GameTitleInput
 		MenuTabNextPressed = rb && !_tabNextWasDown;
 		MenuEquipPressed = x && !_equipWasDown;
 		(MenuPageNextPressed, MenuPagePrevPressed) = _pageButtons.Feed(lb, rb, leftTrigger, rightTrigger);
+
+		// The platform keyboard reads the pad itself while it is open: the menus get no press, and
+		// a button still down when it closes is held, not a fresh edge (the was-down state below).
+		if (Engine_UiPlatformKeyboard.IsOpen)
+		{
+			MenuAcceptPressed = MenuAcceptReleased = MenuBackPressed = MenuFlipPressed = false;
+			MenuTabPrevPressed = MenuTabNextPressed = MenuEquipPressed = false;
+			MenuPageNextPressed = MenuPagePrevPressed = false;
+			MenuHorizontal = 0;
+			MenuDirection = 0;
+		}
 		_acceptWasDown = a;
 		_backWasDown = b;
 		_flipWasDown = y;
@@ -715,6 +866,16 @@ public sealed class Fable2Input : GameTitleInput
 			wheel = held;
 		}
 
+		// RB, the shipped binding (GameActions 40 / 41, masked from the guest in play, SetMasked): its
+		// press and release are posted as themselves (`QuickWheel:rb:press|release`), and the pump runs
+		// them as the guest's dispatcher does, its toggle option deciding hold or toggle. A press counts
+		// from the world; its release follows whatever its press did.
+		bool rb = (buttons & RightShoulder) != 0;
+		RbWheelPressed = rb && !_rbWheel && Instance.WorldHasInput && !Refii.Mods.ModWheel.Open;
+		RbWheelReleased = !rb && _rbWheelDown;
+		_rbWheelDown = rb && (_rbWheelDown || RbWheelPressed);
+		_rbWheel = rb;
+
 		QuickWheelPressed = wheel && !_wheelWasDown;
 		QuickWheelReleased = !wheel && _wheelWasDown;
 		QuickWheelHeld = wheel;
@@ -735,6 +896,12 @@ public sealed class Fable2Input : GameTitleInput
 		{
 			wheel = held;
 		}
+
+		bool rbTwo = (buttons & RightShoulder) != 0;
+		RbWheelTwoPressed = rbTwo && !_rbWheelTwo && Instance.WorldHasInput && !Refii.Mods.ModWheel.IsOpen(2);
+		RbWheelTwoReleased = !rbTwo && _rbWheelTwoDown;
+		_rbWheelTwoDown = rbTwo && (_rbWheelTwoDown || RbWheelTwoPressed);
+		_rbWheelTwo = rbTwo;
 
 		bool lb = (buttons & LeftShoulder) != 0;
 		bool rb = (buttons & RightShoulder) != 0;
@@ -874,31 +1041,39 @@ public sealed class Fable2Input : GameTitleInput
 
 	private static bool _wheelWasDown;
 
+	/// <summary>Pad 0's RB last frame, and whether its press was posted to the wheel (PublishHolds).</summary>
+	private static bool _rbWheel;
+
+	private static bool _rbWheelDown;
+
+	/// <summary>Local player two's RB last frame, and whether its press was posted (PublishWheelTwo).</summary>
+	private static bool _rbWheelTwo;
+
+	private static bool _rbWheelTwoDown;
+
+	/// <summary>Pad 0's RB went down in the world: GameAction 40 (<c>QuickWheel:rb:press</c>).</summary>
+	public static bool RbWheelPressed { get; private set; }
+
+	/// <summary>Pad 0's RB came up after a posted press: GameAction 41 (<c>QuickWheel:rb:release</c>).</summary>
+	public static bool RbWheelReleased { get; private set; }
+
+	/// <summary>Local player two's RB went down in the world (<c>QuickWheel:2:rb:press</c>).</summary>
+	public static bool RbWheelTwoPressed { get; private set; }
+
+	/// <summary>Local player two's RB came up after a posted press (<c>QuickWheel:2:rb:release</c>).</summary>
+	public static bool RbWheelTwoReleased { get; private set; }
+
 	/// <summary>
 	/// The spells menu's hold — GameAction 42 on press, 43 on release, on the RIGHT TRIGGER
 	/// (`XboxButton` 16). Unlike the wheel above this is the SHIPPED binding, not a host one:
 	/// `GameControlsCombatOnRelease` aliases a scheme that overrides `GameActionGUISpellsMenu`
-	/// onto 16 over a base of 10.
+	/// onto 16 over a base of 10. The guest opens and closes the menu on it itself.
 	/// </summary>
-	public static bool SpellsMenuPressed { get; private set; }
-
-	public static bool SpellsMenuReleased { get; private set; }
-
 	public static bool SpellsMenuHeld { get; private set; }
 
-	private static bool _spellsWasDown;
-
-	/// The title screen's idle state. A is gated by the armed byte `titleScreen+80` (what
-	/// <c>canPressA</c> reports): `a2 == 36 &amp;&amp; *(BYTE *)(a1 + 80)` at 0x826E3078, armed by
-	/// the presentation's CAN_PRESS_A event at 0x826E2E38; states 0, 9, 10 and 11 all reach it.
-	/// Waiting for state 0 avoids state 8, where the attract movie takes A down 0x826E3030 and
-	/// only sets its skip flag.
-	/// </summary>
-	private const uint TitleIdleState = 0;
-
 	/// <summary>
-	/// `PressStart` — the main menu's opening slide, where the row list is not up yet and A is
-	/// the only button that does anything. The row sequence waits for the slide to leave it.
+	/// Whose spells menu the guest states open: 1 player one (`QM+36`), 2 player two (`QM+37`), 0
+	/// none (Engine_UiSpellAssignSet.WheelPlayer). Set by <c>GameUi</c> every frame.
 	/// </summary>
-	private const int PressStartSlide = 1;
+	public static int SpellsMenuPlayer { get; set; }
 }

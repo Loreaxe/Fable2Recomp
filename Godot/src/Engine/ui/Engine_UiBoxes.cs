@@ -45,6 +45,11 @@ public partial class Engine_UiMenuBox : Node3D, IUiSurfaceView
 
 	private Node3D? _group;
 
+	private Engine_UiCloneSlide? _slides;
+
+	/// <summary>A clone node's document ordinal (the builder's `ordinal` meta); -1 without one.</summary>
+	private static int OrdinalOf(Node3D node) => node.HasMeta("ordinal") ? (int)node.GetMeta("ordinal") : -1;
+
 	/// <summary>
 	/// Which option a canvas point is on, 0-based; -2 for the cancel prompt; -1 for neither.
 	/// </summary>
@@ -209,7 +214,7 @@ public partial class Engine_UiMenuBox : Node3D, IUiSurfaceView
 	public void ShowStated(
 		string? title, string?[] labels, int count, int selected,
 		uint enabledMask, bool cancelable, bool gamerTag = false, string? gamerName = null,
-		string? gamerScore = null)
+		string? gamerScore = null, Engine_BgfDocument? file = null)
 	{
 		if (_group is null || Theme is null)
 		{
@@ -270,10 +275,15 @@ public partial class Engine_UiMenuBox : Node3D, IUiSurfaceView
 					material.SetShaderParameter("opacity", opacity);
 			}
 
-			// THE SELECTION RIM — `Choice1/RimSelect` and its `sliderframe` quad, authored OFF on
-			// every row and lit by the guest on the selected one. The cursor is ours (the guest's
-			// follows through MenuBoxSelect), so the rim follows the stated selection.
-			if (button.GetNodeOrNull<Node3D>(P("Choice1/RimSelect")) is { } rim)
+			// THE SELECTION RIM — each button's own `Selected` / `Unselected` slide switches
+			// `Choice1/RimSelect` and its `frame` (parked in the book: `Unselected` is the preview's
+			// pick), so the slide is stood, not the rim by name. The cursor is ours (the guest's
+			// follows through MenuBoxSelect), so the slide follows the stated selection.
+			if (Engine_UiCloneSlide.Named(file, OrdinalOf(button), i == selected ? "Selected" : "Unselected") is { } rest)
+			{
+				(_slides ??= new Engine_UiCloneSlide(_group)).Apply(rest);
+			}
+			else if (button.GetNodeOrNull<Node3D>(P("Choice1/RimSelect")) is { } rim)
 			{
 				rim.Visible = i == selected;
 			}
@@ -487,85 +497,10 @@ public partial class Engine_UiMessageBox : Node3D, IUiSurfaceView
 		return TextSizes - 1;
 	}
 
-	private System.Collections.Generic.Dictionary<int, Node3D>? _byOrdinal;
+	private Engine_UiCloneSlide? _slides;
 
-	/// <summary>
-	/// States one slide's entries on the clone: each named element's switch, and its
-	/// position / scale / rotation.z writes, through the pivot-keeping writers.
-	/// </summary>
-	private void ApplySlide(BgfSlide slide)
-	{
-		if (_byOrdinal is null)
-		{
-			_byOrdinal = new System.Collections.Generic.Dictionary<int, Node3D>();
-			Index(_paper!);
-
-			void Index(Node node)
-			{
-				if (node is Node3D element && element.HasMeta("ordinal"))
-				{
-					_byOrdinal![(int)element.GetMeta("ordinal")] = element;
-				}
-
-				foreach (Node child in node.GetChildren())
-				{
-					Index(child);
-				}
-			}
-		}
-
-		uint positionX = Refii.Core.Engine_GameHash.AttributeId("position.x");
-		uint positionY = Refii.Core.Engine_GameHash.AttributeId("position.y");
-		uint scaleX = Refii.Core.Engine_GameHash.AttributeId("scale.x");
-		uint scaleY = Refii.Core.Engine_GameHash.AttributeId("scale.y");
-		uint rotationZ = Refii.Core.Engine_GameHash.AttributeId("rotation.z");
-
-		foreach (BgfSlideEntry entry in slide.Entries)
-		{
-			if (!_byOrdinal.TryGetValue(entry.ElementOrdinal, out Node3D? node) || node == _paper)
-			{
-				continue;
-			}
-
-			node.Visible = entry.Active;
-			if (entry.Commands is null)
-			{
-				continue;
-			}
-
-			float? x = null, y = null, sx = null, sy = null, rz = null;
-			foreach (BgfAttribute command in entry.Commands)
-			{
-				if (command.Type != BgfValueType.Float)
-				{
-					continue;
-				}
-
-				if (command.Id == positionX) x = command.AsFloat();
-				else if (command.Id == positionY) y = command.AsFloat();
-				else if (command.Id == scaleX) sx = command.AsFloat();
-				else if (command.Id == scaleY) sy = command.AsFloat();
-				else if (command.Id == rotationZ) rz = command.AsFloat();
-			}
-
-			if (rz is { } turn)
-			{
-				Engine_UiSceneBuilder.SetLiveRotationZ(node, turn);
-			}
-
-			if (sx is > 0f && sy is > 0f)
-			{
-				Engine_UiSceneBuilder.SetLiveScale(node, new Vector3(sx.Value, sy.Value, 1f));
-			}
-
-			if (x is not null || y is not null)
-			{
-				Vector3 offset = node.Transform.Basis * Engine_UiSceneBuilder.PivotOf(node);
-				Vector3 stated = node.Position + offset;
-				node.Position = new Vector3(x ?? stated.X, y ?? stated.Y, stated.Z) - offset;
-			}
-		}
-	}
+	/// <summary>States one slide's entries on the clone (<see cref="Engine_UiCloneSlide"/>).</summary>
+	private void ApplySlide(BgfSlide slide) => (_slides ??= new Engine_UiCloneSlide(_paper!)).Apply(slide);
 
 }
 
@@ -583,8 +518,9 @@ public partial class Engine_UiMessageBox : Node3D, IUiSurfaceView
 ///
 /// The file authors three choice rows — `Choices` (A yes / B no), `XAChoices` and
 /// `ReloadChoices`, the latter two shipped inactive. Which row a box uses is the guest's
-/// statement (the opener slides the root for ids 20 and 13), read off the live active flags and
-/// passed to <see cref="ShowStated"/>.
+/// statement: the root slide its opener stands (the router slides it for ids 20 and 13), passed
+/// to <see cref="ShowStated"/> and put on the clone whole — the rows' choices are slide-gated
+/// themselves, so standing a row by name drew it with no glyph and no caption.
 /// </remarks>
 public partial class Engine_UiQueryBox : Node3D, IUiSurfaceView
 {
@@ -750,12 +686,14 @@ public partial class Engine_UiQueryBox : Node3D, IUiSurfaceView
 	public void Release() => Paper?.Release();
 
 	/// <summary>
-	/// Puts the guest's stated strings on the authored elements and stands the row the guest chose.
+	/// Puts the guest's stated strings on the authored elements and stands the slide the guest
+	/// stated (<see cref="Engine_UiCloneSlide"/>); without one in the art, the row by name.
 	/// Empty label strings keep the authored tags, which the book's Babel strings already resolved
 	/// at build time. <paramref name="single"/> stands the row's first choice alone — a host notice,
 	/// which has one answer.
 	/// </summary>
-	public void ShowStated(string body, string activeRow, string? first, string? second, bool single = false)
+	public void ShowStated(
+		string body, string activeRow, string? first, string? second, bool single = false, BgfSlide? slide = null)
 	{
 		if (_box is null || Theme is null)
 		{
@@ -775,10 +713,19 @@ public partial class Engine_UiQueryBox : Node3D, IUiSurfaceView
 			report += ", " + Paper.Report;
 		}
 
+		if (slide is not null && _box is not null)
+		{
+			(_slides ??= new Engine_UiCloneSlide(_box)).Apply(slide);
+		}
+
 		(string Row, string First, string Second) descriptor = ChoiceRows[0];
 		foreach ((string Row, string First, string Second) candidate in ChoiceRows)
 		{
-			SetRow(candidate.Row, candidate.Row == activeRow);
+			if (slide is null)
+			{
+				SetRow(candidate.Row, candidate.Row == activeRow);
+			}
+
 			if (candidate.Row == activeRow)
 			{
 				descriptor = candidate;
@@ -834,6 +781,8 @@ public partial class Engine_UiQueryBox : Node3D, IUiSurfaceView
 
 	private static bool Covers(Node3D? node, Vector2 at) =>
 		node is not null && Engine_UiPointer.CanvasBounds(node) is { } bounds && bounds.HasPoint(at);
+
+	private Engine_UiCloneSlide? _slides;
 
 	private MeshInstance3D? BodyNode() => _box?.GetNodeOrNull<MeshInstance3D>(P("Text"));
 
@@ -1238,10 +1187,11 @@ public partial class Engine_UiReceiveItems : Node3D, IUiSurfaceView
 	/// <param name="usable">`Buttons` slide 1. Slide 2 only dims `Action` to opacity 50 in the
 	/// original; here a prompt that does nothing is not drawn.</param>
 	/// <param name="labels">The stated prompt labels, in <see cref="Prompts"/> order.</param>
+	/// <param name="file">The card's document, for the back's `Flip2Back` switches.</param>
 	public void ShowStated(
 		string? title, string? name, string? backText,
 		uint iconHash, Texture2D? icon,
-		bool up, bool reverse, bool usable, string?[] labels)
+		bool up, bool reverse, bool usable, string?[] labels, Engine_BgfDocument? file = null)
 	{
 		if (_front is null || Theme is null)
 		{
@@ -1366,7 +1316,19 @@ public partial class Engine_UiReceiveItems : Node3D, IUiSurfaceView
 				Engine_UiSceneBuilder.RestateOpacity(_back, 1f);
 			}
 
-			if (_back.GetNodeOrNull<Node3D>(P("PaperBackground")) is { } paper)
+			// THE BACK'S OWN SWITCHES ARE `Flip2Back`'s: its `Buttons`, `PaperBackground`, `Text` and
+			// `Group` are parked in the book (the preview stands `Intro`, where all are off), so the
+			// slide's active bits are stated — not its writes, which start the flip. `Group` then
+			// stands only while the description overflows (ScrollBack).
+			if (reverse && Engine_UiCloneSlide.Named(file, Engine_BgfDocument.SceneOwnerElement, "Flip2Back") is { } flip)
+			{
+				(_backSlides ??= new Engine_UiCloneSlide(_back)).Apply(flip, switchesOnly: true);
+				if (_back.GetNodeOrNull<Node3D>(P("Group")) is { } group)
+				{
+					group.Visible = _scrollRange > 1f;
+				}
+			}
+			else if (_back.GetNodeOrNull<Node3D>(P("PaperBackground")) is { } paper)
 			{
 				paper.Visible = true;
 			}
@@ -1379,6 +1341,8 @@ public partial class Engine_UiReceiveItems : Node3D, IUiSurfaceView
 	private const float ScrollUnitsPerSecond = 150f;
 
 	private MeshInstance3D? _backText;
+
+	private Engine_UiCloneSlide? _backSlides;
 
 	private Vector3 _backTextRest;
 

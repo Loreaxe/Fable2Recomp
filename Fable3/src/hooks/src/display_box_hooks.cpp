@@ -1,8 +1,16 @@
 // refii - Fable 3's display boxes, the pause screen's message box and the menu box: stated at
 // the calls that make, show, drop and close them, for Godot's Fable3GuiNatives / Fable3Boxes,
-// which draw them and own their pad. Godot's answer comes back as a guest tick action and is
-// handed to the box's OWN answer function on the guest's thread (AnswerBoxAction); the box's pad
-// handler does nothing while Godot owns it.
+// which draw them and own their pad. Godot's answer comes back as a guest tick action carrying the
+// player who pressed, and is handed to the box's OWN pad handler on the guest's thread with that
+// player in r5 (AnswerBoxAction), so each class's and each build's own gates decide; the guest's
+// pad never reaches a handler of a box Godot owns.
+//
+// THE PLAYER IN r5 is the pressing pad's local player, 1 or 2: the GUI input object's slot 4
+// (`lwz r11,8(r3)` / `lwz r3,0x24(r11)`, TU3 0x82295BA0 / disc 0x822978E0) answers it for the
+// router's caller (TU3 0x82601B9C..0x82601BB4), the numeric adjuster picks player record 1 for it
+// and record 2 for anything else (`cmpwi r5,1`, TU3 0x8287A1F0 / disc 0x8281C488), and the menu
+// box's mapper selects only for 1 (`cmpwi r4,1`, TU3 0x82B512D4 / disc the same body at
+// sub_82B13220).
 //
 // THE BOX MANAGER BM = *(*(GUI+0x1C)+0x30) (GUI = *0x83596F84) holds two queues of 28 bytes at
 // BM+4 (Q0: messages, questions, adjusters, quest boxes) and BM+32 (Q1: intermission and info
@@ -30,20 +38,39 @@
 //   - message disc off_820B45C0 (CMessageBox_HandleInput sub_82878F88: 73 GUI_CANCEL plays the cancel
 //     cue and closes it, disc 0x8281B3D0..disc 0x8281B404; 76 with the download form +33 opens the
 //     marketplace; both only when `+28` is -1 or the player, disc 0x8281B3BC);
-//   - yes/no disc off_820B45E0 (+28 = -1, +32/+36 the yes/no tags: Lua_GUI_DisplayYesNoQuestion
-//     0x82548A38..disc 0x82518E30) and the natal query off_820DB278: 41 answers 1, 42 answers 0
-//     through sub_82B93DB0(box, answer) (`li r4,1` disc 0x8281BD54 / `li r4,0` disc 0x8281BD38), which posts
-//     message event 68 with it (`sub_821CFA18(..., 68, ..., 101, answer)` at 0x82B93E30) and
-//     closes the box through its vt[2];
+//   - yes/no TU3 off_820B9A78 / disc off_820B45E0 (+28 = -1, +32/+36 the yes/no tags:
+//     Lua_GUI_DisplayYesNoQuestion 0x82548A38..disc 0x82518E30): 41 answers 1, 42 answers 0
+//     (TU3 `li r4,1` 0x82879AB4 / `li r4,0` 0x82879A9C; disc 0x8281BD54 / 0x8281BD38) through the
+//     class's own answer — TU3 sub_82879AD8(box, answer), which refuses a 0 on a box whose +41 is
+//     set (`lbz r11,0x29(r3)` 0x82879AF4); disc sub_8281BD88(box, answer). It posts message event
+//     68 with the answer and player one's hero (`li r4,0x44` / `li r8,0x65` / `mr r9,r29`, TU3
+//     0x82879B54..0x82879B6C) and closes the box through its vt[2] (0x82879B70..0x82879B80);
+//   - the natal query TU3 off_820DB278 / disc off_820D8868: the same two actions through TU3
+//     sub_82B93DB0(box, answer) (event 68 at 0x82B93E30), on the disc through sub_8281BD88 — one
+//     function for both classes there;
 //   - the numeric adjuster off_820B9A9C (ctor sub_82879C28(box, text, min, max, increment,
-//     value, …): +100 min, +104 max, +108 increment, +112 value, 0x82879C94..0x82879CA0): 41/42
-//     finish it through sub_8287A3A0(box, accept), which posts event 69 (accept) or 70 with
-//     `box[28]` = +112 (0x8287A3F0..0x8287A434) and closes it;
+//     value, …): +100 min, +104 max, +108 increment, +112 value, 0x82879C94..0x82879CA0): its
+//     handler sub_8287A1B0 (disc sub_8281C448, the same body) takes the pad only when +200 is -1 or
+//     the player and +12 is set (0x8287A1C4..0x8287A1E8) and the player's hero exists
+//     (0x8287A20C..0x8287A220), then 41/42 finish it through sub_8287A3A0(box, accept)
+//     (0x8287A36C / 0x8287A358), which posts event 69 (accept) or 70 with `box[28]` = +112
+//     (0x8287A3F0..0x8287A434) and closes it;
 //   - the quest box off_820B9AC0 (CQuestInfoBox_HandleInput sub_8287A8E8: 73/61 post event 67 and
 //     close, 0x8287A958..0x8287A96C);
-//   - the tutorial notice disc off_82091964 (CTutorialBox_HandleInput sub_824C13F0: 41 closes).
-// The cards (CAcceptHoldBox: a press and release on its own elements) and the button box stay
-// the guest's: their answers are hold and release, not one call.
+//   - the tutorial notice disc off_82091964 (CTutorialBox_HandleInput sub_824C13F0: 41 closes);
+//   - the info card CAcceptHoldBox off_820D9BB0 / disc off_820D71CC (its HandleInput sub_82B8BD28 /
+//     disc sub_82B57178, the same body: no shown or player test). With A shown (+40) and not held
+//     (+42 = 0), 74 posts PostButtonAnswer(1) (`li r3,1` / `bl` 0x82B8BDEC..0x82B8BDF0); with A held,
+//     74 and 82 only set the hold H+8 (`stb r11,8(r10)` 0x82B8BDA0 / 0x82B8BDD4) and 79 clears it; with
+//     Y shown (+41), 77 posts PostButtonAnswer(4) (0x82B8BE0C..0x82B8BE10). Its hold is Godot's clock
+//     (display_box_stubs.cpp drops the guest's): `accept` on a held card is PostButtonAnswer(1) itself,
+//     sub_824D1BC0 / disc sub_8291F060 — `PostEvent(MS, 64, zero16, 0, 0, 101, code)` (`li r4,0x40`
+//     0x824D1BF4, `bl sub_821CFA18` 0x824D1C08) — the call the guest's update makes when its fill
+//     crosses 1.0 (0x82B8BD00..0x82B8BD04). The accept does not close the card: the script removes it;
+//   - the button box CButtonBox off_820DB200 / disc off_820D87F4 (HandleInput sub_82B93850 / disc
+//     sub_82B5ECE0, the same body, no shown or player test): the RELEASE codes, 79 A → 1, 80 B → 2,
+//     78 X → 3, 81 Y → 4 (`li r3,1` 0x82B93884, 2 0x82B938A0, 3 0x82B938BC, 4 0x82B938D8, each then
+//     `bl sub_824D1BC0`); its Hide posts 0 every time (0x82B93830).
 //
 // THE PAUSE SCREEN'S MESSAGE BOX is not a queued box. sub_825F9F38(G, text LHString, download)
 // — reached only from sub_823CDB48 (0x823CDC08) when the top mode is the GUI's — runs when
@@ -93,6 +120,8 @@ REX_EXTERN(__imp__rex_NatalQueryBox_HandleInput);
 REX_EXTERN(__imp__rex_NumericAdjuster_HandleInput);
 REX_EXTERN(__imp__rex_QuestBox_HandleInput);
 REX_EXTERN(__imp__rex_TutorialBox_HandleInput);
+REX_EXTERN(__imp__rex_AcceptHoldBox_HandleInput);
+REX_EXTERN(__imp__rex_ButtonBox_HandleInput);
 REX_EXTERN(__imp__rex_GuiManager_ScreenInput);
 REX_EXTERN(__imp__rex_GuiManager_ModalReset);
 REX_EXTERN(__imp__rex_MenuBox_Open);
@@ -104,11 +133,14 @@ REX_EXTERN(__imp__rex_ScreenManager_Destroy);
 REX_EXTERN(rex_MessageBox_HandleInput);
 REX_EXTERN(rex_QueryBox_HandleInput);
 REX_EXTERN(rex_NatalQueryBox_HandleInput);
+REX_EXTERN(rex_NumericAdjuster_HandleInput);
 REX_EXTERN(rex_QuestBox_HandleInput);
 REX_EXTERN(rex_TutorialBox_HandleInput);
+REX_EXTERN(rex_AcceptHoldBox_HandleInput);
+REX_EXTERN(rex_ButtonBox_HandleInput);
+REX_EXTERN(rex_Box_PostButtonAnswer);
 REX_EXTERN(rex_GuiManager_ScreenInput);
 REX_EXTERN(rex_MenuBox_Close);
-REX_EXTERN(rex_NumericAdjuster_Answer);
 REX_EXTERN(rex_MenuBox_Highlight);
 REX_EXTERN(rex_MenuBox_Accept);
 REX_EXTERN(rex_GuiInput_MenuAction);
@@ -118,6 +150,7 @@ namespace {
 using namespace refii::fable3;
 
 const refii::guest::Addr kGuiManager{0x83596F84u};
+const refii::guest::Addr kGame{0x83597034u};
 constexpr uint32_t kQueuePendingEnd = 8u;
 constexpr uint32_t kQueueShowing = 20u;
 // A queue's size: Q0 at BM+4, Q1 after it (TU3 `addi r3,r31,0x28` 0x821B6748, disc 0x20 at
@@ -195,6 +228,17 @@ constexpr uint32_t kMessageActionTag = 36u;
 
 /// The adjuster's answer reads its value at +112 (`box[28]`, 0x8287A3F0).
 constexpr uint32_t kAdjusterValue = 112u;
+/// Every box's shown byte (base ctor sub_82958000: +12 = 0; each Show sets it, each Hide clears it).
+constexpr uint32_t kBoxShown = 12u;
+
+/// The info card's flags from its params (CAcceptHoldBox_ctor sub_82B8B7A8, 0x82B8B7C8..0x82B8B86C):
+/// +40 A shown, +41 Y shown, +42 A must be held — the bytes its handler tests (`lbz r11,0x28(r3)`
+/// 0x82B8BD3C, `lbz r11,0x2A(r3)` 0x82B8BD50, `lbz r11,0x29(r31)` 0x82B8BDF4).
+constexpr uint32_t kCardShowA = 40u;
+constexpr uint32_t kCardShowY = 41u;
+constexpr uint32_t kCardHoldA = 42u;
+/// PostButtonAnswer's code for the accept.
+constexpr uint32_t kButtonAccept = 1u;
 
 /// The game actions the owned handlers take (sub_82878F88, sub_82B93CD8, sub_8287A8E8,
 /// sub_824C13F0, sub_825F9408).
@@ -203,6 +247,12 @@ constexpr uint32_t kActionNo = 42u;
 constexpr uint32_t kActionSelect = 72u;
 constexpr uint32_t kActionCancel = 73u;
 constexpr uint32_t kActionX = 76u;
+/// The face buttons' pressed codes (A 74, Y 77) the card takes, and the released codes the button
+/// box answers on, by its answer 1..4 (A 79, B 80, X 78, Y 81: `addi r11,r11,-0x4E` and its jump,
+/// 0x82B93860..0x82B93880).
+constexpr uint32_t kActionAPressed = 74u;
+constexpr uint32_t kActionYPressed = 77u;
+constexpr uint32_t kButtonBoxReleased[4] = {79u, 80u, 78u, 81u};
 
 /// The pause screen's message box: SM+40 is 42 while it is up (0x825F9F74, read at 0x825F9434).
 constexpr uint32_t kScreenManager = 0x1Cu;
@@ -304,8 +354,9 @@ void PostQueued(const uint8_t* base, int32_t queue, uint32_t box) {
       queued.Add(Text(ReadCharString(base, box + 36u)))
           .Add(Text(ReadCharString(base, box + 44u)))
           .Add(Text(ReadCharString(base, box + 48u)))
-          .Add(Boolean(base[box + 40u] != 0u))
-          .Add(Boolean(base[box + 41u] != 0u));
+          .Add(Boolean(base[box + kCardShowA] != 0u))
+          .Add(Boolean(base[box + kCardShowY] != 0u))
+          .Add(Boolean(base[box + kCardHoldA] != 0u));
       break;
     default:
       break;
@@ -314,7 +365,7 @@ void PostQueued(const uint8_t* base, int32_t queue, uint32_t box) {
 }
 
 /// A box on screen, as this file stated it: its class at the push and the last player the
-/// guest's own router handed its handler (the handler's player filter, sub_82878F88 disc 0x8281B3BC).
+/// guest's own router handed its handler (r5 at the handler's entry), kept for the answer's log line.
 struct Showing {
   int32_t queue = -1;
   uint32_t vtable = 0u;
@@ -376,9 +427,10 @@ void StoreGuestU32(uint8_t* base, uint32_t address, uint32_t value) {
   std::memcpy(base + address, &swapped, sizeof(swapped));
 }
 
-/// Runs a pad handler `handler(box, {action, 0, 0}, player)` with Godot's answer.
+/// Runs a pad handler `handler(box, {action, 0, 0}, player)` with Godot's answer; the handler's own
+/// answer (1 when it took the action).
 template <typename Handler>
-void RunHandler(PPCContext& ctx, uint8_t* base, Handler handler, uint32_t box, uint32_t action, uint32_t player) {
+uint32_t RunHandler(PPCContext& ctx, uint8_t* base, Handler handler, uint32_t box, uint32_t action, uint32_t player) {
   PPCContext work = Frame(ctx);
   const uint32_t event = work.r1.u32 + 0x100u;
   StoreGuestU32(base, event, action);
@@ -390,6 +442,7 @@ void RunHandler(PPCContext& ctx, uint8_t* base, Handler handler, uint32_t box, u
   work.r5.u64 = player;
   HostAnswer answering;
   handler(work, base);
+  return work.r3.u32;
 }
 
 /// The gate every owned handler runs through: Godot's answer passes, the guest's pad is
@@ -412,6 +465,19 @@ void Gate(PPCContext& ctx, uint8_t* base, Original original) {
     it->second.player = ctx.r5.u32;
   }
   ctx.r3.u64 = 1u;
+}
+
+/// The message system's event serial, MS+0x9B0 (disc +0x980), MS = *(*(*(*(GAME+12)+28)+4)+28) —
+/// the chain the save menu's accept reads it through (0x829B5618..0x829B562C); 0 when unreadable.
+uint32_t MessageSerial(const uint8_t* base) {
+  uint32_t at = LoadGuestU32(base, kGame);
+  for (uint32_t offset : {0xCu, 0x1Cu, 4u, 0x1Cu}) {
+    if (!Plausible(at)) {
+      return 0u;
+    }
+    at = LoadGuestU32(base, at + offset);
+  }
+  return Plausible(at) ? LoadGuestU32(base, at + refii::guest::Pick(0x9B0u, 0x980u)) : 0u;
 }
 
 /// The pause screen's message box is up: SM+40 = 42.
@@ -458,14 +524,54 @@ bool BoxIsShowing(uint32_t box) {
   return ShowingBoxes().count(box) != 0u;
 }
 
+bool PadTakenAheadOfTopBox(const uint8_t* base, uint32_t action, uint32_t player) {
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (const auto& [box, showing] : ShowingBoxes()) {
+      // The pause screen's message box: the screen route ahead of the dispatcher takes the press.
+      // A queued box: the router (channel 1) answers "consumed" for 72..85 unless the one showing is
+      // an intermission (0x825F39EC..0x825F3A40).
+      if (showing.queue == kModalQueue || refii::guest::ToTu3(showing.vtable) != kVtIntermission) {
+        return true;
+      }
+    }
+  }
+  // The menu box (channel 0): its mapper turns 74 into its select for player one alone (`cmpwi
+  // r11,0x4A` 0x82B5133C, `cmpwi r4,1` 0x82B512D4) and its input answers 1 for it.
+  const uint32_t menu = g_menu;
+  return action == kActionAPressed && player == 1u && menu != 0u && Plausible(menu) && base[menu + kMenuOpen] != 0u;
+}
+
+/// The player field of a lever, `<p>:` with p 1 or 2, at `at`; the text after it, or null.
+static const char* TakePlayer(const char* at, uint32_t& player) {
+  if ((at[0] != '1' && at[0] != '2') || at[1] != ':') {
+    return nullptr;
+  }
+  player = static_cast<uint32_t>(at[0] - '0');
+  return at + 2;
+}
+
 bool AnswerBoxAction(PPCContext& ctx, uint8_t* base, const char* action) {
   if (base == nullptr || action == nullptr) {
     return false;
   }
 
-  // `menubox:<row>` (0-based) / `menubox-cancel`.
-  if (std::strncmp(action, kMenuBoxAnswerAction, sizeof(kMenuBoxAnswerAction) - 1u) == 0 ||
-      std::strcmp(action, kMenuBoxCancelAction) == 0) {
+  // `menubox:<p>:<row>` (0-based) / `menubox-cancel:<p>`.
+  const bool menu_cancel = std::strncmp(action, kMenuBoxCancelAction, sizeof(kMenuBoxCancelAction) - 1u) == 0;
+  if (menu_cancel || std::strncmp(action, kMenuBoxAnswerAction, sizeof(kMenuBoxAnswerAction) - 1u) == 0) {
+    uint32_t player = 0u;
+    const char* rest = nullptr;
+    if (!menu_cancel) {
+      rest = TakePlayer(action + sizeof(kMenuBoxAnswerAction) - 1u, player);
+    } else if (action[sizeof(kMenuBoxCancelAction) - 1u] == ':' &&
+               (action[sizeof(kMenuBoxCancelAction)] == '1' || action[sizeof(kMenuBoxCancelAction)] == '2')) {
+      player = static_cast<uint32_t>(action[sizeof(kMenuBoxCancelAction)] - '0');
+      rest = action + sizeof(kMenuBoxCancelAction) + 1u;
+    }
+    if (rest == nullptr) {
+      REXLOG_WARN("[fable3-boxes] menu box answer '{}' names no player; dropped", action);
+      return false;
+    }
     const uint32_t menu = g_menu;
     if (menu == 0u || !Plausible(menu) || base[menu + kMenuOpen] == 0u) {
       REXLOG_WARN("[fable3-boxes] menu box answer '{}' with no menu box open; dropped", action);
@@ -473,16 +579,22 @@ bool AnswerBoxAction(PPCContext& ctx, uint8_t* base, const char* action) {
     }
     PPCContext work = Frame(ctx);
     work.r3.u64 = menu;
-    if (std::strcmp(action, kMenuBoxCancelAction) == 0) {
+    if (menu_cancel) {
       if (base[menu + kMenuCancelable] == 0u) {
         return false;
       }
-      // The guest's own cancel: `+13 = 1` then the close (0x82621F78..0x82621F7C).
+      // The guest's own cancel, any player's: `+13 = 1` then the close (0x82621F78..0x82621F7C).
       base[menu + kMenuCancelled] = 1u;
       rex_MenuBox_Close(work, base);
       return true;
     }
-    const long row = std::strtol(action + sizeof(kMenuBoxAnswerAction) - 1u, nullptr, 10);
+    // The guest selects for player one alone: its mapper turns 72 / 74 into the select only when
+    // the pad is 1 (`cmpwi r4,1` / `bne`, TU3 0x82B512D4..0x82B512D8; disc sub_82B13220, the same body).
+    if (player != 1u) {
+      REXLOG_INFO("[fable3-boxes] menu box answer '{}': the guest selects for player one only; refused", action);
+      return false;
+    }
+    const long row = std::strtol(rest, nullptr, 10);
     if (row < 0 || row >= static_cast<long>(kMenuMaxRows)) {
       return false;
     }
@@ -494,11 +606,16 @@ bool AnswerBoxAction(PPCContext& ctx, uint8_t* base, const char* action) {
     return true;
   }
 
-  // `box:<HEX>:<verb>[:<value>]`.
+  // `box:<p>:<HEX>:<verb>[:<value>]`.
   if (std::strncmp(action, kBoxAnswerAction, sizeof(kBoxAnswerAction) - 1u) != 0) {
     return false;
   }
-  const char* at = action + sizeof(kBoxAnswerAction) - 1u;
+  uint32_t player = 0u;
+  const char* at = TakePlayer(action + sizeof(kBoxAnswerAction) - 1u, player);
+  if (at == nullptr) {
+    REXLOG_WARN("[fable3-boxes] answer '{}' names no player; dropped", action);
+    return false;
+  }
   char* end = nullptr;
   const uint32_t box = static_cast<uint32_t>(std::strtoul(at, &end, 16));
   if (end == nullptr || *end != ':') {
@@ -519,49 +636,90 @@ bool AnswerBoxAction(PPCContext& ctx, uint8_t* base, const char* action) {
     }
     showing = it->second;
   }
+  REXLOG_INFO("[fable3-boxes] answer '{}' as player {} (the guest's router last handed this box player {})", action,
+              player, showing.player);
 
   if (showing.queue == kModalQueue) {
     if (!ModalUp(base)) {
       return false;
     }
     // sub_826019F0 passes SM = *(GUI+0x1C), the action itself (not an event block) and the
-    // player (0x82601A98, 0x82601B74).
+    // player (0x82601A98, 0x82601B74). The player (`mr r27,r5` 0x825F9420) goes only to a screen
+    // object's slot 6 past the modal's branch (`mr r5,r27` 0x825F95EC; disc 0x825CE564): the
+    // modal's 72 and 76 do not read it.
     PPCContext work = Frame(ctx);
     work.r3.u64 = LoadGuestU32(base, LoadGuestU32(base, kGuiManager) + kScreenManager);
     work.r4.u64 = verb == "action" ? kActionX : kActionSelect;
-    work.r5.u64 = 0u;
+    work.r5.u64 = player;
     HostAnswer answering;
     rex_GuiManager_ScreenInput(work, base);
     return true;
   }
 
-  PPCContext work = Frame(ctx);
-  work.r3.u64 = box;
   switch (refii::guest::ToTu3(showing.vtable)) {
     case kVtYesNo:
       // Through the box's own input, so each build's rule decides: the disc's answers 41/42 at once
-      // (disc sub_8281BCF8); TU3's holds the other-player-paused box for its first 30 ticks and its
-      // answer refuses a "no" while +41 is set (sub_828799F8, sub_82879AD8 0x82879AF4).
-      RunHandler(ctx, base, rex_QueryBox_HandleInput, box, verb == "yes" ? kActionYes : kActionNo, showing.player);
+      // (disc sub_8281BCF8); TU3's holds the other-player-paused box for its first ticks
+      // (0x82879A04..0x82879A64) and its answer refuses a "no" while +41 is set (0x82879AF4).
+      // The handler answers 1 only where it called the answer (TU3 0x82879AA8 / 0x82879AC0, disc
+      // 0x8281BD40 / 0x8281BD5C), and the answer posted its event 68 when the message serial moved
+      // (PostEvent `stw r10,0x9B0(r30)` 0x821CFB58, disc 0x980 at 0x821CFA88): a save menu
+      // confirmation's row runs on that (save_menu_confirm.cpp).
+      {
+        const uint32_t before = MessageSerial(base);
+        if (RunHandler(ctx, base, rex_QueryBox_HandleInput, box, verb == "yes" ? kActionYes : kActionNo, player) == 1u) {
+          NoteQuestionAnswered(box, verb == "yes", MessageSerial(base) != before);
+        }
+      }
       return true;
     case kVtNatalQuery:
-      RunHandler(ctx, base, rex_NatalQueryBox_HandleInput, box, verb == "yes" ? kActionYes : kActionNo, showing.player);
+      RunHandler(ctx, base, rex_NatalQueryBox_HandleInput, box, verb == "yes" ? kActionYes : kActionNo, player);
       return true;
     case kVtAdjuster:
-      if (verb == "accept") {
+      // The value is Godot's until the answer: stored where the guest's answer reads it, on a box
+      // that is still shown; the handler then applies its own gates (player, shown, the player's hero).
+      if (verb == "accept" && base[box + kBoxShown] != 0u) {
         StoreGuestU32(base, box + kAdjusterValue, static_cast<uint32_t>(static_cast<int32_t>(value)));
       }
-      work.r4.u64 = verb == "accept" ? 1u : 0u;
-      rex_NumericAdjuster_Answer(work, base);
+      RunHandler(ctx, base, rex_NumericAdjuster_HandleInput, box, verb == "accept" ? kActionYes : kActionNo, player);
       return true;
     case kVtMessage:
-      RunHandler(ctx, base, rex_MessageBox_HandleInput, box, verb == "action" ? kActionX : kActionCancel, showing.player);
+      RunHandler(ctx, base, rex_MessageBox_HandleInput, box, verb == "action" ? kActionX : kActionCancel, player);
       return true;
     case kVtQuest:
-      RunHandler(ctx, base, rex_QuestBox_HandleInput, box, kActionCancel, showing.player);
+      RunHandler(ctx, base, rex_QuestBox_HandleInput, box, kActionCancel, player);
       return true;
     case kVtNotice:
-      RunHandler(ctx, base, rex_TutorialBox_HandleInput, box, kActionYes, showing.player);
+      RunHandler(ctx, base, rex_TutorialBox_HandleInput, box, kActionYes, player);
+      return true;
+    case kVtInfoCard:
+      if (verb == "help") {
+        RunHandler(ctx, base, rex_AcceptHoldBox_HandleInput, box, kActionYPressed, player);
+        return true;
+      }
+      if (verb != "accept") {
+        return false;
+      }
+      if (base[box + kCardHoldA] == 0u) {
+        // A press card: its own handler with A.
+        RunHandler(ctx, base, rex_AcceptHoldBox_HandleInput, box, kActionAPressed, player);
+        return true;
+      }
+      // A held card whose hold Godot timed to the full: the answer the guest's fill would post.
+      if (base[box + kCardShowA] == 0u || base[box + kBoxShown] == 0u) {
+        return false;
+      }
+      {
+        PPCContext work = Frame(ctx);
+        work.r3.u64 = kButtonAccept;
+        rex_Box_PostButtonAnswer(work, base);
+      }
+      return true;
+    case kVtButtonBox:
+      if (verb != "button" || value < 1 || value > 4) {
+        return false;
+      }
+      RunHandler(ctx, base, rex_ButtonBox_HandleInput, box, kButtonBoxReleased[value - 1], player);
       return true;
     default:
       REXLOG_WARN("[fable3-boxes] answer '{}' for a box Godot does not own (vtable {:08X}); dropped", action,
@@ -589,6 +747,9 @@ REX_EXTERN(rex_BoxQueue_Push) {
     std::lock_guard<std::mutex> lock(g_mutex);
     Queued()[box] = LoadGuestU32(base, box);
   }
+  if (refii::fable3::SaveMenuAccepting()) {
+    refii::fable3::NoteSaveConfirmQueued(box);
+  }
   PostQueued(base, QueueIndex(base, queue), box);
 }
 
@@ -613,6 +774,7 @@ REX_EXTERN(rex_BoxVector_Erase) {
     was_queued = Queued().erase(box) != 0u;
   }
   if (was_queued) {
+    refii::fable3::NoteBoxGone(box);
     Statement("@Box.Dropped").Add(Text(Hex(box))).Post();
   }
 }
@@ -638,6 +800,7 @@ REX_EXTERN(rex_BoxQueue_Update) {
       std::lock_guard<std::mutex> lock(g_mutex);
       ShowingBoxes().erase(before);
     }
+    refii::fable3::NoteBoxGone(before);
     Statement("@Box.Close").Add(Number(static_cast<float>(index))).Add(Text(Hex(before))).Post();
   }
   if (after != 0u && Plausible(after)) {
@@ -664,6 +827,8 @@ REX_EXTERN(rex_NatalQueryBox_HandleInput) { Gate(ctx, base, __imp__rex_NatalQuer
 REX_EXTERN(rex_NumericAdjuster_HandleInput) { Gate(ctx, base, __imp__rex_NumericAdjuster_HandleInput); }
 REX_EXTERN(rex_QuestBox_HandleInput) { Gate(ctx, base, __imp__rex_QuestBox_HandleInput); }
 REX_EXTERN(rex_TutorialBox_HandleInput) { Gate(ctx, base, __imp__rex_TutorialBox_HandleInput); }
+REX_EXTERN(rex_AcceptHoldBox_HandleInput) { Gate(ctx, base, __imp__rex_AcceptHoldBox_HandleInput); }
+REX_EXTERN(rex_ButtonBox_HandleInput) { Gate(ctx, base, __imp__rex_ButtonBox_HandleInput); }
 
 /// (SM, action, player): while the pause screen's message box is up, its two actions (72, and 76
 /// on the download form) are Godot's; every other action runs as the guest has it.
@@ -793,6 +958,7 @@ REX_EXTERN(rex_ScreenManager_Destroy) {
     g_modal = 0u;
   }
   refii::fable3::ForgetSaveMenu();
+  refii::fable3::ForgetSaveConfirms();
   Statement("@Screens.Destroyed").Add(Text(Hex(manager))).Post();
   __imp__rex_ScreenManager_Destroy(ctx, base);
 }

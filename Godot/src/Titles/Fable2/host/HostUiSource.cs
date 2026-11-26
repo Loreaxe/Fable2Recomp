@@ -36,7 +36,7 @@ public sealed class HostUiSource : Fable2UiSource
 	public override Engine_UiModel.MenuBoxState? GetMenuBox() => Engine_UiDisplayBoxes.MenuState();
 
 	public override FrontEndDialogState? GetFrontEndDialog() =>
-		HostBridge.TryGetFrontEndDialog(out bool accepting) ? new FrontEndDialogState(accepting) : null;
+		HostBridge.TryGetFrontEndDialog(out bool accepting, out bool title) ? new FrontEndDialogState(accepting, title) : null;
 
 	/// <summary>
 	/// The screen the showing box stands on, by the guest's own mapping — the class's type (vtable

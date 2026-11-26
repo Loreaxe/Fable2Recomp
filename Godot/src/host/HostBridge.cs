@@ -23,7 +23,7 @@ public static partial class HostBridge
 	/// ABI this binding expects; bump together with the native `RefiiHostBridgeAbiVersion`.
 	/// The check is exact and `GameSession` treats a mismatch as fatal before the guest initialises.
 	/// </summary>
-	public const int ExpectedAbiVersion = 257;
+	public const int ExpectedAbiVersion = 259;
 
 	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
 	private static extern uint RefiiHostGetSaveRoot(byte[] output, uint capacity);
@@ -2816,30 +2816,6 @@ public static partial class HostBridge
 			Mathf.RadToDeg(2f * Mathf.Atan(0.75f * Mathf.Tan(HorizontalFov * 0.5f)));
 	}
 
-	[ThreadStatic]
-	private static float[]? _cameraScratch;
-
-	/// <summary>
-	/// The guest's camera, or null when it could not be read coherently. The snapshot is five
-	/// unsynchronised stores with no sequence counter, so the bridge reads it twice and requires
-	/// agreement rather than returning a torn camera.
-	/// </summary>
-	public static GuestCamera? GetCamera()
-	{
-		float[] values = _cameraScratch ??= new float[11];
-		if (RefiiHostGetCamera(values) == 0)
-		{
-			return null;
-		}
-
-		return new GuestCamera(
-			new Vector3(values[0], values[1], values[2]),
-			new Vector3(values[3], values[4], values[5]),
-			new Vector3(values[6], values[7], values[8]),
-			values[9],
-			values[10] != 0f);
-	}
-
 	/// <summary>
 	/// Why rigs are not clip-driven: no component bit, component unresolved, controller found,
 	/// controller found but empty — and rigs a linked animation posed. See RefiiHostGetAnimWalkStats.
@@ -2862,64 +2838,43 @@ public static partial class HostBridge
 
 	private static uint[]? _animStatWords;
 
-	/// <summary>
-	/// The two cameras the guest blends between — the live one and the one it latched at the
-	/// start of the current game tick — or null when the chain is not up.
-	/// </summary>
-	/// <remarks>
-	/// `sub_8228FEF0` blends `game+0x10` to the live block by the same alpha register
-	/// `sub_822112D8` gets for every renderable. `Live.Flag` is the guest's snap override: when
-	/// set, the blend is skipped and the live camera stands (a cut).
-	/// </remarks>
-	public static (GuestCamera Previous, GuestCamera Live)? GetCameraPair()
-	{
-		_cameraPairValues ??= new float[22];
-		float[] values = _cameraPairValues;
-		if (RefiiHostGetCameraPair(values) == 0)
-		{
-			return null;
-		}
-
-		static GuestCamera At(float[] v, int from) => new(
-			new Vector3(v[from], v[from + 1], v[from + 2]),
-			new Vector3(v[from + 3], v[from + 4], v[from + 5]),
-			new Vector3(v[from + 6], v[from + 7], v[from + 8]),
-			v[from + 9],
-			v[from + 10] != 0f);
-
-		return (At(values, 11), At(values, 0));
-	}
-
-	private static float[]? _cameraPairValues;
+	private static readonly float[] _statedCamera = new float[11];
 
 	/// <summary>
-	/// One player's own live camera (1 or 2), or null when that player has no camera manager —
-	/// local player two has one only on split screen. Not blended by the guest: the caller keeps
-	/// its own timeline, as it does for player one's.
+	/// States the camera the shell draws back to the title's bridge, in the guest's block layout,
+	/// for the hooks that read it natively (Fable 3's mouse look and <c>Refii.fov</c>).
 	/// </summary>
-	public static GuestCamera? GetPlayerCamera(int player)
+	public static void StateCamera(GuestCamera camera)
 	{
-		if (player != 1 && player != 2)
+		if (TryGetAbiVersion() is null)
 		{
-			return null;
+			return;
 		}
 
-		_playerCameraValues ??= new float[11];
-		float[] v = _playerCameraValues;
-		if (RefiiHostGetPlayerCamera(player, v) == 0)
-		{
-			return null;
-		}
-
-		return new GuestCamera(
-			new Vector3(v[0], v[1], v[2]),
-			new Vector3(v[3], v[4], v[5]),
-			new Vector3(v[6], v[7], v[8]),
-			v[9],
-			v[10] != 0f);
+		float[] v = _statedCamera;
+		(v[0], v[1], v[2]) = (camera.Position.X, camera.Position.Y, camera.Position.Z);
+		(v[3], v[4], v[5]) = (camera.Up.X, camera.Up.Y, camera.Up.Z);
+		(v[6], v[7], v[8]) = (camera.Forward.X, camera.Forward.Y, camera.Forward.Z);
+		v[9] = camera.HorizontalFov;
+		v[10] = camera.Flag ? 1f : 0f;
+		RefiiHostStateCamera(v);
 	}
 
-	private static float[]? _playerCameraValues;
+	/// <summary>
+	/// The camera statements after sequence <paramref name="after"/>, oldest first, into
+	/// <paramref name="words"/> (<see cref="Refii.Camera.Engine_CameraStatements.RecordWords"/> words
+	/// each); returns how many records were written. 0 without a bridge.
+	/// </summary>
+	public static uint GetCameraStatements(uint after, uint[] words)
+	{
+		uint capacity = (uint)(words.Length / Refii.Camera.Engine_CameraStatements.RecordWords);
+		if (capacity == 0u || TryGetAbiVersion() is null)
+		{
+			return 0u;
+		}
+
+		return RefiiHostGetCameraStatements(after, words, capacity);
+	}
 
 
 	private static readonly float[] _holdPromptAt = new float[3];
@@ -7983,8 +7938,9 @@ public static partial class HostBridge
 	/// The front end as the title's own calls state it (payload_bridge.h, stated value 13): the
 	/// active screen, that screen's mode, whether the title takes A, and the Load Game card the
 	/// guest's cursor is on. False, and every value zero, while the front-end GUI does not exist.
-	/// On Fable 2's title the modes are 9 legal sequence, 0 idle, 10 start sequence, 11 handing
-	/// over to the menu, 12 dialog; on its main menu 0 the list, 1 locked through a transition,
+	/// On Fable 2's title the modes are 9 legal sequence, 0 idle, 8 the idle attract movie (A only
+	/// skips it, the latch stays), 10 start sequence, 11 handing over to the menu, 12 dialog; on its
+	/// main menu 0 the list, 1 locked through a transition,
 	/// 2 to 4 the hero card, 5 the Load Game cards, 6 a warning, 7 leaving for the title.
 	/// </summary>
 	public static bool TryGetFrontEnd(
@@ -8004,15 +7960,27 @@ public static partial class HostBridge
 		return up;
 	}
 
+	/// <summary>Fable 2's title mode while its idle attract movie plays (frontend_stated.cpp).</summary>
+	public const uint TitleAttractMode = 8u;
+
+	/// <summary>
+	/// The pad Fable 2's title took A from (stated value 13, bits 6-7: r5 of the title's input slot
+	/// on the arm that writes the session's pad, frontend_stated.cpp) — the only pad the main menu
+	/// answers. 0 until a title has taken A.
+	/// </summary>
+	public static int FrontEndPad => (int)((Stated(StatedValue.FrontEnd) >> 6) & 3u);
+
 	/// <summary>
 	/// Whether the front end has a warning raised — from the title's OpenDialog until that
 	/// dialog's UNFREEZE (stated value 13, bits 4-5: the screen that raised it) — and whether its
-	/// owner is taking the answer yet: the title in mode 12, the main menu in mode 6.
+	/// owner is taking the answer yet: the title in mode 12, the main menu in mode 6. <paramref
+	/// name="title"/> is set when the title raised it (it takes A from any pad).
 	/// </summary>
-	public static bool TryGetFrontEndDialog(out bool accepting)
+	public static bool TryGetFrontEndDialog(out bool accepting, out bool title)
 	{
 		uint word = Stated(StatedValue.FrontEnd);
 		FrontEndScreen owner = (word & 1u) != 0u ? (FrontEndScreen)((word >> 4) & 3u) : FrontEndScreen.None;
+		title = owner == FrontEndScreen.Title;
 		accepting = owner switch
 		{
 			FrontEndScreen.Title => ((word >> 8) & 0xFFu) == 12u,
@@ -8160,12 +8128,6 @@ public static partial class HostBridge
 		out float x0, out float y0, out float x1, out float y1);
 
 	[DllImport(Library)]
-	private static extern int RefiiHostGetCamera(float[] outValues);
-
-	[DllImport(Library)]
-	private static extern int RefiiHostGetCameraPair(float[] outValues);
-
-	[DllImport(Library)]
 	private static extern void RefiiHostPostMouseLook(float yawDegrees, float pitchDegrees);
 
 	[DllImport(Library)]
@@ -8181,7 +8143,10 @@ public static partial class HostBridge
 	private static extern uint RefiiHostGetMouseLook(double[] outValues, uint count);
 
 	[DllImport(Library)]
-	private static extern int RefiiHostGetPlayerCamera(int player, float[] outValues);
+	private static extern uint RefiiHostGetCameraStatements(uint after, [Out] uint[] outWords, uint maxRecords);
+
+	[DllImport(Library)]
+	private static extern void RefiiHostStateCamera(float[] eleven);
 
 	[DllImport(Library)]
 	private static extern int RefiiHostGetPlayerTwoHoldPrompt([Out] float[] at, [Out] byte[] title, uint capacity);

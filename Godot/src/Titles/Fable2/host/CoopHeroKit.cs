@@ -422,7 +422,8 @@ public static class CoopHeroKit
 		Godot.GD.Print($"[coop-kit] chosen save '{name}' read: {hero.Worn.Count} worn, " +
 			$"{hero.Inventory.Count} inventory record(s), melee '{Name(hero.Melee)}' (0x{hero.Melee:X8}), " +
 			$"ranged '{Name(hero.Ranged)}' (0x{hero.Ranged:X8}), " +
-			$"money {hero.Money}, renown {hero.Renown}, face 0x{hero.Face:X8}");
+			$"money {hero.Money}, renown {hero.Renown}, " +
+			(hero.Face == 0u ? "no character-creation face (the save's CharacterUID is 0)" : $"face 0x{hero.Face:X8}"));
 		return kit;
 	}
 

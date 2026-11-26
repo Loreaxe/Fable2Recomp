@@ -58,7 +58,15 @@ void RunMenuLua(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t scratch
 
 Scratch Claim(const PPCContext& ctx);
 
+/// One line naming a slot that ran. An INPUT slot (`OnScreenAction`, `HandleAction`) is called with the
+/// same code every tick a trigger is held (gift 25: code 9, which its handler ignores — TU1 0x826C4BC0
+/// `cmplwi r5,1 ; bnelr ; addi r11,r4,-0x1A ; cmplwi r11,0xB ; bgtlr`, disc 0x825A0B58 the same), so
+/// its line says the first call of a screen's activation and then only a new code or player.
 void Said(const char* screen, const char* slot, uint32_t handler, uint32_t a = 0u, uint32_t b = 0u);
+
+/// A screen became active: every input slot's next call is said again. Called by the screen setter
+/// (`lhGuiManager_SetScreen`, mod_events.cpp), which runs each activation's OnEnter.
+void SaidAnew();
 
 /// The element a static name handle names in `pres`: `sub_821F0240` copies the handle into `slot`
 /// and `sub_82426798` resolves it and releases the copy.
@@ -88,9 +96,19 @@ uint32_t ScreenHandler(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t 
 void HighlightedRow(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t row, uint32_t chars, uint32_t* type,
                     uint32_t* id);
 
-/// The logbook opened on another player (`sub_823C48D8`, the orb's View Stats): 0 not, 1 opened
-/// elsewhere, 2 opened over the world map (its B returns there). gui_screen_stub_logbook.cpp.
-int LogbookOrbMode();
+/// PLAYER TWO'S PURSE. The book and world screens state the gold text for HERO ONE whoever opened them:
+/// `sub_8246B5E8(pres, key, 1)` (map 0x826C5E38, items 0x826D15A8, clothing 0x826D2D48, logbook 0x826D913C,
+/// options 0x826D9E78, gift 0x826C4598, shop 0x826AE4D8, crime 0x826A90A8, real estate 0x826B1F18,
+/// furniture 0x826B6158, decoration 0x826B70B0 — all `li r5,1`; disc the same 11 sites before
+/// `sub_82837218`), and the reader takes the players' record's +108 (hero one, `lhEntity_GetModel`
+/// 0x8246B650) for 1 and +116 (hero two, 0x8246B658) for 0. The original's henchman list opens none of them;
+/// they are player two's here. So while the open GUI is player two's — the guest's own owner test
+/// `sub_8236E400(QM)` (disc `sub_82336610`: GUI mode and the pause root's +4 == 1, which the world
+/// screens' openers set for their user), or `shopping` for local player two's shop (coop_hero_hooks.cpp)
+/// — the reader is asked again with 0 right after the guest's call. Player one's screens are untouched.
+/// `key` is the TU1 address of the screen's gold element name.
+void RestatePurseForPlayerTwo(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t pres, uint32_t key,
+                              bool shopping = false);
 
 }  // namespace refii::vfs::stub
 

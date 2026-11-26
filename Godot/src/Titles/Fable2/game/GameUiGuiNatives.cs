@@ -118,6 +118,10 @@ public partial class GameUi
 		RouteMeters();
 		RouteDisplayBoxes();
 		RouteTimers();
+
+		// The platform keyboard (`@Keyboard.Open`, keyboard_ui.cpp): the villager card's rename and
+		// the dog's naming ask it; Engine_UiPlatformKeyboard answers.
+		Engine_UiPlatformKeyboard.Register(_guiNatives);
 		RoutePredicates();
 		RouteNotYetOwned();
 	}

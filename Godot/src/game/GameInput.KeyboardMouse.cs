@@ -37,6 +37,8 @@ public partial class GameInput
 	/// One rebindable action: its setting key, default keys, and what it presses. <c>Superseded</c>
 	/// lists the action's former defaults: the launcher writes every setting it offers, so an install
 	/// holds the default of its day, and a stored value equal to a former default reads as today's.
+	/// A stored value's <c>Pad:</c> tokens (<see cref="Refii.Core.Engine_PadActionBinding"/>) are no part of
+	/// its keys: the keys are what is left without them.
 	/// </summary>
 	public readonly record struct KeyAction(string Name, string Defaults, string Description, string[]? Superseded = null)
 	{
@@ -55,10 +57,23 @@ public partial class GameInput
 			init => _hostAction = value;
 		}
 
-		/// <summary>Whether <paramref name="stored"/> means "the default": empty, today's, or a former one.</summary>
+		/// <summary>
+		/// Whether the action may also be bound to a pad chord (<c>Pad:</c> tokens in its setting,
+		/// <see cref="ApplyPadActions"/>): the Controls page then gives it a controller row. Unbound
+		/// by default.
+		/// </summary>
+		public bool PadBindable { get; init; }
+
+		/// <summary>
+		/// For a pad-bindable <see cref="KeyPress.HostAction"/>: the action posted for the player
+		/// (1 or 2) whose pad pressed the chord. Null posts <see cref="HostAction"/>.
+		/// </summary>
+		public System.Func<int, string>? HostActionFor { get; init; }
+
+		/// <summary>Whether <paramref name="stored"/>'s keys mean "the default": empty, today's, or a former one.</summary>
 		public bool IsDefault(string? stored)
 		{
-			string value = Normalised(stored);
+			string value = Normalised(Refii.Core.Engine_PadActionBinding.KeysOf(stored));
 			if (value.Length == 0 || value == Normalised(Defaults))
 			{
 				return true;
@@ -76,7 +91,8 @@ public partial class GameInput
 		}
 
 		/// <summary>The keys in force for <paramref name="stored"/>: today's defaults when it means the default.</summary>
-		public string Bound(string? stored) => IsDefault(stored) ? Defaults : stored!;
+		public string Bound(string? stored) => IsDefault(stored) ? Defaults :
+			Refii.Core.Engine_PadActionBinding.HasPadToken(stored) ? Refii.Core.Engine_PadActionBinding.KeysOf(stored) : stored!;
 
 		private static string Normalised(string? list) =>
 			string.Join(",", (list ?? string.Empty).Trim().Trim('"').Split(',',
@@ -252,8 +268,9 @@ public partial class GameInput
 	{
 		foreach (KeyAction action in KeyActions)
 		{
-			string raw = action.Bound(Refii.Core.Engine_RefiiConfig.String(values, "key_" + action.Name,
-				action.Defaults));
+			string stored = Refii.Core.Engine_RefiiConfig.String(values, "key_" + action.Name, action.Defaults);
+			string raw = action.Bound(stored);
+			ReadPadBinding(action, stored);
 			var inputs = new List<BoundInput>();
 			foreach (string part in raw.Split(','))
 			{
@@ -299,10 +316,16 @@ public partial class GameInput
 	/// <summary>Whether any input bound to an action is down. A mouse button counts from a press
 	/// made while the mouse was captured until its release (<see cref="PlayButtons"/>) — a free
 	/// cursor's clicks belong to the menus.</summary>
-	private static bool Down(string action)
+	private static bool Down(string action) => ActionInContext(action) && Held(action);
+
+	/// <summary>Whether an action's context (<see cref="KeyAction.When"/>) holds this frame; an action with none always does.</summary>
+	private static bool ActionInContext(string action) =>
+		!_contexts.TryGetValue(action, out KeyContext when) || InContext(when);
+
+	/// <summary>Whether any input bound to an action is physically down, whatever the context (<see cref="Down"/> without it).</summary>
+	private static bool Held(string action)
 	{
-		if (!_bindings.TryGetValue(action, out List<BoundInput>? inputs) ||
-			(_contexts.TryGetValue(action, out KeyContext when) && !InContext(when)))
+		if (!_bindings.TryGetValue(action, out List<BoundInput>? inputs))
 		{
 			return false;
 		}
@@ -327,6 +350,13 @@ public partial class GameInput
 	}
 
 	public static bool PhotoModeKeyHeld => Down("photo_mode");
+
+	/// <summary>
+	/// Whether a key action a title reads itself is down: one that presses nothing on the pad
+	/// (<see cref="KeyPress.None"/>), in its own context, as <see cref="PhotoModeKeyHeld"/> is read —
+	/// by a key, or by its pad chord on any player's pad (<see cref="PadActionHeld"/>).
+	/// </summary>
+	public static bool KeyActionHeld(string action) => Down(action) || PadActionHeld(action);
 
 	/// <summary>The keyboard's state for the debug channel (`input`): the contexts, the device and every action down now.</summary>
 	public static object DescribeKeys()
@@ -593,8 +623,27 @@ public partial class GameInput
 	/// <summary>The keys the mods' claims withhold from the pad mapping this frame (ModInput.WithheldKeys).</summary>
 	private static IReadOnlySet<Key> _withheldKeys = new HashSet<Key>();
 
-	/// <summary>The host actions whose keys are down: each posts once per press.</summary>
-	private static readonly HashSet<string> _hostActionsHeld = new();
+	/// <summary>The host actions' key presses: each posts once per press (<see cref="Engine_PressLatch{TInput}"/>).</summary>
+	private static readonly Refii.Core.Engine_PressLatch<string> _hostActionPresses = new();
+
+	/// <summary>
+	/// Every host action's press this frame: posted on the frame its key goes down in context, and
+	/// not again until the key is released. <paramref name="mayRun"/> false (the keyboard is not
+	/// play's: the dev menu, a rebind capture or a text entry has it) still latches a press, so a
+	/// key held into play is not a new press.
+	/// </summary>
+	private static void PostHostActions(bool mayRun)
+	{
+		foreach (KeyAction action in KeyActions)
+		{
+			if (action.Press == KeyPress.HostAction &&
+				_hostActionPresses.Press(action.Name, Held(action.Name), mayRun && ActionInContext(action.Name)) &&
+				!string.IsNullOrEmpty(action.HostAction))
+			{
+				HostBridge.PostFrontEndAction(action.HostAction);
+			}
+		}
+	}
 
 	/// <summary>The pad bit a plain button press sets.</summary>
 	private static uint ButtonOf(KeyPress press) => press switch
@@ -622,6 +671,7 @@ public partial class GameInput
 		// name typed into the host's text entry.
 		if (GameDevMenu.KeyboardCaptured || Engine_UiInputCapture.Blocking || Refii.Ui.Engine_UiTextEntry.AnyOpen)
 		{
+			PostHostActions(mayRun: false);
 			return;
 		}
 
@@ -630,24 +680,10 @@ public partial class GameInput
 		bool pause = false, backOut = false, walk = false;
 		var move = Vector2.Zero;
 		float lookX = 0f;
+		PostHostActions(mayRun: true);
 		foreach (KeyAction action in KeyActions)
 		{
-			if (action.Press == KeyPress.HostAction)
-			{
-				bool held = Down(action.Name);
-				if (held && _hostActionsHeld.Add(action.Name) && !string.IsNullOrEmpty(action.HostAction))
-				{
-					HostBridge.PostFrontEndAction(action.HostAction);
-				}
-				else if (!held)
-				{
-					_hostActionsHeld.Remove(action.Name);
-				}
-
-				continue;
-			}
-
-			if (action.Press is KeyPress.None or KeyPress.PhotoMode or KeyPress.MeleeMode or KeyPress.RangedMode or
+			if (action.Press is KeyPress.HostAction or KeyPress.None or KeyPress.PhotoMode or KeyPress.MeleeMode or KeyPress.RangedMode or
 				KeyPress.MagicMode || !Down(action.Name))
 			{
 				continue;

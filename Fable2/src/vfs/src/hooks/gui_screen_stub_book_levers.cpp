@@ -1,6 +1,6 @@
 // THE PORTED BOOKS' SHARED LEVERS (S7): B at a book's root and LB / RB, the spine calls the abilities
-// (14), items (15), clothing (16), logbook (17) and options (18) handlers made. guest_tick_pump.cpp
-// dispatches them.
+// (14), items (15), clothing (16), logbook (17), options (18) and world map (23) handlers made.
+// guest_tick_pump.cpp dispatches them.
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -39,7 +39,12 @@ bool DispatchPauseBack(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     return true;
   }
   const Scratch s = Claim(ctx);
-  if (screen == 17u && LogbookOrbMode() == 2) {
+  // The logbook opened on another player (`sub_823C48D8`: h+4 = 2 through vf+32, h+28 = 2 over the world
+  // map `*(PS+4) == 23` else 1, 0x823C4924..0x823C4970) is told apart as its own B tells it: `lwz r11,
+  // 4(r31)` / `cmpwi r11, 2` (0x826D9858), then `lwz r11, 0x1C(r31)` / `cmpwi r11, 2` (0x826D98B8; disc
+  // 0x825824E8 / 0x82582548). Its OnExit zeroes both.
+  const bool orb = screen == 17u && LoadU32(base, h + 4u) == 2u;
+  if (orb && LoadU32(base, h + 28u) == 2u) {
     // The orb book over the world map (0x826D98C4..0x826D9960): SetScreen(QM, 23, 0), the map's
     // OnEnter, EnterGuiMode, the map's Update, `g_Menu:PopMenuState()`.
     PPCContext map = ctx;
@@ -55,18 +60,22 @@ bool DispatchPauseBack(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     REXLOG_INFO("Refii guest-tick pump: PauseBack — the orb logbook back to the world map");
     return true;
   }
-  if (screen == 17u && LogbookOrbMode() == 1) {
+  if (orb) {
     Call(ctx, base, s.frame, 0x826D5A60u, {h});  // 0x826D9970: ExitScreen at the menu root
     REXLOG_INFO("Refii guest-tick pump: PauseBack — the orb logbook closed");
     return true;
   }
   // The book's back at its root (logbook 0x826D9870..0x826D9890, abilities 0x826C2ADC..0x826C2AFC /
-  // disc 0x8259EA8C..0x8259EAAC, items 0x826D27DC..0x826D2814, clothing 0x826D53A8..0x826D53D8, options
-  // 0x826DA4B0..0x826DA4BC): the tab strip's hide `sub_826B8130(*(G+76))` (every book but options only
+  // disc 0x8259EA8C..0x8259EAAC, items 0x826D27DC..0x826D2814, clothing 0x826D53A8..0x826D53D8, the world
+  // map 0x826C6508..0x826C653C, options 0x826DA4B0..0x826DA4BC): the tab strip's hide `sub_826B8130(*(G+76))` (every book but options only
   // when `sub_826C1D98(*(QM+60))` says the menu is at its root) and, on the items screen, the preview's
   // Hide `sub_828C3FD8(h+128)` (0x826D280C / disc 0x82834DA0); then `sub_826D5AF0(h)`, which reopens the
   // pause root `sub_826A2C88`. The clothing arm also destroys its preview mannequin at the root,
-  // `sub_826D7E90(SCENE, &h+44)` (0x826D53D0 / disc 0x823FDA78).
+  // `sub_826D7E90(SCENE, &h+44)` (0x826D53D0 / disc 0x823FDA78). The logbook's arm then falls through
+  // into the book's input `sub_829907F0(h+52, 37, player, pres)` (0x826D9894..0x826D98AC / disc
+  // 0x82582524..0x8258253C, no branch between), which returns at once while the book's clock
+  // `*(float*)(h+52)` is not past its threshold (0x82990814..0x82990824); only the dropped book tick
+  // advances that clock, so the call is not made.
   const bool at_root = screen == 18u || (Call(ctx, base, s.frame, 0x826C1D98u, {LoadU32(base, qm + 60u)}) & 0xFFu) != 0u;
   if (at_root) {
     Call(ctx, base, s.frame, 0x826B8130u, {LoadU32(base, g + 76u)});
@@ -92,8 +101,11 @@ bool DispatchPauseCycle(PPCContext& ctx, uint8_t* base, uint32_t screen, uint32_
   // closed (h+420 == 0, 0x826D2654 / 0x826D2678; disc 0x8257E08C / 0x8257E0B0), clothing player one
   // outside dye mode (h+220 != 5, 0x826D5240..0x826D5250 / 0x826D526C..0x826D527C).
   const Scratch s = Claim(ctx);
-  bool refused = screen == 15u ? false : player != 1u || (screen == 17u && LogbookOrbMode() != 0);
-  if (screen == 15u) {
+  bool refused = screen != 15u && player != 1u;
+  if (screen == 17u && !refused) {
+    const uint32_t h = ScreenHandler(ctx, base, s.frame, 17u, 0x820D0110u);
+    refused = h == 0u || LoadU32(base, h + 4u) == 2u;  // the orb book has no tabs
+  } else if (screen == 15u) {
     const uint32_t h = ScreenHandler(ctx, base, s.frame, 15u, 0x820CFEB0u);
     refused = h == 0u || LoadU32(base, h + 0x1A4u) != 0u;
   } else if (screen == 16u && !refused) {

@@ -502,8 +502,9 @@ public static class Engine_TexCache
 		// WRITTEN ASIDE AND RENAMED. Several workers reach this concurrently and the process can
 		// be killed at any point in it; a half-written file under the final name is a cache entry
 		// that reads as valid until its payload length check fails, which is a slow way to find
-		// out. The thread id keeps two workers racing on the same key off each other's temp.
-		string temp = $"{path}.{System.Environment.CurrentManagedThreadId}.tmp";
+		// out. The thread id keeps two workers racing on the same key off each other's temp, and
+		// the process id two instances sharing one cache folder (a second package linked to this one).
+		string temp = $"{path}.{System.Environment.ProcessId}.{System.Environment.CurrentManagedThreadId}.tmp";
 
 		byte[] payload = image.GetData();
 

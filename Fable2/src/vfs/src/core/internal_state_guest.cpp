@@ -1249,6 +1249,43 @@ std::string Latin1ToUtf8(const std::string& bytes) {
   return text;
 }
 
+std::string StatedBytesToUtf8(const std::string& bytes) {
+  size_t at = 0;
+  while (at < bytes.size()) {
+    const unsigned char lead = static_cast<unsigned char>(bytes[at]);
+    size_t follow = 0;
+    uint32_t minimum = 0;
+    uint32_t code = 0;
+    if (lead < 0x80u) {
+      ++at;
+      continue;
+    } else if (lead >= 0xC2u && lead <= 0xDFu) {
+      follow = 1; minimum = 0x80u; code = lead & 0x1Fu;
+    } else if (lead >= 0xE0u && lead <= 0xEFu) {
+      follow = 2; minimum = 0x800u; code = lead & 0x0Fu;
+    } else if (lead >= 0xF0u && lead <= 0xF4u) {
+      follow = 3; minimum = 0x10000u; code = lead & 0x07u;
+    } else {
+      return Latin1ToUtf8(bytes);
+    }
+    if (at + follow >= bytes.size()) {
+      return Latin1ToUtf8(bytes);
+    }
+    for (size_t i = 1; i <= follow; ++i) {
+      const unsigned char next = static_cast<unsigned char>(bytes[at + i]);
+      if ((next & 0xC0u) != 0x80u) {
+        return Latin1ToUtf8(bytes);
+      }
+      code = (code << 6) | (next & 0x3Fu);
+    }
+    if (code < minimum || code > 0x10FFFFu || (code >= 0xD800u && code <= 0xDFFFu)) {
+      return Latin1ToUtf8(bytes);
+    }
+    at += follow + 1;
+  }
+  return bytes;
+}
+
 std::string ReadGuestWideString(uint8_t* base, uint32_t handle) {
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
 
@@ -1278,8 +1315,10 @@ std::string ReadGuestWideString(uint8_t* base, uint32_t handle) {
     return std::string();
   }
 
-  // Big-endian, NUL-terminated. Anything outside ASCII becomes '?' rather than being dropped:
-  // a field that is present but unrenderable must not read as an absent field.
+  // Big-endian, NUL-terminated, out as UTF-8 — the host decodes these as UTF-8, and a '?' per
+  // unit past ASCII turned every accented name ("Starý hrob") into "Star? hrob" (TEST_MATRIX 55).
+  // Basic plane only, as the host bridge's own reader (host_bridge.cpp ReadGuestWideString): a
+  // surrogate stops the string, since emitting a lone one is worse than stopping at it.
   uint8_t raw[512];
   const size_t readable = TryCopyGuestBytes(base, characters, raw, sizeof(raw));
   if (readable < 2u) {
@@ -1291,10 +1330,19 @@ std::string ReadGuestWideString(uint8_t* base, uint32_t handle) {
   for (size_t i = 0; i < max_units; ++i) {
     const uint16_t unit = static_cast<uint16_t>(
         (static_cast<uint32_t>(raw[i * 2u]) << 8) | raw[i * 2u + 1u]);
-    if (unit == 0u) {
+    if (unit == 0u || (unit >= 0xD800u && unit <= 0xDFFFu)) {
       break;
     }
-    value.push_back(unit < 0x80u ? static_cast<char>(unit) : '?');
+    if (unit < 0x80u) {
+      value.push_back(static_cast<char>(unit));
+    } else if (unit < 0x800u) {
+      value.push_back(static_cast<char>(0xC0u | (unit >> 6)));
+      value.push_back(static_cast<char>(0x80u | (unit & 0x3Fu)));
+    } else {
+      value.push_back(static_cast<char>(0xE0u | (unit >> 12)));
+      value.push_back(static_cast<char>(0x80u | ((unit >> 6) & 0x3Fu)));
+      value.push_back(static_cast<char>(0x80u | (unit & 0x3Fu)));
+    }
   }
   return value;
 }

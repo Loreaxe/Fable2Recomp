@@ -19,6 +19,7 @@
 #include "vfs_hooks_private.h"
 #include "core/guest_state.h"
 #include "core/gui_native_calls.h"
+#include "hooks/gui_screen_stubs.h"
 #include "hooks/ppc_externs.h"
 
 namespace {
@@ -86,5 +87,7 @@ REX_EXTERN(rex_lhGuiCrimeScreen_Open) {
     Add(call, service_key);
     refii::vfs::PostGuiNativeCall(std::move(call));
 
+    // An arrest states whose screen this is just before it opens it (gui_screen_stub_crime.cpp).
+    refii::vfs::CrimeScreenOpening();
     __imp__rex_lhGuiCrimeScreen_Open(ctx, base);
 }

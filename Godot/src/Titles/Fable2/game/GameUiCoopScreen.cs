@@ -20,10 +20,12 @@ using Refii.Game;
 /// (`sub_824047E8` skips the per-player filter for screen 0x18). Each page's state crosses the
 /// wire in the screen's own message (`sub_8243A8F0`), so both machines already show both pages;
 /// the remaster draws them the same way on both.</para>
-/// <para>THE MOUSE PRESSES PAD BUTTONS for this machine's page: the pointer's presses reach pad 0,
-/// which is player one on the host and on the couch, and player two on a joiner. A row the
+/// <para>THE PADS AND THE MOUSE POST THE SCREEN'S OWN CODES (`CoopAction:&lt;code&gt;:&lt;player&gt;`, the
+/// screen's input slot vf+24): each pad for its own player (Fable2Input.CoopPresses), the mouse for
+/// this machine's page — player one on the host and on the couch, player two on a joiner. A row the
 /// pointer picks is reached the way the pad reaches it — the focus stepped with up/down, the value
-/// with left/right — so the guest's own rows, sync and respawns all stay the guest's.</para>
+/// with left/right, each a press and its release — so the guest's own rows, sync and respawns all
+/// stay the guest's.</para>
 /// </remarks>
 public partial class GameUi
 {
@@ -45,11 +47,6 @@ public partial class GameUi
 	/// <summary>The co-op screen's file-only build, for clean copies of its art.</summary>
 	private Engine_UiTheme? _coopPattern;
 
-	/// <summary>Pad presses a pointer target needs, played one at a time.</summary>
-	private readonly Queue<uint> _coopPresses = new();
-
-	private double _coopPressClock;
-
 	/// <summary>Player one's left/right last frame, so a held direction changes the mode once.</summary>
 	private int _coopModeHeld;
 
@@ -63,12 +60,6 @@ public partial class GameUi
 	private int _coopPickerSent = -1;
 
 	private ulong _coopPickerSentAt;
-
-	/// <summary>
-	/// A press and its release: the pointer holds a press 0.1 s, and the guest's own repeat filter
-	/// needs to see the release before the next press counts as one.
-	/// </summary>
-	private const double CoopPressSpacing = 0.22;
 
 	/// <summary>The co-op screen's book while it stands, else null.</summary>
 	private Engine_UiOwnedBook? CoopBook() =>
@@ -109,7 +100,6 @@ public partial class GameUi
 
 		DriveCoopSaveFan(book, delta);
 		DriveCoopModeRow(book);
-		PlayCoopPresses(delta);
 	}
 
 	/// <summary>
@@ -215,30 +205,24 @@ public partial class GameUi
 		}
 	}
 
-	private void PlayCoopPresses(double delta)
-	{
-		_coopPressClock = System.Math.Max(0.0, _coopPressClock - delta);
-		if (_coopScreen is null)
-		{
-			_coopPresses.Clear();
-			return;
-		}
+	/// <summary>The player whose page this machine's pointer drives.</summary>
+	private static int CoopPointerPlayer => CoopDrivesRightPage ? 2 : 1;
 
-		if (_coopPressClock > 0.0 || !_coopPresses.TryDequeue(out uint press))
-		{
-			return;
-		}
+	/// <summary>One code to the screen for this machine's page.</summary>
+	private static void PostCoopPress(int code) =>
+		HostBridge.PostFrontEndAction(Fable2CoopScreenPresses.Lever(code, CoopPointerPlayer));
 
-		GameInput.QueuePointerPress(press);
-		_coopPressClock = CoopPressSpacing;
-	}
-
-	/// <summary>Queues <paramref name="count"/> presses of one button.</summary>
-	private void QueueCoopPresses(uint button, int count)
+	/// <summary>
+	/// <paramref name="count"/> steps of one direction, each its press and its release: the page's
+	/// repeat filter takes a press only after the release that resets it (`sub_828818E8`, 32..35 at
+	/// TU1 0x82881A88), and the lever posts them in order within one input pass.
+	/// </summary>
+	private static void PostCoopSteps(int direction, int count)
 	{
 		for (int i = 0; i < count; ++i)
 		{
-			_coopPresses.Enqueue(button);
+			PostCoopPress(direction);
+			PostCoopPress(direction + Fable2CoopScreenPresses.ReleaseOffset);
 		}
 	}
 
@@ -360,7 +344,7 @@ public partial class GameUi
 
 		int pointed = _coopSaveCards.SaveAt(at);
 		bool clicked = Engine_UiPointer.TakeLeft();
-		if (pointed < 0 || _coopPresses.Count != 0)
+		if (pointed < 0)
 		{
 			return;
 		}
@@ -382,12 +366,12 @@ public partial class GameUi
 		int steps = Engine_CoopSavePicker.Presses(state.PickerCursor, pointed, state.Saves.Count, state.OwnSave);
 		if (steps != 0)
 		{
-			QueueCoopPresses(steps > 0 ? GameInput.PadRight : GameInput.PadLeft, System.Math.Abs(steps));
+			PostCoopSteps(steps > 0 ? Fable2CoopScreenPresses.Right : Fable2CoopScreenPresses.Left, System.Math.Abs(steps));
 		}
 
 		if (clicked && state.Saves[pointed].Valid)
 		{
-			_coopPresses.Enqueue(GameInput.PadA);
+			PostCoopPress(Fable2CoopScreenPresses.Accept);
 		}
 	}
 
@@ -434,12 +418,15 @@ public partial class GameUi
 			_coopModeRow.GetParent()?.RemoveChild(_coopModeRow);
 			page.AddChild(_coopModeRow);
 
-			// Where the first share slider stood: `Sliders` (−124, 71) + `slider1` (0, −160).
-			_coopModeRow.Position = new Vector3(-124f, -89f, 0f);
+			// Under player one's name and over their figure's head, where the page is bare: at the
+			// first share slider's place (`Sliders` (−124, 71) + `slider1` (0, −160)) the label ran
+			// across the figure's waist, which stands in front of it. The share sliders' x.
+			_coopModeRow.Position = new Vector3(-124f, 184f, 0f);
 		}
 
 		_coopModeRow.Visible = true;
-		_coopModeRow.Show(CoopScreenMode());
+		int mode = CoopScreenMode();
+		_coopModeRow.Show(mode, mode != 0 && Fable2Bridge.CoopSessionRaw() is { LocalCoop: true, SplitInEffect: false });
 
 		bool locked = _coopScreen is { LeftAccepted: true } or { PickerOpen: true };
 		int sideways = Fable2Input.MenuHorizontal;
@@ -473,10 +460,10 @@ public partial class GameUi
 	}
 
 	/// <summary>
-	/// The mouse on the co-op screen, on this machine's page. A button is its pad button —
-	/// Accept A, Cancel or Reject B, Select Save Y, Load Hero X — and a henchman row's arrow
-	/// steps the focus to that row and its value one way. Any other click is taken, so it cannot
-	/// accept the screen by falling through as A.
+	/// The mouse on the co-op screen, on this machine's page. A button is its pad button's code —
+	/// Accept A, Cancel or Reject B, Select Save Y — Load Hero X is Godot's own-hero toggle, as
+	/// player two's X is, and a henchman row's arrow steps the focus to that row and its value one
+	/// way. Any other click is taken, so it cannot accept the screen by falling through as A.
 	/// </summary>
 	private void PointerCoop()
 	{
@@ -487,10 +474,6 @@ public partial class GameUi
 		}
 
 		Engine_UiPointer.TakeLeft();
-		if (_coopPresses.Count != 0)
-		{
-			return;
-		}
 
 		bool Hit(string path, float grow = 6f) =>
 			book.NodeFor(path) is { } node && node.IsVisibleInTree() &&
@@ -505,30 +488,35 @@ public partial class GameUi
 			}
 			else if (Hit("Foreground.LeftPage.buttons.AcceptGroup"))
 			{
-				_coopPresses.Enqueue(GameInput.PadA);
+				PostCoopPress(Fable2CoopScreenPresses.Accept);
 			}
 			else if (Hit("Foreground.LeftPage.buttons.CancelGroup"))
 			{
-				_coopPresses.Enqueue(GameInput.PadB);
+				PostCoopPress(Fable2CoopScreenPresses.Back);
 			}
 
 			return;
 		}
 
-		foreach ((string path, uint button) in new[]
+		foreach ((string path, int code) in new[]
 		{
-			("Foreground.RightPage.buttons.AcceptGroup", GameInput.PadA),
-			("Foreground.RightPage.buttons.CancelGroup", GameInput.PadB),
-			("Foreground.RightPage.buttons.LoadGroup", GameInput.PadY),
-			("Foreground.RightPage.ProfileSelector.Buttons.icon_button_x", GameInput.PadX),
-			("Foreground.RightPage.ProfileSelector.Buttons.Title2", GameInput.PadX),
+			("Foreground.RightPage.buttons.AcceptGroup", Fable2CoopScreenPresses.Accept),
+			("Foreground.RightPage.buttons.CancelGroup", Fable2CoopScreenPresses.Back),
+			("Foreground.RightPage.buttons.LoadGroup", Fable2CoopScreenPresses.ButtonY),
 		})
 		{
 			if (Hit(path))
 			{
-				_coopPresses.Enqueue(button);
+				PostCoopPress(code);
 				return;
 			}
+		}
+
+		if (Hit("Foreground.RightPage.ProfileSelector.Buttons.icon_button_x") ||
+			Hit("Foreground.RightPage.ProfileSelector.Buttons.Title2"))
+		{
+			RequestCoopHeroBody(!Fable2PageProviders.CoopOwnHero);
+			return;
 		}
 
 		// A henchman row: the focus to it (`+156`, up/down are 28/29), then its value.
@@ -542,10 +530,10 @@ public partial class GameUi
 			}
 
 			int steps = row - state.RightFocus;
-			QueueCoopPresses(steps > 0 ? GameInput.PadDown : GameInput.PadUp, System.Math.Abs(steps));
+			PostCoopSteps(steps > 0 ? Fable2CoopScreenPresses.Down : Fable2CoopScreenPresses.Up, System.Math.Abs(steps));
 			if (value != 0)
 			{
-				_coopPresses.Enqueue(value > 0 ? GameInput.PadRight : GameInput.PadLeft);
+				PostCoopSteps(value > 0 ? Fable2CoopScreenPresses.Right : Fable2CoopScreenPresses.Left, 1);
 			}
 
 			return;

@@ -104,6 +104,7 @@ void ItemsScreenOnEnter(PPCContext& ctx, uint8_t* base) {
   DropString(ctx, base, s.frame, name);
 
   Call(ctx, base, s.frame, 0x8246B5E8u, {pres, Address(0x8349B28Cu), 1u});
+  RestatePurseForPlayerTwo(ctx, base, s.frame, pres, 0x8349B28Cu);
   if (back) {
     Call(ctx, base, s.frame, 0x829B0A58u, {h + 24u, 8u});
   } else {

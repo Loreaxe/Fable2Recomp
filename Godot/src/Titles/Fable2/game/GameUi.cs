@@ -351,6 +351,11 @@ public partial class GameUi : Node, IGameTitleUi
 		var layer = new CanvasLayer { Name = "UiLayer", Layer = 5 };
 		AddChild(layer);
 
+		// The console's keyboard, over every screen that asks for it (and over the credits, 11).
+		var keyboard = new CanvasLayer { Name = "KeyboardLayer", Layer = 12 };
+		keyboard.AddChild(new Engine_UiPlatformKeyboard { Name = "Keyboard" });
+		AddChild(keyboard);
+
 		_container = new SubViewportContainer
 		{
 			Name = "UiView",
@@ -1014,14 +1019,29 @@ public partial class GameUi : Node, IGameTitleUi
 
 	private bool _guestDialogUnstatedReported;
 
+	/// <summary>A one-button notice was written onto the open list book's page instead of boxed; stands until the guest closes its dialog.</summary>
+	private bool _guestDialogPaged;
+
+	/// <summary>The paged notice's accept has not been posted yet: the owner was not taking one.</summary>
+	private bool _guestDialogPagedAnswerOwed;
+
 	/// <summary>
 	/// THE FRONT END'S OWN DIALOG. The guest raises it itself — Load Game with no saves or a
 	/// refused save, a co-op or network failure arriving on the menu or the title, Downloadable
 	/// Content with nobody signed in — through OpenDialog (`sub_826E40E0`, disc `sub_826CB158`),
 	/// and waits in its dialog mode for the owner's own accept. The host's warning box draws the
 	/// owner's statement of that call (Engine_FrontEndStated.Dialog), and A/B go back through
-	/// `FrontEndDialog:36/37`. The host's own refusals never raise it, so the two cannot stand
-	/// together.
+	/// `FrontEndDialog:&lt;pad&gt;:36/37` with the pad the title took A from (the main menu answers no
+	/// other, 0x826DEE60). A title's dialog takes A from any pad: Fable2Input posts that per pad.
+	/// The host's own refusals never raise it, so the two cannot stand together.
+	///
+	/// UNDER A LIST BOOK A NOTICE GOES ON THE PAGE. The Multiplayer book (and the mods book) is
+	/// drawn over the front end, the box under it. A one-button dialog stated while a list book
+	/// is open — the host's answer to a join: "This co-op game is already full.", a different
+	/// version, no longer available, the connection failed — is written onto the row's page
+	/// (<see cref="Engine_UiNetworkSource.Say"/>, which also replaces a held "Joining"), and its
+	/// one answer is posted for the player as soon as the owner takes it. A two-button dialog
+	/// asks something only the box can answer and still raises it.
 	/// </summary>
 	private bool DriveGuestDialog()
 	{
@@ -1048,6 +1068,30 @@ public partial class GameUi : Node, IGameTitleUi
 
 				_menuHiddenForDialog = false;
 				GD.Print("[game-ui] front-end dialog closed by the guest");
+			}
+
+			_guestDialogPaged = false;
+			_guestDialogPagedAnswerOwed = false;
+			return false;
+		}
+
+		if (!_guestDialogShown && !_guestDialogPaged && OpenListBook is not null &&
+			_frontEndStated.LastDialog is { AllowCancel: false } notice && notice.Sequence > _guestDialogClosedAt)
+		{
+			_guestDialogPaged = true;
+			_guestDialogPagedAnswerOwed = true;
+			_guestDialogClosedAt = notice.Sequence;
+			Engine_UiNetworkSource.Say(notice.Body);
+			GD.Print($"[game-ui] front-end dialog stated by 0x{notice.Owner:X8} — '{notice.Body}' — " +
+				"written on the open list book's page, not boxed");
+		}
+
+		if (_guestDialogPaged)
+		{
+			if (_guestDialogPagedAnswerOwed && dialog.Accepting)
+			{
+				_guestDialogPagedAnswerOwed = false;
+				Engine_UiSource.Current.PostFrontEndAction(Fable2FrontEndLevers.Dialog(HostBridge.FrontEndPad, 36));
 			}
 
 			return false;
@@ -1097,20 +1141,23 @@ public partial class GameUi : Node, IGameTitleUi
 		}
 
 		_guestDialogShown = true;
-		// ONLY THE MOUSE IS POSTED. The pad is not masked in mode 6 (GameInput.MaskMenuInput),
-		// so A and B reach the owner's own input slot `sub_826DEE40` directly — 36 at
-		// 0x826df9c0, 37 under `+206` at 0x826dfc98. Posting the pad's press as well answered
-		// the dialog twice, and the second landed on the list once the first had closed it.
+		// THE ANSWER IS THE HOST'S, ONCE. The pad's A and B are masked from the guest while this
+		// box stands (Fable2Input.HostDrawsOver, the title's A by Fable2Input.TitleTakesA), so the
+		// owner's slot — 36 at 0x826df9c0, 37 under `+206` at 0x826dfc90 — hears only this lever.
+		// The title's dialog takes its A per pad in Fable2Input; the mouse answers both.
 		int clicked = _warningView.Click();
 		if (dialog.Accepting)
 		{
-			if (clicked > 0)
+			int pad = HostBridge.FrontEndPad;
+			bool accept = clicked > 0 || (!dialog.Title && Fable2Input.MenuAcceptPressed);
+			bool cancel = clicked < 0 || (!dialog.Title && Fable2Input.MenuBackPressed);
+			if (accept)
 			{
-				Engine_UiSource.Current.PostFrontEndAction("FrontEndDialog:36");
+				Engine_UiSource.Current.PostFrontEndAction(Fable2FrontEndLevers.Dialog(pad, 36));
 			}
-			else if (clicked < 0 && stated.AllowCancel)
+			else if (cancel && stated.AllowCancel)
 			{
-				Engine_UiSource.Current.PostFrontEndAction("FrontEndDialog:37");
+				Engine_UiSource.Current.PostFrontEndAction(Fable2FrontEndLevers.Dialog(pad, 37));
 			}
 		}
 
@@ -1203,14 +1250,17 @@ public partial class GameUi : Node, IGameTitleUi
 			_pauseBook = _books.ClaimPrebuilt(0, PausePresentation) ?? _books.Ensure(0, PausePresentation);
 		}
 
-		// The banner, above the book — its own small owned tree, driven by the cycler's text.
+		// The banner, above the book — its own small owned tree, driven by the cycler's text. Seated
+		// over every slab a book stands on (BannerDepth): the guest states no depth for it (it only
+		// loads the cycler parked, `sub_826B80A0` 0x826B8100 / 0x826B811C), and at the depth of the
+		// first slab the pause book and the tab books (depth × 1000) covered it.
 		if (_pauseBanner is null || !IsInstanceValid(_pauseBanner))
 		{
 			_pauseBanner = _presentation.CloneTemplateTree(CyclerPresentation);
 			if (_pauseBanner is not null)
 			{
 				_pauseBanner.Name = "PauseBanner";
-				_pauseBanner.Position = new Vector3(0f, 0f, 600f);
+				_pauseBanner.Position = new Vector3(0f, 0f, BannerDepth);
 				_pauseBanner.Visible = false;
 				_presentation.MenuLayer.AddChild(_pauseBanner);
 				GD.Print("[game-ui] the pause banner is owned — cloned from 'menucycler'");
@@ -1352,6 +1402,12 @@ public partial class GameUi : Node, IGameTitleUi
 
 	/// <summary>The pause banner's presentation — owned as a whole-tree clone.</summary>
 	private const string CyclerPresentation = "menucycler";
+
+	/// <summary>
+	/// The banner's plane: in front of every presentation slab (depth × <see cref="Engine_UiPresentationDepth.Step"/>)
+	/// and the owned book and list over it, under the menu owner tag (<see cref="TagDepth"/>).
+	/// </summary>
+	private const float BannerDepth = TagDepth - 100f;
 
 	private Node3D? _pauseBanner;
 	private uint _cyclerAddress;
@@ -1610,7 +1666,8 @@ public partial class GameUi : Node, IGameTitleUi
 				{
 					Fable2Input.ScreenMenuOwnsInput = true;
 					Engine_UiScreenActions.RunRevealed(
-						declined.ScreenId, Fable2Input.MenuAcceptPressed, Fable2Input.MenuBackPressed);
+						declined.ScreenId, Fable2Input.MenuAcceptPressed, Fable2Input.MenuBackPressed,
+						Fable2Input.MenuFlipPressed, Fable2Input.MenuEquipPressed);
 					return true;
 				}
 			}
@@ -2698,7 +2755,8 @@ public partial class GameUi : Node, IGameTitleUi
 	/// player two's view of the same HUD in theirs (right or bottom); the spells wheel in the half of whoever opened it; the menu
 	/// input and masks on the pad of whoever owns the open menu. A shared screen and solo play take
 	/// none of this — every seat is the whole window and the menu owner is not stated. The menus
-	/// stand in the half of whoever opened them (<see cref="Engine_UiPresentationHost.MenuLayer"/>).
+	/// (<see cref="Engine_UiPresentationHost.MenuLayer"/>) fill the whole window on either screen,
+	/// as the original's one screen draws them, and say whose they are (<see cref="DriveMenuOwnerTag"/>).
 	/// </summary>
 	private void SeatPlayerUi(Vector2 window)
 	{
@@ -2733,26 +2791,7 @@ public partial class GameUi : Node, IGameTitleUi
 		// pause is player two's too.
 		Fable2Input.MenuOwner = CoopSession.LocalCoop ? StatedMenuOwner() : 0;
 
-		// THE MENUS IN THE OPENER'S HALF. The book is laid out for the whole window; on split
-		// screen it is drawn whole inside the half of the player who opened it, scaled to fit,
-		// so the other player keeps their view of the world.
-		if (_presentation is not null && GodotObject.IsInstanceValid(_presentation))
-		{
-			// The co-op screen is both players' and stays whole while player two answers its box.
-			int owner = split && OwnedScreenId() != CoopScreenId ? Fable2Input.MenuOwner : 0;
-			if (owner != 0)
-			{
-				Engine_UiSeats.Frame half = Engine_UiSeats.Of(window, Engine_UiSeats.For(owner, true));
-				Vector2 full = Engine_HudLayout.CanvasExtent(window);
-				Vector2 room = half.Extent * half.Scale;
-				float fit = full.X > 0f && full.Y > 0f ? Mathf.Min(room.X / full.X, room.Y / full.Y) : 1f;
-				_presentation.SeatMenus(fit, half.Centre);
-			}
-			else
-			{
-				_presentation.SeatMenus(1f, Vector2.Zero);
-			}
-		}
+		DriveMenuOwnerTag(window);
 		if (Fable2Input.MenuOwner != _menuOwnerSaid)
 		{
 			_menuOwnerSaid = Fable2Input.MenuOwner;
@@ -2764,6 +2803,9 @@ public partial class GameUi : Node, IGameTitleUi
 	}
 
 	private int _menuOwnerSaid;
+
+	/// <summary>Whether "player two holds no weapon" was said since the bridge last answered a pair.</summary>
+	private bool _coopHeldNoneSaid;
 
 	/// <summary>
 	/// The expression wheel's owner: the player its last open stated
@@ -2912,8 +2954,8 @@ public partial class GameUi : Node, IGameTitleUi
 			return wheel;
 		}
 
-		return HostBridge.GetPauseState() is { } pause && (pause.RootActive || pause.ModalMode == 1)
-			? Fable2Bridge.GetMenuOwner()
+		return HostBridge.GetPauseState() is { } pause
+			? Fable2ActingPlayer.Answerer(Fable2Bridge.GetMenuOwner(), pause.ModalMode)
 			: 0;
 	}
 
@@ -4624,11 +4666,28 @@ public partial class GameUi : Node, IGameTitleUi
 		{
 			// THE EXPRESSION WHEEL, through the guest's own open/close/select — the
 			// GameAction chain that would run them from the pad does not fire here.
-			// Hold to open, release to close (the shipped default; the toggle option
-			// `GUIQuickAccessMenuOnToggle` is not read yet). The pump gates every call
+			// Back holds it (the remaster's binding); RB is the guest's own, hold or toggle as the
+			// input map's `GUIQuickAccessMenuOnToggle` says. The pump gates every call
 			// on the guest's own tests, so a press it cannot honour is refused there.
 			// What the touch controls follow: the wheel's open flag, the item slots (GameUi.Touch.cs).
 			FollowTouchHud();
+			// RB is the shipped binding (GameActions 40 / 41): its edges go to the pump as themselves, which
+			// opens and closes as the guest's dispatcher would, hold or toggle by the input map's option.
+			// While the guest states the wheel open for player one, A / B / the stick are its levers
+			// whatever opened it.
+			if (Fable2Input.RbWheelPressed)
+			{
+				HostBridge.PostFrontEndAction("QuickWheel:rb:press");
+				_wheelSector = -1;
+				_wheelInGroup = false;
+			}
+			else if (Fable2Input.RbWheelReleased)
+			{
+				HostBridge.PostFrontEndAction("QuickWheel:rb:release");
+			}
+
+			bool wheelStated = Fable2Bridge.GetExpressionWheelPlayer() == 1;
+			Fable2Input.WheelOpenStated = wheelStated;
 			if (Fable2Input.QuickWheelPressed)
 			{
 				HostBridge.PostFrontEndAction("QuickWheel:open");
@@ -4639,7 +4698,7 @@ public partial class GameUi : Node, IGameTitleUi
 			{
 				HostBridge.PostFrontEndAction("QuickWheel:close");
 			}
-			else if (Fable2Input.QuickWheelHeld)
+			else if (Fable2Input.QuickWheelHeld || wheelStated)
 			{
 				// A accepts (`sub_826AA230`: enter a group / start the item), its release
 				// ends a held expression (`sub_826AA5D8`), B backs out (`sub_826AA510`).
@@ -4723,6 +4782,16 @@ public partial class GameUi : Node, IGameTitleUi
 			// accepted with the owner's flag, performs on player two), off player two's pad.
 			if (CoopSession.LocalCoop && Fable2Input.PlayerTwoPad >= 1)
 			{
+				if (Fable2Input.RbWheelTwoPressed)
+				{
+					HostBridge.PostFrontEndAction("QuickWheel:2:rb:press");
+					_wheelSectorTwo = -1;
+				}
+				else if (Fable2Input.RbWheelTwoReleased)
+				{
+					HostBridge.PostFrontEndAction("QuickWheel:2:rb:release");
+				}
+
 				if (Fable2Input.QuickWheelTwoPressed)
 				{
 					HostBridge.PostFrontEndAction("QuickWheel:2:open");
@@ -4732,7 +4801,7 @@ public partial class GameUi : Node, IGameTitleUi
 				{
 					HostBridge.PostFrontEndAction("QuickWheel:2:close");
 				}
-				else if (Fable2Input.QuickWheelTwoHeld)
+				else if (Fable2Input.QuickWheelTwoHeld || Fable2Bridge.GetExpressionWheelPlayer() == 2)
 				{
 					if (Refii.Mods.ModWheel.IsOpen(2))
 					{
@@ -4760,25 +4829,14 @@ public partial class GameUi : Node, IGameTitleUi
 				}
 			}
 
-			// THE SPELLS MENU. The comment here used to say "no GameAction reaches the
-			// consumer that would run 42 and 43, so the guest never sees the press" —
-			// THAT IS FALSE. `sub_8236F788` has one code caller, the guest's own
-			// GameAction dispatcher, and it is what sets the open flag in a live run
-			// while the host lever logs only refusals. The guest sees the trigger.
-			//
-			// These posts are kept as a debug lever, and the pump now refuses to CLOSE a
-			// blade it did not open — closing the guest's own clears the flag at
-			// 0x8236f9b8 before the id-5 GuiBlock pop at 0x8236fa00 can run, and an
-			// orphaned GuiBlock costs movement and camera for the rest of the session.
-			if (Fable2Input.SpellsMenuPressed)
-			{
-				HostBridge.PostFrontEndAction("SpellsMenu:open");
-			}
-			else if (Fable2Input.SpellsMenuReleased)
-			{
-				HostBridge.PostFrontEndAction("SpellsMenu:close");
-			}
-			else if (Fable2Input.SpellsMenuHeld)
+			// THE SPELLS MENU OPENS AND CLOSES ON THE GUEST'S OWN TRIGGER. The right trigger
+			// carries GameActions 42 (press: `OpenSpellsMenu` 0x8236F788, which pushes a player
+			// mode), 55 (held: suck orbs), 43 and 56 (release: `CloseSpellsMenu` 0x8236F968 pops
+			// mode 5) and the magic modifier, so it is never masked and never posted here; the
+			// pump's `SpellsMenu:` verb stays for the debug channel. What Godot owns is the
+			// blade's navigation while the guest states player one's menu open (Fable2Input masks
+			// that player's D-pad, stick and A).
+			if (Fable2Input.SpellsMenuHeld && _spells.WheelPlayer == 1)
 			{
 				// THE HELD DIRECTION, AS THE GUEST'S OWN IDS, EVERY FRAME. The widget
 				// moves on GameAction 28 UP / 29 DOWN / 30 LEFT / 31 RIGHT and nothing
@@ -5176,9 +5234,21 @@ public partial class GameUi : Node, IGameTitleUi
 		// `sub_8298DF98` (0x826A2D14; disc `sub_82842860` from 0x8240F0CC), which deletes every spawned row
 		// (0x8298DFF0 / disc 0x828428B4) and runs `g_Menu:SetInitiallySelectedItem(2)` (`sub_826CE070`, 0x8298E000 / disc 0x828428C4) —
 		// every folder shut, the cursor on the second row. The open is screen 0 stated over none.
+		// WHOSE ROOT IT IS is judged on every frame the root stands, not only when the tree is
+		// adopted: the owner is stated by the opener of THIS open (`sub_826A2C88`'s vf+32, the
+		// root's +4), and a list built from the last open's owner gave player two the hero's
+		// rows — Save among them (TEST_MATRIX 54).
 		bool bookUp = pause is { } stated && Engine_StatedPause.StatesPause(stated.ScreenId);
-		if (pause is { ScreenId: 0 } && !_pauseBookWasUp)
+		bool playerTwosRoot = PauseIsPlayerTwos();
+		if (pause is { ScreenId: 0 } && (!_pauseBookWasUp || playerTwosRoot != _pauseMenuJoiner))
 		{
+			if (playerTwosRoot != _pauseMenuJoiner)
+			{
+				GD.Print("[game-ui] pause menu rebuilt — now " +
+					(playerTwosRoot ? "the joiner's variant" : "the hero's variant") + " (the root's owner)");
+			}
+
+			_pauseMenuJoiner = playerTwosRoot;
 			_pauseMenu = Engine_PauseMenu.BuildHero(_pauseMenuJoiner);
 			_pauseTabsMask = 0u;
 			_pauseView.Bind(_pauseMenu);
@@ -6243,16 +6313,21 @@ public partial class GameUi : Node, IGameTitleUi
 			// then Hero002, the host built the second), and the pick's weapon is the SAVE FILE's,
 			// not the one the live hero holds.
 			//
-			// Once the body is player two's, the live sample is appearance only and starts at
-			// once: Worn and Inventory keep their previous values while the fresh body reads
-			// empty, and a weapon slot is taken only when it holds a record, so an early sample
-			// cannot unarm or undress the kit.
+			// Once the body is player two's, the live sample is appearance only, and it starts
+			// when THE BODY SHOWS THE KIT: the guest reports the version it has applied to player
+			// two's current body (0 for a body not yet dressed), and the sample is taken only
+			// while that is the version last stated. A body is created in its definition's starter
+			// clothes on the machine that owns it; read before the kit was worn, they went back
+			// out as the hero's outfit (HeroState v3: the six kit items plus two starter pieces).
+			// A change the player makes afterwards is on a body that shows the stated version, so
+			// it is still read here, and stated once.
 			if (SessionRole != 2u)
 			{
 				CoopHeroKit.Sample();
 			}
 			else if (HostBridge.IsInGame && Fable2PageProviders.CoopOwnHero &&
-				CoopHeroKit.Local.Known && HostBridge.HeroEntityAddress() != 0u)
+				CoopHeroKit.Local.Known && HostBridge.HeroEntityAddress() != 0u &&
+				CoopHeroState.Version != 0u && Fable2Bridge.HeroStateApplied(2u) == CoopHeroState.Version)
 			{
 				if (!_coopLiveSampling)
 				{
@@ -6565,16 +6640,31 @@ public partial class GameUi : Node, IGameTitleUi
 				if (Fable2Bridge.CoopHeldUids(player) is { } heldIds)
 				{
 					HostBridge.CoopSend($"CoopHeroHeld:{player}:{heldIds.Melee:X16},{heldIds.Ranged:X16}");
+					if (player == 2u)
+					{
+						_coopHeldNoneSaid = false;
+					}
 				}
 				else if (player == 2u && Fable2PageProviders.CoopOwnHero &&
 					(_coopHeldUnanswered += CoopHeroRestateSeconds) >= 5.0)
 				{
-					// Said while it lasts: a body the bridge cannot read is a joiner who never
-					// gets their weapons (run 2026-10-07 22:07: no CoopHeroHeld:2 for a session).
+					// The bridge answers no pair for a body holding no weapon as for one it cannot
+					// read. A kit that names no weapon is the first, said once; one that names a
+					// weapon is a joiner who never gets theirs (run 2026-10-07 22:07: no
+					// CoopHeroHeld:2 for a session), said while it lasts.
 					_coopHeldUnanswered = 0.0;
 					(uint one, uint two) = HostBridge.CoopPlayerEntities();
-					GD.Print($"[game-ui] co-op — player two's held ids are unanswered by the bridge " +
-						$"(player entities one 0x{one:X8}, two 0x{two:X8})");
+					if (CoopHeroKit.Remote is not { MeleeId: 0u, RangedId: 0u })
+					{
+						GD.Print($"[game-ui] co-op — player two's held ids are unanswered by the bridge " +
+							$"(player entities one 0x{one:X8}, two 0x{two:X8})");
+					}
+					else if (!_coopHeldNoneSaid)
+					{
+						_coopHeldNoneSaid = true;
+						GD.Print($"[game-ui] co-op — player two holds no weapon (their kit names none; " +
+							$"player two 0x{two:X8})");
+					}
 				}
 			}
 		}
@@ -7625,6 +7715,7 @@ public partial class GameUi : Node, IGameTitleUi
 		DriveCoopHeroX();
 		if (guestFrame) _books.Drive(_drawn, IsRevealed);
 		if (guestFrame) _spells.Follow(IsRevealed);
+		Fable2Input.SpellsMenuPlayer = _spells.WheelPlayer;
 		DrivePreviewObject();
 		DriveCoopScreen(delta);
 		if (guestFrame) DriveCoopFigures();
@@ -7917,7 +8008,7 @@ public partial class GameUi : Node, IGameTitleUi
 		{
 			// A false return is "nothing left to back out of". Inside a mod's menu that closes
 			// the menu; on the front end's root it is the guest's business, not ours — B there
-			// leaves for the title screen, and the guest is fed the same B press through XInput.
+			// leaves for the title screen, through the guest's own slot (`FrontEndBack:`, Fable2Input).
 			// A fold closed here is the guest's `OnPressB` arm, which slides the blade out
 			// (`SE_GUI_BLADE_SLIDE_OUT`, 0x826DFC80 then 0x826DFBDC).
 			if (_menuView.Back())
@@ -10016,6 +10107,7 @@ public partial class GameUi : Node, IGameTitleUi
 				Engine_UiMenuSources.StatedPresentation = address;
 
 				bool moved = Engine_UiMenuModel.ApplyStatedLabels(_pauseMenu, _menuModel.For(address).Rows);
+				moved |= Engine_PauseMenu.ApplyStatedSaveGhosts(_pauseMenu, _menuModel.For(address).Rows);
 
 				// AND THE SUB-TABS, from the same capture the in-game lists join against.
 				//

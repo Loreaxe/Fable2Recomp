@@ -84,11 +84,12 @@ public sealed class Fable3Input : GameTitleInput
 	/// The world has the input in play with nothing of the guest's or ours over it: the HUD root at
 	/// state 2 is the guest's own word that a box-manager screen has the pad (every box's Show hides
 	/// it through sub_825C1CB0, its hide shows it through sub_825C1D28; `@Hud.Root`) — Options among
-	/// them. Under one the keys take their menu meanings and the cursor is free for the menus.
+	/// them. Under one the keys take their menu meanings and the cursor is free for the menus. An
+	/// interaction list with the stick (<see cref="Fable3InteractionList.HasPad"/>) is one more.
 	/// </summary>
 	public override bool WorldHasInput => base.WorldHasInput && !Fable3Elements.HudHidden && !Fable3MapTable.Presented &&
 		!Fable3Keyboard.IsOpen && !Fable3HostOptions.IsOpen && !Fable3Boxes.RefiiUp && !Fable3Boxes.ModMenuUp &&
-		!Refii.Mods.ModScreen.Owned;
+		!Refii.Mods.ModScreen.Owned && !Fable3InteractionList.HasPad;
 
 	public override bool PointerOverlay => Fable3Keyboard.IsOpen || Fable3HostOptions.IsOpen;
 
@@ -147,6 +148,21 @@ public sealed class Fable3Input : GameTitleInput
 		new("camera_mode", "V", "Toggle the camera mode (right stick click).") { Press = KeyPress.RightThumb, When = KeyContext.Play },
 		new("nickname", "Backspace", "The Back button: change your nickname; in co-op, return to the host.")
 			{ Press = KeyPress.Back, When = KeyContext.Play },
+		// TWO FUNCTIONS THE PC BUILD PUTS ON KEYS AND THE 360 SCHEME DOES NOT BIND (GameControlsPC:
+		// `QuickSavePC`, `ToggleSafetyMode`), each run on the 360 guest's own function
+		// (Fable3/src/hooks/src/pc_extras.cpp). The keys are ours: the PC's F5 is this host's
+		// performance overlay and its Backspace is the Back button here. The key is player one's (the
+		// keyboard is player one's device); each also takes a pad chord, unbound by default, which acts
+		// for the player whose pad pressed it (GameInput.PadActions.cs).
+		new("quick_save", "F9", "Save the game now, where the game allows a save.")
+			{ Press = KeyPress.HostAction, HostAction = Fable3PcExtras.QuickSave(Fable3ActingPlayer.One), When = KeyContext.Play,
+				PadBindable = true, HostActionFor = Fable3PcExtras.QuickSave },
+		new("safety_mode", "G", "Turn the safety on or off: with it on, your attacks cannot hurt the innocent.")
+			{ Press = KeyPress.HostAction, HostAction = Fable3PcExtras.Safety(Fable3ActingPlayer.One), When = KeyContext.Play,
+				PadBindable = true, HostActionFor = Fable3PcExtras.Safety },
+		// The PC's `LiteMenuPause` (P): the host stops stepping the simulation (Fable3LitePause reads it).
+		new(Fable3LitePause.Action, "P", "Pause the game where it stands (not online). Press again to go on.")
+			{ Press = KeyPress.None, PadBindable = true },
 		new("photo_mode", "F11", "Open or close Photo Mode (L3 + R3 on controller).") { Press = KeyPress.PhotoMode },
 		new("pause", "Escape", "The Sanctuary (Start). Escape is back in menus.") { Press = KeyPress.Pause },
 		// Fable III PC: F1 right, F2 left, F3 down, F4 up (`GUIRightPC` 59, `GUILeftPC` 60, `GUIDownPC` 61,

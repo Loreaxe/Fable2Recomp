@@ -2430,7 +2430,7 @@ REFII_F3_NATIVE(NativeCameraHeld) {
 }
 
 /// Refii._view_fov() -> degrees: the horizontal 4:3 FOV of the camera this machine renders with, as the
-/// guest states it to View_SetRenderCamera (Fable 2's fov: the live block's +0x30); 0 before the first.
+/// shell states its rebuild back (the block's +0x30); 0 before the first.
 REFII_F3_NATIVE(NativeViewFov) {
   lua.PushNumber(static_cast<double>(refii::fable3::view::StatedFovRadians()) * 57.29577951308232);
   g_results = 1;

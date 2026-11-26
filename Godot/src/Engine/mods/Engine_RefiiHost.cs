@@ -1212,11 +1212,13 @@ public partial class RefiiHost : Node
 
 	/// <summary>
 	/// The field of view of <paramref name="player"/>'s live camera in degrees, read at the call — the
-	/// horizontal 4:3 angle the game's cameras state (70 the default), from the block this machine
-	/// draws that player's view from; 0 for a player with no camera here (<see cref="ModApi.CameraFovMeaning"/>).
+	/// horizontal 4:3 angle the game's cameras state (70 the default), from the camera this machine
+	/// rebuilt for that player's view (Refii.Camera.Engine_CameraFeed); 0 for a player with no camera
+	/// here (<see cref="ModApi.CameraFovMeaning"/>).
 	/// </summary>
 	public float fov(int player) =>
-		HostBridge.GetPlayerCamera(player) is { } camera && float.IsFinite(camera.HorizontalFov) && camera.HorizontalFov > 0f
+		Refii.Camera.Engine_CameraFeed.AsGuestCamera(Refii.Camera.Engine_CameraFeed.ForPlayer(player)?.Live) is { } camera &&
+		float.IsFinite(camera.HorizontalFov) && camera.HorizontalFov > 0f
 			? Mathf.RadToDeg(camera.HorizontalFov)
 			: 0f;
 

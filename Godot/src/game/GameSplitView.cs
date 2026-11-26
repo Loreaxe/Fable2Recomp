@@ -11,8 +11,9 @@ namespace Refii.Game;
 /// <remarks>
 /// <para>THE GUEST STATES BOTH CAMERAS. With the host's <c>coop_split_screen</c> switch on, local
 /// player two's Player gets a camera manager of their own, ticked straight after player one's and
-/// driven by player two's pad (Fable2/src/hooks/src/coop_hero_hooks.cpp); the bridge reads each player's
-/// live block (<c>RefiiHostGetPlayerCamera</c>). Player one's view follows <see cref="GameWorld"/>'s
+/// driven by player two's pad (Fable2/src/hooks/src/coop_hero_hooks.cpp); each manager's camera is
+/// rebuilt from its statements (<see cref="Refii.Camera.Engine_CameraFeed"/>), player two's the one its
+/// push keys 2. Player one's view follows <see cref="GameWorld"/>'s
 /// camera, which stays the window's camera and the one every single-camera system reads; player
 /// two's follows their own stated camera on the bodies' clock and rule, as player one's does.</para>
 /// <para>TWO SUBVIEWPORTS OVER THE ONE WORLD. Godot renders a viewport through exactly one camera,
@@ -77,7 +78,7 @@ public partial class GameSplitView : CanvasLayer
 	public void Follow(Camera3D first)
 	{
 		HostBridge.GuestCamera? second = Engine_TitleGame.Active.LocalCoop && Wanted
-			? HostBridge.GetPlayerCamera(2)
+			? Refii.Camera.Engine_CameraFeed.AsGuestCamera(Refii.Camera.Engine_CameraFeed.ForPlayer(2)?.Live)
 			: null;
 		if (second is not { IsDefault: false } stated ||
 			!GameWorld.TryStatedCamera(stated, out Transform3D secondStated, out _))

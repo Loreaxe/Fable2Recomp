@@ -314,18 +314,23 @@ bool DispatchAbility(PPCContext& ctx, uint8_t* base, uint32_t player, bool unlea
   // The transaction is one guest call taking (ability 1..14, hero flag) and reading nothing of the
   // screen: Strength / Skill `lhGuiAbilitiesScreen_PurchaseStrengthOrSkillLevel` 0x8246C970 / 0x828385A0,
   // Will `sub_8246CF48` / 0x82838B78, the discard `sub_8246D510` / 0x82839138. The flag is the
-  // screen's `h+4 == 0` (0x826C2D58): 1 → `lhEntity_GetModel` (hero one, 0x8246C9B0), 0 →
-  // `GetRenderObject` (hero two). Each spends or refunds and opens its own result box,
-  // `OpenModal(QM, text, 2, 1, 0)` (0x8246CF30 / 0x8246D4F4 / 0x8246D9D4), answered by OnModalAnswer.
+  // book's owner, `h+4 == 0` (`lwz r11, 4(r31)` / `cntlzw` 0x826C2D58 / 0x826C2E80; disc 0x8259ED08): 1 →
+  // `lhEntity_GetModel` (hero one, 0x8246C9B0), 0 → `GetRenderObject` (hero two). Each spends or refunds
+  // and opens its own result box, `OpenModal(QM, text, 2, 1, 0)` (0x8246CF30 / 0x8246D4F4 / 0x8246D9D4),
+  // answered by OnModalAnswer.
   const Scratch s = Claim(ctx);
-  const uint32_t flag = player == 1u ? 1u : 0u;
   const uint32_t qm_now = LoadU32(base, Gui(base) + 28u);
   PPCContext find = ctx;
   find.r1.u32 = s.frame;
   find.r3.u32 = qm_now;
   find.r4.u32 = refii::guest::ScreenId(14u);
   rex_lhGuiManager_FindScreenHandler(find, base);
-  const uint32_t h = Plausible(qm_now) ? find.r3.u32 : 0u;
+  const uint32_t h = Plausible(qm_now) && Plausible(find.r3.u32) ? find.r3.u32 : 0u;
+  if (h == 0u) {
+    REXLOG_INFO("Refii guest-tick pump: Ability:{} — no abilities handler, dropped", player);
+    return true;
+  }
+  const uint32_t flag = LoadU32(base, h + 4u) == 0u ? 1u : 0u;
   if (unlearn) {
     // The discard confirm's YES (`sub_826C2B58` 0x826C2BB0..0x826C2BF8): the info built from the
     // highlighted row h+624 — the row Godot states, cached by the Update stub — gated by the guest's own
@@ -344,8 +349,13 @@ bool DispatchAbility(PPCContext& ctx, uint8_t* base, uint32_t player, bool unlea
   if (done && Plausible(h)) {
     // A level bought or given back forgets the highlight (h+624 = -1: 0x826C2DB0, 0x826C2EDC,
     // 0x826C2C1C; disc 0x8259ED60, 0x8259EE84), so the next Update's edge refills the page and
-    // states the row's gate again.
+    // states the row's gate again. A Will level bought, and any level given back, also restates the
+    // Spell Selector row's ghost, `sub_826C2C88(h)` / 0x8259EC38 (0x826C2EE0, 0x826C2C24):
+    // `sub_823DF660(14, "SpellAssigning", !CanOpen(h+200, owner + 1), 0)`.
     StoreU32(base, h + 624u, 0xFFFFFFFFu);
+    if (unlearn || entry == 0x8246CF48u) {
+      Call(ctx, base, s.frame, 0x826C2C88u, {h});
+    }
   }
   const uint32_t qm = LoadU32(base, Gui(base) + 28u);
   REXLOG_INFO("Refii guest-tick pump: Ability:{}:{}:{} ran 0x{:08X}(index {}, hero flag {}) — {}; box {}", player,

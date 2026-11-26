@@ -28,6 +28,13 @@ public partial class Fable3StatedScreen : Fable3ListScreen
 
 	protected override bool Framed => Fable3ScreenFrames.FrameOf(_root) is not null;
 
+	/// <summary>
+	/// The save menu's rows are choices, centred as the Options box centres its save section's
+	/// (`Sections.SaveManagement.SelectionText.*`, halign 1 at x 0); its own `SaveMenu.bgf` ships
+	/// in no build. The other box screens keep their rows left.
+	/// </summary>
+	protected override bool RowsOnCentreLine => _root == Fable3BoxScreenModel.SaveMenu;
+
 	protected override Fable3ScreenPage? Compose(double delta)
 	{
 		if (Fable3Elements.Generation == _elements && Fable3UiStatements.Generation == _statements &&
@@ -64,6 +71,26 @@ public partial class Fable3StatedScreen : Fable3ListScreen
 		_root = root;
 		_page = root is null ? null : Fable3ScreenModel.Compose(root, _stated, screen, Resolve);
 		return _page;
+	}
+
+	/// <summary>
+	/// The save menu is stated the clicked row: its own steps take its cursor there (0.3 s a
+	/// row, its pace) and the click selects the row once reached (<see cref="Fable3BoxAnswers.SaveMenuRow"/>). The box
+	/// manager's screens keep their cursors inside their pad handlers and take no row from
+	/// outside, so theirs is walked (<see cref="Fable3PointerSteps"/>).
+	/// </summary>
+	protected override void PointAt(int row, bool clicked)
+	{
+		if (_root != Fable3BoxScreenModel.SaveMenu)
+		{
+			base.PointAt(row, clicked);
+			return;
+		}
+
+		if ((clicked || row != _page?.Selected) && Fable3BoxAnswers.SaveMenuRow(row, clicked) is { } action)
+		{
+			Refii.Host.HostBridge.PostFrontEndAction(action);
+		}
 	}
 
 	/// <summary>

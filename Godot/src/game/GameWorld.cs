@@ -598,11 +598,26 @@ public partial class GameWorld : Node3D
 		}
 	}
 
+	/// <summary>The mouse's account read just before and after this frame's camera statements were taken.</summary>
+	private HostBridge.MouseLookState? _cameraLookBefore;
+	private HostBridge.MouseLookState? _cameraLookAfter;
+
 	private void world_processBody(double delta)
 	{
 		if (HostBridge.TryGetAbiVersion() is null)
 		{
 			return;
+		}
+
+		// The camera statements are taken every frame, world up or not, so the rebuild never
+		// misses an update (Engine_CameraFeed). The mouse's account is read on both sides of the
+		// take: the camera's read is the take, and a turn in flight across it is a torn read below.
+		_cameraLookBefore = HostBridge.GetMouseLook();
+		Refii.Camera.Engine_CameraFeed.Pump();
+		_cameraLookAfter = HostBridge.GetMouseLook();
+		if (Refii.Camera.Engine_CameraFeed.AsGuestCamera(Refii.Camera.Engine_CameraFeed.Drawn?.Live) is { } drawnCamera)
+		{
+			HostBridge.StateCamera(drawnCamera);
 		}
 
 		if (!PumpRegionRetirement()) return;
@@ -646,23 +661,15 @@ public partial class GameWorld : Node3D
 			return;
 		}
 
-		HostBridge.MouseLookState? lookBefore = HostBridge.GetMouseLook();
-		var pair = HostBridge.GetCameraPair();
-		HostBridge.GuestCamera camera;
-		if (pair is { } both)
-		{
-			camera = both.Live;
-		}
-		else if (HostBridge.GetCamera() is { } single)
-		{
-			camera = single;
-		}
-		else
+		HostBridge.MouseLookState? lookBefore = _cameraLookBefore;
+		Refii.Camera.Engine_CameraRig.Manager? drawnManager = Refii.Camera.Engine_CameraFeed.Drawn;
+		if (Refii.Camera.Engine_CameraFeed.AsGuestCamera(drawnManager?.Live) is not { } camera)
 		{
 			return;
 		}
 
-		HostBridge.MouseLookState? lookAfter = HostBridge.GetMouseLook();
+		bool pairStated = drawnManager!.Previous is { Known: true };
+		HostBridge.MouseLookState? lookAfter = _cameraLookAfter;
 
 		if (camera.IsDefault)
 		{
@@ -685,7 +692,7 @@ public partial class GameWorld : Node3D
 			++MouseLookTornReads;
 			if (_hostAimCamera.Active)
 			{
-				EvaluateAndApplyHostAim(delta, cameraTick, pair is not null);
+				EvaluateAndApplyHostAim(delta, cameraTick, pairStated);
 				return;
 			}
 
@@ -712,7 +719,7 @@ public partial class GameWorld : Node3D
 			LastMouseLook = lookAfter;
 		}
 
-		bool snap = pair is { } snapping && snapping.Live.Flag;
+		bool snap = camera.Flag;
 		bool stepComplete = Refii.Core.Engine_GuestFrame.Changed;
 		bool wantsHostAim = lookBefore is not null && lookAfter is { } wholeAim &&
 			Refii.Ui.Engine_UiInputMode.KeyboardMouse &&
@@ -752,7 +759,7 @@ public partial class GameWorld : Node3D
 				Refii.Entities.Engine_DrawnFrame.NoteRestated();
 			}
 
-			EvaluateAndApplyHostAim(delta, cameraTick, pair is not null);
+			EvaluateAndApplyHostAim(delta, cameraTick, pairStated);
 			return;
 		}
 
@@ -833,7 +840,7 @@ public partial class GameWorld : Node3D
 			_reported = true;
 			GD.Print($"[game-world] driving Godot's camera from the guest: " +
 				$"pos={drawn.Origin} fov={_camera.Fov:F1}deg " +
-				$"pair={(pair is null ? "no" : "yes")}");
+				$"pair={(pairStated ? "yes" : "no")}");
 			Refii.Core.Engine_FramePhases.ArmDrawTrace("camera-drive", 5);
 		}
 	}

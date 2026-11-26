@@ -24,18 +24,18 @@ namespace Refii.Titles.Fable2;
 /// </summary>
 public partial class GameUi
 {
-	/// <summary>Refii's own words on this path, English, resolved through the game's text book so a
-	/// translation overlay (<c>.babel.csv</c>, key = the English) can say them in another language.</summary>
-	private const string ReplaceASaveText = "Replace a save";
-	private const string ReplaceText = "Replace";
-	private const string ChooseOneText = "Choose a save to replace";
-	private const string ChooseManyText = "Choose {0} saves to replace";
-	private const string MoreToChooseText = "{0} more to choose";
-	private const string ChosenText = "Chosen to replace";
-	private const string ConfirmOneText = "Replace {0}? It will be kept in Older saves.";
-	private const string ConfirmManyText = "Replace these saves? They will be kept in Older saves.\n{0}";
-	private const string SetAsideFailedText = "The save could not be set aside, so no new game was started:\n{0}";
-	private const string PageText = "Page {0} / {1}";
+	/// <summary>Refii's own words on this path: our keys, resolved through the game's text book (a mod's
+	/// overlay may restate them) and then our own table (Refii.Text.Engine_OwnWords) in the language in force.</summary>
+	private const string ReplaceASaveText = "REFII_F2_SAVES_REPLACE_A_SAVE";
+	private const string ReplaceText = "REFII_F2_SAVES_REPLACE";
+	private const string ChooseOneText = "REFII_F2_SAVES_CHOOSE_ONE";
+	private const string ChooseManyText = "REFII_F2_SAVES_CHOOSE_MANY";
+	private const string MoreToChooseText = "REFII_F2_SAVES_MORE_TO_CHOOSE";
+	private const string ChosenText = "REFII_F2_SAVES_CHOSEN";
+	private const string ConfirmOneText = "REFII_F2_SAVES_CONFIRM_ONE";
+	private const string ConfirmManyText = "REFII_F2_SAVES_CONFIRM_MANY";
+	private const string SetAsideFailedText = "REFII_F2_SAVES_SET_ASIDE_FAILED";
+	private const string PageText = "REFII_PAGE_OF";
 
 	/// <summary>The game's own labels the limit box keeps.</summary>
 	private const string ContinueWithoutSavingTag = "GUI_DEVICE_REMOVED_CONTINUE";
@@ -58,7 +58,7 @@ public partial class GameUi
 	/// <summary>The answer handler of a box raised by this file, or null for the guest's warnings.</summary>
 	private System.Action<int>? _warningAnswered;
 
-	private string Said(string text) => _presentation?.Theme?.Resolve(text) ?? text;
+	private string Said(string text) => _presentation?.Theme?.Resolve(text) ?? Refii.Text.Engine_OwnWords.Say(text);
 
 	private string Said(string template, object argument) =>
 		string.Format(System.Globalization.CultureInfo.InvariantCulture, Said(template), argument);

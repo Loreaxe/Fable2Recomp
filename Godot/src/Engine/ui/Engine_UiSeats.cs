@@ -34,9 +34,9 @@ public static class Engine_UiSeats
     }
 
     /// <summary>
-    /// The group of the node that seats the menus (<c>Engine_UiPresentationHost.MenuLayer</c>):
-    /// identity on the whole window, one player's half while that player's menu is open on split
-    /// screen.
+    /// The group of the node that holds the menus (<c>Engine_UiPresentationHost.MenuLayer</c>).
+    /// Nothing seats it today — menus fill the window on split screen too — so every transform
+    /// below is the identity; they keep a clip measured in laid-out space if a layer is ever seated.
     /// </summary>
     public const string MenuLayerGroup = "refii_ui_menu_layer";
 

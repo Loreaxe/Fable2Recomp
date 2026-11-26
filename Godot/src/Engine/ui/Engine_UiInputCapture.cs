@@ -18,6 +18,10 @@ namespace Refii.Ui;
 /// <para>Escape cancels; so does <see cref="Timeout"/> without a press. The keyboard capture takes
 /// keys and the five mouse buttons by the names refii.toml spells them (Godot key names, MouseLeft
 /// ... Mouse5); the pad capture takes the sixteen pad inputs by their <see cref="PadInput"/> names.</para>
+/// <para>The chord capture (<see cref="Kind.PadChord"/>) takes every pad input pressed on one joypad
+/// up to the first release among them, as their names joined by <c>+</c> in the order pressed: one
+/// button pressed and let go is that button; Back held and Y pressed is <c>Back+Y</c>. Every input of
+/// the chord is waited on before the devices return.</para>
 /// </remarks>
 public static class Engine_UiInputCapture
 {
@@ -25,6 +29,9 @@ public static class Engine_UiInputCapture
 	{
 		Keyboard,
 		Pad,
+
+		/// <summary>One or more pad inputs held together on one joypad.</summary>
+		PadChord,
 	}
 
 	public const float TriggerOn = 0.6f;
@@ -43,6 +50,12 @@ public static class Engine_UiInputCapture
 	private static InputEvent? _waiting;
 	private static ulong _waitingSince;
 
+	/// <summary>A chord capture's inputs so far, in the order pressed.</summary>
+	private static readonly List<(string Name, InputEvent Event)> _chord = new();
+
+	/// <summary>The other inputs of a captured chord still down: withheld with <see cref="_waiting"/>.</summary>
+	private static readonly List<InputEvent> _chordWaiting = new();
+
 	/// <summary>Per joypad and trigger, whether it has been seen at rest since the capture armed.</summary>
 	private static readonly HashSet<(int Device, JoyAxis Axis)> _triggerRested = new();
 
@@ -55,7 +68,7 @@ public static class Engine_UiInputCapture
 		get
 		{
 			Tick();
-			return _armed is not null || _waiting is not null;
+			return _armed is not null || _waiting is not null || _chordWaiting.Count != 0;
 		}
 	}
 
@@ -68,7 +81,8 @@ public static class Engine_UiInputCapture
 		_cancelled = cancelled;
 		_armedAt = Time.GetTicksMsec();
 		_triggerRested.Clear();
-		if (kind == Kind.Pad)
+		_chord.Clear();
+		if (kind is Kind.Pad or Kind.PadChord)
 		{
 			foreach (int device in Engine_Joypads.Connected())
 			{
@@ -101,6 +115,7 @@ public static class Engine_UiInputCapture
 		_armed = null;
 		_done = null;
 		_cancelled = null;
+		_chord.Clear();
 	}
 
 	/// <summary>The timeouts, checked whenever <see cref="Blocking"/> is read.</summary>
@@ -112,9 +127,15 @@ public static class Engine_UiInputCapture
 			Cancel();
 		}
 
-		if (_waiting is not null && (now - _waitingSince > ReleaseTimeout * 1000.0 || !StillDown(_waiting)))
+		bool expired = now - _waitingSince > ReleaseTimeout * 1000.0;
+		if (_waiting is not null && (expired || !StillDown(_waiting)))
 		{
 			_waiting = null;
+		}
+
+		if (_chordWaiting.Count != 0)
+		{
+			_chordWaiting.RemoveAll(held => expired || !StillDown(held));
 		}
 	}
 
@@ -126,7 +147,7 @@ public static class Engine_UiInputCapture
 	{
 		if (_armed is not { } kind)
 		{
-			return _waiting is not null && SameInput(_waiting, @event);
+			return (_waiting is not null && SameInput(_waiting, @event)) || ChordWaitingOn(@event);
 		}
 
 		switch (@event)
@@ -141,6 +162,26 @@ public static class Engine_UiInputCapture
 				return MouseName(mouse.ButtonIndex) is { } name ? Take(name, @event) : true;
 			case InputEventJoypadButton { Pressed: true } button when kind == Kind.Pad:
 				return PadName(button.ButtonIndex) is { } padName ? Take(padName, @event) : true;
+			case InputEventJoypadButton button when kind == Kind.PadChord:
+				if (PadName(button.ButtonIndex) is { } chordName)
+				{
+					ChordInput(chordName, @event, button.Pressed);
+				}
+
+				return true;
+			case InputEventJoypadMotion motion when kind == Kind.PadChord &&
+				motion.Axis is JoyAxis.TriggerLeft or JoyAxis.TriggerRight:
+				if (motion.AxisValue < TriggerOff)
+				{
+					_triggerRested.Add((motion.Device, motion.Axis));
+					ChordInput(motion.Axis == JoyAxis.TriggerLeft ? "LT" : "RT", @event, false);
+				}
+				else if (motion.AxisValue > TriggerOn && _triggerRested.Remove((motion.Device, motion.Axis)))
+				{
+					ChordInput(motion.Axis == JoyAxis.TriggerLeft ? "LT" : "RT", @event, true);
+				}
+
+				return true;
 			case InputEventJoypadMotion motion when kind == Kind.Pad &&
 				motion.Axis is JoyAxis.TriggerLeft or JoyAxis.TriggerRight:
 				if (motion.AxisValue < TriggerOff)
@@ -155,6 +196,60 @@ public static class Engine_UiInputCapture
 				return true;
 			case InputEventKey or InputEventMouseButton or InputEventJoypadButton:
 				return true;
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// One pad input of a chord capture going down or up. A press joins the chord (the first sets
+	/// its joypad); the first release of an input in it takes the chord.
+	/// </summary>
+	private static void ChordInput(string name, InputEvent @event, bool pressed)
+	{
+		if (_chord.Count != 0 && _chord[0].Event.Device != @event.Device)
+		{
+			return;
+		}
+
+		int at = _chord.FindIndex(input => input.Name == name);
+		if (pressed)
+		{
+			if (at < 0)
+			{
+				_chord.Add((name, @event));
+			}
+
+			return;
+		}
+
+		if (at < 0)
+		{
+			return;
+		}
+
+		var names = new List<string>();
+		_chordWaiting.Clear();
+		foreach ((string Name, InputEvent Event) input in _chord)
+		{
+			names.Add(input.Name);
+			if (input.Name != name)
+			{
+				_chordWaiting.Add(input.Event);
+			}
+		}
+
+		Take(string.Join("+", names), @event);
+	}
+
+	private static bool ChordWaitingOn(InputEvent @event)
+	{
+		foreach (InputEvent held in _chordWaiting)
+		{
+			if (SameInput(held, @event))
+			{
+				return true;
+			}
 		}
 
 		return false;

@@ -101,6 +101,19 @@ public class ModUiDispatchTests
             "Map*,Abilities*,Items*,Weapons*,Clothing*,Logbook*,Achievements*,Multiplayer*,Options,HenchmanQuit*");
         AssertThat(pause.Entries.Single(e => e.Name == "Achievements").Command)
             .IsEqual(Engine_UiHostScreens.OpenCommand(Engine_UiAchievementPage.ScreenId));
+
+        // Player two's way out is the original's one row (`sub_8298EDE0`): the game's own key, the
+        // guest's own box behind it, and no quit to the title or the desktop under it.
+        Engine_UiMenuEntry quit = pause.Entries.Single(e => e.Name == "HenchmanQuit");
+        AssertThat(quit.Tag).IsEqual("GUI_SCREEN_PAUSE_HENCHMAN_QUIT");
+        AssertThat(quit.Command).IsEqual(Engine_PauseMenu.HenchmanQuitCommand);
+        AssertThat(quit.Children.Count).IsEqual(0);
+        AssertThat(Fable2PortedScreens.HenchmanQuit(2)).IsEqual("PauseHenchmanQuit:2");
+
+        // The console's quit pair says the game's own words.
+        Engine_UiMenuEntry saving = pause.Entries.Single(e => e.Name == "Saving");
+        AssertThat(saving.Children.Single(e => e.Name == "SaveAndQuit").Tag).IsEqual("GUI_SCREEN_PAUSE_SAVE_AND_QUIT");
+        AssertThat(saving.Children.Single(e => e.Name == "QuitDontSave").Tag).IsEqual("GUI_SCREEN_PAUSE_QUIT_DONT_SAVE");
     }
 
     [TestCase]

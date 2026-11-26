@@ -16,6 +16,8 @@
 // the box's address and its identity (`box+4`, the name `RemoveDisplayBox` matches). The host
 // draws the box from its live `messageboxmulti` presentation and answers the stated address.
 
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <initializer_list>
 #include <cstdio>
@@ -33,6 +35,7 @@ std::string ReadStatedWideLhString(uint8_t* base, uint32_t handle);
 }  // namespace refii::vfs
 
 PPC_EXTERN_FUNC(__imp__rex_lhGuiNumericAdjuster_Render);
+extern "C" uint8_t* RefiiGuestBase(void);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiGamerCard_SetName);
 
 namespace refii::vfs {
@@ -172,6 +175,31 @@ REX_EXTERN(rex_lhGuiManager_OpenNumericAdjuster) {
     }
 }
 
+namespace {
+
+/// `@Adjuster.Render <widget> value min max step flags`: the widget's value as its writer hands it,
+/// beside the limits +0x20 / +0x24, the base step +0x28 and the flags +0x1C its opener stored.
+void StateAdjuster(uint8_t* base, uint32_t widget, int32_t value) {
+    refii::vfs::GuiNativeCall call;
+    call.name = "@Adjuster.Render";
+    const auto add = [&call](std::string text) {
+        refii::vfs::GuiNativeArgument argument;
+        argument.kind = refii::vfs::GuiNativeArgument::Kind::kString;
+        argument.text = std::move(text);
+        call.arguments.push_back(std::move(argument));
+    };
+    char hex[9];
+    std::snprintf(hex, sizeof hex, "%08X", widget);
+    add(hex);
+    add(std::to_string(value));
+    for (const uint32_t at : {0x20u, 0x24u, 0x28u, 0x1Cu}) {
+        add(std::to_string(static_cast<int32_t>(refii::vfs::LoadGuestU32(base, widget + at))));
+    }
+    refii::vfs::PostGuiNativeCall(std::move(call));
+}
+
+}  // namespace
+
 // The adjuster widget's render `sub_826B8BB0(widget)` (disc `sub_8240CA98`), r3 the widget: the one
 // writer of its value text, called by the router's opener (0x8236fde8, 0x8236fe00, 0x8236fe08 / disc
 // 0x82337fe0, 0x82337ff8, 0x82338000), the display box's Open (0x823cf750 / 0x823bdd90) and both
@@ -182,22 +210,51 @@ REX_EXTERN(rex_lhGuiManager_OpenNumericAdjuster) {
 // +0xC while max - value >= step. Stated `@Adjuster.Render <widget> value min max step flags`.
 REX_EXTERN(rex_lhGuiNumericAdjuster_Render) {
     const uint32_t widget = ctx.r3.u32;
-    refii::vfs::GuiNativeCall call;
-    call.name = "@Adjuster.Render";
-    const auto add = [&call](std::string value) {
-        refii::vfs::GuiNativeArgument argument;
-        argument.kind = refii::vfs::GuiNativeArgument::Kind::kString;
-        argument.text = std::move(value);
-        call.arguments.push_back(std::move(argument));
-    };
-    char hex[9];
-    std::snprintf(hex, sizeof hex, "%08X", widget);
-    add(hex);
-    for (const uint32_t at : {0x2Cu, 0x20u, 0x24u, 0x28u, 0x1Cu}) {
-        add(std::to_string(static_cast<int32_t>(refii::vfs::LoadGuestU32(base, widget + at))));
-    }
-    refii::vfs::PostGuiNativeCall(std::move(call));
+    StateAdjuster(base, widget, static_cast<int32_t>(refii::vfs::LoadGuestU32(base, widget + 0x2Cu)));
     __imp__rex_lhGuiNumericAdjuster_Render(ctx, base);
+}
+
+// The adjuster widget's hold acceleration `sub_822CF9A0(widget)` (disc `sub_822D0120`), run every GUI
+// tick on the modal's widget `*(QM+0x40)` (`lhGuiManager_TickUpdate` 0x8229ADE8 / 0x8229A9A8) and on
+// the display adjuster's (box+24, 0x823CF698 / 0x823BDCD8). With the widget open (+0), the hold armed
+// (+0x39), a direction still held (`*sub_822CFC78(widget+0x44)`, 0x822CF9D8) and the hold clock run
+// out (`sub_828C3748(widget+0x38)` 0x822CFA04), it multiplies the current step +0x30 by ten
+// (0x822CFA14..0x822CFA34) and writes the value rounded up to that step's next multiple, `value -
+// value % step + step` (0x822CFA30..0x822CFA48), with no test against the limits and no render: `stw
+// r3, 0x2C(r31)` at 0x822CFA4C / disc 0x822D01CC. Both steps (`sub_826B8CF0` / `sub_826B8DD0`) and the
+// real-estate commit (0x826B29CC..0x826B2A08) keep the value inside min +0x20 .. max +0x24; this store
+// is the one writer that does not — the profit box's -60..100 became 200, shown after the next step as
+// +180 / +140 (GitHub #57). At that store, r3 the value about to be written and r31 the widget: a value
+// inside the limits the opener stated goes through as the guest computed it; one outside them is held
+// at the maximum while the held code `*(widget+0x44)` is the increment (28 → `sub_826B8CF0`, the
+// widget's input `sub_826B8EB0` jump table 0x826B8EF4; disc `sub_8240CBD8`, `sub_8240CD98` 0x8240CDDC),
+// and left where it stands while it is the decrement (29 → `sub_826B8DD0` / disc `sub_8240CCB8`): the rounding is upward whatever is held, so a held Down past the
+// maximum would otherwise jump to it every time the hold clock runs out. The decrement then shrinks
+// the grown step to fit (0x826B8E30..0x826B8E4C) and goes on down. The value is stated as a render
+// states it, since the guest renders nothing here.
+void RefiiNumericAdjusterHeldValue(PPCRegister& r3, PPCRegister& r31) {
+    uint8_t* base = RefiiGuestBase();
+    const uint32_t widget = r31.u32;
+    if (base == nullptr || widget < 0x10000u) {
+        return;
+    }
+    const int32_t minimum = static_cast<int32_t>(refii::vfs::LoadGuestU32(base, widget + 0x20u));
+    const int32_t maximum = static_cast<int32_t>(refii::vfs::LoadGuestU32(base, widget + 0x24u));
+    const int32_t asked = static_cast<int32_t>(r3.u32);
+    const int32_t standing = static_cast<int32_t>(refii::vfs::LoadGuestU32(base, widget + 0x2Cu));
+    const bool decrementing = refii::vfs::LoadGuestU32(base, widget + 0x44u) == 29u;
+    int32_t held = asked;
+    if (minimum <= maximum && (asked < minimum || asked > maximum)) {
+        held = std::clamp(decrementing ? standing : asked, minimum, maximum);
+    }
+    r3.u64 = static_cast<uint32_t>(held);
+    StateAdjuster(base, widget, held);
+    static std::atomic<uint32_t> said{0};
+    if (held != asked && said.fetch_add(1, std::memory_order_relaxed) < 16u) {
+        REXLOG_INFO("Refii numeric adjuster: the hold acceleration asked for {} on widget 0x{:08X} — held at {} "
+                    "(limits {}..{}, {})",
+                    asked, widget, held, minimum, maximum, decrementing ? "decrement held" : "increment held");
+    }
 }
 
 // MessageBox::Open — stated after the guest's own Open, so the presentation exists and the open

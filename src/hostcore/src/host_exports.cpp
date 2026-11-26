@@ -770,7 +770,15 @@ extern "C" {
 ///     screen's pages populate on its enter (`@PickBox.Set`).
 /// 257 removes (Fable 2) RefiiHostGetCoopScreen and RefiiHostGetCoopState's two accepted words: the
 ///     co-op screen's enter, SetAccepted, finish and save picker state them (`@Coop.*`).
-REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 257; }
+/// 258 adds RefiiHostGetCameraStatements: what each title's camera setters, activation, easing
+///     step and push are called with, in the guest's order (src/runtime/include/core/
+///     camera_statements.h); the shell rebuilds the camera from them.
+/// 259 removes RefiiHostGetCamera, RefiiHostGetCameraPair and RefiiHostGetPlayerCamera: the shell
+///     rebuilds every manager's camera from the statements of 258 (Godot/src/Engine/camera/
+///     Engine_CameraFeed.cs); Fable 3 no longer reads the finished block at the view's fill or the
+///     frame blend. Adds RefiiHostStateCamera: the shell states the drawn camera back for the hooks
+///     that read it natively (Fable 3's mouse look and Refii.fov).
+REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 259; }
 
 /// The loading screen, as the title's own calls state it: made by its manager, the fade its tick
 /// leaves, the take-down requested and finished. Returns 1 while a screen exists.
@@ -799,6 +807,21 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetLoadingScreenArt(uint32_t* out_type, 
     if (out_type != nullptr) *out_type = kind;
     if (out_body != nullptr) *out_body = body;
     return name != nullptr && capacity > 0u && name[0] != '\0' ? 1u : 0u;
+}
+
+/// The camera statements after sequence `after`, oldest first, refii::camera::kRecordWords words
+/// each, up to `max_records`; returns how many (src/runtime/include/core/camera_statements.h).
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetCameraStatements(uint32_t after, uint32_t* out_words,
+                                                            uint32_t max_records) {
+    return refii_bridge_camera_statements_read(after, out_words, max_records);
+}
+
+/// The camera the shell draws, as the guest's block (position, up, forward, horizontal FOV in
+/// radians, cut), stated back each frame for the hooks that read it natively.
+REFII_HOST_ABI_EXPORT void RefiiHostStateCamera(const float* eleven) {
+    if (eleven != nullptr) {
+        refii_bridge_camera_stated(eleven, eleven + 3, eleven + 6, eleven[9], eleven[10] != 0.0f ? 1 : 0);
+    }
 }
 
 /// The word a title's own call last stated under `key` (payload_bridge.h lists the keys); 0 until
@@ -1638,9 +1661,9 @@ REFII_HOST_ABI_EXPORT uint64_t RefiiHostGetControllerReadReceipt(uint32_t user_i
 /// 2. COHERENCE. Read before and after a pose copy it brackets the read. The rig arrays are
 ///    memcpy'd out of guest memory from Godot's thread while the simulation thread writes
 ///    them, with no lock on either side — so a straddled read is possible by construction,
-///    and this is the cheapest thing that can DETECT one. `RefiiHostGetCamera` solves the
-///    same problem by reading twice and comparing, which costs a second copy of the payload;
-///    a rig is up to 160 bones of 48 bytes and does not deserve that.
+///    and this is the cheapest thing that can DETECT one. Reading twice and comparing would
+///    cost a second copy of the payload; a rig is up to 160 bones of 48 bytes and does not
+///    deserve that.
 ///
 /// Zero means the guest is absent. Callers must compare for INEQUALITY and must not assume
 /// the value only ever grows, or grows by one: whether a level load resets it is not settled,

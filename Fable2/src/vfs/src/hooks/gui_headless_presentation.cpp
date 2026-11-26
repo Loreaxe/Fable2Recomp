@@ -277,7 +277,7 @@ std::atomic<uint64_t> g_textures_named{0};
 thread_local bool t_wheel_item = false;
 
 /// Inside an entry that states its own element values (rex_lhGuiPauseRootScreen_SetMapKey,
-/// rex_lhGuiPickBox_SetIndex, rex_lhGuiLogbookScreen_FillExpression): its SetText /
+/// rex_lhGuiPickBox_SetIndex): its SetText /
 /// SetTextFromTag / SetTexture are not told to the elements; SetText's string is kept for the
 /// entry's statement.
 thread_local bool t_entry_states = false;
@@ -1059,7 +1059,6 @@ constexpr refii::guest::Addr kPickBoxText{0x8349C384u};  // ".grp.text"
 
 std::atomic<uint64_t> g_map_keys_stated{0};
 std::atomic<uint64_t> g_pickboxes_stated{0};
-std::atomic<uint64_t> g_expressions_filled{0};
 
 /// Each pickbox's text element path, as its Init named it.
 std::mutex g_pickbox_mutex;
@@ -1241,22 +1240,6 @@ REX_EXTERN(rex_lhGuiSlider_SetValue) {
     const uint64_t n = ++g_sliders_stated;
     if (Milestone(n)) {
         REXLOG_INFO("Refii slider: 0x{:08X} '{}' set to {} (#{})", slider, path, value, n);
-    }
-}
-
-// THE LOGBOOK'S EXPRESSION PAGE. FillExpression (TU1 `sub_829BCDF0`, disc `sub_828D61D0`): r3 the
-// screen, r4 the row (type, id). On type 61 (0x829bce10) it looks the id up (`sub_821DA348`
-// 0x829bce1c) and writes the record's `NameTag` (0x829bce94), `IconGraphic` (GuiElement_SetTexture
-// 0x829bcee8, disc 0x828d62c8) and `ExpressionDescriptionTextTag` (0x829bcf38), then the effects
-// (`sub_829BCF98`). Godot draws the same record from the row it states (Engine_UiLogbookPage), so
-// nothing written inside is told to the elements.
-PPC_EXTERN_FUNC(__imp__rex_lhGuiLogbookScreen_FillExpression);
-REX_EXTERN(rex_lhGuiLogbookScreen_FillExpression) {
-    REX_FUNC_PROLOGUE();
-    RunStating(ctx, base, __imp__rex_lhGuiLogbookScreen_FillExpression);
-    const uint64_t n = ++g_expressions_filled;
-    if (Milestone(n)) {
-        REXLOG_INFO("Refii logbook: expression page filled by the guest, untold (#{})", n);
     }
 }
 

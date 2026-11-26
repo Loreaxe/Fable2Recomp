@@ -81,6 +81,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 
+#include "box_answers.h"
 #include "core/headless_presentation.h"
 #include "gui_statements.h"
 #include "../../vfs/include/fable3_guest_build.h"
@@ -373,6 +374,7 @@ REX_EXTERN(rex_InteractionButton_Show) {
 /// sub_82972A70(mode, scroll): the cursor and count it lays out, at entry.
 REX_EXTERN(rex_InteractionList_Write) {
   if (base != nullptr && Plausible(ctx.r3.u32)) {
+    NoteInteractionList(ctx.r3.u32);
     const int32_t cursor = static_cast<int32_t>(LoadGuestU32(base, ctx.r3.u32 + ModeCursor()));
     const int32_t count = static_cast<int32_t>(LoadGuestU32(base, ctx.r3.u32 + ModeCount()));
     const int32_t scroll = static_cast<int32_t>(ctx.r4.u32);
