@@ -22,6 +22,7 @@ public sealed class Engine_UiTheme
 	// change: one StringName each, never a literal (a literal is a weak handle per call).
 	private static readonly StringName ClipRectName = "clip_rect";
 	private static readonly StringName ClipSeatName = "clip_seat";
+	private static readonly StringName SeatRectName = "seat_rect";
 	private static readonly StringName OpacityName = "opacity";
 
 	/// <summary>The bitmap fonts. Without them <see cref="Label"/> produces nothing.</summary>
@@ -216,6 +217,10 @@ public sealed class Engine_UiTheme
 		if (ownMaterials)
 		{
 			OwnMaterials(clone);
+			if (Engine_UiKeyGlyphs.SurfacePlayer == 2)
+			{
+				Engine_UiKeyGlyphs.TakePlayerTwo(clone);
+			}
 		}
 		return clone;
 	}
@@ -300,11 +305,13 @@ public sealed class Engine_UiTheme
 		Variant? clip = null;
 		Variant? opacity = null;
 		Variant? seat = null;
+		Variant? seatRect = null;
 		if (node.MaterialOverride is ShaderMaterial previous)
 		{
 			clip = previous.GetShaderParameter(ClipRectName);
 			opacity = previous.GetShaderParameter(OpacityName);
 			seat = previous.GetShaderParameter(ClipSeatName);
+			seatRect = previous.GetShaderParameter(SeatRectName);
 		}
 
 		node.MaterialOverride = Engine_UiSceneBuilder.TextMaterial(opaque, selection.Font.Atlas);
@@ -324,6 +331,11 @@ public sealed class Engine_UiTheme
 			if (seat is { } st && st.VariantType != Variant.Type.Nil)
 			{
 				fresh.SetShaderParameter(ClipSeatName, st);
+			}
+
+			if (seatRect is { } sr && sr.VariantType != Variant.Type.Nil)
+			{
+				fresh.SetShaderParameter(SeatRectName, sr);
 			}
 		}
 
@@ -369,11 +381,13 @@ public sealed class Engine_UiTheme
 		Variant? clip = null;
 		Variant? opacity = null;
 		Variant? seat = null;
+		Variant? seatRect = null;
 		if (node.MaterialOverride is ShaderMaterial previous)
 		{
 			clip = previous.GetShaderParameter(ClipRectName);
 			opacity = previous.GetShaderParameter(OpacityName);
 			seat = previous.GetShaderParameter(ClipSeatName);
+			seatRect = previous.GetShaderParameter(SeatRectName);
 		}
 
 		// A label the binding has culled (`Layers` 0 at opacity 0, Engine_UiCloneBinding) keeps no
@@ -444,6 +458,11 @@ public sealed class Engine_UiTheme
 			if (seat is { } st && st.VariantType != Variant.Type.Nil)
 			{
 				fresh.SetShaderParameter(ClipSeatName, st);
+			}
+
+			if (seatRect is { } sr && sr.VariantType != Variant.Type.Nil)
+			{
+				fresh.SetShaderParameter(SeatRectName, sr);
 			}
 		}
 

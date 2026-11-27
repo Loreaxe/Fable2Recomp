@@ -287,6 +287,13 @@ public partial class Engine_PostFxEffect : CompositorEffect
 
     private int _shaftPingPong;
     private bool _shaftHistoryValid;
+
+    /// <summary>
+    /// The frame (Engine.GetFramesDrawn) this effect last marched its shafts, or -1. A view that was not
+    /// drawn in between (the window under a split screen, a half under a shared one) has no previous frame:
+    /// its history is the picture from before the gap, under the camera it had then.
+    /// </summary>
+    private long _shaftFrame = -1;
     private Vector3 _prevShaftCamOrigin;
     private Vector3 _prevShaftForward;
     private Vector3 _prevShaftRight;
@@ -322,6 +329,62 @@ public partial class Engine_PostFxEffect : CompositorEffect
 
     private static int _historyResetGeneration;
     private int _historyResetSeen;
+
+    /// <summary>
+    /// ONE SCREEN'S TONE HISTORY ACROSS A CO-OP SPLIT OR MERGE. The title has one tone history for its one
+    /// screen; each co-op view's chain keeps its own. A view that starts drawing again continues the picture
+    /// of the view it replaces (the halves the window's at a split, the window player one's half at a merge
+    /// or when player two leaves), so it takes that chain's state and histogram instead of its own stale
+    /// ones or a snap to its first frame: under a theme holding its exposure (EXPOSURE_SPEED 0, the caves)
+    /// every view keeps the level the room took at its load, and the brightness does not step.
+    /// Main thread; the copy runs on the render thread ahead of the frame and of any release queued after
+    /// it (GameSplitView asks before it frees the halves).
+    /// </summary>
+    public static void Continue(Camera3D? from, Camera3D? to)
+    {
+        if (Of(from) is not { } source || Of(to) is not { } target || ReferenceEquals(source, target))
+        {
+            return;
+        }
+
+        RenderingServer.CallOnRenderThread(Callable.From(() => target.TakeStateOf(source)));
+    }
+
+    private static Engine_PostFxEffect? Of(Camera3D? camera)
+    {
+        if (camera is null || !GodotObject.IsInstanceValid(camera) ||
+            camera.Compositor is not { } compositor || !GodotObject.IsInstanceValid(compositor))
+        {
+            return null;
+        }
+
+        foreach (CompositorEffect effect in compositor.CompositorEffects)
+        {
+            if (effect is Engine_PostFxEffect postFx)
+            {
+                return postFx;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Render thread: this chain's state and histogram become <paramref name="source"/>'s.</summary>
+    private void TakeStateOf(Engine_PostFxEffect source)
+    {
+        if (_disposed || !_ready || _rd is null || !ReferenceEquals(_rd, source._rd) || source._firstFrame ||
+            !_stateBuffer.IsValid || !source._stateBuffer.IsValid ||
+            !_histogramBuffer.IsValid || !source._histogramBuffer.IsValid)
+        {
+            return;
+        }
+
+        _rd.BufferCopy(source._stateBuffer, _stateBuffer, 0u, 0u, (uint)Engine_PostFxState.ToneBytes);
+        _rd.BufferCopy(source._histogramBuffer, _histogramBuffer, 0u, 0u, (uint)HistogramBytes);
+        _firstFrame = false;
+        _histogramValid = source._histogramValid;
+        _historyResetSeen = source._historyResetSeen;
+    }
     private bool _histogramValid;
     private bool _measuredAny;
     private bool _materialDisabledWritten;
@@ -538,10 +601,30 @@ public partial class Engine_PostFxEffect : CompositorEffect
         }
 
         _ready = true;
+        ClaimExposure();
+    }
+
+    /// <summary>1 while a claim is queued for the main thread.</summary>
+    private int _claimQueued;
+
+    /// <summary>
+    /// Points this view's exposure global at this chain's exposure, on the main thread: once it is
+    /// built, and whenever it runs while another chain holds the global. Two cameras run a chain for
+    /// view 0 — the window's and player one's split view (Refii.Game.GameSplitView) — and only the
+    /// one drawing runs, so the one that runs holds the global; the split view's, released when local
+    /// co-op ends, put the placeholder in and left it there.
+    /// </summary>
+    private void ClaimExposure()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _claimQueued, 1) == 1)
+        {
+            return;
+        }
 
         Rid exposureRid = _exposureRd;
         Callable.From(() =>
         {
+            System.Threading.Volatile.Write(ref _claimQueued, 0);
             if (_disposed || !_ready || _exposureRd != exposureRid || !exposureRid.IsValid)
             {
                 return;
@@ -1099,6 +1182,11 @@ public partial class Engine_PostFxEffect : CompositorEffect
             return;
         }
 
+        if (View is >= 0 and < 2 && !ReferenceEquals(System.Threading.Volatile.Read(ref _publishers[View]), this))
+        {
+            ClaimExposure();
+        }
+
         if (!Engine_PostFxParams.Enabled ||
             !Refii.Game.GameWorld.ShouldRunRenderEffects(
                 Refii.Game.GameWorld.HasActiveWorld,
@@ -1576,6 +1664,13 @@ public partial class Engine_PostFxEffect : CompositorEffect
     private void VolumetricShafts(
         Rid colour, Rid depth, Vector2I size, Basis camBasis, Vector3 camOrigin, Projection projection)
     {
+        long frame = Engine.GetFramesDrawn();
+        if (_shaftFrame < 0 || frame - _shaftFrame > 1)
+        {
+            _shaftHistoryValid = false;
+        }
+
+        _shaftFrame = frame;
         if (Engine_PostFxParams.VolumetricShaftScale <= 1e-4f ||
             !_volShaftsPipeline.IsValid || !_volUpsamplePipeline.IsValid ||
             !Engine_VolumetricLightShafts.TrySnapshot(

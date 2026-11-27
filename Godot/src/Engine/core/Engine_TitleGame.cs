@@ -156,10 +156,27 @@ public abstract class Engine_TitleGame
 	public virtual bool LocalCoop => false;
 
 	/// <summary>
+	/// What the guest is to be told about the local co-op screen, every drawn frame
+	/// (Refii.Game.GameSplitView.GuestSplit): true while each player has their own camera — split, or
+	/// hybrid while split. A title that states it from its own co-op session (Fable 2's CoopSession) leaves
+	/// this empty.
+	/// </summary>
+	public virtual void StateCoopSplit(bool split)
+	{
+	}
+
+	/// <summary>
 	/// Whether this title's bridge states the guest's entities (the entity walk). A title that does
 	/// not yet has no first entity pass to wait for, so the world's load hold does not wait on one.
 	/// </summary>
 	public virtual bool StatesEntities => true;
+
+	/// <summary>
+	/// Whether this title's bridge states which dead creatures the guest leaves lying
+	/// (<see cref="Refii.Host.HostBridge.EntityAppearance.GuestCorpseFlag"/>). False keeps the
+	/// host corpse on Engine_CorpsePolicy's exclusions.
+	/// </summary>
+	public virtual bool StatesCorpses => false;
 
 	/// <summary>This machine joined another's game online.</summary>
 	public virtual bool OnlineClient => false;
@@ -255,6 +272,13 @@ public abstract class Engine_TitleGame
 
 	/// <summary>The guest's stated targeting-highlight blur width, in texels of its half-resolution buffer; 0 when not stated.</summary>
 	public virtual int HighlightWidthTexels => 0;
+
+	/// <summary>
+	/// The players targeting <paramref name="entity"/> as the title's targeting states it: bit 0
+	/// player one, bit 1 player two; 0 when the title states none (every view then draws its
+	/// highlight, as on one screen).
+	/// </summary>
+	public virtual int TargetedBy(uint entity) => 0;
 
 	/// <summary>
 	/// A live entity as the title shows it: the guest's statement, or the title's own stand-in
@@ -399,15 +423,6 @@ public abstract class Engine_TitleGame
 	/// <summary>The static population table a menu's `MenuPopulationScript` names, or null.</summary>
 	public virtual Refii.Ui.Engine_UiPopulationTable? PopulationTable(string script) => null;
 
-	/// <summary>A menu the title holds up in place of the screen's own (a dye being chosen), or null.</summary>
-	public virtual string? HeldMenuScript => null;
-
-	/// <summary>
-	/// The menu a screen shows while the title holds one (<see cref="HeldMenuScript"/>), or null for
-	/// the screen's own; on any other screen the title puts its held menu away.
-	/// </summary>
-	public virtual string? OverrideMenuScript(uint screenId) => null;
-
 	/// <summary>A row's command that has nothing to unlearn (a mod's ability), so Y does nothing.</summary>
 	public virtual bool IsModAbilityRow(string command) => false;
 
@@ -466,6 +481,12 @@ public abstract class Engine_TitleGame
 
 	/// <summary>The player whose menus are open on this machine (0 when the title has no such notion).</summary>
 	public virtual int MenuPlayer => 0;
+
+	/// <summary>
+	/// The player whose menu, box or wheel is up now, 0 while none is (the shared prompts follow it on a
+	/// split screen, GameInput's glyph device). By default <see cref="MenuPlayer"/>.
+	/// </summary>
+	public virtual int OpenMenuPlayer => MenuPlayer;
 
 	/// <summary>The title's options-screen cursor the host options page rides: its row.</summary>
 	public virtual int OptionsCursorRow => 0;

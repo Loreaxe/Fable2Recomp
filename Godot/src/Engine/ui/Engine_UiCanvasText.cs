@@ -34,6 +34,76 @@ public static class Engine_UiCanvasText
 	}
 
 	/// <summary>
+	/// How wide a line of the title's MARKED text will be, in font pixels at scale 1: its runs as
+	/// <paramref name="contract"/>'s markup splits them (<see cref="Engine_UiTextMarkup"/>), a text run
+	/// by its glyphs, an inline icon by the title's pen advance
+	/// (<see cref="Engine_UiTextContract.IconPenAdvance"/>), the same cells
+	/// <see cref="Engine_UiTextMesh"/> lays; a break ends the line.
+	/// </summary>
+	public static float MeasureMarked(UiFont font, string text, Engine_UiTextContract contract)
+	{
+		float width = 0f;
+		foreach (Engine_UiTextMarkup.Run run in contract.Markup.Split(text))
+		{
+			if (run.Break)
+			{
+				break;
+			}
+
+			width += run.Tag is { } tag
+				? contract.IconPenAdvance(tag is { Kind: Engine_UiTextMarkup.Kind.Icon, DoubleWidth: true }, font.Font.LineHeight)
+				: Measure(font, run.Text);
+		}
+
+		return width;
+	}
+
+	/// <summary>
+	/// Draws one line of the title's MARKED text — a guest string that may carry its own tags, such as
+	/// a price's `&lt;gold_img&gt;` — returning the advance used. The runs are <paramref name="contract"/>'s
+	/// markup's, as the 3D text mesh draws them: a text run in its colour run's tint (replacing the RGB
+	/// where the title's runs replace, <see cref="Engine_UiTextContract.ColourRunsReplace"/>), an icon as
+	/// its tag's art (<paramref name="textures"/> given the tag's path + `.tex`) of the title's icon size,
+	/// its top-left <see cref="Engine_UiTextContract.IconInset"/> left of and above the pen, the pen then
+	/// moved by the title's icon advance; an unknown tag draws nothing and a break ends the line. Same
+	/// <paramref name="origin"/> and <paramref name="scale"/> as <see cref="DrawLine"/>.
+	/// </summary>
+	public static float DrawMarked(CanvasItem into, UiFont font, string text, Vector2 origin, float scale, Color colour,
+		Engine_UiTextContract contract, System.Func<string, Texture2D?>? textures)
+	{
+		float pen = 0f;
+		foreach (Engine_UiTextMarkup.Run run in contract.Markup.Split(text))
+		{
+			if (run.Break)
+			{
+				break;
+			}
+
+			if (run.Tag is { } tag)
+			{
+				bool wide = tag is { Kind: Engine_UiTextMarkup.Kind.Icon, DoubleWidth: true };
+				if (tag.Kind == Engine_UiTextMarkup.Kind.Icon && textures?.Invoke(tag.Texture + ".tex") is { } art)
+				{
+					(float width, float height) = contract.IconSize(wide, font.Font.LineHeight);
+					into.DrawTextureRect(art, new Rect2(
+						origin + new Vector2((pen - contract.IconInset) * scale, -contract.IconInset * scale),
+						new Vector2(width * scale, height * scale)), false, new Color(1f, 1f, 1f, colour.A));
+				}
+
+				pen += contract.IconPenAdvance(wide, font.Font.LineHeight);
+				continue;
+			}
+
+			Color tint = run.Colour is not { } c ? colour
+				: contract.ColourRunsReplace ? new Color(c.R, c.G, c.B, colour.A)
+				: colour * c;
+			pen += DrawLine(into, font, run.Text, origin + new Vector2(pen * scale, 0f), scale, tint) / (scale != 0f ? scale : 1f);
+		}
+
+		return pen * scale;
+	}
+
+	/// <summary>
 	/// Draws one line, returning the advance used.
 	///
 	/// <paramref name="origin"/> is the LEFT baseline-top corner in the canvas item's own

@@ -677,9 +677,9 @@ public partial class GameDecorate : Node
         }
         if (!_room)
         {
-            foreach (var row in Engine_UiInventorySource.Rows("15"))
-                if (Engine_DecorateCatalog.Current?.Items.ContainsKey(row.Id) == true)
-                { _cards.Add(row.Id); _stored.Add(0); _labels.Add(row.Label); }
+            foreach ((uint record, string label) in Engine_UiInventorySource.Carried(Engine_UiInventorySource.Category.Furniture))
+                if (Engine_DecorateCatalog.Current?.Items.ContainsKey(record) == true)
+                { _cards.Add(record); _stored.Add(0); _labels.Add(label); }
             int storedCount = Math.Clamp((int)Read("storedcount"), 0, 4096);
             for (int i = 1; i <= storedCount; i++)
             {

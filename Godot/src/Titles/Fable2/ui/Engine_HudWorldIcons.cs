@@ -38,6 +38,12 @@ public sealed partial class Engine_HudWorldIcons : Node3D
 	/// <summary>The guest's published HUD values — the hold icon's meter is one of them.</summary>
 	public Engine_HudValues? Values { get; set; }
 
+	/// <summary>
+	/// Whose button glyphs the prompts draw (Engine_UiKeyGlyphs.Surface): 2 for player two's icons,
+	/// which are theirs alone; 1, the shared set, for player one's.
+	/// </summary>
+	public int GlyphPlayer { get; set; } = 1;
+
 	/// <summary>One pooled slot, resolved from the document once.</summary>
 	private sealed class Slot
 	{
@@ -146,6 +152,8 @@ public sealed partial class Engine_HudWorldIcons : Node3D
 	/// </summary>
 	public void Bind(Engine_UiScreen screen)
 	{
+		using Engine_UiKeyGlyphs.SurfaceScope glyphs = Engine_UiKeyGlyphs.Surface(GlyphPlayer);
+
 		// A rebind (a new `hud.bgf`, or new art) drops the slots built from the old one.
 		foreach (Slot slot in _slots)
 		{
@@ -386,6 +394,8 @@ public sealed partial class Engine_HudWorldIcons : Node3D
 	/// </summary>
 	public void Sample(IReadOnlyList<bool> drawn, IReadOnlyList<string?> texts, uint[]? textures)
 	{
+		using Engine_UiKeyGlyphs.SurfaceScope glyphs = Engine_UiKeyGlyphs.Surface(GlyphPlayer);
+
 		if (drawn.Count != _documentElements || texts.Count != _documentElements)
 		{
 			Clear();

@@ -25,8 +25,14 @@
 //     `sub_8229EE78(sub_821C7CE0(gui))` (sub_826AF430), and sub_821C7CE0 is player one on the
 //     session host — solo and local co-op read as host — else player two. So the refusal is
 //     lifted exactly where player two IS the local player (an online joiner); on a host it would
-//     have player one pay. Travel agents and the gamesmaster keep theirs (Fable 3 keeps the
-//     travel agents' too: sub_827E1C40).
+//     have player one pay. TRAVEL AGENTS: the same routine's job test (`lwz r11,0x9C(r25)`, 14 the
+//     coach driver, 29 the ship captain; 0x827E152C..0x827E153C / disc 0x827A84D4..0x827A84E4) then
+//     says the reject line to player two (`clrlwi r11,r27,24` 0x827E1540 → `sub_825D7060`) or runs the
+//     agent's script for the user (`sub_827E1668(r25, r24, OnActionUseTravelAgent)` 0x827E1574..
+//     0x827E1584 / disc 0x827A851C..0x827A852C). That reject is the 360's rule for the henchman and it
+//     stays theirs; a player two who brought a hero is served (RefiiCoopTravelAgentForHero; Fable 3
+//     refuses every partner, `sub_827E1C40`). The gamesmaster keeps its refusal: pub games refuse in
+//     a multiplayer game anyway (onactionusegamesmaster.lua's `not IsMultiplayerGame()`).
 //
 //   PROGRESSION: each hero keeps what they earn. Experience (rex_CECExperience_Modify), gold
 //     (rex_CECMoney_Modify) and renown (rex_lhHeroStats_ModifyRenown) pool player two's gains
@@ -40,6 +46,12 @@
 //         0x8249D7A0.
 //     The network gates in front of each (only the host credits) are untouched. Fable 3 keeps a
 //     purse per hero too (sub_823B0590: a split only between spouses or partners).
+//
+//   ONLY FOR A PLAYER TWO WHO BROUGHT A HERO (a character from a save; RefiiCoopGetOwnHero, the one
+//     statement of it, guest_tick_pump.cpp). The plain henchman is the shipped one: every gate below
+//     answers the shipped instruction for them, so their use runs as hero one, shops and reactions
+//     refuse them, their crimes and deeds are hero one's and their earnings pool into hero one and
+//     split by the co-op screen's sliders, exactly as on the 360.
 //
 //   REACTIONS: villagers react to player two. The opinion-reaction filter (sub_8278CAE0 /
 //     sub_8275F0F0) refuses player two unless the reaction's data sets ForHenchman (`extrwi
@@ -78,6 +90,7 @@ void Once(std::atomic<bool>& said, const char* what) {
 }
 
 std::atomic<bool> g_said_use{false};
+std::atomic<bool> g_said_travel{false};
 std::atomic<bool> g_said_shop{false};
 std::atomic<bool> g_said_experience{false};
 std::atomic<bool> g_said_gold{false};
@@ -97,6 +110,20 @@ bool g_shop_user_is_local_two = false;
 std::atomic<bool> g_shopping_player_two{false};
 
 bool Plausible(uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; }
+
+}  // namespace
+
+/// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
+extern "C" int RefiiCoopGetOwnHero(void);
+extern "C" uint8_t* RefiiGuestBase(void);
+
+namespace {
+
+/// Player two is here as the plain henchman: their gains, uses and reactions are the shipped ones.
+bool HenchmanHere() {
+  uint8_t* base = RefiiGuestBase();
+  return base != nullptr && RefiiCoopGetOwnHero() == 0 && refii_mod_player_hero(base, 2) != 0u;
+}
 
 /// The guest's IsLocalCoopGame: game+0x11C == 2.
 bool LocalCoopGame(uint8_t* base) {
@@ -120,8 +147,32 @@ bool LocalPlayerIsPlayerTwo(uint8_t* base) {
 
 }  // namespace
 
-// The real user's script path; nothing to decide.
-void RefiiCoopUseByRealUser() { Once(g_said_use, "an object used by player two runs for player two"); }
+// The real user's script path. Every user reaches the hook (r27 the user, r3 the henchman from
+// `lhEntity_GetRenderObject`, TU1 0x82821B84 / disc 0x82753604); for any other user the shipped `bne`
+// (0x82821B8C / 0x8275360C) takes the same jump, so only player two's use is player two's. True takes
+// it; false runs the shipped `cmplw cr6, r27, r3` (0x82821B88 / 0x82753608): the henchman's use is
+// refused or replaced by hero one's, as shipped.
+bool RefiiCoopUseByRealUser(PPCRegister& r27, PPCRegister& r3) {
+  if (r27.u32 != r3.u32) {
+    return true;
+  }
+  if (RefiiCoopGetOwnHero() == 0) {
+    return false;
+  }
+  Once(g_said_use, "an object used by player two runs for player two");
+  return true;
+}
+
+// True: run the travel agent's script for player two (r24 the user), a hero; false: the shipped test
+// (the henchman's reject line).
+bool RefiiCoopTravelAgentForHero(PPCRegister& r24) {
+  uint8_t* base = RefiiGuestBase();
+  if (base == nullptr || RefiiCoopGetOwnHero() == 0 || r24.u32 == 0u || r24.u32 != refii_mod_player_hero(base, 2)) {
+    return false;
+  }
+  Once(g_said_travel, "a travel agent serves player two");
+  return true;
+}
 
 // True: open the shop for player two (jump to the shopkeeper path); false: the shipped test.
 bool RefiiCoopShopForLocalPlayerTwo() {
@@ -135,10 +186,6 @@ bool RefiiCoopShopForLocalPlayerTwo() {
   return false;
 }
 
-extern "C" uint8_t* RefiiGuestBase(void);
-
-extern "C" uint8_t* RefiiGuestBase(void);
-
 // CRIME IS THE CRIMINAL'S. AddCrime (`sub_827C9C10`) records a crime against the criminal, but
 // for a player criminal that is not hero one it then makes hero one the criminal: `bl
 // sub_8222C1B8` (0x827C9F64), `cmplw r28, r3`, `mr r29, r3` (0x827C9F9C) — r29 already holds the
@@ -147,7 +194,7 @@ extern "C" uint8_t* RefiiGuestBase(void);
 // player two's, `DisplayCrimeScreen` 0x827CFF08) are player two's own.
 bool RefiiCoopCrimeIsTheirs(PPCRegister& r28) {
   uint8_t* base = RefiiGuestBase();
-  return base != nullptr && r28.u32 != 0u && r28.u32 == refii_mod_player_hero(base, 2);
+  return base != nullptr && r28.u32 != 0u && RefiiCoopGetOwnHero() != 0 && r28.u32 == refii_mod_player_hero(base, 2);
 }
 
 // A DEED'S ALIGNMENT AND RENOWN ARE THE DOER'S. The villager's deed handler
@@ -164,7 +211,7 @@ void RefiiCoopDeedDoer(PPCRegister& r1, PPCRegister& r3) {
   }
   const uint32_t holder = LoadGuestU32(base, r1.u32 + 0x108u + 4u);
   const uint32_t doer = Plausible(holder) ? LoadGuestU32(base, holder) : 0u;
-  if (doer != 0u && doer == refii_mod_player_hero(base, 2)) {
+  if (doer != 0u && RefiiCoopGetOwnHero() != 0 && doer == refii_mod_player_hero(base, 2)) {
     r3.u64 = doer;
   }
 }
@@ -175,7 +222,8 @@ void RefiiCoopDeedDoer(PPCRegister& r1, PPCRegister& r3) {
 // but only for a sound whose definition says AudibleToSecondaryListeners: the distance test
 // `sub_82C5B8D8` takes the flag in r4 (`clrlwi r9, r4, 24` at 0x82C5B8E0) and otherwise measures from
 // the camera alone. On split screen every sound takes the nearest listener, so player two hears the
-// world around them in their half.
+// world around them in their half. That is LOUDNESS only; the side a sound comes from is
+// RefiiCoopListenerForSound, below.
 extern "C" int RefiiCoopSplitScreen(void);
 
 void RefiiCoopAudibleToBoth(PPCRegister& r4) {
@@ -233,6 +281,35 @@ void RefiiCoopShopPlayer(PPCRegister& r4) {
   }
 }
 
+// The same rule INLINED: `lbz 0x34` / `lbz 0x35` of the net manager, `li r4, 1`, `li r4, 2` when not
+// both, then `bl sub_82264230` (disc `sub_822641F0`) — at the `bl`, r4 is the local player's id. The
+// sites a player-two screen reaches (gui_screen_stub_support.cpp OwnerScope): the gift's recipient
+// `sub_8230F540` 0x8230F594 / disc 0x823031EC; the furniture's targeted piece `sub_826B61C8` 0x826B622C /
+// 0x8259B41C and its label `sub_826B6678` 0x826B66DC / 0x8259B844; the decoration's mount `sub_826B7128`
+// 0x826B718C / 0x8259C3A4; the furniture pages `sub_8299B6D8` 0x8299B780 / 0x828F12A8 and `sub_8299C710`
+// 0x8299C780 / 0x828F2328; the decoration pages `sub_8299C008` 0x8299C0AC / 0x828F1C5C and `sub_8299CF80`
+// 0x8299CFEC / 0x828F2B94. While a call is made for local player two, each answers player two.
+void RefiiCoopInlineLocalPlayer(PPCRegister& r4) {
+  if (r4.u32 == 1u && g_local_player_two_call > 0) {
+    r4.u64 = 2u;
+  }
+}
+
+// THE SHOP IS ITS USER'S GUI. The shopkeeper path of the villager use opens the shop
+// (`sub_823C4060`, TU1 0x827E1460 / disc 0x827A8408) and then states the GUI's owner the way every
+// world screen's opener does: `lhGuiManager_FindScreenHandler(QM, 0)` (0x827E146C / 0x827A8414) and
+// the pause root's vf+32 with `li r4, 0` (0x827E147C / 0x827A8424; the call 0x827E1488 / 0x827A8430)
+// — player one, whoever used the villager. The owner is what the GUI tick serves
+// (`lhGuiManager_TickUpdate` → `sub_8236E400`: player two's input object App+0x18 when the root's +4
+// is 1) and what the host routes (guest_tick_pump.cpp StateMenuOwner). At the `lwz r10, 0x20(r11)`
+// after the `li` (0x827E1480 / 0x827A8428): local player two's shop states player two, as the crime
+// arrest states its criminal (0x827D0070 / 0x82855958).
+void RefiiCoopShopOwner(PPCRegister& r4) {
+  if (g_shop_user_is_local_two) {
+    r4.u64 = 1u;
+  }
+}
+
 // After `bl sub_8222C1B8` in the price and tattoo checks: r3 is hero one; player two's shop asks
 // about hero two.
 void RefiiCoopShopHero(PPCRegister& r3) {
@@ -245,20 +322,49 @@ void RefiiCoopShopHero(PPCRegister& r3) {
   }
 }
 
-void RefiiCoopExperienceOwnPool() { Once(g_said_experience, "experience credited to its earner"); }
+// True jumps to the routine's own "credit this component" block; false runs the shipped split (the
+// henchman's gains pool into hero one and split by the co-op screen's sliders).
+bool RefiiCoopExperienceOwnPool() {
+  if (HenchmanHere()) {
+    return false;
+  }
+  Once(g_said_experience, "experience credited to its earner");
+  return true;
+}
 
-void RefiiCoopGoldOwnPurse() { Once(g_said_gold, "gold credited to its earner"); }
+bool RefiiCoopGoldOwnPurse() {
+  if (HenchmanHere()) {
+    return false;
+  }
+  Once(g_said_gold, "gold credited to its earner");
+  return true;
+}
 
-void RefiiCoopRenownOwnPool() { Once(g_said_renown, "renown credited to its earner"); }
+bool RefiiCoopRenownOwnPool() {
+  if (HenchmanHere()) {
+    return false;
+  }
+  Once(g_said_renown, "renown credited to its earner");
+  return true;
+}
 
-void RefiiCoopReactToPlayerTwo() { Once(g_said_reaction, "a villager reaction accepts player two"); }
+// True skips the refusal of player two (the ForHenchman path); false runs the shipped
+// `cmplw cr6, r22, r3` (TU1 0x8278D998 / disc 0x8275FFA8).
+bool RefiiCoopReactToPlayerTwo() {
+  if (RefiiCoopGetOwnHero() == 0) {
+    return false;
+  }
+  Once(g_said_reaction, "a villager reaction accepts player two");
+  return true;
+}
 
 // Villager use (r3 villager component, r4 user). Records the shop decision for the call.
 REX_EXTERN(rex_CECVillager_OnUse) {
   const uint32_t user = ctx.r4.u32;
   const bool previous = g_shop_for_local_player_two;
   const bool previous_local = g_shop_user_is_local_two;
-  const bool two = Plausible(user) && user == refii_mod_player_hero(base, 2);
+  // A shop serves a player two who brought a hero; the henchman gets the shipped refusal.
+  const bool two = Plausible(user) && RefiiCoopGetOwnHero() != 0 && user == refii_mod_player_hero(base, 2);
   g_shop_user_is_local_two = two && LocalCoopGame(base);
   g_shop_for_local_player_two = two && (LocalPlayerIsPlayerTwo(base) || g_shop_user_is_local_two);
   __imp__rex_CECVillager_OnUse(ctx, base);
@@ -310,6 +416,7 @@ namespace {
 
 std::atomic<bool> g_said_own_camera{false};
 std::atomic<bool> g_said_lod{false};
+std::atomic<bool> g_said_lod_camera{false};
 
 /// Set by the ActivateCamera wrapper for its call: this machine is the online joiner.
 bool g_activate_as_joiner = false;
@@ -372,7 +479,28 @@ void RefiiCoopLodPair(PPCVRegister& v11, PPCVRegister& v12) {
   Once(g_said_lod, "the world centres on the nearer player");
 }
 
-void RefiiCoopLodCamera() { g_lod.two.store(false, std::memory_order_release); }
+bool PartnerCameraPosition(uint8_t* base, float* out);
+
+// The camera branch (TU1 0x822906B8 / disc 0x82290260, `stvx128 v0,r29,r28`: v0 the camera position
+// sub_82199398 built from "the" camera, player one's): taken in single player, outside co-op, with a
+// hero out of the world, and whenever player one's manager holds an override camera (manager+0x3C,
+// 0x82290590). With player two's view on this machine the centre is each player's own camera — the
+// nearer of player one's (v0) and player two's (their camera's block) — so player two keeps the world
+// around them through player one's cutscene camera. Otherwise the pair is cleared: the guest's centre.
+void RefiiCoopLodCamera(PPCVRegister& v0) {
+  uint8_t* base = RefiiGuestBase();
+  float partner[3];
+  if (base == nullptr || !PartnerCameraPosition(base, partner)) {
+    g_lod.two.store(false, std::memory_order_release);
+    return;
+  }
+  for (int i = 0; i < 3; ++i) {
+    g_lod.a[i] = v0.f32[i + 1];
+    g_lod.b[i] = partner[i];
+  }
+  g_lod.two.store(true, std::memory_order_release);
+  Once(g_said_lod_camera, "the world centres on the nearer player's camera under an override camera");
+}
 
 void RefiiCoopLodNearer(PPCRegister& f1, PPCVRegister& v127) {
   if (!g_lod.two.load(std::memory_order_acquire)) {
@@ -417,10 +545,15 @@ extern "C" REX_FUNC(__imp__rex_lhCameraManager_Update);
 
 namespace {
 
-/// The Players the constructor built a camera manager for on split screen (player two's; one or
-/// two entries over a session). Written by the constructor on the guest thread; the host bridge
-/// asks RefiiCoopSplitCameraBuilt from Godot's.
+/// The LIVE Players the constructor built a camera manager for (player two's): added by the constructor,
+/// removed when the guest destroys that manager (rex_lhCameraManager_Destroy below). Only key 2 is ever
+/// added and the guest holds one key-2 Player at a time, two while a new one is built before the old
+/// one's release, so four slots never fill; a full table means a manager was never destroyed, and the
+/// oldest entry gives way (logged). Written on the guest thread; the host bridge asks
+/// RefiiCoopSplitCameraBuilt from Godot's.
 std::array<std::atomic<uint32_t>, 4> g_split_players{};
+std::array<uint32_t, 4> g_split_added{};
+uint32_t g_split_adds = 0;
 
 bool IsSplitPlayer(uint32_t player) {
   for (const std::atomic<uint32_t>& slot : g_split_players) {
@@ -438,12 +571,36 @@ void RememberSplitPlayer(uint32_t player, bool built) {
       return;
     }
   }
-  if (built) {
-    for (std::atomic<uint32_t>& slot : g_split_players) {
-      if (slot.load(std::memory_order_relaxed) == 0u) {
-        slot.store(player, std::memory_order_relaxed);
-        return;
+  if (!built) {
+    return;
+  }
+  std::size_t at = g_split_players.size();
+  for (std::size_t i = 0; i < g_split_players.size(); ++i) {
+    if (g_split_players[i].load(std::memory_order_relaxed) == 0u) {
+      at = i;
+      break;
+    }
+  }
+  if (at == g_split_players.size()) {
+    at = 0;
+    for (std::size_t i = 1; i < g_split_added.size(); ++i) {
+      if (g_split_added[i] < g_split_added[at]) {
+        at = i;
       }
+    }
+    REXLOG_WARN("Refii co-op heroes: four Players with a camera manager stand and none was destroyed; "
+                "Player 0x{:08X} gives way to 0x{:08X}",
+                g_split_players[at].load(std::memory_order_relaxed), player);
+  }
+  g_split_added[at] = ++g_split_adds;
+  g_split_players[at].store(player, std::memory_order_relaxed);
+}
+
+/// The guest destroyed a manager whose Player (manager+0) this table holds: it holds it no longer.
+void ForgetSplitPlayer(uint32_t player) {
+  for (std::atomic<uint32_t>& slot : g_split_players) {
+    if (player != 0u && slot.load(std::memory_order_relaxed) == player) {
+      slot.store(0u, std::memory_order_relaxed);
     }
   }
 }
@@ -488,19 +645,87 @@ uint32_t ManagerForKey(uint8_t* base, uint32_t key) {
 }
 
 std::atomic<bool> g_said_split_camera{false};
+std::atomic<bool> g_said_partner_scripts{false};
+
+/// Player two's camera manager once the game's own update (lhCameraManager_Update, below) has run
+/// for it; 0 from the Player constructor until then. A manager the update has not run for holds
+/// its constructed block (position 0,0,0), which is no camera to pan a sound from.
+std::atomic<uint32_t> g_second_manager_updated{0};
+
+/// Which camera manager player two's is: moves on at every second player's Player built with one.
+std::atomic<uint32_t> g_partner_manager_generation{0};
 
 }  // namespace
 
+// PLAYER TWO ALWAYS HAS A CAMERA MANAGER IN LOCAL CO-OP (camera stage C2d): shared screen or split, so
+// the screen can split or merge under an unchanged picture. The constructor gate answers "local co-op"
+// (game+0x11C == 2, the guest's IsLocalCoopGame) rather than "split wanted"; what is DRAWN and what the
+// sim's readers take stay keyed to split in effect (RefiiCoopSplitScreen). A shared screen keeps the
+// shipped rules: player two's manager updates (below) but its camera states nothing the save or the
+// shared screen reads (the core camera chunk, across the whole update: RefiiCoopPartnerCameraUpdating),
+// and its construction runs no camera script (RefiiCoopPartnerCameraScripts).
 bool RefiiCoopSplitPlayerCamera(PPCRegister& r31) {
-  const bool split = RefiiCoopSplitScreenWanted() != 0;
-  RememberSplitPlayer(r31.u32, split);
+  uint8_t* base = RefiiGuestBase();
+  const bool build = base != nullptr && LocalCoopGame(base);
+  g_second_manager_updated.store(0u, std::memory_order_release);
+  RememberSplitPlayer(r31.u32, build);
   REXLOG_INFO("Refii co-op heroes: a second player's Player 0x{:08X} constructed {} a camera "
-              "manager (split screen {})", r31.u32, split ? "with" : "without",
-              split ? "wanted" : "not wanted");
-  if (split) {
-    Once(g_said_split_camera, "player two gets their own camera (split screen)");
+              "manager (local co-op {}, split screen {})", r31.u32, build ? "with" : "without",
+              build ? "yes" : "no", RefiiCoopSplitScreenWanted() != 0 ? "wanted" : "not wanted");
+  if (build) {
+    g_partner_manager_generation.fetch_add(1u, std::memory_order_acq_rel);
+    Once(g_said_split_camera, "player two gets their own camera (local co-op)");
   }
-  return split;
+  return build;
+}
+
+// THE SECOND MANAGER RUNS NO CAMERA SCRIPT. lhCameraManager_Create (TU1 0x82481328 / disc 0x82422B08; r3
+// the manager, kept in r31, `stw r4,0(r31)` the Player, whose +0x24 is its player-map key, `stw
+// r4,0x24(r31)` 0x82389988) runs every camera script file again (`bl lhLuaScriptSystem_RunCameraScripts`
+// 0x82481568 / 0x82422D48). Shipped, a manager is only ever built at a level or save load; player two's,
+// built at a drop-in mid-level, would empty the saved CameraManager.Overrides (cameramanager.lua line 2,
+// `CameraManager.Overrides = {}`) and rebuild every mode table, restarting player one's camera. For a
+// key-2 Player in local co-op with player one's manager standing (the scripts already ran in this VM) the
+// call is skipped (0x8248156C / 0x82422D4C): the manager binds the camera tables that stand.
+bool RefiiCoopPartnerCameraScripts(PPCRegister& r31) {
+  uint8_t* base = RefiiGuestBase();
+  if (base == nullptr || !LocalCoopGame(base)) {
+    return false;
+  }
+  const uint32_t player = refii::vfs::LoadGuestU32(base, r31.u32);
+  if (!Plausible(player) || refii::vfs::LoadGuestU32(base, player + 0x24u) != 2u || ManagerForKey(base, 1u) == 0u) {
+    return false;
+  }
+  Once(g_said_partner_scripts, "player two's camera manager keeps the camera scripts that stand");
+  return true;
+}
+
+/// 1 in local co-op while player two's current Player was built with a camera manager.
+extern "C" int RefiiCoopPartnerCameraManager(void) {
+  uint8_t* base = RefiiGuestBase();
+  return base != nullptr && LocalCoopGame(base) && IsSplitPlayer(PlayerForKey(base, 2u)) ? 1 : 0;
+}
+
+/// 1 for the whole of player two's camera manager update (the second lhCameraManager_Update below).
+/// One update runs two Lua calls: the selection, CameraManager:FrameUpdate(hero) (`bl sub_821AC8B0` on
+/// manager+0x18 / +4, TU1 0x821B94EC, disc `bl sub_821ACA18` 0x821B95B4), and then the active mode's
+/// FrameUpdate (`bl sub_8219A758` on wrapper+0x2C / +0x18, the override wrapper +0x3C else the primary
+/// +0x2C, TU1 0x821B9514, disc `bl sub_8219A800` 0x821B95DC). The mode's update is what writes the
+/// saved CameraManager.CameraPosition and states the leash and the canopy fading, so the core camera
+/// chunk asks this (Refii._partner_camera_update) rather than marking the selection call alone.
+extern "C" int RefiiCoopPartnerCameraUpdating(void) { return g_ticking_manager != 0u ? 1 : 0; }
+
+/// PLAYER TWO'S CAMERA IS NEW AT EVERY JOIN. A local quit destroys player two's Player and its manager;
+/// a re-join builds both again (the constructor above). A new manager has no mode wrapper: only
+/// ActivateCamera (sub_82481760, TU1 / disc 0x82422FA0) builds the primary (+0x2C) and override (+0x3C)
+/// wrappers, and the update calls the active mode with no test (`lwz r11,0x3C(r26)` .. `lwz r30,0x2C(r26)`
+/// .. `addi r3,r30,0x2C; bl sub_8219A758` TU1 0x821B94F0..0x821B9514, disc 0x821B95B8..0x821B95DC; its
+/// first load `lwz r11,0(r30)` 0x8219A76C / 0x8219A814 faults at 0x2C with no wrapper). CameraManager:
+/// FrameUpdate activates only a camera that differs from self.CurrentCamera, so the core camera chunk
+/// keeps player two's current camera against this number and starts it empty when the number moves.
+/// Counts from 1; 0 never names a manager.
+extern "C" int RefiiCoopPartnerCameraGeneration(void) {
+  return static_cast<int>(g_partner_manager_generation.load(std::memory_order_acquire) & 0xFFFFFFu);
 }
 
 bool RefiiCoopSplitPlayerCameraEntities(PPCRegister& r27) { return IsSplitPlayer(r27.u32); }
@@ -551,6 +776,107 @@ std::atomic<bool> g_said_own_card{false};
 bool RefiiCoopOwnCardRoams() {
   Once(g_said_own_card, "a client's own card leaves it roaming");
   return true;
+}
+
+// A PLAYER'S OWN PAUSE HOLDS NO WORLD IN AN ONLINE SESSION. The world advances only through the sim-step
+// slot (+0x18) of the command on top of the GameFlow stack: the flow tick `sub_821762C0` ends in
+// `lwz r3,8(r11); lwz r11,0(r3); lwz r10,0x18(r11); bctrl` (0x821764BC..CC; disc `sub_82176088`
+// 0x82176284..94). CGameModePause (vt 0x820AEC7C / disc 0x820B3AEC) and the box state CGameModeUI
+// (0x820AED78 / 0x820B3BE8) hold `blr` there (0x82B96E78 / 0x829CE870), and the pose pass
+// `sub_821A61B0` (disc `sub_821A6010`) calls the top's +0x1C the same way (0x821A623C..54 / 0x821A609C..B4),
+// where the pause holds only the pad dispatch (`sub_823D5378` / disc `sub_8245C958`). The pause is pushed with no
+// session test (lhGuiManager_EnterGuiMode `bl lhGameFlow_IsGuiActive; bne` 0x8236ED1C..28 then
+// `bl CGameModePause_ctor; bl GameFlow_QueueCommand` 0x8236ED3C / 0x8236ED5C; disc 0x82336F1C..5C); shipped, its
+// apply tells the partner (`lbz r5,0xD9(r6); bne` — `lwz r10,0x64(r3); ble` — `bl sub_82349460`, 0x823D505C..
+// 0x823D5144; disc 0x8245C63C..0x8245C724) and both worlds stop together. With the partner's half cut
+// (RefiiCoopPartnerPauseRoams) the pauser alone stood still, so here the pauser's world runs too: while this
+// machine is in an online session with a partner (game+0x11C == 1, net+0x34, and the count the guest's own relay
+// tests, net+0x64) and pause / box commands are on top, the state under them keeps its world. Its tick is the
+// guest's step for a state without player modes, `sub_823D9898` (disc `sub_82460E78`: scripts, the world's sim
+// tick, the camera, the world frame) — PlayGame's own step `sub_821D4628` (disc `sub_821D43D8`) refuses when it
+// is not the top (`subf r7,r31,r3 .. beq` 0x821D46D8..E8 / 0x821D4488..98) — and its poses are that state's own
+// +0x1C, when it is the world's (`sub_822AF5D8` / disc `sub_822AF410`). A state under the pause whose own slots
+// run no world (a movie, a level change) keeps none. Solo and local co-op are untouched: one machine, one world.
+std::atomic<bool> g_said_own_pause{false};
+std::atomic<bool> g_said_own_pause_missing{false};
+
+namespace {
+
+constexpr uint32_t kFlowStepSlot = 0x18u;
+constexpr uint32_t kFlowPoseSlot = 0x1Cu;
+
+/// The command under the pause / box commands on top of the GameFlow stack, in an online session with a
+/// partner; 0 when the top is not one of them, out of such a session, or nothing lies under them. The stack is
+/// the list at `*(*(game+0x80)+4)`: sentinel `+4`, count `+8`, the top the sentinel's `+4`, each node's command `+8`.
+uint32_t CommandUnderOwnPause(uint8_t* base) {
+  using refii::vfs::LoadGuestU32;
+  const uint32_t root = LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
+  const uint32_t game = Plausible(root) ? LoadGuestU32(base, root + 0xCu) : 0u;
+  if (!Plausible(game) || LoadGuestU32(base, game + 0x11Cu) != 1u) {
+    return 0u;
+  }
+  const uint32_t net = LoadGuestU32(base, game + 0x8Cu);
+  if (!Plausible(net) || refii::vfs::LoadGuestU8(base, net + 0x34u) == 0u || LoadGuestU32(base, net + 0x64u) == 0u) {
+    return 0u;
+  }
+  const uint32_t holder = LoadGuestU32(base, game + 0x80u);
+  const uint32_t flow = Plausible(holder) ? LoadGuestU32(base, holder + 4u) : 0u;
+  if (!Plausible(flow) || LoadGuestU32(base, flow + 8u) == 0u) {
+    return 0u;
+  }
+  const uint32_t sentinel = LoadGuestU32(base, flow + 4u);
+  uint32_t node = Plausible(sentinel) ? LoadGuestU32(base, sentinel + 4u) : 0u;
+  bool paused = false;
+  for (int depth = 0; depth < 8 && Plausible(node) && node != sentinel; ++depth) {
+    const uint32_t command = LoadGuestU32(base, node + 8u);
+    if (!Plausible(command)) {
+      return 0u;
+    }
+    const uint32_t vtable = LoadGuestU32(base, command);
+    if (vtable != refii::guest::Address(0x820AEC7Cu) && vtable != refii::guest::Address(0x820AED78u)) {
+      return paused && Plausible(vtable) ? command : 0u;
+    }
+    paused = true;
+    node = LoadGuestU32(base, node + 4u);
+  }
+  return 0u;
+}
+
+}  // namespace
+
+/// Called after the flow tick ran no world tick (rex_lhGameFlow_Tick). 1 when the world's step ran here.
+extern "C" int RefiiCoopOwnPauseRunsWorld(PPCContext* ctx, uint8_t* base) {
+  const uint32_t under = CommandUnderOwnPause(base);
+  if (under == 0u) {
+    return 0;
+  }
+  const uint32_t step = refii::vfs::LoadGuestU32(base, refii::vfs::LoadGuestU32(base, under) + kFlowStepSlot);
+  if (step != refii::guest::Address(0x821D4628u) && step != refii::guest::Address(0x823D9898u)) {
+    return 0;
+  }
+  PPCContext work = refii::mods::Frame(*ctx);
+  if (!refii::mods::CallGuest(work, base, refii::guest::Address(0x823D9898u))) {
+    Once(g_said_own_pause_missing, "own pause online: the world's step is not a known function - the world is held");
+    return 0;
+  }
+  Once(g_said_own_pause, "this player's own pause leaves the world running (online session)");
+  return 1;
+}
+
+/// Called after the pose pass (rex_lhGameLoop_HighFrequencyUpdate) with its alpha: the world's poses under the
+/// player's own pause.
+extern "C" void RefiiCoopOwnPauseRunsPoses(PPCContext* ctx, uint8_t* base, double alpha) {
+  const uint32_t under = CommandUnderOwnPause(base);
+  if (under == 0u) {
+    return;
+  }
+  const uint32_t pose = refii::vfs::LoadGuestU32(base, refii::vfs::LoadGuestU32(base, under) + kFlowPoseSlot);
+  if (pose != refii::guest::Address(0x822AF5D8u)) {
+    return;
+  }
+  PPCContext work = refii::mods::Frame(*ctx);
+  work.f1.f64 = alpha;
+  refii::mods::CallGuest(work, base, pose);
 }
 
 // A PARTNER'S LOOK-AT (held left trigger) IS THEIRS. The left trigger sets the presser's own
@@ -638,7 +964,7 @@ REX_EXTERN(rex_lhCameraManager_ActivateCamera) {
 extern "C" void RefiiMouseLookBeforeCameraUpdate(PPCContext& ctx, uint8_t* base, uint32_t manager);
 extern "C" void RefiiMouseLookAfterCameraUpdate(PPCContext& ctx, uint8_t* base, uint32_t manager);
 
-// The camera manager update (r3 manager). After player one's, player two's on split screen.
+// The camera manager update (r3 manager). After player one's, player two's in local co-op (split or shared).
 // The manager the guest itself updates is this machine's own player's (sub_821F87C8) — pad 0's,
 // which the keyboard and mouse drive — and it takes the mouse's turn
 // (Fable2/src/vfs/src/hooks/mouse_look.cpp); player two's split-screen manager, updated below, never does.
@@ -647,7 +973,7 @@ REX_EXTERN(rex_lhCameraManager_Update) {
   RefiiMouseLookBeforeCameraUpdate(ctx, base, manager);
   __imp__rex_lhCameraManager_Update(ctx, base);
   RefiiMouseLookAfterCameraUpdate(ctx, base, manager);
-  if (g_ticking_manager != 0u || RefiiCoopSplitScreen() == 0) {
+  if (g_ticking_manager != 0u || RefiiCoopPartnerCameraManager() == 0) {
     return;
   }
   const uint32_t second = ManagerForKey(base, 2u);
@@ -667,12 +993,42 @@ REX_EXTERN(rex_lhCameraManager_Update) {
   work.r3.u32 = second;
   __imp__rex_lhCameraManager_Update(work, base);
   g_ticking_manager = 0u;
+  g_second_manager_updated.store(second, std::memory_order_release);
 
   for (std::size_t i = 0; i < kLatches.size(); ++i) {
     const uint32_t at = refii::guest::Address(kLatches[i]);
     g_second_latches[i] = refii::vfs::LoadGuestU8(base, at);
     refii::vfs::StoreGuestU8(base, at, first_latches[i]);
   }
+}
+
+// A CAMERA MANAGER'S END. The manager has no vtable of its own: the Player holds it through an
+// 8-byte holder (Player+4; vtable off_820BA384 / disc off_820B1130, stored by the Player constructor
+// at 0x82389A00 / 0x8238F1D0, the manager at holder+4 0x82389A18 / 0x8238F1E8). The holder's one
+// slot (sub_824833F0 / disc sub_82424C30) runs its body (sub_82483440 / sub_82424C80): `lwz
+// r30,4(r31)` .. `mr r3,r30; bl sub_824834B0` then frees it (0x82483460..0x8248347C; disc
+// 0x82424CA0..0x82424CBC, `bl sub_82424CF0`). That call is the manager destructor's only caller; it
+// is hooked here, before its body: the manager's Player (manager+0, `stw r4,0(r31)` in
+// lhCameraManager_Create 0x82481348 / 0x82422B28) leaves the table above, and the shell drops the
+// manager (camera_statements.cpp RefiiCameraManagerDestroyed), so nothing answers a dead manager
+// as a player's camera.
+extern "C" REX_FUNC(__imp__rex_lhCameraManager_Destroy);
+extern "C" void RefiiCameraManagerDestroyed(uint32_t manager);
+
+REX_EXTERN(rex_lhCameraManager_Destroy) {
+  const uint32_t manager = ctx.r3.u32;
+  if (Plausible(manager)) {
+    const uint32_t player = refii::vfs::LoadGuestU32(base, manager);
+    if (IsSplitPlayer(player)) {
+      REXLOG_INFO("Refii co-op heroes: player two's Player 0x{:08X} lost its camera manager 0x{:08X}",
+                  player, manager);
+    }
+    ForgetSplitPlayer(player);
+    uint32_t updated = manager;
+    g_second_manager_updated.compare_exchange_strong(updated, 0u, std::memory_order_acq_rel);
+    RefiiCameraManagerDestroyed(manager);
+  }
+  __imp__rex_lhCameraManager_Destroy(ctx, base);
 }
 
 // THE ACTIVE CAMERA FOLLOWS ITS RESPAWNED ENTITY. Player::SetHero (sub_82389D60) respawns the
@@ -704,7 +1060,7 @@ REX_EXTERN(rex_lhCameraManager_SpawnCameraEntities) {
   const uint32_t game = Plausible(root) ? LoadGuestU32(base, root + 0xCu) : 0u;
   const uint32_t net = Plausible(game) ? LoadGuestU32(base, game + 0x8Cu) : 0u;
   const bool session = Plausible(net) && refii::vfs::LoadGuestU8(base, net + 0x34u) != 0u;
-  if (!Plausible(manager) || (!session && RefiiCoopSplitScreen() == 0)) {
+  if (!Plausible(manager) || (!session && RefiiCoopPartnerCameraManager() == 0)) {
     return;
   }
 
@@ -944,12 +1300,235 @@ REX_EXTERN(rex_lhCamera_ScreenBlock) {
   __imp__rex_lhCamera_ScreenBlock(ctx, base);
 }
 
+// The cached block (sub_82211598 / disc sub_822116D0: one copy per tick, stamp dword_8331906C ->
+// unk_8331A230, read by the AI's sight and visibility filters, the LOD and the script frustum tests)
+// answers player two's view for code running for player two too, and never caches it.
 REX_EXTERN(rex_lhCamera_CurrentBlock) {
-  if (t_peer_view && g_peer_guest != 0u) {
+  if ((t_peer_view || (t_partner_screen > 0 && PeerCone(ctx, base) != 0u)) && g_peer_guest != 0u) {
     ctx.r3.u64 = g_peer_guest;
     return;
   }
   __imp__rex_lhCamera_CurrentBlock(ctx, base);
+}
+
+/// How deep the calling thread is in code running for player two (RefiiCoopPartnerScreen).
+extern "C" int RefiiCoopPartnerScreenDepth(void) { return t_partner_screen; }
+
+/// 1 while player two's view is on this machine: their own camera manager on split screen, or, on an
+/// online host, the joiner's camera as received (the peer view).
+extern "C" int RefiiCoopPartnerViewHere(void) {
+  uint8_t* base = RefiiGuestBase();
+  if (base == nullptr) {
+    return 0;
+  }
+  if (RefiiCoopSplitScreen() != 0 && ManagerForKey(base, 2u) != 0u) {
+    return 1;
+  }
+  if (!IsSessionHost(base)) {
+    return 0;
+  }
+  std::lock_guard<std::mutex> lock(g_peer_mutex);
+  return g_peer_have ? 1 : 0;
+}
+
+/// Player two's camera position as the block their camera's getter last built (split screen: their
+/// manager's +0x90) or as the joiner stated it (online host: the received 0xBD block, +0); guest axes.
+bool PartnerCameraPosition(uint8_t* base, float* out) {
+  if (RefiiCoopSplitScreen() != 0) {
+    const uint32_t manager = ManagerForKey(base, 2u);
+    if (manager == 0u) {
+      return false;
+    }
+    for (uint32_t i = 0; i < 3u; ++i) {
+      out[i] = LoadF32(base, manager + 0x90u + i * 4u);
+    }
+    return true;
+  }
+  if (!IsSessionHost(base)) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(g_peer_mutex);
+  if (!g_peer_have) {
+    return false;
+  }
+  for (uint32_t i = 0; i < 3u; ++i) {
+    uint32_t bits;
+    std::memcpy(&bits, g_peer_received.data() + i * 4u, sizeof(bits));
+    bits = __builtin_bswap32(bits);
+    std::memcpy(&out[i], &bits, sizeof(bits));
+  }
+  return true;
+}
+
+/// Player two's camera holder (their Player+4) while split screen is in effect, once the game's camera
+/// update has run for its manager (holder+4) since the Player constructor built it; else 0. Before that
+/// lhCamera_ScreenBlock on it answers the constructed block at the origin. The second listener and the
+/// particles' second view (coop_particle_view.cpp) build player two's block from it.
+extern "C" uint32_t RefiiCoopSplitPartnerCameraHolder(uint8_t* base) {
+  if (base == nullptr || RefiiCoopSplitScreen() == 0) {
+    return 0u;
+  }
+  const uint32_t player = PlayerForKey(base, 2u);
+  const uint32_t holder = player != 0u ? refii::vfs::LoadGuestU32(base, player + 4u) : 0u;
+  const uint32_t manager = Plausible(holder) ? refii::vfs::LoadGuestU32(base, holder + 4u) : 0u;
+  if (!Plausible(manager) || manager != g_second_manager_updated.load(std::memory_order_acquire)) {
+    return 0u;
+  }
+  return holder;
+}
+
+// EACH SOUND COMES FROM THE SIDE ITS NEARER PLAYER SEES IT ON (split screen).
+// The mixer has ONE X3DAUDIO_LISTENER for panning, mixer+0x84 (front +0, top +12, position +24,
+// velocity +36, cone +48; 52 bytes): every world voice's speaker matrix is
+// `X3DAudioCalculate(mixer+0x70, mixer+0x84, voice+0x190, 1, voice+0x1F4)` in the voice update
+// (TU1 `sub_82C58B00` 0x82C58E58 / disc `sub_82C52A80` 0x82C52DD8; a head-relative voice,
+// voice+0x260, takes the fixed listener mixer+0xB8 instead: `addi r4, r11, 0xB8` 0x82C58E4C, else
+// `addi r4, r11, 0x84` 0x82C58E54 / disc 0x82C52DCC, 0x82C52DD4). The emitter's volume curve is
+// flat (voice+0x1D8 = mixer+0x104: two points, both 1.0 — `sub_82C59E10` 0x82C59F94,
+// `sub_82C5AB80`), so that call decides the SIDE only; loudness is the distance test above.
+// The listener is the game's statement, once a frame: `sub_822A8B00(audio, position, front, top,
+// 1/sin(hfov/2))` at 0x821DC3A8 (disc `sub_822A88C0` at 0x821DBF08), fed from
+// `lhCamera_ScreenBlock(block, sub_821F87C8(...))` (0x821DC34C..0x821DC360) — block +0 position,
+// +0x10 top, +0x20 front — which is player one's camera whatever is drawn; it reaches the mixer
+// unchanged (`sub_82C57D60`, mixer vtable slot 7: front 0x84, top 0x90, position 0x9C).
+// Split screen: right after the game states player one's listener, the same getter is run for
+// player two's camera holder (Player+4) and kept as a second listener — only once the game's
+// camera update has run for player two's manager (holder+4) since the Player constructor built
+// it; before that the getter returns the constructed block at the origin. A world voice whose
+// emitter (the call's own argument, emitter +28) is nearer to that camera than to the listener the
+// call was given is calculated against it. Two speakers cannot give each half its own; the nearer
+// player's view is the one the sound belongs to. Shared screen and online keep the one listener.
+extern "C" REX_FUNC(__imp__rex_lhAudio_SetListener);
+
+namespace {
+
+constexpr uint32_t kListenerBytes = 52u;      // X3DAUDIO_LISTENER
+constexpr uint32_t kListenerTwoOffset = 64u;  // after the camera block the getter fills
+
+/// Player two's camera as last stated on the game thread, and the copy the mixer thread keeps in
+/// the guest listener.
+struct SecondListener {
+  std::mutex mutex;
+  float front[3] = {0.0f, 0.0f, 1.0f};
+  float top[3] = {0.0f, 1.0f, 0.0f};
+  float position[3] = {0.0f, 0.0f, 0.0f};
+  uint32_t stated = 0;   // bumped per statement
+  uint32_t written = 0;  // the statement the guest listener holds
+};
+SecondListener g_second_listener;
+
+/// 16-aligned guest buffer: the camera block (64 bytes), then the second X3DAUDIO_LISTENER.
+std::atomic<uint32_t> g_second_listener_guest{0};
+std::atomic<bool> g_second_listener_live{false};
+std::atomic<bool> g_said_second_listener{false};
+
+void LoadVec3(uint8_t* base, uint32_t at, float* out) {
+  for (uint32_t i = 0; i < 3u; ++i) {
+    out[i] = LoadF32(base, at + i * 4u);
+  }
+}
+
+void StoreVec3(uint8_t* base, uint32_t at, const float* in) {
+  for (uint32_t i = 0; i < 3u; ++i) {
+    StoreF32(base, at + i * 4u, in[i]);
+  }
+}
+
+float ListenerDistanceSquared(const float* a, const float* b) {
+  const float dx = a[0] - b[0];
+  const float dy = a[1] - b[1];
+  const float dz = a[2] - b[2];
+  return dx * dx + dy * dy + dz * dz;
+}
+
+/// The emitter belongs to the second listener only when strictly nearer to it; NaN keeps the first.
+bool NearerToSecond(const float* emitter, const float* first, const float* second) {
+  return ListenerDistanceSquared(emitter, second) < ListenerDistanceSquared(emitter, first);
+}
+
+}  // namespace
+
+// The game's listener statement (r3 audio; v1 position, v2 front, v3 top, f1 the zoom scale).
+REX_EXTERN(rex_lhAudio_SetListener) {
+  const PPCContext entry = ctx;
+  __imp__rex_lhAudio_SetListener(ctx, base);
+
+  const uint32_t holder = RefiiCoopSplitPartnerCameraHolder(base);
+  if (holder == 0u) {
+    g_second_listener_live.store(false, std::memory_order_release);
+    return;
+  }
+
+  uint32_t guest = g_second_listener_guest.load(std::memory_order_acquire);
+  if (guest == 0u) {
+    static PPCFunc* const alloc = refii::vfs::FindGuestFunction(refii::guest::Address(0x8221F258u));
+    if (alloc == nullptr) {
+      return;
+    }
+    PPCContext call = entry;
+    call.r3.u64 = kListenerTwoOffset + 64u + 16u;
+    alloc(call, base);
+    if (!Plausible(call.r3.u32)) {
+      return;
+    }
+    guest = (call.r3.u32 + 15u) & ~15u;
+    std::memset(base + guest, 0, kListenerTwoOffset + kListenerBytes);
+    g_second_listener_guest.store(guest, std::memory_order_release);
+  }
+
+  PPCContext call = entry;
+  call.r3.u32 = guest;
+  call.r4.u32 = holder;
+  __imp__rex_lhCamera_ScreenBlock(call, base);
+
+  {
+    std::lock_guard<std::mutex> lock(g_second_listener.mutex);
+    LoadVec3(base, guest + 0x00u, g_second_listener.position);
+    LoadVec3(base, guest + 0x10u, g_second_listener.top);
+    LoadVec3(base, guest + 0x20u, g_second_listener.front);
+    ++g_second_listener.stated;
+  }
+  g_second_listener_live.store(true, std::memory_order_release);
+}
+
+// Before `addi r4, r11, 0x84` (r11 the mixer, r5 the emitter): true = r4 is the second listener and
+// the instruction is skipped; false = the shipped listener.
+bool RefiiCoopListenerForSound(PPCRegister& r4, PPCRegister& r5, PPCRegister& r11) {
+  if (!g_second_listener_live.load(std::memory_order_acquire) || RefiiCoopSplitScreen() == 0) {
+    return false;
+  }
+  uint8_t* base = RefiiGuestBase();
+  const uint32_t guest = g_second_listener_guest.load(std::memory_order_acquire);
+  if (base == nullptr || guest == 0u || !Plausible(r5.u32) || !Plausible(r11.u32)) {
+    return false;
+  }
+  const uint32_t two = guest + kListenerTwoOffset;
+  float second[3];
+  {
+    std::lock_guard<std::mutex> lock(g_second_listener.mutex);
+    if (g_second_listener.written != g_second_listener.stated) {
+      StoreVec3(base, two + 0u, g_second_listener.front);
+      StoreVec3(base, two + 12u, g_second_listener.top);
+      StoreVec3(base, two + 24u, g_second_listener.position);
+      g_second_listener.written = g_second_listener.stated;
+    }
+    std::memcpy(second, g_second_listener.position, sizeof(second));
+  }
+  float emitter[3];
+  float first[3];
+  LoadVec3(base, r5.u32 + 28u, emitter);
+  LoadVec3(base, r11.u32 + 0x84u + 24u, first);
+  if (!NearerToSecond(emitter, first, second)) {
+    return false;
+  }
+  r4.u64 = two;
+  if (!g_said_second_listener.exchange(true, std::memory_order_relaxed)) {
+    REXLOG_INFO("Refii co-op heroes: a sound nearer player two is panned from player two's camera "
+                "(sound {:.1f} {:.1f} {:.1f}; camera one {:.1f} {:.1f} {:.1f}; camera two {:.1f} {:.1f} {:.1f})",
+                emitter[0], emitter[1], emitter[2], first[0], first[1], first[2], second[0], second[1],
+                second[2]);
+  }
+  return true;
 }
 
 REX_EXTERN(rex_lhVisibility_Refresh) {
@@ -1383,6 +1962,7 @@ REX_EXTERN(rex_CECLevelExit_Fire) {
 extern "C" REX_FUNC(__imp__rex_CECOnActionUse_Update);
 extern "C" REX_FUNC(__imp__rex_lhPromptManager_HoldInput);
 extern "C" REX_FUNC(__imp__rex_lhPromptManager_Update);
+extern "C" void refii_bridge_world_icons_step(uint64_t step);
 extern "C" REX_FUNC(__imp__rex_lhPromptManager_Request);
 extern "C" REX_FUNC(__imp__rex_CECOnActionUse_Hide);
 extern "C" REX_FUNC(__imp__rex_lhPromptManager_Witnessed);
@@ -1836,7 +2416,9 @@ REX_EXTERN(rex_lhTutorials_Display) {
 // the pump acts on player two's hero directly (guest_tick_pump.cpp), because the pages' own answers
 // commit to the equipment record at GUI+52, which pause exit applies to hero one.
 namespace {
-bool PlayerTwoOwnsPause(uint8_t* base) { return refii_bridge_menu_owner_two() != 0 && LocalCoopGame(base); }
+bool PlayerTwoOwnsPause(uint8_t* base) {
+  return refii_bridge_menu_owner_two() != 0 && LocalCoopGame(base) && RefiiCoopGetOwnHero() != 0;
+}
 }  // namespace
 
 REX_EXTERN(rex_lhGuiItemsScreen_OnEnter) {
@@ -2089,6 +2671,12 @@ REX_EXTERN(rex_lhPromptManager_Update) {
   }
   const float dt = static_cast<float>(ctx.f1.f64) - last;
   g_hold_creature = g_hold_player == 2 && CoopGame(base) ? refii_mod_player_hero(base, 2) : 0u;
+  // The step the world icons' Updates are stamped with (stated_world_icons.cpp) is one call of this
+  // update: it is the icons' only driver (lhWorldIcon_Update under it; its GUI gate `bl
+  // lhGameFlow_IsGuiActive` / `bne` TU1 0x821C5BE8 / disc 0x821C5C58 runs none), and it runs less
+  // often than the tick pump when a frame holds several sim steps.
+  static uint64_t s_updates = 0;
+  refii_bridge_world_icons_step(++s_updates);
   __imp__rex_lhPromptManager_Update(ctx, base);
   g_hold_creature = previous;
   PPCContext work = entry;

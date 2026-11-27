@@ -152,6 +152,16 @@ extern "C" uint32_t refii_bridge_stated_value_now(uint32_t key) {
     return key < kStatedValues ? g_stated_values[key].load() : 0u;
 }
 
+extern "C" void refii_bridge_coop_tether_stated(float distance, float separation) {
+    uint32_t d = 0u;
+    uint32_t s = 0u;
+    std::memcpy(&d, &distance, sizeof(d));
+    std::memcpy(&s, &separation, sizeof(s));
+    g_stated_values[22].store(s);
+    g_stated_values[21].store(d);
+    g_stated_values[23].fetch_add(1u);
+}
+
 extern "C" void refii_bridge_stated_screens_up(uint32_t up) {
     g_stated_screens_up.store(up);
     if (up == 0u) {

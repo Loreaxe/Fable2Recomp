@@ -18,12 +18,48 @@ public sealed class Fable3Input : GameTitleInput
 {
 	public static Fable3Input Instance { get; } = new();
 
-	/// <summary>Per pad: buttons hidden from the guest until they are released.</summary>
-	private readonly uint[] _held = new uint[4];
-	private readonly bool[] _holdNext = new bool[4];
+	/// <summary>
+	/// Per pad: the buttons hidden from the guest until they are released — those down when the
+	/// world got the input back from anything that had it (<see cref="WorldHasInput"/>: a guest
+	/// screen, box or menu, a map, one of ours), and after the host's text entry and boxes.
+	/// </summary>
+	private readonly Refii.Core.Engine_HandBackHold _handBack = new(4);
+
+	/// <summary>The HUD's levers, made from each pad as it is published to the guest (<see cref="Fable3HudInput"/>).</summary>
+	private readonly Fable3HudInput _hud = new();
+	private readonly System.Collections.Generic.List<string> _hudLevers = new();
 
 	public override Published PublishPad(int pad, bool connected, GameInput.PadState seen, GameInput.PadState guest)
 	{
+		Published published = Masked(pad, connected, seen, guest);
+		if (Refii.Host.HostBridge.IsGuestUp)
+		{
+			Fable3UiStatements.TopBoxMessage? top = Fable3UiStatements.TopBox.Current;
+			_hudLevers.Clear();
+			_hud.Step(pad,
+				Fable3HudInput.Mask(published.Packet.Buttons, published.Packet.LeftTrigger, published.Packet.RightTrigger),
+				System.Environment.TickCount64,
+				new Fable3HudInput.Surfaces(Fable3WorldIcons.ChoicesUp, top is { ShowA: true }, top is { ShowY: true },
+					Fable3UiStatements.InteractionPad.Owned, PlayOf(pad), Fable3PointerStatements.GuestHoldsThePad,
+					Fable3HudInput.SanctuaryHolds(Fable3ActingPlayer.OfPad(pad), Fable3GuiWorld.ListUp, Fable3GuiWorld.Player)),
+				_hudLevers);
+			foreach (string lever in _hudLevers)
+			{
+				Refii.Host.HostBridge.PostFrontEndAction(lever);
+			}
+		}
+
+		return published;
+	}
+
+	/// <summary>The pad as the guest is to see it, behind this title's masks.</summary>
+	private Published Masked(int pad, bool connected, GameInput.PadState seen, GameInput.PadState guest)
+	{
+		// THE HAND-BACK MASK, for every surface at once: a button that went down while anything but
+		// the world had the input is not the world's when the world has it again (Engine_HandBackHold).
+		// Followed before every mask below, so a surface that returns early is still a hand-back.
+		_handBack.Follow(WorldHasInput);
+
 		// The mods' wheel (Fable3BoxesModWheel): Back while it has it, the whole pad while it stands.
 		if (Fable3Boxes.FollowModWheel(ModPlayer(pad), ref guest, WorldHasInput))
 		{
@@ -42,16 +78,14 @@ public sealed class Fable3Input : GameTitleInput
 			return new(new GameControllerPacket(pad, connected, 0u, 0u, 0u, 0, 0, 0, 0), guest.Buttons, 0u, 0u);
 		}
 
-		if (_holdNext[pad])
-		{
-			_holdNext[pad] = false;
-			_held[pad] = guest.Buttons;
-		}
+		uint hidden = _handBack.Hidden(pad, guest.Buttons);
+		guest.Buttons &= ~hidden;
+		guest.PhysicalButtons &= ~hidden;
+		guest.OtherButtons &= ~hidden;
 
-		_held[pad] &= guest.Buttons;
-		guest.Buttons &= ~_held[pad];
-		guest.PhysicalButtons &= ~_held[pad];
-		guest.OtherButtons &= ~_held[pad];
+		// The world map's buttons are Godot's levers, as the map's owner (Fable3MapInput) — player one's
+		// hands when the owner has no pad here; the pad stays published for the map's analog actions.
+		Fable3MapInput.Drive(pad, connected, guest.Buttons, lever => Refii.Host.HostBridge.PostFrontEndAction(lever));
 
 		// The mouse's pick on a guest menu, walked by the guest's own cursor (Fable3PointerSteps).
 		if (pad == 0)
@@ -69,27 +103,53 @@ public sealed class Fable3Input : GameTitleInput
 			}
 		}
 
+		// The Sanctuary's pad is Godot's: its presses become `guiworld:` levers (the guest's pad reaches
+		// the mode's handlers and is answered there without a consequence, interaction_guiworld.cpp) —
+		// only while nothing of the guest's is ahead of the mode (Fable3HudInput.SanctuaryTakesPad); a
+		// pad not fed starts again from what it holds, with no edge.
+		if (Fable3HudInput.SanctuaryTakesPad(Fable3GuiWorld.Up, Fable3ScreenBoxes.Showing, Fable3PointerStatements.GuestHoldsThePad))
+		{
+			Fable3GuiWorld.Feed(pad, guest);
+		}
 		return base.PublishPad(pad, connected, seen, guest);
 	}
 
-	public override void HoldUntilReleased()
-	{
-		for (int pad = 0; pad < _holdNext.Length; ++pad)
-		{
-			_holdNext[pad] = true;
-		}
-	}
+	/// <summary>
+	/// Guest pad 0 is player one's and pad 1 the local player two's (<see cref="Fable3ActingPlayer"/>):
+	/// the mods' claims and presses, the pad chords, the remap and the mods' wheel follow it, and the
+	/// host surfaces read that pad for player two (GameInput.PadOfPlayer).
+	/// </summary>
+	public override int ModPlayer(int pad) => Fable3ActingPlayer.LocalOfPad(pad);
+
+	public override void HoldUntilReleased() => _handBack.HoldAll();
 
 	/// <summary>
-	/// The world has the input in play with nothing of the guest's or ours over it: the HUD root at
-	/// state 2 is the guest's own word that a box-manager screen has the pad (every box's Show hides
-	/// it through sub_825C1CB0, its hide shows it through sub_825C1D28; `@Hud.Root`) — Options among
-	/// them. Under one the keys take their menu meanings and the cursor is free for the menus. An
-	/// interaction list with the stick (<see cref="Fable3InteractionList.HasPad"/>) is one more.
+	/// The world has the input in play with nothing of the guest's or ours over it — THE gate of every
+	/// world lever (<see cref="Fable3HudInput"/>). The guest's own words that one of its surfaces has
+	/// the pad (<see cref="Fable3PointerStatements"/>): the UI mode on top of the presented game (a
+	/// box's pause form, the menu box, the save menu), the GUI's pause (a GUI screen: the epilogue,
+	/// the credits) and a box's hold on the heroes ("DisBox", the tail of its Show). The HUD root at state 2 (`@Hud.Root`,
+	/// TU3 sub_824CD7E8 / disc sub_825C1CB0) stays a term: 17 Shows make that call, some with neither
+	/// hold (the box types 5..8 hold nothing). Under any of them the keys take their menu meanings and
+	/// the cursor is free for the menus (<see cref="Refii.Ui.Engine_UiPointer.Free"/>). An interaction
+	/// list with the stick (<see cref="Fable3InteractionList.HasPad"/>) is one more.
 	/// </summary>
-	public override bool WorldHasInput => base.WorldHasInput && !Fable3Elements.HudHidden && !Fable3MapTable.Presented &&
+	public override bool WorldHasInput => WorldHasInputBesidesTheLists && !Fable3InteractionList.HasPad;
+
+	/// <summary><see cref="WorldHasInput"/> without its last term, a list with the stick: the terms that hold every player's pad.</summary>
+	private bool WorldHasInputBesidesTheLists => base.WorldHasInput && !Fable3PointerStatements.GuestHoldsThePad &&
+		!Fable3Elements.HudHidden && !MapHasInput &&
 		!Fable3Keyboard.IsOpen && !Fable3HostOptions.IsOpen && !Fable3Boxes.RefiiUp && !Fable3Boxes.ModMenuUp &&
-		!Refii.Mods.ModScreen.Owned && !Fable3InteractionList.HasPad;
+		!Refii.Mods.ModScreen.Owned;
+
+	/// <summary>
+	/// The world has guest pad <paramref name="pad"/>'s player's input (<see cref="Fable3HudInput.PlayOf"/>): as
+	/// <see cref="WorldHasInput"/>, except that a Sanctuary list standing for the OTHER player takes nothing of
+	/// this one's — both players are principals.
+	/// </summary>
+	private bool PlayOf(int pad) => Fable3HudInput.PlayOf(Fable3ActingPlayer.OfPad(pad), WorldHasInputBesidesTheLists,
+		Fable3InteractionList.HasPad, Fable3GuiWorld.ListUp,
+		Fable3UiStatements.InteractionListUp && Fable3UiStatements.InteractionList.Count > 0, Fable3GuiWorld.Player);
 
 	public override bool PointerOverlay => Fable3Keyboard.IsOpen || Fable3HostOptions.IsOpen;
 
@@ -98,7 +158,13 @@ public sealed class Fable3Input : GameTitleInput
 	/// the map has the pad, its cursor on the left stick (GameActionWorldMapMoveCursorXBOX, InputType 4),
 	/// so the mouse drives that stick and the keys take the map's meanings.
 	/// </summary>
-	public override bool MapUp => Fable3MapTable.Presented && !Fable3Keyboard.IsOpen && !Fable3HostOptions.IsOpen;
+	public override bool MapUp => MapHasInput && !Fable3Keyboard.IsOpen && !Fable3HostOptions.IsOpen;
+
+	/// <summary>
+	/// A presented map table reads the input — unless it is the world map's scene left standing after
+	/// its game mode was popped (<see cref="Fable3MapTable.Stranded"/>), which nothing reads.
+	/// </summary>
+	private static bool MapHasInput => Fable3MapTable.Presented && !Fable3MapTable.Stranded;
 
 	/// <summary>Expression choices take the keys only while the world has the input: a screen over them has its own.</summary>
 	public override bool ChoicesUp => Fable3WorldIcons.ChoicesUp && WorldHasInput;

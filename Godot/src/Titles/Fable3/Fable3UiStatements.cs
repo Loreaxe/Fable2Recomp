@@ -88,6 +88,17 @@ public static class Fable3UiStatements
 	/// <summary>The last answer the TopBox got (1 A, 4 Y), or 0.</summary>
 	public static int TopBoxAnswer { get; private set; }
 
+	/// <summary>
+	/// `@TopBox.Held(button, held, heldRate, releasedRate)`: whether the guest holds the TopBox's A (0)
+	/// or Y (1) — the held argument its hold step is called with, on its edges — and the two rates its
+	/// load read (GUIValues.HeldButtonUpdateSpeed / .ReleasedButtonUpdateSpeed), fill per MILLISECOND:
+	/// the guest's hold step adds rate × dt with dt from the GUI clock in whole milliseconds
+	/// (topbox_answer.cpp, TU3 sub_82193B08 / disc sub_82193908 × 1000.0).
+	/// </summary>
+	public readonly record struct TopBoxHold(bool Held, float HeldRate, float ReleasedRate);
+
+	public static readonly TopBoxHold[] TopBoxHeld = new TopBoxHold[2];
+
 	/// <summary>The save menu: up, whether saving is allowed, its row (1 Save, 2 Save and Quit, 3 Quit, 4 Character Management).</summary>
 	public static bool SaveMenuOpen { get; private set; }
 
@@ -106,6 +117,13 @@ public static class Fable3UiStatements
 	/// until its hide or its mode's set, clear or close (interaction_list_step.cpp).
 	/// </summary>
 	public static bool InteractionListUp { get; private set; }
+
+	/// <summary>
+	/// `@Interaction.Input(owned, mode)`: whether the interaction mode up is one whose pad is Godot's
+	/// (0 the NPC's, 13 the dog's — the guest's own pad no longer reaches its input,
+	/// interaction_mode_input.cpp), and the mode the set stated (-1 for none or a dedicated opener's).
+	/// </summary>
+	public static (bool Owned, int Mode) InteractionPad { get; private set; } = (false, -1);
 
 	/// <summary>The dye bar's colour, value and range as ShowDyingBar stated them.</summary>
 	public static (float R, float G, float B, float Value, float Min, float Max)? DyeBar { get; private set; }
@@ -164,6 +182,30 @@ public static class Fable3UiStatements
 		void Add(string name, System.Action<Engine_UiModel.GuiNativeCall> handler) => routes[name] = handler;
 
 		Add("@Hud.Root", call => Fable3Elements.StateHudRoot((int)call.Argument(0).Number, call.Argument(1).Text));
+		Add("@GameMode.Ui", call =>
+		{
+			if (Fable3PointerStatements.StateUiMode(call.Argument(0).Boolean))
+			{
+				Said(null, "the UI mode is " + (call.Argument(0).Boolean ? "on top: the pad is the GUI's" : "off"));
+			}
+		});
+		Add("@GameMode.Gui", call =>
+		{
+			if (Fable3PointerStatements.StateGuiMode(call.Argument(0).Boolean))
+			{
+				Said(null, "the GUI's pause is " + (call.Argument(0).Boolean ? "on top: the pad is the GUI screen's" : "off"));
+			}
+		});
+		Add("@Box.Hold", call =>
+		{
+			if (Fable3PointerStatements.StateBoxHold(Fable3Elements.Parse(call.Argument(0).Text), call.Argument(1).Boolean))
+			{
+				Said(null, $"box {call.Argument(0).Text} " + (call.Argument(1).Boolean ? "holds the heroes" : "let the heroes go"));
+			}
+		});
+
+		Add("@Target.By", call => Fable3Targeting.State(
+			Fable3Elements.Parse(call.Argument(0).Text), (int)call.Argument(1).Number, call.Argument(2).Boolean));
 
 		// The cut presentation Lua's inputs: the Parameters stagers and the chunks the C++ ran.
 		Add("@Lua.Param", Fable3LuaContracts.Param);
@@ -172,6 +214,8 @@ public static class Fable3UiStatements
 			Fable3Elements.DocumentOfKey(call.Argument(0).Text), call.Argument(1).Text,
 			call.Argument(2).Text, call.Argument(3).Text, call.Argument(4).Boolean));
 		Add("@Interaction.ListUp", call => ListUp(call.Argument(0).Boolean));
+		Add("@Interaction.Input", call => Said(() => InteractionPad = (call.Argument(0).Boolean, (int)call.Argument(1).Number),
+			$"interaction mode {(int)call.Argument(1).Number}: its pad is {(call.Argument(0).Boolean ? "Godot's" : "the guest's")}"));
 		Add("@Interaction.List", call =>
 			List((int)call.Argument(0).Number, (int)call.Argument(1).Number, (int)call.Argument(2).Number));
 		Add("@Interaction.DyeBar", call => Said(() => DyeBar = (call.Argument(0).Number, call.Argument(1).Number,
@@ -186,6 +230,10 @@ public static class Fable3UiStatements
 		Add("@TopBox.Clear", _ => TopBoxClear());
 		Add("@TopBox.Answer", call => Said(() => TopBoxAnswer = (int)call.Argument(0).Number,
 			$"TopBox answered {(int)call.Argument(0).Number}"));
+		Add("@TopBox.Held", call => Said(() => TopBoxHeld[call.Argument(0).Text == "y" ? 1 : 0] =
+			new TopBoxHold(call.Argument(1).Boolean, call.Argument(2).Number, call.Argument(3).Number),
+			$"TopBox {call.Argument(0).Text} {(call.Argument(1).Boolean ? "held" : "let go")} " +
+			$"(rates {call.Argument(2).Number} / {call.Argument(3).Number})"));
 
 		Add("@SaveMenu.Open", call => SaveMenuOpened(call.Argument(0).Boolean, (int)call.Argument(1).Number));
 		Add("@SaveMenu.Row", call => Said(() => SaveMenuRow = (int)call.Argument(0).Number, null));
@@ -273,6 +321,7 @@ public static class Fable3UiStatements
 		SaveMenuAllowed = false;
 		SaveMenuRow = 0;
 		OptionsQuery = null;
+		Fable3PointerStatements.ScreensDestroyed();
 		++Generation;
 		Log("[fable3-stated] save menu closed with its screen manager");
 	}
@@ -282,12 +331,14 @@ public static class Fable3UiStatements
 	{
 		TopBox.Clear();
 		TopBoxAnswer = 0;
+		System.Array.Clear(TopBoxHeld);
 		SaveMenuOpen = false;
 		SaveMenuAllowed = false;
 		SaveMenuRow = 0;
 		OptionsQuery = null;
 		InteractionList = (0, 0, 0);
 		InteractionListUp = false;
+		InteractionPad = (false, -1);
 		DyeBar = null;
 		SidePanel = 0;
 		System.Array.Clear(Money);
@@ -296,6 +347,8 @@ public static class Fable3UiStatements
 		CrimeSeconds = 0;
 		CrimeShown = false;
 		Job = (0, string.Empty);
+		Fable3PointerStatements.Clear();
+		Fable3Targeting.Clear();
 		++Generation;
 	}
 

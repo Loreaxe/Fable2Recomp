@@ -61,6 +61,7 @@ public sealed class Engine_UiListBookScreen(uint screenId, string menuName, stri
 	public void Close()
 	{
 		IsOpen = false;
+		Engine_UiNetworkSource.ReleaseHeld();
 		if (_view is not null && GodotObject.IsInstanceValid(_view))
 		{
 			_view.Visible = false;
@@ -154,10 +155,18 @@ public sealed class Engine_UiListBookScreen(uint screenId, string menuName, stri
 			// A FOLD ANSWERS NULL — `Activate` opens or shuts it and there is nothing to
 			// dispatch. Only a leaf carries a command, and acting on one can change the list it
 			// is in, so the sources are dropped and re-read.
-			if (_menu!.Activate() is { Length: > 0 } command)
+			Engine_UiExpandableMenu.Item? pressed = _menu!.Highlighted;
+			bool taken = _menu.CanActivate;
+			if (_menu.Activate() is { Length: > 0 } command)
 			{
 				Action?.Invoke(command);
 				Engine_UiNetworkSource.Invalidate();
+			}
+			else if (!taken && pressed is { Children.Count: 0 })
+			{
+				// A press on a row that does nothing reads as a dead row; say which gate held it.
+				GD.Print($"[list-book] {menuName}: A on '{pressed.Name}' not taken — " +
+					(pressed.Ghosted ? "the row is ghosted" : "the rows are still sliding in (the menu's WaitForInput)"));
 			}
 
 			_view!.Refresh();

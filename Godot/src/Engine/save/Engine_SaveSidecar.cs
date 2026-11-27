@@ -17,7 +17,8 @@ namespace Refii.Save;
 /// <code>
 /// {
 ///   "schema": "refii-save/1",
-///   "refii": { "build": "…", "written": "…", "player_state": ["refii_player.txt", "refii_blob_*.bin"] },
+///   "refii": { "build": "…", "written": "…", "player_state": ["refii_player.txt", "refii_blob_*.bin"],
+///              "character": { "id": "…", "name": "…", "achievements": [id…] } },
 ///   "mods":  { "api": 2, "digest": "…",
 ///              "set":  [ { "name", "title", "version", "sha256", "order", "native", "session",
 ///                          "records": ["0x…"], "keys": ["name."] } ],
@@ -29,7 +30,9 @@ namespace Refii.Save;
 /// - `refii` — "if refii": what OUR build persists per save that the vanilla game does not. Today
 ///   that is the player store's files (<c>refii_player.txt</c> and <c>refii_blob_*.bin</c>, written
 ///   by the native player state beside the save) — named here so an export knows what to carry
-///   or drop. A refii save without mods has only this layer.
+///   or drop. A refii save without mods has only this layer. `character` is the hero the save holds
+///   (Refii's own id: the guest's SaveUID changes at every write) and that hero's achievements as they
+///   were at the write, so a moved or copied save carries them (Engine_AchievementCharacters).
 /// - `mods` — "if modded": the stamp (the mod set the save was last written under, with each
 ///   mod's added GDB records and its save-key prefixes) and the records filtered out of the save
 ///   for mods that were missing, held so re-enabling the mod puts them back.
@@ -58,6 +61,15 @@ public sealed class SaveSidecar
 		public string Build = string.Empty;
 		public string Written = string.Empty;
 		public List<string> PlayerState = new(PlayerStateFiles);
+		public CharacterLayer? Character;
+	}
+
+	/// <summary>The hero a save holds: its id, a name for it, and its unlocked achievements.</summary>
+	public sealed class CharacterLayer
+	{
+		public string Id = string.Empty;
+		public string Name = string.Empty;
+		public List<uint> Achievements = new();
 	}
 
 	// ---------------------------------------------------------------- the mods layer
@@ -172,6 +184,17 @@ public sealed class SaveSidecar
 				w.WriteStartArray("player_state");
 				foreach (string file in refii.PlayerState) w.WriteStringValue(file);
 				w.WriteEndArray();
+				if (refii.Character is { Id.Length: > 0 } character)
+				{
+					w.WriteStartObject("character");
+					w.WriteString("id", character.Id);
+					w.WriteString("name", character.Name);
+					w.WriteStartArray("achievements");
+					foreach (uint id in character.Achievements) w.WriteNumberValue(id);
+					w.WriteEndArray();
+					w.WriteEndObject();
+				}
+
 				w.WriteEndObject();
 			}
 
@@ -269,6 +292,24 @@ public sealed class SaveSidecar
 			{
 				layer.PlayerState.Clear();
 				foreach (JsonElement file in files.EnumerateArray()) layer.PlayerState.Add(file.GetString() ?? string.Empty);
+			}
+
+			if (refii.TryGetProperty("character", out JsonElement character) && character.ValueKind == JsonValueKind.Object &&
+				Str(character, "id") is { Length: > 0 } characterId)
+			{
+				var hero = new CharacterLayer { Id = characterId, Name = Str(character, "name") };
+				if (character.TryGetProperty("achievements", out JsonElement ids) && ids.ValueKind == JsonValueKind.Array)
+				{
+					foreach (JsonElement id in ids.EnumerateArray())
+					{
+						if (id.ValueKind == JsonValueKind.Number && id.TryGetUInt32(out uint value) && value != 0)
+						{
+							hero.Achievements.Add(value);
+						}
+					}
+				}
+
+				layer.Character = hero;
 			}
 
 			sidecar.Refii = layer;

@@ -81,7 +81,8 @@ public partial class Fable3LitePause : Control
 		bool key = !typing && GameInput.KeyActionHeld(Action);
 		bool pressed = key && !_keyWas;
 		_keyWas = key;
-		uint pad = GameInput.Pad0.Buttons;
+		// Either local player's pad ends it: the pause holds the one screen both play on.
+		uint pad = GameInput.Pad0.Buttons | GameInput.Seen(Fable3ActingPlayer.PadOfTwo).Buttons;
 		bool padEnds = PadEnds(pad, _padWas);
 		_padWas = pad;
 

@@ -48,16 +48,6 @@ public sealed class Engine_UiCoopNotices
 	public const string PressStart = "REFII_F2_COOP_PRESS_START";
 
 	/// <summary>
-	/// The host's notice when player two is gone, however they went: the game's own text KEY for it.
-	/// The original has one path on the host for a leave, a kick and a dropped link — its
-	/// lost-connection handler raises this key for five seconds and never asks why (TU1
-	/// 0x8232DE34 `"GUI_NET_DROPPED_CLIENT"` then `sub_8230B560(…, 5000.0)`; disc 0x8231080C) —
-	/// so one text for all three is its behaviour. A key, not a sentence: the shell shows what
-	/// the game's string book holds for it, in the player's language (<see cref="IsTextKey"/>).
-	/// </summary>
-	public const string HostLost = "GUI_NET_DROPPED_CLIENT";
-
-	/// <summary>
 	/// Whether a notice is a text key — one of the game's, shown as its string book has it, or one of our
 	/// own (Refii.Text.Engine_OwnWords) for the lines its book has none for.
 	/// </summary>
@@ -101,12 +91,25 @@ public sealed class Engine_UiCoopNotices
 	public int Queued => _queue.Count;
 
 	/// <summary>
-	/// An online session transition. <paramref name="told"/> is false when the player is not in
-	/// a game to be told (the front end), and <paramref name="refused"/> when this side refused
-	/// the peer itself — that refusal is said on the multiplayer page, not as a lost connection.
+	/// An online session transition. Only the JOIN is told here; the loss is the guest's statement on both
+	/// sides.
 	/// </summary>
-	public void Session(
-		CoopSession.Phase was, CoopSession.Phase now, CoopSession.Role side, bool told, bool refused)
+	/// <remarks>
+	/// THE HOST IS TOLD BY ITS GUEST. The lost-connection handler's host branch (`net+0x34` and `net+0x35`
+	/// set, with a game up, TU1 `sub_8232D4D8` 0x8232D6D4 / disc `sub_8230FEB0` 0x823100AC) pushes its own
+	/// HUD message for every way player two goes — leave, kick, dropped link, no test of why: the record
+	/// `{Fnv1("DroppedClient") = 0x74B90A4C, "GUI_NET_DROPPED_CLIENT", 5000 ms}` (`sub_8230B560`
+	/// 0x8232DE54 / `sub_823319A0` 0x8231082C) into the TopBox manager on channel 0
+	/// (`lhHudTopBox_Push(*(*(G+0x20)+0x58), 0, record, 1)` 0x8232DE70 / `sub_82332D48` 0x82310848).
+	/// The TopBox presenter (Engine_UiHudTopBox) draws that record as the composer states it.
+	///
+	/// THE JOINER IS TOLD BY ITS GUEST. Its LeaveSession (TU1 `sub_8233E7F8`, disc `sub_82321268`) raises
+	/// its own box for every way out of a game it joined (`net+0x34` and `net+0x36`,
+	/// 0x8233E814..0x8233E82C / 0x82321284..0x8232129C) — KICKED when `net+0x141` is set (0x8233E978 /
+	/// 0x823213E8), else DISCONNECTED / DISCONNECTED_NOSAVE / FAILED — as a message box
+	/// (`sub_8230FE48` 0x8233EA5C / `sub_82303AA0` 0x823214A0), quiet only on the joiner's own leave.
+	/// </remarks>
+	public void Session(CoopSession.Phase was, CoopSession.Phase now, CoopSession.Role side)
 	{
 		if (was == now)
 		{
@@ -122,24 +125,11 @@ public sealed class Engine_UiCoopNotices
 			return;
 		}
 
-		if (was != CoopSession.Phase.PeerJoined)
+		// The peer is gone: a join notice still waiting for a name is moot.
+		if (was == CoopSession.Phase.PeerJoined)
 		{
-			return;
-		}
-
-		// The peer is gone. A join notice still waiting for a name is moot now.
-		//
-		// THE JOINER IS TOLD BY ITS GUEST, never here: the joiner's LeaveSession (TU1 `sub_8233E7F8`, disc
-		// `sub_82321268`) raises its own box for every way out of a game it joined (`net+0x34 && net+0x36`,
-		// 0x8233E814..0x8233E82C / 0x82321284..0x8232129C) — KICKED when `net+0x141` is set (0x8233E978 /
-		// 0x823213E8), else DISCONNECTED / DISCONNECTED_NOSAVE / FAILED — as a message box
-		// (`sub_8230FE48` 0x8233EA5C / `sub_82303AA0` 0x823214A0), quiet only on the joiner's own leave.
-		_nameWait = -1.0;
-		CoopSession.Role joinedAs = _joinedAs;
-		_joinedAs = CoopSession.Role.Solo;
-		if (told && !refused && joinedAs != CoopSession.Role.Client)
-		{
-			Enqueue(HostLost);
+			_nameWait = -1.0;
+			_joinedAs = CoopSession.Role.Solo;
 		}
 	}
 

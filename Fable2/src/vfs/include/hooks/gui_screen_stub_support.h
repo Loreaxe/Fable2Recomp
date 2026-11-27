@@ -9,6 +9,8 @@
 
 #include <rex/ppc/context.h>
 
+#include "hooks/item_rows_stated.h"
+
 namespace refii::vfs::stub {
 
 /// Scratch below the caller: the callee frames grow down from `frame`, the scratch sits above it.
@@ -40,7 +42,10 @@ uint32_t Tutorials(uint8_t* base);
 /// (GuestPresentation below).
 uint32_t BookPresentation(uint8_t* base);
 
-/// One guest call on a scratch frame below `ctx`; r3 back.
+/// One guest call on a scratch frame below `ctx`; r3 back. Each argument sets the LOW WORD of its register
+/// only; the high word is the caller's. A callee that reads an argument as 64 bits (TU1's
+/// `lhGuiManager_OpenModal` stores its seventh, r9, with `std r9,0x68(r31)` 0x8236FAA4, read back only
+/// for box 42 by `ld r5,0x68(r31)` 0x8236E4E0) needs a call that writes `.u64`.
 uint32_t Call(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t tu1, std::initializer_list<uint32_t> args);
 
 /// A virtual call, slot `slot` of `object`, on a scratch frame.
@@ -95,6 +100,50 @@ uint32_t ScreenHandler(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t 
 /// released before the return, as the callers release them.
 void HighlightedRow(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t row, uint32_t chars, uint32_t* type,
                     uint32_t* id);
+
+/// A box answered, without the answer's sound: the guest's accept `sub_8236FEC8(QM, mode)` / disc
+/// `sub_823380C0` and cancel `sub_8236FE38(QM, mode)` / `sub_82338030` each post one UI sound
+/// ("SE_GUI_MENU_BOX_SELECT" 0x8236FEFC / "SE_GUI_MENU_BOX_CANCEL" 0x8236FE6C) and then
+/// `if (mode == *(QM+40)) lhGuiManager_ClearModalState(QM)` (0x8236FF30 / 0x8236FEA0; 0x8236FF58 / disc
+/// 0x82338150). This is the second half alone.
+void AnswerBox(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t qm, uint32_t mode);
+
+/// THE GUI'S OWNER, stated as a world screen's opener states it: `lhGuiManager_FindScreenHandler(QM, 0)`
+/// (TU1 0x8236FFC0 / disc 0x823381B8), the pause root, and its vf+32 — the store `+4 = r4` (the folded
+/// `stw r4, 4(r3)`, gui_stated_screens.cpp) — with 1 for player two, 0 for player one. The guest reads it
+/// back as `sub_8236E400` (0x8236E430: GUI mode and +4 == 1), which picks the input object the GUI tick
+/// serves (`lhGuiManager_TickUpdate` 0x8229AC48: App+0x18 player two's, else App+0x14) and which the
+/// host routes (StateMenuOwner). The writers are the pause opener `sub_826A2C88` and each world
+/// screen's opener (the arrest 0x827D0050, the item action 0x82805578, the shopkeeper 0x827E146C, the
+/// villager card 0x826CCCF4, the real estate's OnEnter 0x826B18F0); a screen whose opener writes
+/// nothing inherits the last statement. The statement reaches the host at once (the screen being
+/// entered reads it in its own OnEnter, OwnerScope); the tick's own asking of the GUI-mode gate
+/// confirms it (guest_tick_pump.cpp StateMenuOwner).
+void StateGuiOwner(PPCContext& ctx, uint8_t* base, uint32_t frame, bool player_two);
+
+/// THE OPENER'S PLAYER for a screen whose opener states no owner: 2 local player two, 1 player one, 0
+/// none noted. Noted by the opener hooks (gui_screen_stub_shared.cpp: the expression wheel's gift, the
+/// player-interact ability's furniture and decoration screens), taken once by that screen's OnEnter.
+uint32_t TakeOpenerPlayer();
+void NoteOpenerPlayer(uint32_t player);
+
+/// THE SCREEN ACTS FOR ITS OWNER. While local player two owns the GUI (MenusActForPlayerTwo), the hero
+/// reads of the guest code a gift / furniture / decoration slot runs answer hero two: the hero-one slot
+/// (players record +108, `lhEntity_GetModel` / `sub_8222C1B8`) holds hero two (ListedHeroScope, when
+/// `lend_slot`), and "the local player" — `sub_821C7CE0` and its inlined copies — answers player two
+/// (RefiiCoopLocalPlayerTwoCall, coop_hero_hooks.cpp RefiiCoopShopPlayer / RefiiCoopInlineLocalPlayer).
+/// An online joiner needs neither: its own picks answer its own hero, and ListedHeroScope lends it.
+class OwnerScope {
+public:
+  OwnerScope(uint8_t* base, uint32_t screen, bool lend_slot = true);
+  ~OwnerScope();
+  OwnerScope(const OwnerScope&) = delete;
+  OwnerScope& operator=(const OwnerScope&) = delete;
+
+private:
+  refii::vfs::ListedHeroScope listed_;
+  bool two_ = false;
+};
 
 /// PLAYER TWO'S PURSE. The book and world screens state the gold text for HERO ONE whoever opened them:
 /// `sub_8246B5E8(pres, key, 1)` (map 0x826C5E38, items 0x826D15A8, clothing 0x826D2D48, logbook 0x826D913C,

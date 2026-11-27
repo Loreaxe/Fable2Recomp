@@ -15,6 +15,13 @@ public static class Engine_UiRowConditions
 	/// <summary>The pause list is player two's (an online joiner's, or local player two's own book).</summary>
 	public const string PlayerTwo = "player-two";
 
+	/// <summary>
+	/// Player two brought a hero (a character from a save) rather than standing as the plain henchman
+	/// — the one statement every hero-only feature keys on (the payload's refii_bridge_two_is_hero).
+	/// The henchman's book is the 360's: Abilities, Options and their way out.
+	/// </summary>
+	public const string PlayerTwoHero = "player-two-hero";
+
 	/// <summary>A co-op partner stands (online or local).</summary>
 	public const string Coop = "coop";
 
@@ -52,11 +59,7 @@ public static class Engine_UiRowConditions
 	public static readonly string[] BuilderFacts = { PlayerTwo };
 
 	/// <summary>Every name the game states — the builders' facts and what the in-game UI registers.</summary>
-	public static readonly string[] Game =
-	{
-		PlayerTwo, Coop, CoopOnline, CoopClient, InGame, HasGold,
-		EstateKnown, EstateOwned, EstateVacant, EstateTenanted, EstateBusiness, EstateHome,
-	};
+	public static readonly string[] Game = { PlayerTwo, PlayerTwoHero, Coop, CoopOnline, CoopClient, InGame, HasGold };
 
 	private static readonly Dictionary<string, Func<bool>> Registered = new(StringComparer.Ordinal);
 

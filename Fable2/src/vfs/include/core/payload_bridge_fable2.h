@@ -59,6 +59,12 @@ void refii_bridge_note_fx_orientation(uint32_t instance, const uint32_t* lanes);
 // (src/core/target_highlight_state.cpp). RGBA packed big-endian, R in the top byte.
 void refii_bridge_note_highlight_colour(uint32_t component, uint32_t rgba);
 void refii_bridge_note_highlight_target(void);
+// Who targets each thing, as lhECTargeted_SetTargetedByPlayer leaves its two bytes (+0x21 player
+// one, +0x22 player two): mask bit 0 player one, bit 1 player two, 0 drops the thing. `interact`:
+// the targeted component raises the shared "Interact" icon (+0x27). The host copies them out as
+// (thing, mask) pairs (RefiiHostGetTargetedBy); `interact_only` keeps the icon raisers.
+void refii_bridge_note_targeted_by(uint32_t thing, uint32_t mask, int32_t interact);
+int32_t refii_bridge_targeted_by(uint32_t* out_pairs, int32_t capacity_pairs, int32_t interact_only);
 
 // Each renderable's stated appearance. Wrappers: refii::vfs::NoteAppearance / ForgetAppearance
 // in vfs_hooks_private.h; the table is in refii_vfs (src/core/entity_appearance_state.cpp).
@@ -78,6 +84,12 @@ enum {
 void refii_bridge_note_appearance(uint32_t component, const uint32_t* words);
 void refii_bridge_forget_appearance(uint32_t component);
 
+// The dead creatures the guest leaves lying: `CECCreature_FinishDeath` ran on the CECCreature
+// (component 20) since its constructor. Wrappers: refii::vfs::NoteCreatureCorpse /
+// ForgetCreatureCorpse in vfs_hooks_private.h; table in src/core/creature_corpse_state.cpp.
+void refii_bridge_note_creature_corpse(uint32_t creature);
+void refii_bridge_forget_creature_corpse(uint32_t creature);
+
 // Each character part's morph targets as the guest states them to `sub_82A48B90`: `pairs` is
 // `count` x {target model hash, weight float bits}; count 0 states the part unmorphed.
 // Wrapper: refii::vfs::NotePartMorph; table in src/core/part_morph_state.cpp.
@@ -92,17 +104,6 @@ void refii_bridge_note_part_morph(uint32_t entity, uint32_t base_model, const ui
 // The entity left the world; its parts are dropped.
 void refii_bridge_forget_part_morphs(uint32_t entity);
 
-// Which of the hero's garments are dyed: the guest's own `sub_826CAFA8` per slot, sampled on
-// the GUI tick, ONE ENTRY PER ITEM INSTANCE — the dye is the instance's type-2 record, so two
-// copies of one record are dyed apart. kDyeStateWords words per item: 0 the item (guest
-// address, the instance), 1 its record hash, 2 flags (bit 0 slot 1 dyed, bit 1 slot 2 dyed,
-// bit 2 the item is worn). Worn items first, then the inventory in list order. Table in
-// src/core/dye_state.cpp.
-enum {
-  kDyeStateWords = 3,
-  kDyeStateItems = 160,
-};
-void refii_bridge_note_dye_states(const uint32_t* words, uint32_t count);
 
 // Each character's texture work as the guest states it. Wrappers: refii::vfs::BeginTextureLayers
 // / NoteTextureLayers; table in src/core/texture_layer_state.cpp. A layer is kTextureLayerWords
@@ -155,7 +156,8 @@ void refii_bridge_forget_twin(uint32_t handle);
 // The layers the guest's own dye builder states for ONE inventory item INSTANCE, keyed by the
 // item's guest address (the instance its type-2 dye record hangs off) and written as a
 // character's composites are (kTextureLayerWords per layer); the menu previews a dyed garment
-// through them. Sampled on the GUI tick for every dyed item the hero wears or carries. Table in
+// through them. Built on the GUI tick for the one item the host asks for (the stated row's item,
+// refii_bridge_want_item_dye_layers; guest_tick_pump.cpp StateRowItemDyeLayers). Table in
 // src/core/item_dye_layer_state.cpp.
 enum {
   kItemDyeLayerItems = 64,
@@ -164,6 +166,9 @@ enum {
 void refii_bridge_set_item_dye_layers(const uint32_t* items, const uint32_t* offsets,
                                       const uint32_t* counts, uint32_t item_count,
                                       const uint32_t* words);
+// The item the host's preview asks the layers of (0 none), and the read of it on the guest's side.
+void refii_bridge_want_item_dye_layers(uint32_t item);
+uint32_t refii_bridge_wanted_item_dye_layers(void);
 
 // The pub-game seam. The host claims the guest's pub-game module and posts the fscommands
 // Godot's game issues; the pump replacement (Fable2/src/vfs/src/hooks/pubgame_pump.cpp, on the guest's render
@@ -184,6 +189,24 @@ void refii_bridge_menu_spawn_begin_for(uint32_t screen_id);
 void refii_bridge_menu_spawn_row_labelled(const char* name, const char* parent, uint32_t id,
                                           int32_t event_type, int32_t rating,
                                           const char* label);
+
+// The row just spawned: its String3 icon (SpawnButton's r6), and, for an item row, the item the row
+// builder `sub_826CE230` was handed (hooks/item_rows_stated.cpp) or the item its ticket was filed
+// against — record, instance, count, category, viewed. `item_flags`: kMenuRowItem, kMenuRowViewed.
+void refii_bridge_menu_spawn_row_item(const char* icon, uint32_t item_flags, uint32_t record,
+                                      uint32_t item, uint32_t count, uint32_t category);
+
+// The mark `g_Menu:SetItemEmphasisByIndex()` states for the row just spawned (Float1, 0..3).
+void refii_bridge_menu_row_emphasis_last(int32_t level);
+
+// `g_Menu:SetItemEmphasis()` (`sub_823DFA98`: String1, Float1): the mark of the captured row so named.
+void refii_bridge_menu_row_emphasis_named(const char* name, int32_t level);
+
+enum {
+  kMenuRowItem = 1,    // the row stands for an inventory item
+  kMenuRowViewed = 2,  // that item's `+0x14` byte was set when the row was built
+  kMenuRowCounted = 4, // count / category / viewed are the row builder's (not only the ticket's)
+};
 
 void refii_bridge_guest_tick_pump_note_result(uint32_t addr, uint64_t r3,
                                               const char* note, size_t length);
@@ -293,8 +316,8 @@ void refii_bridge_hero_derived_snapshot(void* out);
 /// from the last bumps the UI data generation.
 void refii_bridge_publish_hero_inventory(const uint32_t* words, uint32_t count);
 /// The same walk with each record's ITEM INSTANCE: five words per record {recordId, count,
-/// category, viewed, item} — the item at `node+8`, the guest address the dye tables key on
-/// (kDyeStateWords, kItemDyeLayerWords). Publishing it also publishes the four-word snapshot
+/// category, viewed, item} — the item at `node+8`, the guest address the dye layers key on
+/// (kItemDyeLayerWords). Publishing it also publishes the four-word snapshot
 /// above, in one step, so the two never disagree; an item address is meaningful only until the
 /// next publish. The snapshot call returns the record count and copies as many whole records as
 /// fit.
@@ -310,16 +333,20 @@ void refii_bridge_publish_quests(const void* entries, uint32_t count);
 uint32_t refii_bridge_requested_world_map_region(void);
 void refii_bridge_publish_world_map_region(const void* region);
 
+/// 1 while a captured menu row stands for the inventory item `item` (its guest address), else 0
+/// (guest_tick_pump_state.cpp; refii::vfs::MenuRowsHoldItem).
+int32_t refii_bridge_menu_rows_hold_item(uint32_t item);
+
+/// The attribute `name` staged for the menu chunk about to run (gui_menu_chunks.cpp): 1 and its text
+/// (NUL-terminated, cut to `text_capacity`) and number, else 0. Either out may be null.
+int32_t refii_bridge_staged_menu_attribute(const char* name, char* text, uint32_t text_capacity, float* number);
+
 // The rest of the pump's sampled pages, on the same terms as the two above: the payload
 // samples on the guest thread and publishes, the host asks for the one row it is showing.
 // Each POD goes over as const void* because its definition is in hero_derived.h, which is
 // C++; the host casts it back. "sell" is int32_t rather than bool for the reason the
 // contract gives at the top of this file.
-void refii_bridge_publish_family(const void* members, uint32_t count);
-void refii_bridge_publish_real_estate(const void* estate);
-void refii_bridge_publish_furniture(const void* furniture);
 void refii_bridge_publish_coop_screen(const void* coop);
-void refii_bridge_publish_shop_front(const void* front);
 
 /// The highlighted row Godot's list states for an in-game screen (screen 0 clears): what the
 /// guest's `g_Menu:GetHighlightedMenuItemData()` reader `sub_826C1B50` answers with instead of
@@ -343,10 +370,6 @@ uint32_t refii_bridge_list_fold_depth(uint32_t screen);
 /// The world map's property row: the UID the host wants sampled, and the page's numbers for it.
 uint64_t refii_bridge_requested_property_estate(void);
 void refii_bridge_publish_property_estate(uint64_t uid, const void* estate);
-uint32_t refii_bridge_requested_quest_travel(void);
-void refii_bridge_publish_quest_travel(const void* travel);
-uint32_t refii_bridge_requested_shop_price(int32_t* sell);
-void refii_bridge_publish_shop_price(const void* price);
 
 // What the guest TELLS a presentation's elements (refii_bridge_told_*) is shared state: its
 // entries are in core/payload_bridge.h, its queues in src/runtime/src/core/told_statements.cpp.
@@ -374,6 +397,15 @@ uint32_t refii_bridge_menu_last_spawn_ordinal(uint32_t presentation);
 /// in its current populate (`SpawnButton`, then the refresh statements), else "No Text Tag".
 /// Taken once; false when that statement has not run since.
 bool refii_bridge_menu_by_name_text_tag(uint32_t presentation, char* out, size_t capacity);
+
+// PLAYER TWO BROUGHT A HERO (src/core/hero_partners.cpp): a character from a save, standing in their
+// own hero's body, rather than the plain henchman. THE ONE STATEMENT every hero-only feature keys on
+// (the dog, the household, property, per-hero opinion, crime, deeds, progression, shops, the pause
+// book): the plain henchman gets none of them, as on the 360. Set by the pump's CoopHeroBody action
+// (the host's own pick locally; the joiner's `coop.hero=` online), cleared with the co-op session.
+// The payload's hooks read it as RefiiCoopGetOwnHero (guest_tick_pump.cpp).
+int32_t refii_bridge_two_is_hero(void);
+void refii_bridge_two_is_hero_set(int32_t on);
 
 // HERO IDENTITY AND PARTNERSHIPS (src/core/hero_partners.cpp), Fable 3's player-to-player marriage
 // and business partnership: a hero's id (48 bits, kept with its save; 0 not yet known), made once by

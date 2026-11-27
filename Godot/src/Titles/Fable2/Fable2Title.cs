@@ -135,6 +135,9 @@ public sealed class Fable2Title : Engine_TitleGame
 
 	public override uint CompanionEntityAddress => Fable2Bridge.GetMinimapLive().Dog;
 
+	/// <summary>The bridge reports CECCreature_FinishDeath (TU1 0x823A4290, disc 0x82432848).</summary>
+	public override bool StatesCorpses => true;
+
 	public override Godot.Collections.Dictionary ModMinimap(uint hero) => Engine_UiMinimapMod.State(hero);
 
 	public override Godot.Vector2? ModMinimapPoint(Godot.Vector3 world) => Engine_UiMinimapMod.Point(world);
@@ -234,33 +237,6 @@ public sealed class Fable2Title : Engine_TitleGame
 
 	public override Refii.Ui.Engine_UiPopulationTable? PopulationTable(string script) => Engine_UiMenuPopulation.For(script);
 
-	public override string? HeldMenuScript =>
-		Engine_UiDyeFlow.Active ? Engine_UiDyeFlow.MenuScript
-		: Engine_UiAugmentFlow.HeldScript;
-
-	public override string? OverrideMenuScript(uint screenId)
-	{
-		string? held = HeldMenuScript;
-		if (held is null)
-		{
-			return null;
-		}
-
-		// Both held lists live on the items screen.
-		if (screenId == Engine_UiDyeFlow.ItemsScreen)
-		{
-			return held;
-		}
-
-		if (screenId != 0)
-		{
-			Engine_UiDyeFlow.End();
-			Engine_UiAugmentFlow.End();
-		}
-
-		return null;
-	}
-
 	public override bool IsModAbilityRow(string command) =>
 		command.StartsWith(Engine_UiModAbilities.BuyAction, System.StringComparison.Ordinal);
 
@@ -296,6 +272,9 @@ public sealed class Fable2Title : Engine_TitleGame
 			: string.Empty;
 
 	public override int MenuPlayer => Engine_UiPropertySource.MenuPlayer();
+
+	/// <summary>The owner of what is up now (GameUi.StatedMenuOwner: consent, boxes, the spells wheel, the pause), 0 for none.</summary>
+	public override int OpenMenuPlayer => Fable2Input.MenuOwner;
 
 	public override int OptionsCursorRow => Engine_UiOptionsPending.Row;
 
@@ -347,6 +326,8 @@ public sealed class Fable2Title : Engine_TitleGame
 		player == 2 ? Fable2Bridge.PlayerTwoBuilding() : Fable2Bridge.HeroBuilding();
 
 	public override int HighlightWidthTexels => Fable2Bridge.HighlightWidthTexels();
+
+	public override int TargetedBy(uint entity) => Fable2Bridge.TargetedBy(entity);
 
 	// The pub games' SWF assets: bitmaps, shapes and fonts under game://FlashGames/.
 

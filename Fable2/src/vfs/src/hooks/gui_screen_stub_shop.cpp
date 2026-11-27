@@ -18,6 +18,7 @@
 #include "core/refii_mod.h"
 #include "hooks/gui_screen_stub_support.h"
 #include "hooks/gui_screen_stubs.h"
+#include "hooks/page_fills_stated.h"
 #include "hooks/ppc_externs.h"
 #include "vfs_hooks_private.h"
 
@@ -40,13 +41,12 @@ using refii::mods::StoreU32;
 // "repopulate pending after a transaction", h+444 the rows transacted this visit. Same offsets on both
 // builds.
 //
-// Four slots stay the guest's. OnEnter (TU1 0x826ADDC0 / disc 0x82592340) is all statement and state —
-// PopulateMenu, the transacted map's erase, the book and its pages' readers, the titles-shop header, the
-// greeting flag — around one open sound. OnMenuEvent (0x826AE5C0 / 0x82592AE0) and OnModalAnswer
-// (0x826AE7E8 / 0x82592D08) are the buy and sell decision trees with the guest's own boxes (0, 16..22),
-// run on the row Godot pushes by its ticket (`MenuEvent`, types 30 / 31). OnExit (0x826AE090 /
-// 0x82592610) releases the preview and applies the visit's wealth drift and title announcement,
-// `sub_8296AF98(shop)`.
+// Every slot but two is ported here. OnExit (TU1 0x826AE090 / disc 0x82592610) stays the guest's: the
+// preview's release and the visit's wealth drift and title announcement, `sub_8296AF98(shop)` — game
+// logic, no element, no sound. The dtor (0x826ADCA0 / 0x82592220) frees. The buy and sell decision
+// trees behind OnMenuEvent and OnModalAnswer (`sub_826AFF48`, `sub_826B0D10`, `sub_826AF430`,
+// `sub_826AFB98`, `sub_826AF888`) are the guest's own helpers, called whole, with the guest's own boxes
+// (0, 16..22), on the row Godot pushes by its ticket (`MenuEvent`, types 30 / 31).
 
 namespace {
 
@@ -55,6 +55,89 @@ constexpr uint32_t kShopVtable = 0x820CE708u;
 bool g_shop_update_said = false;
 
 }  // namespace
+
+// OnEnter TU1 0x826ADDC0 / disc 0x82592340. Kept, in the guest's order: the rows and the stock fill,
+// h+24 vf+4 = `lhGuiShopScreen_PopulateMenu` (0x826ADDF0); h+441 = 0 (0x826ADDFC); the transacted map
+// h+444 emptied — `Erase(h+444, head->parent)` (0x826ADE08; 0x82B54BC0 / disc 0x82367AE8), head->parent
+// = head, h+452 = 0, head->left = head->right = head (0x826ADE10..0x826ADE30); the two pages h+128 and
+// h+368 pushed (`sub_82B49750` 0x826ADE44 / 0x826ADE58; disc 0x8228A900) and the book
+// `sub_82990610(h+44, &pages, "Foreground.Book", pres, 1)` (0x826ADE90 / 0x828CE060; pres `*(*(G+56)+156)`,
+// disc +152), which runs each page's +4; the front page's fill h+88 vf+4 (0x826ADEA4: the hooked
+// `lhGuiShopFrontPage_Fill`, stated as "front") and the stats page's h+368 vf+4 (0x826ADEB8); h+440 = 1,
+// the greeting pending (0x826ADEC4); the keeper `**(h+404)` (a dead handle reset, `sub_82193E38(h+400)`
+// 0x826ADEEC / 0x821940C8), its component 26 (0x826ADEF4..0x826ADFEC) and, for a titles shop
+// (`comp26+156 == 31`, 0x826AE008), the header `sub_8246B888(pres, 0x8349ADE0, localised
+// "GUI_SCREEN_TITLE_TITLES")` (0x826AE04C / 0x828374B8 with 0x83498C9C; the tag through `sub_8230E0E8`
+// 0x826AE038); h+396 = 0 (0x826AE058); the timer `sub_828C36D0(h+424, 0.0)` (0x826AE068 / 0x82834498:
+// two bytes and two floats off `QueryPerformanceCounter`), which the kept highlight edge reads
+// (`sub_828C3748(h+424)` in `sub_826B13B8`, 0x826B1488 / disc 0x82595988). Dropped: the open sound,
+// `h` vf+4 (0x826ADDDC / 0x8259235C). The guest reads a keeper that is gone through a null pointer
+// (0x826ADEF0 `li r11,0` → 0x826ADEF4 `lwz r10,0x24(r11)`); here that is "not a titles shop".
+REX_EXTERN(rex_lhGuiShopScreen_OnEnter) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  const Scratch s = Claim(ctx);
+  const uint32_t pages = s.data;          // {?, begin, end, capacity}
+  const uint32_t item = s.data + 0x10u;   // the page pointer handed to the push
+  const uint32_t book = s.data + 0x14u;   // "Foreground.Book"
+  const uint32_t tag = s.data + 0x18u;    // the header's tag, consumed by the localiser
+  const uint32_t wide = s.data + 0x1Cu;   // its localised text
+  const uint32_t pres = BookPresentation(base);
+  g_shop_update_said = false;
+
+  CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
+  base[h + 0x1B9u] = 0u;
+  const uint32_t head = LoadU32(base, h + 0x1C0u);
+  Call(ctx, base, s.frame, 0x82B54BC0u, {h + 0x1BCu, LoadU32(base, head + 4u)});
+  StoreU32(base, LoadU32(base, h + 0x1C0u) + 4u, LoadU32(base, h + 0x1C0u));
+  StoreU32(base, h + 0x1C4u, 0u);
+  StoreU32(base, LoadU32(base, h + 0x1C0u), LoadU32(base, h + 0x1C0u));
+  StoreU32(base, LoadU32(base, h + 0x1C0u) + 8u, LoadU32(base, h + 0x1C0u));
+
+  for (uint32_t i = 0; i < 16u; i += 4u) {
+    StoreU32(base, pages + i, 0u);
+  }
+  for (uint32_t page : {0x80u, 0x170u}) {
+    StoreU32(base, item, h + page);
+    Call(ctx, base, s.frame, 0x82B49750u, {pages, item});
+  }
+  MakeString(ctx, base, s.frame, book, s.data + 0x40u, "Foreground.Book");
+  Call(ctx, base, s.frame, 0x82990610u, {h + 0x2Cu, pages, book, pres, 1u});
+  CallSlot(ctx, base, s.frame, h + 0x58u, 1u, {});
+  CallSlot(ctx, base, s.frame, h + 0x170u, 1u, {});
+  base[h + 0x1B8u] = 1u;
+
+  uint32_t keeper = 0u;
+  const uint32_t holder = LoadU32(base, h + 0x194u);
+  if (holder != 0u) {
+    keeper = LoadU32(base, holder);
+    if (keeper == 0u) {
+      Call(ctx, base, s.frame, 0x82193E38u, {h + 0x190u});
+    }
+  }
+  const uint32_t comp26 = Plausible(keeper) ? refii_mod_component(base, keeper, 26u) : 0u;
+  const bool titles = comp26 != 0u && LoadU32(base, comp26 + 156u) == 31u;
+  if (titles) {
+    MakeString(ctx, base, s.frame, tag, s.data + 0x80u, "GUI_SCREEN_TITLE_TITLES");
+    const uint32_t said = Call(ctx, base, s.frame, 0x8230E0E8u, {wide, tag});
+    Call(ctx, base, s.frame, 0x8246B888u, {pres, Address(0x8349ADE0u), said});
+    Call(ctx, base, s.frame, 0x821C67F8u, {wide});
+  }
+  StoreU32(base, h + 0x18Cu, 0u);
+  {
+    PPCContext work = ctx;
+    work.r1.u32 = s.frame;
+    work.r3.u32 = h + 0x1A8u;
+    work.f1.f64 = 0.0;
+    refii::mods::CallGuest(work, base, Address(0x828C36D0u));
+  }
+  DropString(ctx, base, s.frame, book);
+  const uint32_t storage = LoadU32(base, pages + 4u);
+  if (storage != 0u) {
+    Call(ctx, base, s.frame, 0x8221BD38u, {storage});  // Render_FreeD3DObject
+  }
+  Said("shop (22)", "OnEnter", h, keeper, titles ? 1u : 0u);
+}
 
 // Update TU1 0x826AE270 / disc 0x825927F0. Kept, in the guest's order: the keeper's greeting, once per
 // entry — h+440 set → cleared, the keeper `**(h+404)` (`lhSmartPtr_Deref(h+400)` 0x826AE2A0), its
@@ -112,7 +195,11 @@ REX_EXTERN(rex_lhGuiShopScreen_Update) {
     rex_lhGuiMenu_GetHighlightedItemData(ask, base);
   }
   const uint32_t type = LoadU32(base, row);
+  // The edge's fills state the row's pages (page_fills_stated.cpp): scope "row", keyed by the row's
+  // ticket, the id the edge compares with h+408 (0x826B13D0..0x826B13DC).
+  refii::vfs::OpenPageFill(22u, "row");
   Call(ctx, base, s.frame, 0x826B13B8u, {h, Call(ctx, base, s.frame, 0x826AE560u, {copy, row})});
+  refii::vfs::ClosePageFill(LoadU32(base, row + 4u));
   Call(ctx, base, s.frame, 0x8246B5E8u, {pres, Address(0x8349ADD8u), 1u});
   RestatePurseForPlayerTwo(ctx, base, s.frame, pres, 0x8349ADD8u, RefiiCoopShoppingPlayerTwo() != 0);
   if (base[h + 0x1B9u] != 0u && type == 301u && LoadU32(base, qm + 40u) == 1u) {
@@ -136,6 +223,80 @@ REX_EXTERN(rex_lhGuiShopScreen_Update) {
 REX_EXTERN(rex_lhGuiShopScreen_OnScreenAction) {
   REX_FUNC_PROLOGUE();
   Said("shop (22)", "OnScreenAction", ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+}
+
+// OnMenuEvent TU1 0x826AE5C0 / disc 0x82592AE0 (r4 the event: +0 name, +4 type, +8 id). Kept: the
+// event copied to QM+80 — `lhCharString_Assign(QM+80, event)` (0x826AE5E8; 0x822651A0 / 0x82265160),
+// then its type and id (0x826AE5F0 / 0x826AE5F8) — which the buy and sell answers read; by type
+// (compares, 0x826AE600..0x826AE6A8): 30 the buy entry `sub_826AFF48(h, event)` (0x826AE668 / disc
+// 0x82594468), 31 the sell entry `sub_826B0D10(h, event)` (0x826AE654 / 0x82595218) — their gates,
+// `g_Menu:SetExpandableMenuDisabled(true)` and boxes are the guest's; 301 with h+441 set the deferred
+// repopulate: h+441 = 0, the list's vf+4 (0x826AE6D0) and the transacted map cleared
+// `sub_822F8640(h+444)` (0x826AE6D8 / 0x82367A90); 201 with "ReturnToGame" in the event's name (`strstr`
+// 0x826AE724, an empty name for a null string) `lhGuiManager_ExitScreen(QM, 1)` (0x826AE754 /
+// 0x82336F98). Dropped: 140 / 141, `sub_82371E80(&ev, G, "SE_GUI_SLIDE_MENU_UP" 0x83497DD8 / "_DOWN"
+// 0x83497DDC, 0)` and its release (0x826AE638 / 0x826AE688; disc 0x82592B58 / 0x82592BA8).
+REX_EXTERN(rex_lhGuiShopScreen_OnMenuEvent) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  const uint32_t event = ctx.r4.u32;
+  const Scratch s = Claim(ctx);
+  const uint32_t qm = LoadU32(base, Gui(base) + 28u);
+  Call(ctx, base, s.frame, 0x822651A0u, {qm + 80u, event});
+  StoreU32(base, qm + 84u, LoadU32(base, event + 4u));
+  StoreU32(base, qm + 88u, LoadU32(base, event + 8u));
+  const uint32_t type = LoadU32(base, event + 4u);
+  Said("shop (22)", "OnMenuEvent", h, type, LoadU32(base, event + 8u));
+  if (type == 30u) {
+    Call(ctx, base, s.frame, 0x826AFF48u, {h, event});
+  } else if (type == 31u) {
+    Call(ctx, base, s.frame, 0x826B0D10u, {h, event});
+  } else if (type == 301u) {
+    if (base[h + 0x1B9u] != 0u) {
+      base[h + 0x1B9u] = 0u;
+      CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
+      Call(ctx, base, s.frame, 0x822F8640u, {h + 0x1BCu});
+    }
+  } else if (type == 201u) {
+    const uint32_t handle = LoadU32(base, event);
+    const uint32_t chars = handle != 0u ? LoadU32(base, handle) : 0u;
+    if (Plausible(chars) && std::strstr(reinterpret_cast<const char*>(base + chars), "ReturnToGame") != nullptr) {
+      Call(ctx, base, s.frame, 0x8236ED98u, {LoadU32(base, Gui(base) + 28u), 1u});
+    }
+  }
+}
+
+// OnModalAnswer TU1 0x826AE7E8 / disc 0x82592D08 (r4 the answer's code). Kept: with a plain box up
+// (`*(QM+40) == 2`) and code 36, the box answered (`sub_8236FEC8(QM, 2)` 0x826AE88C, without its
+// sound: AnswerBox) and `g_Menu:SetExpandableMenuDisabled(false)` on the book's presentation
+// (0x826AE8B4); with a question up (`*(QM+40) == 3`), by its id `*(QM+44)` (0x826AE81C..0x826AE830): 17
+// the tattoo removal's answer `sub_826AF430` (0x826AE864 / disc 0x82593950), 19 the worn item's sale
+// `sub_826AFB98` (0x826AE84C / 0x825940B8), 20 buy-and-wear `sub_826AF888` (0x826AE834 / 0x82593DA8),
+// each with the slot's own registers (h, code, r5). Dropped: "SE_GUI_MENU_BOX_SELECT" inside
+// `sub_8236FEC8` (0x8236FEFC / 0x823380F4). The three helpers are the guest's, whole.
+REX_EXTERN(rex_lhGuiShopScreen_OnModalAnswer) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  const uint32_t code = ctx.r4.u32;
+  const Scratch s = Claim(ctx);
+  const uint32_t qm = LoadU32(base, Gui(base) + 28u);
+  const uint32_t mode = LoadU32(base, qm + 40u);
+  const uint32_t box = LoadU32(base, qm + 44u);
+  Said("shop (22)", "OnModalAnswer", h, code, mode == 3u ? box : mode);
+  if (mode == 2u) {
+    if (code == 36u) {
+      AnswerBox(ctx, base, s.frame, qm, 2u);
+      RunMenuLua(ctx, base, s.frame, s.data, "g_Menu:SetExpandableMenuDisabled(false)", BookPresentation(base));
+    }
+  } else if (mode == 3u) {
+    if (box == 17u) {
+      Call(ctx, base, s.frame, 0x826AF430u, {h, code, ctx.r5.u32});
+    } else if (box == 19u) {
+      Call(ctx, base, s.frame, 0x826AFB98u, {h, code, ctx.r5.u32});
+    } else if (box == 20u) {
+      Call(ctx, base, s.frame, 0x826AF888u, {h, code, ctx.r5.u32});
+    }
+  }
 }
 
 // ---- THE LEVERS -----------------------------------------------------------------------------

@@ -15,7 +15,8 @@ namespace Refii.Ui;
 /// One of each on screen at a time, the rest QUEUED in order: a question raised while another is
 /// up is asked when that one is answered, and a notice told under a notice follows it. Nothing
 /// is answered -1 on another's account; -1 is only a withdrawal. An answer is the button's
-/// index: 0 for A (the question's accept, the notice's dismiss), 1 for B.
+/// index: 0 for A (the question's accept, the notice's dismiss), 1 for B, 2 for X (a question
+/// asked with a third caption: the guest's three-button system box, Engine_UiSystemBoxes).
 /// </remarks>
 public static class Engine_UiHostBoxes
 {
@@ -27,6 +28,9 @@ public static class Engine_UiHostBoxes
 
 	/// <summary>The question's B caption, or null for the box's authored one.</summary>
 	public static string? CancelCaption { get; private set; }
+
+	/// <summary>The question's X caption (answer 2), or null for a question of two answers.</summary>
+	public static string? ThirdCaption { get; private set; }
 
 	/// <summary>
 	/// The question's page title when it is asked ON A PAGE (<see cref="AskPage"/>) — a body of
@@ -45,7 +49,8 @@ public static class Engine_UiHostBoxes
 	private static string _key = string.Empty;
 
 	private readonly record struct PendingQuestion(
-		string Body, string? Title, Action<int>? Answered, string? Accept, string? Cancel, string Key);
+		string Body, string? Title, Action<int>? Answered, string? Accept, string? Cancel, string Key,
+		string? Third = null);
 
 	private readonly record struct PendingNotice(string Body, Action<int>? Dismissed);
 
@@ -59,6 +64,7 @@ public static class Engine_UiHostBoxes
 		PageTitle = next.Title;
 		AcceptCaption = next.Accept;
 		CancelCaption = next.Cancel;
+		ThirdCaption = next.Third;
 		_onQuestion = next.Answered;
 		_key = next.Key;
 		Godot.GD.Print($"[host-box] asked: {next.Body}");
@@ -95,6 +101,12 @@ public static class Engine_UiHostBoxes
 	/// </summary>
 	public static void Ask(string body, Action<int>? answered, string? accept, string? cancel, string key = "") =>
 		Ask(new PendingQuestion(body, null, answered, accept, cancel, key));
+
+	/// <summary>
+	/// Asks <paramref name="body"/> with three answers: A (0), B (1) and X (2), each with its caption.
+	/// </summary>
+	public static void Ask(string body, Action<int>? answered, string accept, string cancel, string third, string key) =>
+		Ask(new PendingQuestion(body, null, answered, accept, cancel, key, third));
 
 	private static void Ask(PendingQuestion question)
 	{
@@ -155,6 +167,7 @@ public static class Engine_UiHostBoxes
 		PageTitle = null;
 		AcceptCaption = null;
 		CancelCaption = null;
+		ThirdCaption = null;
 		_onQuestion = null;
 		_key = string.Empty;
 		Godot.GD.Print($"[host-box] withdrawn: {key}");
@@ -205,16 +218,28 @@ public static class Engine_UiHostBoxes
 	}
 
 	/// <summary>The question's answer: A (<paramref name="yes"/>) or B. Closes it either way.</summary>
-	public static void Answer(bool yes)
+	public static void Answer(bool yes) => Answer(yes ? 0 : 1);
+
+	/// <summary>
+	/// The question's answer by index: 0 A, 1 B, 2 X (only while <see cref="ThirdCaption"/> is set;
+	/// otherwise refused). Closes it.
+	/// </summary>
+	public static void Answer(int answer)
 	{
+		if (Question is null || answer is < 0 or > 2 || answer == 2 && ThirdCaption is null)
+		{
+			return;
+		}
+
 		Action<int>? answered = _onQuestion;
 		Question = null;
 		PageTitle = null;
 		AcceptCaption = null;
 		CancelCaption = null;
+		ThirdCaption = null;
 		_onQuestion = null;
 		_key = string.Empty;
-		answered?.Invoke(yes ? 0 : 1);
+		answered?.Invoke(answer);
 		Next();
 	}
 

@@ -302,12 +302,30 @@ public static class Engine_UiModel
 	/// Monotonic. The seam keeps every write of the session stamped, so the host holds N and
 	/// asks "what is new since N"; the read is safe to repeat, unlike a pop-style queue.
 	/// </param>
-	public readonly record struct AchievementUnlock(uint UserIndex, uint AchievementId, ulong Sequence);
+	/// <param name="Binding">The serial of the writing user's binding (<see cref="AchievementBinding"/>), 0 when never bound.</param>
+	public readonly record struct AchievementUnlock(uint UserIndex, uint AchievementId, ulong Sequence, ulong Binding = 0);
+
+	/// <summary>
+	/// A guest adoption point: user <paramref name="User"/> plays the hero of <paramref name="Save"/>; an
+	/// empty save is a hero no save holds yet (a new game, a new hero). Serials count up from 1.
+	/// </summary>
+	public readonly record struct AchievementBinding(ulong Serial, uint User, string Save);
 
 	/// <summary>One spawned menu row's identity, as the guest handed it to `SpawnButton`.</summary>
 	public readonly record struct MenuRow(
 		string Name, string Parent, uint Id, int EventType, int Rating, string Label)
 	{
+		/// <summary>`String3`, the icon path the spawn states (SpawnButton's r6).</summary>
+		public string Icon { get; init; } = string.Empty;
+
+		/// <summary>The guest's mark on the row (0 none .. 3): `SetItemEmphasisByIndex` inside the row
+		/// builder, `SetItemEmphasis` by name otherwise.</summary>
+		public int Emphasis { get; init; }
+
+		/// <summary>The inventory item the row stands for, or null: what the row builder `sub_826CE230`
+		/// was handed, or the item its ticket was filed against (RefiiHostGetMenuRowItem).</summary>
+		public MenuRowItem? Item { get; init; }
+
 		/// <summary>
 		/// `String4 == "Root"` is the spawn convention for a top-level entry (`sub_82430468` passes
 		/// the literal into the `String4` position). `String3`, one slot earlier, is the icon.
@@ -315,6 +333,20 @@ public static class Engine_UiModel
 		public bool IsRoot =>
 			Parent.Length == 0 ||
 			string.Equals(Parent, "Root", System.StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// An item row's item, as its row builder was handed it: the GDB record, the item instance (its guest
+	/// address), and — when <see cref="Counted"/> — the count, the category and the viewed byte the builder
+	/// read (`+0xC`, `+0x10`, `+0x14` of the item).
+	/// </summary>
+	public readonly record struct MenuRowItem(uint Record, uint Instance, int Count, int Category, bool Viewed, bool Counted)
+	{
+		/// <summary>The export's five words {flags, record, item, count, category}; null for a row with no item.</summary>
+		public static MenuRowItem? FromWords(uint flags, uint record, uint item, uint count, uint category) =>
+			(flags & 1u) == 0u
+				? null
+				: new MenuRowItem(record, item, (int)count, (int)category, (flags & 2u) != 0u, (flags & 4u) != 0u);
 	}
 
 	/// <summary>

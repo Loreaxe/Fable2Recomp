@@ -185,17 +185,35 @@ public static class Engine_UiGameTemplates
     },
     "AugmentMenu": {
       "highlight": "",
-      "title": "GUI_SCREEN_TITLE_AUGMENT",
-      "source": "inventory:augment",
+      "title": "",
+      "source": "",
       "rowCommand": "",
-      "entries": []
-    },
-    "AugmentRemoveMenu": {
-      "highlight": "",
-      "title": "GUI_SCREEN_AUGMENT_REMOVAL_TITLE",
-      "source": "inventory:augmentremove",
-      "rowCommand": "",
-      "entries": []
+      "entries": [
+        {
+          "name": "Ranged",
+          "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_RANGED_WEAPONS",
+          "source": "items::Ranged",
+          "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
+          "eventType": 301,
+          "counted": false
+        },
+        {
+          "name": "Melee",
+          "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_MELEE_WEAPONS",
+          "source": "items::Melee",
+          "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
+          "eventType": 301,
+          "counted": false
+        },
+        {
+          "name": "Accessories",
+          "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_ACCESSORIES",
+          "source": "items::Accessories",
+          "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
+          "eventType": 301,
+          "counted": false
+        }
+      ]
     },
     "DyeMenu": {
       "highlight": "",
@@ -206,58 +224,66 @@ public static class Engine_UiGameTemplates
         {
           "name": "Hats",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_HATS",
-          "source": "inventory:dye:17",
+          "source": "items::Hats",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Coats",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_COATS",
-          "source": "inventory:dye:18",
+          "source": "items::Coats",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Shirts",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_SHIRTS",
-          "source": "inventory:dye:19",
+          "source": "items::Shirts",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Gloves",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_GLOVES",
-          "source": "inventory:dye:20",
+          "source": "items::Gloves",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Pants",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_PANTS",
-          "source": "inventory:dye:21",
+          "source": "items::Pants",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Shoes",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_SHOES",
-          "source": "inventory:dye:22",
+          "source": "items::Shoes",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Accessories",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_MASKS",
-          "source": "inventory:dye:23,24",
+          "source": "items::Accessories",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Dye Hero Hair",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_DYE_HERO_HAIR",
-          "source": "inventory:dye:9,10,11",
+          "source": "items::Dye Hero Hair",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         }
       ]
     },
@@ -305,7 +331,7 @@ public static class Engine_UiGameTemplates
         {
           "name": "Suits",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_SUITS",
-          "source": "inventory:wear:25",
+          "source": "items:wear:Suits",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
           "eventType": 301,
           "counted": false
@@ -313,68 +339,67 @@ public static class Engine_UiGameTemplates
         {
           "name": "Hats",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_HATS",
-          "source": "inventory:wear:17",
+          "source": "items:wear:Hats",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Coats",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_COATS",
-          "source": "inventory:wear:18",
+          "source": "items:wear:Coats",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Shirts",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_SHIRTS",
-          "source": "inventory:wear:19",
+          "source": "items:wear:Shirts",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Gloves",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_GLOVES",
-          "source": "inventory:wear:20",
+          "source": "items:wear:Gloves",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Pants",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_PANTS",
-          "source": "inventory:wear:21",
+          "source": "items:wear:Pants",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Shoes",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_SHOES",
-          "source": "inventory:wear:22",
+          "source": "items:wear:Shoes",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Accessories",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_MASKS",
-          "source": "inventory:wear:23,24",
+          "source": "items:wear:Accessories",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         }
       ]
     },
     "GiftGivingMenu": {
       "highlight": "",
       "title": "",
-      "source": "inventory:gift:",
+      "source": "items:gift:",
       "rowCommand": "",
-      "entries": [
-        {
-          "name": "Gold",
-          "tag": "GUI_SCREEN_GIFT_GOLD",
-          "when": "has-gold",
-          "icon": "Art\\GUI\\WheelIcons\\icon_gold_coin.tga",
-          "eventType": 7
-        }
-      ]
+      "entries": []
     },
     "ShopMenu": {
       "highlight": "",
@@ -435,37 +460,42 @@ public static class Engine_UiGameTemplates
         {
           "name": "Quests",
           "tag": "GUI_SCREEN_WORLD_MAP_QUESTS",
-          "source": "quests",
+          "source": "capture:Quests",
           "icon": "Art\\GUI\\WheelIcons\\icon_logbook.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Jobs",
           "tag": "GUI_SCREEN_WORLD_MAP_JOBS",
-          "source": "jobs",
+          "source": "capture:Jobs",
           "icon": "Art\\GUI\\WheelIcons\\icon_logbook.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Sales",
           "tag": "GUI_SCREEN_WORLD_MAP_SALES",
-          "source": "sales",
+          "source": "capture:Sales",
           "icon": "Art\\GUI\\WheelIcons\\icon_logbook.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Family",
           "tag": "GUI_SCREEN_WORLD_MAP_FAMILY",
-          "source": "family",
+          "source": "capture:Family",
           "icon": "Art\\GUI\\WheelIcons\\icon_logbook.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Regions",
           "tag": "GUI_SCREEN_WORLD_MAP_REGIONS",
-          "source": "regions",
+          "source": "capture:Regions",
           "icon": "Art\\GUI\\WheelIcons\\icon_logbook.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Properties",
@@ -485,65 +515,74 @@ public static class Engine_UiGameTemplates
         {
           "name": "KeyItems",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_TOOLS",
-          "source": "inventory:use:2,9,10,11,12,13,14,26",
+          "source": "items:use:KeyItems",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Books",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_BOOKS",
-          "source": "inventory:use:16",
+          "source": "items:use:Books",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Food and Drink",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_FOOD",
-          "source": "inventory:use:5",
+          "source": "items:use:Food and Drink",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Potions",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_POTIONS",
-          "source": "inventory:use:6",
+          "source": "items:use:Potions",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Gifts",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_GIFTS",
-          "source": "inventory:use:3",
+          "source": "items:use:Gifts",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Trophies",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_TROPHIES",
-          "source": "inventory:use:4",
+          "source": "items:use:Trophies",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Augmentations",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_AUGMENTATIONS",
-          "source": "inventory:augmentselect:7",
+          "source": "items::Augmentations",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Dyes",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_DYES",
-          "source": "inventory:dyeselect:8",
+          "source": "items::Dyes",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Furniture",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_FURNITURE",
-          "source": "inventory:use:15",
+          "source": "items:use:Furniture",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         }
       ]
     },
@@ -556,16 +595,18 @@ public static class Engine_UiGameTemplates
         {
           "name": "Melee",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_MELEE_WEAPONS",
-          "source": "weapons:melee",
+          "source": "items:equip:Melee",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         },
         {
           "name": "Ranged",
           "tag": "GUI_SCREEN_INVENTORY_CATEGORIES_RANGED_WEAPONS",
-          "source": "weapons:ranged",
+          "source": "items:equip:Ranged",
           "icon": "Art\\GUI\\WheelIcons\\icon_world_map.tga",
-          "eventType": 301
+          "eventType": 301,
+          "counted": false
         }
       ]
     },
@@ -671,7 +712,7 @@ public static class Engine_UiGameTemplates
           "name": "Map",
           "tag": "GUI_SCREEN_PAUSE_WORLD_MAP",
           "command": "PauseTab:2",
-          "when": "player-two",
+          "when": "player-two, player-two-hero",
           "hostOnly": true
         },
         {
@@ -701,7 +742,7 @@ public static class Engine_UiGameTemplates
           "name": "Items",
           "tag": "GUI_SCREEN_PAUSE_ITEMS",
           "command": "PauseTab:4",
-          "when": "player-two",
+          "when": "player-two, player-two-hero",
           "hostOnly": true
         },
         {
@@ -716,7 +757,7 @@ public static class Engine_UiGameTemplates
           "name": "Weapons",
           "tag": "GUI_SCREEN_PAUSE_WEAPONS",
           "command": "PauseTab:5",
-          "when": "player-two",
+          "when": "player-two, player-two-hero",
           "hostOnly": true
         },
         {
@@ -731,7 +772,7 @@ public static class Engine_UiGameTemplates
           "name": "Clothing",
           "tag": "GUI_SCREEN_PAUSE_CLOTHING",
           "command": "PauseTab:6",
-          "when": "player-two",
+          "when": "player-two, player-two-hero",
           "hostOnly": true
         },
         {
@@ -746,7 +787,7 @@ public static class Engine_UiGameTemplates
           "name": "Logbook",
           "tag": "GUI_SCREEN_PAUSE_LOGBOOK",
           "command": "PauseTab:7",
-          "when": "player-two",
+          "when": "player-two, player-two-hero",
           "hostOnly": true
         },
         {

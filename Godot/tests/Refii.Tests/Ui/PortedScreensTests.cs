@@ -169,22 +169,35 @@ public class PortedScreensTests
 		AssertThat(Fable2PortedScreens.ItemLever(15, 1, "Ability:learn:7", 0u)).IsNull();
 	}
 
-	/// <summary>The ticket is the id the guest spawned the row of that name with; the first when two
-	/// rows share a name, none when the capture holds no such row.</summary>
+	/// <summary>An item row's export words: flags bit 0 the row stands for an item, bit 1 viewed, bit 2 the
+	/// count, category and viewed are the row builder's; no item without bit 0.</summary>
 	[TestCase]
-	public void ARowsTicketIsItsCapturedId()
+	public void ARowsItemIsItsBuildersStatement()
 	{
-		var captured = new System.Collections.Generic.List<Engine_UiModel.MenuRow>
-		{
-			new("Items", "Root", 0u, 301, 0, "Items"),
-			new("INV_ITEM_HAT", "Hats", 5u, 3, 0, "Hat"),
-			new("INV_ITEM_COAT", "Coats", 6u, 3, 0, "Coat"),
-			new("INV_ITEM_HAT", "Hats", 9u, 3, 0, "Hat"),
-		};
-		AssertThat(Fable2PortedScreens.TicketOf(captured, "INV_ITEM_COAT")).IsEqual(6u);
-		AssertThat(Fable2PortedScreens.TicketOf(captured, "INV_ITEM_HAT")).IsEqual(5u);
-		AssertThat(Fable2PortedScreens.TicketOf(captured, "INV_ITEM_BOOTS")).IsEqual(0u);
-		AssertThat(Fable2PortedScreens.TicketOf(captured, string.Empty)).IsEqual(0u);
+		AssertThat(Engine_UiModel.MenuRowItem.FromWords(0u, 5u, 0x40001000u, 2u, 17u) is null).IsTrue();
+		Engine_UiModel.MenuRowItem? item = Engine_UiModel.MenuRowItem.FromWords(1u | 2u | 4u, 0x12345678u, 0x40001000u, 3u, 17u);
+		AssertThat(item is { Record: 0x12345678u, Instance: 0x40001000u, Count: 3, Category: 17, Viewed: true, Counted: true }).IsTrue();
+		AssertThat(Engine_UiModel.MenuRowItem.FromWords(1u, 7u, 9u, 0u, 0u) is { Viewed: false, Counted: false }).IsTrue();
+	}
+
+	/// <summary>A category whose rows are a capturing source's under its own name takes the population's caption.</summary>
+	[TestCase]
+	public void AnItemBooksCategoryIsItsCapture()
+	{
+		Refii.Core.Engine_TitleGame.EnsureInstalled();
+		AssertThat(Engine_UiMenuSources.CapturesFor("capture:Quests", "Quests")).IsTrue();
+		AssertThat(Engine_UiMenuSources.CapturesFor("items:use:KeyItems", "KeyItems")).IsTrue();
+		AssertThat(Engine_UiMenuSources.CapturesFor("items::Dye Hero Hair", "Dye Hero Hair")).IsTrue();
+		AssertThat(Engine_UiMenuSources.CapturesFor("items:use:KeyItems", "Books")).IsFalse();
+		AssertThat(Engine_UiMenuSources.CapturesFor("inventory:usable", "usable")).IsFalse();
+	}
+
+	/// <summary>Y on the clothing book is its own code 39 as the dye's second-layer lever; no other book's.</summary>
+	[TestCase]
+	public void TheClothingBooksYIsTheSecondDyeLayer()
+	{
+		AssertThat(Fable2PortedScreens.Lever(Fable2PortedScreens.Clothing, Engine_UiScreenInput.Unlearn, 2)).IsEqual("Clothing:2:dye2");
+		AssertThat(Fable2PortedScreens.Lever(Fable2PortedScreens.Items, Engine_UiScreenInput.Unlearn, 1) is null).IsTrue();
 	}
 
 	[TestCase]

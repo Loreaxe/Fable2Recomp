@@ -265,7 +265,7 @@ function Refii.stop_sound(e, tag, fade)
 end
 function Refii.set_weather(theme, weight, seconds) EnvironmentTheme.BlendToEnvironmentTheme(theme, weight or 1, seconds or 1) return true end
 function Refii.coop_mode() if Network.IsInCouchGame() then return 1 end if Network.IsInLiveGame() then return Network.IsClient() and 3 or 2 end return 0 end
-function Refii.split_screen() return false end
+function Refii.split_screen() return Refii._coop_split ~= nil and Refii._coop_split() == true end
 function Refii.menu_player() return 1 end
 function Refii.player_for(e) local x = E(e) if x == nil then return nil end local p = Refii.player_of(x) if p > 0 then return p end
 	if IsDog(x) then local m = Dog.GetMaster(x) if m ~= nil then p = Refii.player_of(m) if p > 0 then return p end end end
@@ -309,6 +309,23 @@ local function CameraScope(bits)
 end
 local function FIN(x) return type(x) == "number" and x - x == 0 end
 
+-- THE NATIVE PAIR IS NEVER THE HOLD'S. CameraManager.SetCameraOverride calls
+-- Player.SetOverrideCameraMode(player, enum, scope, data), which stores the mode in the hero's Player
+-- component: `stw r30, 0xC0(r31)` Normal, `stw r30, 0xC4(r31)` LookAt (TU3 0x8242F94C / 0x8242F958,
+-- disc 0x82411CCC / 0x82411CD8) — the two words the component's save writes as
+-- OverrideCameraModeNormal / OverrideCameraModeLookAt (CECPlayer_vf11: `lwz r11, 0xC0(r26)` TU3
+-- 0x8243BE3C, `lwz r8, 0xC4(r26)` 0x8243BE78; disc 0x8241DE7C / 0x8241DEB8) — and, in a network game,
+-- sends the override to the peer. So each of the hold's own SetCameraOverride calls reads the pair
+-- first (Player.GetOverrideCameraMode: scope 1 the Normal word, scope 2 the LookAt word, TU3
+-- 0x8242FD88) and the native Refii._camera_native_restore(hero, normal, look_at) stores the two words
+-- back after (a store, no message): a save made under a hold holds what the game itself stated. The
+-- scripts that ask the pair are answered with the hold's mode on the halves it stands on, as before.
+local function CameraNative(hero)
+	local get = Refii._shipped_get_override_camera_mode or Player.GetOverrideCameraMode
+	local scope = EInteractiveCutsceneRuleScope
+	return get(hero, scope.CUTSCENE_RULE_SCOPE_NORMAL), get(hero, scope.CUTSCENE_RULE_SCOPE_LOOK_AT)
+end
+
 -- The hold stated for hero's player, applied before the shipped FrameUpdate (Fable 2's C.CameraHold).
 function Refii._camera_apply(hero)
 	if next(Refii._camera_holds) == nil and next(Refii._camera_applied) == nil then return end
@@ -349,7 +366,9 @@ function Refii._camera_apply(hero)
 		end
 	end
 	if claim ~= 0 then
+		local kept, normal, look_at = pcall(CameraNative, hero)
 		CameraManager.SetCameraOverride(hero, hold.Mode, CameraScope(claim), hold.Data, true)
+		if kept and Refii._camera_native_restore ~= nil then Refii._camera_native_restore(hero, normal, look_at) end
 		for _, half in ipairs(CAMERA_HALVES) do
 			if math.floor(claim / half[2]) % 2 == 1 then hold.Written[half[1]] = hold.Data end
 		end
@@ -357,7 +376,9 @@ function Refii._camera_apply(hero)
 	if release ~= 0 then
 		local data = nil
 		if hold.Blend ~= nil and hold.Blend >= 0 then data = { BlendInSeconds = hold.Blend } end
+		local kept, normal, look_at = pcall(CameraNative, hero)
 		CameraManager.SetCameraOverride(hero, default, CameraScope(release), data, true)
+		if kept and Refii._camera_native_restore ~= nil then Refii._camera_native_restore(hero, normal, look_at) end
 		for _, half in ipairs(CAMERA_HALVES) do
 			if math.floor(release / half[2]) % 2 == 1 then hold.Written[half[1]] = nil end
 		end
@@ -371,15 +392,34 @@ function Refii._camera_apply(hero)
 end
 
 -- The save's copy: every half our hold stands on written as the default record, the live one untouched.
+-- PLAYER TWO'S CAMERA LEAVES NO RECORD (F. below): the default record player two's camera made for hero two
+-- (GetOverriddenData -> NewOverrideDataForPlayer, cameramanager.lua 137-154; its OnLevelLoad, 409-412) is left
+-- out of the written copy while it is that table and holds only the defaults: the shipped couch screen's one
+-- manager made none. A record a script stated for hero two stays.
+local function PartnerDefault(id, record)
+	local made = Refii._couch ~= nil and Refii._couch.Made[id] or nil
+	if made == nil or made ~= record or type(record) ~= "table" then return false end
+	for _, half in ipairs(CAMERA_HALVES) do
+		local entry = record[half[1]]
+		if type(entry) ~= "table" or entry.CameraEnum ~= ECameraMode.CAMERA_MODE_DEFAULT or entry.OverrideData ~= nil then return false end
+	end
+	return true
+end
+
 local function CameraSaveCopy(save)
 	local overrides = type(save) == "table" and save.Overrides or nil
-	if type(overrides) ~= "table" or next(Refii._camera_applied) == nil then return save end
+	if type(overrides) ~= "table" then return save end
+	local partner = false
+	for id, record in pairs(overrides) do if PartnerDefault(id, record) then partner = true end end
+	if next(Refii._camera_applied) == nil and not partner then return save end
 	local out = {}
 	for k, v in pairs(save) do out[k] = v end
 	local copy = {}
 	for id, record in pairs(overrides) do
 		local hold = Refii._camera_applied[id]
-		if hold ~= nil and type(record) == "table" then
+		if PartnerDefault(id, record) then
+			-- left out: player two's camera's own default record
+		elseif hold ~= nil and type(record) == "table" then
 			local entry = {}
 			for field, value in pairs(record) do entry[field] = value end
 			for _, half in ipairs(CAMERA_HALVES) do
@@ -400,6 +440,22 @@ end
 
 -- Wrapped once per CameraManager table: run again after the camera scripts (the runtime calls it there).
 function Refii._wrap_camera()
+	if type(Player) == "table" and type(Player.GetOverrideCameraMode) == "function" and
+			Player.GetOverrideCameraMode ~= Refii._get_override_camera_mode then
+		local shipped = Player.GetOverrideCameraMode
+		Refii._shipped_get_override_camera_mode = shipped
+		Refii._get_override_camera_mode = function(hero, scope, ...)
+			local key = hero ~= nil and next(Refii._camera_applied) ~= nil and GetIDFromEntity(hero) or nil
+			local hold = key ~= nil and Refii._camera_applied[key] or nil
+			if hold ~= nil then
+				local rule = EInteractiveCutsceneRuleScope
+				if scope == rule.CUTSCENE_RULE_SCOPE_LOOK_AT and hold.Written.LookAt ~= nil then return hold.Mode end
+				if scope == rule.CUTSCENE_RULE_SCOPE_NORMAL and hold.Written.Normal ~= nil then return hold.Mode end
+			end
+			return shipped(hero, scope, ...)
+		end
+		Player.GetOverrideCameraMode = Refii._get_override_camera_mode
+	end
 	if type(CameraManager) == "table" then
 		if type(CameraManager.GetSaveTable) == "function" and CameraManager.GetSaveTable ~= Refii._camera_save_wrapper then
 			local shipped = CameraManager.GetSaveTable
@@ -423,7 +479,13 @@ function Refii._wrap_camera()
 			end
 			Refii._camera_wrapper = function(self, player, a, b, c)
 				if player ~= nil then pcall(Refii._camera_apply, player) end
-				local r1, r2, r3 = inner(self, player, a, b, c)
+				if player ~= nil and Refii._camapi ~= nil then pcall(Refii._camapi.TuneFor, player) end
+				local r1, r2, r3
+				if player ~= nil and Refii._coop_frame ~= nil and Refii._couch ~= nil and Refii._couch.Couch() then
+					r1, r2, r3 = Refii._coop_frame(self, player, inner, a, b, c)
+				else
+					r1, r2, r3 = inner(self, player, a, b, c)
+				end
 				if player ~= nil and Refii._camera_stated ~= nil then
 					pcall(Refii._camera_stated, player, ModeOf(self.CurrentCamera))
 				end
@@ -527,6 +589,696 @@ function Refii._wrap_camera()
 			return shipped(self, ...)
 		end
 		RangedCombatCamera.UpdateCurrentDirection = Refii._aim_update_current_direction
+	end
+
+	if Refii._wrap_camera_api ~= nil then Refii._wrap_camera_api() end
+	if Refii._wrap_coop_camera ~= nil then Refii._wrap_coop_camera() end
+end
+-- THE CAMERA MOD API'S SHAPE (ModApi.CameraShapeMeaning). What the mods state is Refii._cam[p] (the
+-- shared preamble, Engine_ModLuaCamera.cs, run after this chunk: every read checks it is there);
+-- each value is applied where the camera scripts read their own (stringandcagecamera.lua,
+-- targetlockcamera.lua, cameramanager.lua):
+--   tune      SACCamera's class fields (HeightAdjustSpeed in ProcessGameAction; the height bounds in
+--             GetHeight; CameraMoveDamping in FrameUpdate; DirectionStrengthHard in
+--             CalculateDesiredDirection; InwardsRotateSpeed in AlignToDirection), written for the
+--             player whose camera manager updates next, the shipped value put back when let go.
+--   frame     the explore zoom levels (MyExteriorZoomLevels / MyInteriorZoomLevels: the first of each,
+--             or all), reshaped before CalculateActiveZoomLevel picks from them, the shipped values kept
+--             per level table and put back.
+--   combat    GetDesiredCombatCamWeight's answer.
+--   interest  the lists CalculateCentreAndCage takes foes and passers-by from, empty for the call.
+--   pitch     GetHeight's decay of ManualHeightOffset undone: the clamped value put back.
+--   lock      CalculateDesiredDirection: the lock's target framed with no look-at button held.
+--   deny      IsValid of the camera the override set lists under a mode (the normal set asks it;
+--             GetOverrideCamera picks by mode without asking).
+-- frame, combat, interest, lock and deny apply to a camera framing ONE hero (not
+-- CameraFunctions.IsMultiplayerSharedScreen(camera.Player)); pitch too unless stated shared; tune
+-- always. With nothing stated every wrap is the shipped function called with its own arguments.
+-- Not answered on Fable 3: focus, the ranged_* and fp_* tune keys (no wrap is installed for them).
+do
+	local A = Refii._camapi or {}
+	Refii._camapi = A
+	A.Shipped = A.Shipped or setmetatable({}, { __mode = "k" })
+	A.Shaped = A.Shaped or setmetatable({}, { __mode = "k" })
+	A.Wrapped = A.Wrapped or setmetatable({}, { __mode = "k" })
+	A.Empty = {}
+	A.LevelKeys = { "StringLength", "CageRadius", "MaxCageRadius", "SlotWidth", "SlotDepthNear", "SlotDepthFar", "TrackAmount", "HeightOffset", "FocalOffset" }
+	A.TuneFields = {
+		pitch_speed = "HeightAdjustSpeed", pitch_max = "HeightOffsetUpperBound", pitch_min = "HeightOffsetLowerBound",
+		move_damping = "CameraMoveDamping", lock_strength = "DirectionStrengthHard", lock_turn_speed = "InwardsRotateSpeed",
+	}
+
+	-- What is stated for the player whose hero `hero` is; nil with nothing stated.
+	function A.State(hero)
+		local cam = Refii._cam
+		if cam == nil or hero == nil or not (cam[1].any or cam[2].any) then return nil end
+		local p = Refii.player_of(hero)
+		local state = (p == 1 or p == 2) and cam[p] or nil
+		return state ~= nil and state.any and state or nil
+	end
+
+	function A.OneHero(hero) return not CameraFunctions.IsMultiplayerSharedScreen(hero) end
+
+	-- One zoom level as `want` says: a frame's serial (shaped by it) or false (the shipped values).
+	function A.Shape(level, want, frame, distance)
+		if type(level) ~= "table" or A.Shaped[level] == want or (want == false and A.Shaped[level] == nil) then return end
+		local shipped = A.Shipped[level]
+		if shipped == nil then
+			shipped = {}
+			for _, key in ipairs(A.LevelKeys) do shipped[key] = level[key] end
+			A.Shipped[level] = shipped
+		end
+		for _, key in ipairs(A.LevelKeys) do level[key] = shipped[key] end
+		if want ~= false then
+			if distance ~= nil then
+				level.StringLength = distance
+				level.CageRadius = distance
+				level.MaxCageRadius = distance
+			end
+			if frame.slot ~= nil then
+				level.SlotWidth = frame.slot
+				level.SlotDepthNear = frame.slot
+				level.SlotDepthFar = frame.slot
+			end
+			if frame.track ~= nil then level.TrackAmount = frame.track end
+			if frame.height ~= nil then level.HeightOffset = frame.height end
+			if frame.focus_height ~= nil then level.FocalOffset = frame.focus_height end
+		end
+		A.Shaped[level] = want
+	end
+
+	function A.ShapeSet(set, want, frame, distance)
+		if type(set) ~= "table" then return end
+		for i, level in ipairs(set) do
+			local on = want ~= false and (i == 1 or frame.levels == "all")
+			A.Shape(level, on and want or false, frame, distance)
+		end
+	end
+
+	-- The class fields as `state` tunes them, the shipped value for every key it does not state.
+	function A.Tune(state)
+		local tune = state ~= nil and state.tune or nil
+		if (tune == nil and not A.Tuned) or type(SACCamera) ~= "table" then return end
+		local shipped = A.Shipped[SACCamera]
+		if shipped == nil then shipped = {} A.Shipped[SACCamera] = shipped end
+		local any = false
+		for key, field in pairs(A.TuneFields) do
+			local value = tune ~= nil and tune[key] or nil
+			if value ~= nil then
+				if shipped[field] == nil then shipped[field] = { SACCamera[field] } end
+				SACCamera[field] = value
+				any = true
+			elseif shipped[field] ~= nil then
+				SACCamera[field] = shipped[field][1]
+			end
+		end
+		A.Tuned = any
+	end
+
+	-- Called by the FrameUpdate wrapper for the hero whose camera manager updates.
+	function A.TuneFor(hero)
+		local cam = Refii._cam
+		if A.Tuned or (cam ~= nil and (cam[1].any or cam[2].any)) then A.Tune(A.State(hero)) end
+	end
+
+	function A.Deny()
+		local cam = Refii._cam
+		if cam == nil or type(CameraManager) ~= "table" or type(CameraManager.CameraSetList) ~= "table" then return end
+		for p = 1, 2 do
+			for mode, _ in pairs(cam[p].deny or A.Empty) do
+				for _, set in ipairs(CameraManager.CameraSetList) do
+					local class = type(set) == "table" and set.OverridesCameraValidity and
+						type(set.CameraModes) == "table" and set.CameraModes[mode] or nil
+					if type(class) == "table" and type(class.IsValid) == "function" and A.Wrapped[class] ~= class.IsValid then
+						local valid = class.IsValid
+						local wrapped = function(hero, ...)
+							local state = A.State(hero)
+							if state ~= nil and state.deny ~= nil and state.deny[mode] and A.OneHero(hero) then return false end
+							return valid(hero, ...)
+						end
+						class.IsValid = wrapped
+						A.Wrapped[class] = wrapped
+					end
+				end
+			end
+		end
+	end
+
+	function A.Wrap()
+		if type(SACCamera) == "table" and type(SACCamera.CalculateActiveZoomLevel) == "function" and A.Wrapped[SACCamera] == nil then
+			A.Wrapped[SACCamera] = true
+
+			local calculate_active = SACCamera.CalculateActiveZoomLevel
+			SACCamera.CalculateActiveZoomLevel = function(self, ...)
+				local cam = Refii._cam
+				if cam ~= nil and (cam[1].frame ~= nil or cam[2].frame ~= nil or self.RefiiFramed) then
+					local state = A.State(self.Player)
+					local frame = state ~= nil and state.frame or nil
+					local want = frame ~= nil and A.OneHero(self.Player) and state.frame_serial or false
+					local distance = frame ~= nil and frame.distance or nil
+					A.ShapeSet(self.MyExteriorZoomLevels, want, frame, distance)
+					if distance ~= nil and frame.interior_scale ~= nil then distance = distance * frame.interior_scale end
+					A.ShapeSet(self.MyInteriorZoomLevels, want, frame, distance)
+					self.RefiiFramed = (cam[1].frame ~= nil or cam[2].frame ~= nil) or nil
+				end
+				calculate_active(self, ...)
+				-- The level in force now is camera_zoom's; a change of set or of the combat blend raises
+				-- camera_zoom_changed (Refii._camera_zoom_record, the preamble).
+				if Refii._camera_zoom_record ~= nil then
+					Refii._camera_zoom_record(self, Refii.player_of(self.Player) or 0, self.Player)
+				end
+			end
+
+			local combat_weight = SACCamera.GetDesiredCombatCamWeight
+			SACCamera.GetDesiredCombatCamWeight = function(self, ...)
+				local state = A.State(self.Player)
+				if state ~= nil and state.combat ~= nil and A.OneHero(self.Player) then return state.combat end
+				return combat_weight(self, ...)
+			end
+
+			-- camera_focus: the centre slid to the camera's right and up by how far the ease has got (as Fable 2's
+			-- C.CamSlid: right is the camera's facing turned a quarter about world Z).
+			local function slid(self, centre, slide)
+				local forward = self.Camera and Physics.GetFacingVector(self.Camera)
+				local share = self.RefiiFocusShare or 0
+				if forward == nil or centre == nil or share <= 0 then return centre end
+				return centre + CVector3(forward:GetY() * slide.right * share, -forward:GetX() * slide.right * share, slide.up * share)
+			end
+			local centre_and_cage = SACCamera.CalculateCentreAndCage
+			SACCamera.CalculateCentreAndCage = function(self, ...)
+				local state = A.State(self.Player)
+				local interest = state ~= nil and state.interest or nil
+				local focus = state ~= nil and state.focus or nil
+				if interest == nil and focus == nil and self.RefiiFocus == nil then
+					return centre_and_cage(self, ...)
+				end
+				local one = A.OneHero(self.Player)
+				local sliding = focus ~= nil and one
+				if sliding then self.RefiiFocus = focus end
+				local slide = self.RefiiFocus
+				if slide ~= nil then
+					local share = self.RefiiFocusShare or 0
+					share = share + ((sliding and 1 or 0) - share) * slide.ease
+					self.RefiiFocusShare = share
+					if not sliding and share < 0.01 then
+						self.RefiiFocusShare = nil
+						self.RefiiFocus = nil
+						slide = nil
+					end
+				end
+				if interest == nil or (interest.foes and interest.passers) or not one then
+					if slide == nil then return centre_and_cage(self, ...) end
+					local centre, cage = centre_and_cage(self, ...)
+					return slid(self, centre, slide), cage
+				end
+				local foes = self.WeightedNearbyFoes
+				local near = self.WeightedNearbyInterestingEntities
+				local high = self.WeightedNearbyInterestingEntitiesHigh
+				if not interest.foes then self.WeightedNearbyFoes = A.Empty end
+				if not interest.passers then
+					self.WeightedNearbyInterestingEntities = A.Empty
+					self.WeightedNearbyInterestingEntitiesHigh = A.Empty
+				end
+				local ok, centre, cage = pcall(centre_and_cage, self, ...)
+				self.WeightedNearbyFoes = foes
+				self.WeightedNearbyInterestingEntities = near
+				self.WeightedNearbyInterestingEntitiesHigh = high
+				if not ok then error(centre, 0) end
+				if slide ~= nil then centre = slid(self, centre, slide) end
+				return centre, cage
+			end
+
+			local get_height = SACCamera.GetHeight
+			SACCamera.GetHeight = function(self, current_pos, centre, cage_radius, ...)
+				local state = A.State(self.Player)
+				local pitch = state ~= nil and state.pitch or nil
+				if pitch == nil or (not pitch.shared and not A.OneHero(self.Player)) then
+					return get_height(self, current_pos, centre, cage_radius, ...)
+				end
+				local held = self.ManualHeightOffset
+				if pitch.min == nil and pitch.max == nil then
+					local height = get_height(self, current_pos, centre, cage_radius, ...)
+					if held ~= nil then
+						self.ManualHeightOffset = math.min(math.max(held, -self.HeightOffsetLowerBound), self.HeightOffsetUpperBound)
+					end
+					return height
+				end
+				local upper, lower = SACCamera.HeightOffsetUpperBound, SACCamera.HeightOffsetLowerBound
+				local up, down = pitch.max or upper, pitch.min or lower
+				SACCamera.HeightOffsetUpperBound, SACCamera.HeightOffsetLowerBound = up, down
+				local ok, height = pcall(get_height, self, current_pos, centre, cage_radius, ...)
+				SACCamera.HeightOffsetUpperBound, SACCamera.HeightOffsetLowerBound = upper, lower
+				if not ok then error(height, 0) end
+				if held ~= nil then self.ManualHeightOffset = math.min(math.max(held, -down), up) end
+				return height
+			end
+
+			-- CalculateDesiredDirection frames a TARGET_LOCK only while the look-at button is down;
+			-- otherwise it clears TargetLockTarget, which UpdateTarget set this update from
+			-- Targeting.GetTarget while the hero holds PLAYER_MODE_TARGET_LOCK. When the shipped pass
+			-- frames nothing, the lock branch's own statements are made for that target.
+			if type(SACCamera.CalculateDesiredDirection) == "function" then
+				local desired_direction = SACCamera.CalculateDesiredDirection
+				SACCamera.CalculateDesiredDirection = function(self, ...)
+					local state = A.State(self.Player)
+					local lock = state ~= nil and state.lock or nil
+					if lock == nil then return desired_direction(self, ...) end
+					local target = self.TargetLockTarget
+					desired_direction(self, ...)
+					if self.DesiredTargetDirection ~= nil or target == nil or not target:IsAlive() then return end
+					if not A.OneHero(self.Player) or not self:IsTargetLocking() then return end
+					self.TargetLockTarget = target
+					local direction = self:CalculateTargetLockDesiredVector()
+					if direction == nil then
+						self.TargetLockTarget = nil
+						return
+					end
+					self.DesiredTargetDirection = direction
+					self.AvoidAligning = true
+					self.DesiredDirectionStrength = lock.strength or SACCamera.DirectionStrengthHard
+					if lock.tilt then self.TiltVerticalTarget = self:CalculateTargetLockTargetPosition() end
+				end
+			end
+		end
+		-- The gun aim (rangedcombatcamera.lua, as Fable 2's): ranged_pitch_limit is AngleLimit (degrees; the
+		-- class's pi/6 put back when let go), ranged_tightness GetTightness's answer, ranged_offset
+		-- GetOffsetDegrees's; each asked for the camera's own player (self.Player, set in its Activate).
+		if type(RangedCombatCamera) == "table" and type(RangedCombatCamera.GetTightness) == "function" and
+				A.Wrapped[RangedCombatCamera] == nil then
+			A.Wrapped[RangedCombatCamera] = true
+			local shipped_limit = RangedCombatCamera.AngleLimit
+			local tightness = RangedCombatCamera.GetTightness
+			RangedCombatCamera.GetTightness = function(self, ...)
+				local state = A.State(self.Player)
+				local tune = state ~= nil and state.tune or nil
+				local limit = tune ~= nil and tune.ranged_pitch_limit or nil
+				if limit ~= nil then
+					self.AngleLimit = limit * math.pi / 180
+					self.RefiiAngleLimited = true
+				elseif self.RefiiAngleLimited then
+					self.AngleLimit = shipped_limit
+					self.RefiiAngleLimited = nil
+				end
+				if tune ~= nil and tune.ranged_tightness ~= nil then return tune.ranged_tightness end
+				return tightness(self, ...)
+			end
+			if type(RangedCombatCamera.GetOffsetDegrees) == "function" then
+				local offset = RangedCombatCamera.GetOffsetDegrees
+				RangedCombatCamera.GetOffsetDegrees = function(self, ...)
+					local state = A.State(self.Player)
+					local tune = state ~= nil and state.tune or nil
+					if tune ~= nil and tune.ranged_offset ~= nil then return tune.ranged_offset end
+					return offset(self, ...)
+				end
+			end
+		end
+		-- THE HELD FIRST-PERSON VIEW (tune fp_view, stated while a mod holds first person through camera_override),
+		-- as Fable 2's, over Fable 3's firstpersoncamera.lua (the same class: Activate, ProcessGameAction,
+		-- FrameUpdate, UpdateRotations bounded by VerticalAngularBound, GetDesiredPosFromPlayer = the collision
+		-- head). On a FirstPersonCamera activated for such a player and not opened by the game's own look mode
+		-- (CameraFunctions.IsInFirstPerson): fp_fov is its FOV; only GAME_ACTION_CAMERA_ROTATION turns it (the
+		-- shipped one also turns it with the left stick, GAME_ACTION_CAMERA_ROTATION_FIRST_PERSON_LEFT_STICK,
+		-- which here walks the hero); the eye fp_eye_forward ahead of and fp_eye_height above the head, kept
+		-- above water; a scene's framed point faced until the player looks away; the hero turned to the view by
+		-- fp_face (0 never, 1 while standing, 2 always) with no body fade; fp_pitch_limit bounds the pitch.
+		-- With fp_scenes a SIMPLE or SAC pick of an override set is shown through it, never in a full cutscene.
+		function A.FirstPersonTune(hero)
+			local state = A.State(hero)
+			local tune = state ~= nil and state.tune or nil
+			return tune ~= nil and tune.fp_view ~= nil and tune.fp_view ~= 0 and tune or nil
+		end
+		function A.OverrideFocus(data)
+			if data.FocusFunction then return data.FocusFunction() end
+			local entity = data.FocusEntity or data.InterestingObject
+			if entity ~= nil and type(entity) == "userdata" and entity.IsAlive and entity:IsAlive() then
+				return CameraFunctions.GetObjectPosition(entity)
+			end
+			return nil
+		end
+		if type(FirstPersonCamera) == "table" and type(FirstPersonCamera.FrameUpdate) == "function" and
+				A.Wrapped[FirstPersonCamera] == nil then
+			A.Wrapped[FirstPersonCamera] = true
+			local activate = FirstPersonCamera.Activate
+			FirstPersonCamera.Activate = function(self, hero, camera, previous_camera, ...)
+				local a, b, c = activate(self, hero, camera, previous_camera, ...)
+				local tune = A.FirstPersonTune(hero)
+				self.RefiiView = (tune ~= nil and not CameraFunctions.IsInFirstPerson(hero)) or nil
+				self.RefiiTune = self.RefiiView and tune or nil
+				if self.RefiiView and tune.fp_fov ~= nil then self:SetFOV(tune.fp_fov) end
+				return a, b, c
+			end
+			local process_action = FirstPersonCamera.ProcessGameAction
+			FirstPersonCamera.ProcessGameAction = function(self, action, control_x, control_y, ...)
+				if not self.RefiiView then return process_action(self, action, control_x, control_y, ...) end
+				if action == EGameAction.GAME_ACTION_CAMERA_ROTATION then
+					self.RotateX = (self.RotateX or 0) + control_x
+					self.RotateY = (self.RotateY or 0) + control_y
+				end
+			end
+			local frame_update = FirstPersonCamera.FrameUpdate
+			FirstPersonCamera.FrameUpdate = function(self, ...)
+				if not self.RefiiView then return frame_update(self, ...) end
+				local tune = A.FirstPersonTune(self.Player) or self.RefiiTune or A.Empty
+				self.RefiiTune = tune
+				local bound = FirstPersonCamera.VerticalAngularBound
+				FirstPersonCamera.VerticalAngularBound = tune.fp_pitch_limit or 75
+				local ok, err = pcall(self.UpdateRotations, self)
+				FirstPersonCamera.VerticalAngularBound = bound
+				if not ok then error(err, 0) end
+				local forward = Physics.GetFacingVector(self.Camera)
+				forward:SetZ(0)
+				if forward:GetLengthXY() > 0.001 then forward:Normalise() end
+				local position = FirstPersonCamera.GetDesiredPosFromPlayer(self.Player)
+					+ forward * (tune.fp_eye_forward or 0.12)
+					+ CVector3(0, 0, tune.fp_eye_height or 0.05)
+				if self.Camera and Camera.IsOverWaterAtPosition(self.Camera, position) then
+					local water_height = Camera.GetWaterPositionAtPosition(self.Camera, position):GetZ() + 0.25
+					position:SetZ(math.max(position:GetZ(), water_height))
+				end
+				self:SetDesiredPosition(position)
+				if not self.HasTurned then
+					local data = self:GetOverriddenData()
+					local focus = A.OverrideFocus(data)
+					if focus ~= nil then self:SetDesiredTarget(focus + CVector3(0, 0, data.FocusVerticalOffset or 0)) end
+				end
+				local face = tune.fp_face or 1
+				local still = type(Physics.GetVelocity) == "function" and Physics.GetVelocity(self.Player):GetLengthXY() < 0.5
+				if face >= 2 or (face == 1 and still) then Physics.SetFacingVector(self.Player, forward) end
+				self:SetDesiredDOF(CameraFunctions.AssembleDOFData(50, 50, 50, 50, 0, 0.6))
+				return CameraBase.FrameUpdate(self)
+			end
+		end
+		if type(CameraManager) == "table" and type(CameraManager.CameraSetList) == "table" and type(FirstPersonCamera) == "table" then
+			for _, set in ipairs(CameraManager.CameraSetList) do
+				if type(set) == "table" and set.OverridesCameraValidity and type(set.BestCameraFunction) == "function" and
+						A.Wrapped[set] ~= set.BestCameraFunction then
+					local best_camera = set.BestCameraFunction
+					local wrapped = function(camera_set, hero, ...)
+						local camera = best_camera(camera_set, hero, ...)
+						if camera == SimpleCamera or camera == SACCamera then
+							local tune = A.FirstPersonTune(hero)
+							if tune ~= nil and tune.fp_scenes ~= nil and tune.fp_scenes ~= 0 then
+								local p = Refii.player_of(hero) or 0
+								if not (Refii.in_cutscene ~= nil and Refii.in_cutscene(p, Refii.CUTSCENE_FULL)) then
+									return FirstPersonCamera
+								end
+							end
+						end
+						return camera
+					end
+					set.BestCameraFunction = wrapped
+					A.Wrapped[set] = wrapped
+				end
+			end
+		end
+		A.Deny()
+		local cam = Refii._cam
+		if cam ~= nil then
+			if cam[2].any then A.Tune(cam[2]) end
+			if cam[1].any then A.Tune(cam[1]) end
+		end
+	end
+
+	-- After every statement (the preamble), with the values in force resolved.
+	function Refii._camera_changed(p)
+		local cam = Refii._cam
+		local state = cam ~= nil and cam[p] or nil
+		A.Tune(state ~= nil and state.any and state or nil)
+		A.Deny()
+	end
+	Refii._wrap_camera_api = A.Wrap
+end
+-- =================================================================================================
+-- F. THE COUCH CAMERAS (camera C2f)
+-- =================================================================================================
+-- Player two has a camera manager of their own in a couch game (Fable3/src/hooks/src/coop_camera_hooks.cpp:
+-- the Player ctor's shared-screen skip answered for key 2), updated after player one's with player two's
+-- hero. The camera layer is one Lua instance (one CameraManager table, one table per mode), so:
+--  - player two keeps its own CurrentSet / CurrentCamera / CurrentSetPriority (cameramanager.lua 336-394 keeps
+--    them on the one table), swapped in around its update, one record per manager; player one's are the table's;
+-- PLAYER TWO'S UPDATE IS THE NATIVE'S WHOLE UPDATE (CC.PartnerUpdating, Refii._partner_camera_update): one
+-- manager update makes two Lua calls, the selection CameraManager:FrameUpdate(hero) (TU3 0x82255518 / disc
+-- 0x822562E8) and then the active mode's FrameUpdate (TU3 0x82255540 / disc 0x82256310). The selection only
+-- picks; the mode's update writes the saved CameraPosition, states the leash and the canopy fading and reads
+-- the partner. So for the whole of it:
+--  - player two's update runs as player two (GetLocalHero is hero two, GetRemoteHero hero one: Acting, and
+--    Refii.run_as_player around the selection), so its SAC frames player two with player one as its partner
+--    (stringandcagecamera.lua 675, 1437: Secondary = GetRemoteHero(), read in the mode's update);
+--  - it leaves CameraManager.CameraPosition and PrimedFromLoad as player one's camera wrote them: the two
+--    writers, CameraBase:FrameUpdate (camerabase.lua 247-248) and :PureFrameUpdate (299-300), put them back
+--    after player two's write (GetSaveTable saves CameraPosition, cameramanager.lua 211);
+--  - it states no leash (SACCamera:SetMaxCoopDistance, stringandcagecamera.lua 2543) and no canopy fading
+--    (camerabase.lua 262-264): player one's camera does, as the one camera of the shipped couch screen;
+--  - the default record it makes for hero two is not saved (PartnerDefault, above).
+-- EACH PLAYER THEIR OWN CAMERA while the screen is split (Refii._coop_split, the shell's split): the shared-
+-- screen predicates CameraFunctions.IsMultiplayerSharedScreen and IsMultiplayerScreen (camerafunctions.lua
+-- 38-44) answer false, so each SAC frames its own hero and the Multiplayer set (cameramanager.lua 270-273,
+-- which captured the predicate: repointed) stands aside; ranged and first person (camerafunctions.lua 72, 81)
+-- are each player's own.
+-- THE LEASH PER SCREEN. Debug.SetMultiPlayerHeroFree (byte_83596FF3, disc byte_83556501) is the leash's first
+-- test (`lbz r10,byte_83596FF3; bne` 0x8279C124 to the epilogue 0x8279C7A0; disc 0x827659FC / 0x8276607C) and has
+-- no other reader, so free skips the leash whole and changes nothing else. Shared: the shipped leash. Split
+-- and hybrid: free; hybrid keeps the distance stated, and player one's camera states it and the heads'
+-- separation every tick for hybrid's split (Refii._coop_tether_stated: Creature.GetCollisionHeadPosition,
+-- head to head in 3-D as the leash measures, 0x8279C4D4 `fsqrts f31`). The distance hybrid measures against is
+-- the shared camera's (CC.SharedLeashMetres), held while split: SAC scales MaxCoopDistance by the hero only
+-- while it frames one hero (`self_2.Secondary and 1 or SACCamera.CalculateScale(self_2.Player, ...)`,
+-- stringandcagecamera.lua 2246; Secondary nil while IsMultiplayerScreen answers false, 1436-1443). After free
+-- with the heroes beyond the distance they stay free until they are within it: the leash holds every step
+-- that ends beyond it.
+Refii._couch = Refii._couch or { State = {}, Made = {}, OwnWraps = {}, LeashMetres = 30 }
+local CC = Refii._couch
+function CC.Couch() return type(Network) == "table" and type(Network.IsInCouchGame) == "function" and Network.IsInCouchGame() == true end
+function CC.PartnerUpdating() return Refii._partner_camera_update ~= nil and Refii._partner_camera_update() == true end
+function CC.Split() return CC.Couch() and Refii._coop_split ~= nil and Refii._coop_split() == true end
+function CC.Hybrid() return CC.Couch() and Refii._camera_read ~= nil and Refii._camera_read(4, 0) == 3 end
+local function ShippedHero(i)
+	local get = Refii._shipped_heroes ~= nil and Refii._shipped_heroes[i] or (i == 1 and GetLocalHero or GetRemoteHero)
+	return get ~= nil and get() or nil
+end
+function CC.IsPartner(hero)
+	local one = hero ~= nil and CC.Couch() and ShippedHero(1) or nil
+	return one ~= nil and GetIDFromEntity(one) ~= GetIDFromEntity(hero)
+end
+function CC.TetherTick(hero)
+	if Refii._coop_tether_stated == nil or type(Creature) ~= "table" or Creature.GetCollisionHeadPosition == nil then return end
+	local partner = ShippedHero(2)
+	if partner == nil or not partner:IsAlive() then return end
+	local a, b = Creature.GetCollisionHeadPosition(hero), Creature.GetCollisionHeadPosition(partner)
+	if a == nil or b == nil then return end
+	local dx, dy, dz = a:GetX() - b:GetX(), a:GetY() - b:GetY(), a:GetZ() - b:GetZ()
+	CC.Separation = math.sqrt(dx * dx + dy * dy + dz * dz)
+	Refii._coop_tether_stated(CC.SharedLeashMetres or CC.LeashMetres, CC.Separation)
+end
+function CC.Reuniting(free)
+	if free then CC.WasFree = true return false end
+	if not CC.WasFree then return false end
+	if CC.Separation == nil or CC.Separation <= CC.LeashMetres then CC.WasFree = false return false end
+	return true
+end
+
+-- One hero's camera update in a couch game (the FrameUpdate wrapper above calls it). Player one's runs on the
+-- shipped fields; player two's record is swapped in around its update and belongs to ONE manager
+-- (Refii._partner_camera_manager, coop_camera_hooks.cpp): hero two may come back as the same entity, and a
+-- record carried over would name the old manager's camera as current, so the new manager's selection would
+-- activate nothing and its update call a mode it never built (`lwz r30,0x2C(r26)` .. `bl sub_82258978` TU3
+-- 0x8225552C..0x82255540, disc 0x822562FC..0x82256310).
+function CC.PartnerManager()
+	local at = Refii._partner_camera_manager ~= nil and Refii._partner_camera_manager() or 0
+	return type(at) == "number" and at or 0
+end
+function Refii._coop_frame(self, player, inner, a, b, c)
+	local partner = CC.IsPartner(player)
+	if not partner then
+		pcall(CC.TetherTick, player)
+		return inner(self, player, a, b, c)
+	end
+	local key = GetIDFromEntity(player)
+	if key == nil then return inner(self, player, a, b, c) end
+	local manager = CC.PartnerManager()
+	local state = CC.State[key]
+	if state == nil or state.Manager ~= manager then
+		state = { Manager = manager }
+		CC.State[key] = state
+	end
+	local set, camera, priority = self.CurrentSet, self.CurrentCamera, self.CurrentSetPriority
+	self.CurrentSet, self.CurrentCamera, self.CurrentSetPriority = state.Set, state.Camera, state.Priority
+	local overrides = type(CameraManager.Overrides) == "table" and CameraManager.Overrides or nil
+	local had = overrides ~= nil and overrides[key] ~= nil
+	local ok, r1, r2, r3 = pcall(Refii.run_as_player, 2, inner, self, player, a, b, c)
+	if overrides ~= nil and not had and overrides[key] ~= nil then CC.Made[key] = overrides[key] end
+	state.Set, state.Camera, state.Priority = self.CurrentSet, self.CurrentCamera, self.CurrentSetPriority
+	self.CurrentSet, self.CurrentCamera, self.CurrentSetPriority = set, camera, priority
+	if not ok then error(r1, 0) end
+	return r1, r2, r3
+end
+
+-- Wrapped once per table (Refii._wrap_camera runs it after every camera-script run).
+function Refii._wrap_coop_camera()
+	if type(CameraFunctions) == "table" then
+		for _, name in ipairs({ "IsMultiplayerSharedScreen", "IsMultiplayerScreen" }) do
+			local shipped = CameraFunctions[name]
+			if type(shipped) == "function" and shipped ~= CC.OwnWraps[name] then
+				local wrap = function(...) if CC.Split() then return false end return shipped(...) end
+				CC.OwnWraps[name] = wrap
+				CameraFunctions[name] = wrap
+				if type(CameraManager) == "table" and type(CameraManager.CameraSetList) == "table" then
+					for _, set in ipairs(CameraManager.CameraSetList) do
+						if type(set) == "table" and set.IsValid == shipped then set.IsValid = wrap end
+					end
+				end
+			end
+		end
+	end
+	if type(CameraManager) == "table" and type(CameraManager.OnLevelLoad) == "function" and
+			CameraManager.OnLevelLoad ~= Refii._coop_level_load then
+		local shipped = CameraManager.OnLevelLoad
+		Refii._coop_level_load = function(self, player, ...)
+			if not CC.IsPartner(player) or type(CameraManager.Overrides) ~= "table" then return shipped(self, player, ...) end
+			local key = GetIDFromEntity(player)
+			local before = key ~= nil and CameraManager.Overrides[key] or nil
+			local r1, r2, r3 = shipped(self, player, ...)
+			local after = key ~= nil and CameraManager.Overrides[key] or nil
+			if after ~= nil and after ~= before then CC.Made[key] = after end
+			return r1, r2, r3
+		end
+		CameraManager.OnLevelLoad = Refii._coop_level_load
+	end
+	-- VISIBLE ON ANY SCREEN, ON A SPLIT COUCH SCREEN. CameraManager.IsEntityVisibleOnAnyScreen (cameramanager.lua
+	-- 453-473) asks the other screen only in a Live game (StartRequestIsEntityVisibleOnRemoteScreen, the only
+	-- yield). While each couch player has their own camera the other screen is player two's, on this machine:
+	-- Global.IsEntityVisibleOnScreen asked again inside player two's camera bracket (Refii._partner_screen), where
+	-- its frustum (sub_8225A768 -> the cached block sub_82221610) and its line of sight (the selector
+	-- sub_82208EA0 -> sub_821CB2E0, Lua_Global_IsEntityVisibleOnScreen 0x82560500..0C) are player two's
+	-- (coop_camera_readers.cpp, coop_camera_hooks.cpp). Never yields; outside the split a tail call.
+	if type(CameraManager) == "table" and type(CameraManager.IsEntityVisibleOnAnyScreen) == "function" and
+			CameraManager.IsEntityVisibleOnAnyScreen ~= Refii._coop_visible_any then
+		local shipped = CameraManager.IsEntityVisibleOnAnyScreen
+		Refii._coop_visible_any = function(entity, ...)
+			if not CC.Split() or type(IsEntityVisibleOnScreen) ~= "function" or Refii._partner_screen == nil then
+				return shipped(entity, ...)
+			end
+			if IsEntityVisibleOnScreen(entity) == true then return true end
+			Refii._partner_screen(true)
+			local ok, seen = pcall(IsEntityVisibleOnScreen, entity)
+			Refii._partner_screen(false)
+			return ok and seen == true
+		end
+		CameraManager.IsEntityVisibleOnAnyScreen = Refii._coop_visible_any
+	end
+	if type(SACCamera) == "table" and type(SACCamera.SetMaxCoopDistance) == "function" and
+			SACCamera.SetMaxCoopDistance ~= Refii._coop_max_distance then
+		local shipped = SACCamera.SetMaxCoopDistance
+		Refii._coop_max_distance = function(self, ...)
+			if not CC.Couch() then return shipped(self, ...) end
+			if CC.PartnerUpdating() then return end
+			local free = CC.Split() or CC.Hybrid()
+			local reuniting = CC.Reuniting(free)
+			if type(Debug) == "table" and type(Debug.SetMultiPlayerHeroFree) == "function" then
+				Debug.SetMultiPlayerHeroFree(free or reuniting)
+			end
+			return shipped(self, ...)
+		end
+		SACCamera.SetMaxCoopDistance = Refii._coop_max_distance
+	end
+	if type(Debug) == "table" and type(Debug.SetLimitCharacterDistance) == "function" and
+			Debug.SetLimitCharacterDistance ~= Refii._coop_limit_distance then
+		local shipped = Debug.SetLimitCharacterDistance
+		Refii._coop_limit_distance = function(distance, ...)
+			if type(distance) == "number" then
+				CC.LeashMetres = distance
+				-- The shared screen's distance (CC.SharedLeashMetres): SACCamera.SetMaxCoopDistance states it here
+				-- (stringandcagecamera.lua 2547), scaled by the hero only while its camera frames one hero (2246).
+				if not CC.Couch() then
+					CC.SharedLeashMetres = nil
+				elseif not CC.Split() then
+					CC.SharedLeashMetres = distance
+				end
+			end
+			return shipped(distance, ...)
+		end
+		Debug.SetLimitCharacterDistance = Refii._coop_limit_distance
+	end
+	if type(Camera) == "table" and type(Camera.EnableTreeCanopyFading) == "function" and
+			Camera.EnableTreeCanopyFading ~= Refii._coop_canopy then
+		local shipped = Camera.EnableTreeCanopyFading
+		Refii._coop_canopy = function(...)
+			if CC.PartnerUpdating() then return end
+			return shipped(...)
+		end
+		Camera.EnableTreeCanopyFading = Refii._coop_canopy
+	end
+	-- THE HUD'S PLAYER ICONS: a camera's statement is its own player's, anything else's is everyone's.
+	-- SACCamera:Activate / :Deactivate end GUI.SetShouldDrawPlayerIcons(true / false) (stringandcagecamera.lua
+	-- 763, 784; MagicCombatCamera and TrackingCamera reach them by name); a quest states it too
+	-- (qc140_coronation.lua 737 false, 768 true). CC.IconsFromCamera counts the calls inside a camera's
+	-- Activate / Deactivate.
+	--   - player two's camera: player two's half's switch (Refii._partner_player_icons, stated value 25, which
+	--     the hero marker's record update takes while split: coop_player_icons.cpp);
+	--   - player one's camera: the game's own switch (Lua_GUI_SetShouldDrawPlayerIcons `stb r31,0x10(r8)`
+	--     0x8254BDD8), and this machine's alone: Refii._camera_player_icons marks the call, so the native's
+	--     send to an online partner is skipped and a joiner's markers follow the joiner's own camera;
+	--   - anything else (a quest): the game's own switch, sent to an online partner as shipped, and player two's
+	--     half's too on the couch.
+	if type(SACCamera) == "table" then
+		Refii._coop_sac_icons = Refii._coop_sac_icons or {}
+		for _, name in ipairs({ "Activate", "Deactivate" }) do
+			local shipped = SACCamera[name]
+			if type(shipped) == "function" and shipped ~= Refii._coop_sac_icons[name] then
+				local wrap = function(self, ...)
+					CC.IconsFromCamera = (CC.IconsFromCamera or 0) + 1
+					local ok, a, b, c, d = pcall(shipped, self, ...)
+					CC.IconsFromCamera = CC.IconsFromCamera - 1
+					if not ok then error(a, 0) end
+					return a, b, c, d
+				end
+				Refii._coop_sac_icons[name] = wrap
+				SACCamera[name] = wrap
+			end
+		end
+	end
+	if type(GUI) == "table" and type(GUI.SetShouldDrawPlayerIcons) == "function" and
+			GUI.SetShouldDrawPlayerIcons ~= Refii._coop_player_icons then
+		local shipped = GUI.SetShouldDrawPlayerIcons
+		Refii._coop_player_icons = function(on, ...)
+			if CC.PartnerUpdating() then
+				if Refii._partner_player_icons ~= nil then Refii._partner_player_icons(on == true) end
+				return
+			end
+			local camera = (CC.IconsFromCamera or 0) > 0
+			if not camera and CC.Couch() and Refii._partner_player_icons ~= nil then
+				Refii._partner_player_icons(on == true)
+			end
+			if not camera or Refii._camera_player_icons == nil then return shipped(on, ...) end
+			Refii._camera_player_icons(true)
+			local ok, a, b, c, d = pcall(shipped, on, ...)
+			Refii._camera_player_icons(false)
+			if not ok then error(a, 0) end
+			return a, b, c, d
+		end
+		GUI.SetShouldDrawPlayerIcons = Refii._coop_player_icons
+	end
+	-- THE SAVE KEEPS PLAYER ONE'S CAMERA: the two writers of CameraManager.CameraPosition / PrimedFromLoad
+	-- (camerabase.lua 247-248, 299-300; every mode reaches them by name, CameraBase.FrameUpdate(self) /
+	-- CameraBase.PureFrameUpdate(self)) put both back after player two's write; outside player two's update
+	-- they are a tail call to the shipped function.
+	if type(CameraBase) == "table" then
+		Refii._coop_camera_base = Refii._coop_camera_base or {}
+		for _, name in ipairs({ "FrameUpdate", "PureFrameUpdate" }) do
+			local shipped = CameraBase[name]
+			if type(shipped) == "function" and shipped ~= Refii._coop_camera_base[name] then
+				local wrap = function(self, ...)
+					if not CC.PartnerUpdating() then return shipped(self, ...) end
+					local position, primed = CameraManager.CameraPosition, CameraManager.PrimedFromLoad
+					local ok, a, b, c, d = pcall(shipped, self, ...)
+					CameraManager.CameraPosition, CameraManager.PrimedFromLoad = position, primed
+					if not ok then error(a, 0) end
+					return a, b, c, d
+				end
+				Refii._coop_camera_base[name] = wrap
+				CameraBase[name] = wrap
+			end
+		end
 	end
 end
 Refii._wrap_camera()
@@ -895,13 +1647,21 @@ end
 -- The scope is per coroutine (a yield inside fn keeps it; the main thread is keyed by the table itself).
 Refii._acting = Refii._acting or setmetatable({}, { __mode = "k" })
 local function ActingKey() return coroutine.running() or Refii._acting end
+-- Who GetLocalHero means: a scope Refii.run_as_player opened, else player two for the whole of player two's
+-- camera manager update in a couch game (Refii._partner_camera_update, the native's span: its selection and
+-- its mode's update, section F), else as it stands.
+local function Acting()
+	local p = Refii._acting[ActingKey()]
+	if p == nil and Refii._partner_camera_update ~= nil and Refii._partner_camera_update() == true then return 2 end
+	return p
+end
 local function WrapHeroes()
 	if Refii._shipped_heroes ~= nil then return true end
 	if type(GetLocalHero) ~= "function" or type(GetRemoteHero) ~= "function" then return false end
 	local loc, rem = GetLocalHero, GetRemoteHero
 	Refii._shipped_heroes = { loc, rem }
-	GetLocalHero = function() if Refii._acting[ActingKey()] == 2 then return rem() end return loc() end
-	GetRemoteHero = function() if Refii._acting[ActingKey()] == 2 then return loc() end return rem() end
+	GetLocalHero = function() if Acting() == 2 then return rem() end return loc() end
+	GetRemoteHero = function() if Acting() == 2 then return loc() end return rem() end
 	return true
 end
 local function Leave(key, before, ...) Refii._acting[key] = before return ... end
@@ -924,7 +1684,10 @@ function Refii.run_as_player(p, fn, ...)
 	local key = ActingKey()
 	local before = Refii._acting[key]
 	Refii._acting[key] = p
-	if key ~= Refii._acting then return Leave(key, before, fn(...)) end
+	if key ~= Refii._acting then
+		Refii._wrap_acting_save()
+		return Leave(key, before, fn(...))
+	end
 	-- The main thread: the scope restored on an error too (at most eight results, no select/unpack:
 	-- the shipped scripts never use them, so the VM's base library is not relied on for them).
 	local ok, a, b, c, d, e, f, g, h = pcall(fn, ...)
@@ -932,6 +1695,67 @@ function Refii.run_as_player(p, fn, ...)
 	if not ok then error(a, 0) end
 	return a, b, c, d, e, f, g, h
 end
+
+-- A SAVED THREAD KEEPS ITS SCOPE. Fable 3's save holds every running quest and general script with its
+-- coroutine (questmanager.lua GetSaveTable 552-565 over CurrentlyRunningQuests, whose `co_update` is
+-- coroutine.create(quest.Update) at 114; generalscriptmanager.lua GetSaveTable 151-157, `co_update` at 26).
+-- A mod's thread parked inside Refii.run_as_player(p, fn) keeps that function's frame
+-- (`return Leave(key, before, fn(...))`), which the save writes by value: its upvalues are WrapHeroes,
+-- ActingKey and Leave, whose own upvalues are only Acting and ActingKey (Fable3CoreLuaSaveSafeTests), so
+-- nothing of ours that holds a native goes with it, and the loaded thread resumes in it. What the frame does not
+-- hold is the scope, Refii._acting[thread] = p: it goes out with the save as RefiiActing = { Version = 1,
+-- Threads = { [thread] = p } } for every thread the shipped save table reaches and comes back at load, so
+-- the loaded thread resumes acting as p. The engine builds and restores the save through the globals
+-- GetSaveTable / LoadScriptSave, called by name each time (the name built at TU3 0x8231FF68 in sub_8231FBD0 /
+-- disc 0x82319070 in sub_82318CD8, and at TU3 0x823205AC / disc 0x823196B4 in lhLuaScriptSystem_LoadScriptSave;
+-- Engine_ModLua's save preamble wraps them the same way). The walk is over tables only and stops at permanents
+-- (PlutoPermanentsSaveTable: written by name), so it never drags in a thread the save does not hold.
+local function SavedThreads(root)
+	local found, seen, stack = {}, {}, { root }
+	local permanents = PlutoPermanentsSaveTable
+	seen[Refii] = true
+	seen[Refii._acting] = true
+	while #stack > 0 do
+		local t = stack[#stack]
+		stack[#stack] = nil
+		if not seen[t] and not (type(permanents) == "table" and permanents[t] ~= nil) then
+			seen[t] = true
+			for k, v in pairs(t) do
+				if type(k) == "thread" then found[k] = true elseif type(k) == "table" then stack[#stack + 1] = k end
+				if type(v) == "thread" then found[v] = true elseif type(v) == "table" then stack[#stack + 1] = v end
+			end
+		end
+	end
+	return found
+end
+function Refii._wrap_acting_save()
+	if type(GetSaveTable) ~= "function" or type(LoadScriptSave) ~= "function" or
+			GetSaveTable == Refii._acting_get_save then return end
+	local get_save, load_save = GetSaveTable, LoadScriptSave
+	Refii._acting_get_save = function(...)
+		local t = get_save(...)
+		if type(t) ~= "table" then return t end
+		local threads = {}
+		for co, _ in pairs(SavedThreads(t)) do
+			local p = Refii._acting[co]
+			if p == 1 or p == 2 then threads[co] = p end
+		end
+		t.RefiiActing = { Version = 1, Threads = threads }
+		return t
+	end
+	GetSaveTable = Refii._acting_get_save
+	LoadScriptSave = function(t, ...)
+		local saved = type(t) == "table" and t.RefiiActing or nil
+		if type(saved) == "table" and saved.Version == 1 and type(saved.Threads) == "table" then
+			for co, p in pairs(saved.Threads) do
+				if type(co) == "thread" and (p == 1 or p == 2) then Refii._acting[co] = p end
+			end
+		end
+		return load_save(t, ...)
+	end
+	if Refii.log ~= nil then Refii.log("[fable3-acting] the save carries each saved thread's acting player (RefiiActing)") end
+end
+Refii._wrap_acting_save()
 
 -- Refii.show_to_player(p, name, ...): the function a global path names ("GUI.DisplayMessageBox", any)
 -- run as player p. Fable 3 has no partner lane in its mod runtime, so a player played on the other

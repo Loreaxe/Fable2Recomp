@@ -19,9 +19,17 @@
 //       sends its highlight to another entity) is already resolved, so r3 is the component
 //       that should light up.
 //
-//   sub_82427FD0(CECTargeted* r3, ...)
-//       States that an entity became or stopped being a target. `CECTargeted+33` is player one
-//       and `+34` player two; this is their only writer. Counted only.
+//   sub_82427FD0(CECTargeted* r3, r4 the byte, r5 the player) — lhECTargeted_SetTargetedByPlayer
+//       States that an entity became or stopped being a player's target. It writes `+0x21` for
+//       player one or `+0x22` for player two (TU1 `stb r28,0x22(r29)` 0x8242810C / `stb r28,0x21(r29)`
+//       0x82428114; disc 0x82397EE4 / 0x82397EEC), the bytes' only writer, then raises the highlight
+//       while either is set (`sub_822A3BF8` 0x82428160 / disc `sub_822A39B8` 0x82397F38, else the
+//       clear `sub_82429BB0` / `sub_82399988`) and the target's "Interact" icon the same way
+//       (`sub_82175310(r3, either)` 0x8242817C / disc `sub_821750D8` 0x82397F54: shown only when
+//       `+0x27` is set, 0x82175320 / 0x821750E8; one pooled type-34 icon keyed "Interact" on the
+//       thing `*(r3+4)`, `lwz r5,4(r29)` 0x8217588C / 0x82175654). Both are ONE per target, raised
+//       for whichever player targets it, so the players who target the thing are stated here,
+//       as the setter leaves its two bytes: each split view keeps its own player's.
 //
 // Keyed by the component pointer, which the host already resolves per entity.
 
@@ -49,5 +57,13 @@ REX_EXTERN(rex_lhECTargeted_SetTargetedByPlayer) {
   refii::vfs::EnsureAlternateSignalStack();
   REX_FUNC_PROLOGUE();
   refii::vfs::NoteHighlightTarget();
-  REFII_VFS_NATIVE_PASSTHROUGH(rex_lhECTargeted_SetTargetedByPlayer);
+  const uint32_t targeted = ctx.r3.u32;
+  __imp__rex_lhECTargeted_SetTargetedByPlayer(ctx, base);
+  if (targeted < 0x10000u || targeted >= 0xC0000000u) {
+    return;
+  }
+  const uint32_t mask = (refii::vfs::LoadGuestU8(base, targeted + 0x21u) != 0u ? 1u : 0u) |
+                        (refii::vfs::LoadGuestU8(base, targeted + 0x22u) != 0u ? 2u : 0u);
+  refii::vfs::NoteTargetedBy(refii::vfs::LoadGuestU32(base, targeted + 4u), mask,
+                             refii::vfs::LoadGuestU8(base, targeted + 0x27u) != 0u);
 }

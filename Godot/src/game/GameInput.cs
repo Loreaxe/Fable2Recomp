@@ -360,7 +360,8 @@ public partial class GameInput : Node
 
 	/// <summary>
 	/// THE DEVICE SWITCH. Whatever was touched last is the device: a key, a mouse button or a
-	/// real mouse movement makes it the keyboard and mouse; a pad button or a stick or trigger
+	/// real mouse movement of a pointer that reaches the game (Engine_UiInputMode.MovementSwitches: not the
+	/// desktop pointer crossing the unfocused window) makes it the keyboard and mouse; a pad button or a stick or trigger
 	/// pushed past a deliberate threshold makes it the controller, at once. Joypads Godot has no
 	/// mapping for are ignored — a keyboard's or mouse's own HID interface can enumerate as one.
 	/// </summary>
@@ -383,7 +384,8 @@ public partial class GameInput : Node
 			case InputEventMouseMotion when IsTouchPointer(@event):
 				break;
 			case InputEventMouseButton { Pressed: true } when MouseInput:
-			case InputEventMouseMotion motion when MouseInput && motion.Relative.LengthSquared() > 4f:
+			case InputEventMouseMotion motion when MouseInput && Engine_UiInputMode.MovementSwitches(
+				motion.Relative.LengthSquared(), !_reportedUnfocused, GameDebugServer.PointerScripted):
 				Engine_UiInputMode.KeyboardMouse = true;
 				break;
 			case InputEventJoypadButton { Pressed: true } button when Engine_Joypads.Known(button.Device):
@@ -734,6 +736,16 @@ public partial class GameInput : Node
 	/// </summary>
 	public static PadState Pad0 { get; private set; }
 
+	/// <summary>
+	/// Guest pad <paramref name="pad"/> as its last publish folded it, before the mods withhold and
+	/// the title masks: <see cref="Pad0"/> for pad 0, and for pads 1-3 the gamepad holding the pad
+	/// with the debug channel's presses aimed at it. What a host surface reads to be pressed by the
+	/// player on that pad (<c>PadOfPlayer</c>); neutral for a pad out of range.
+	/// </summary>
+	public static PadState Seen(int pad) => (uint)pad < (uint)_seen.Length ? _seen[pad] : default;
+
+	private static readonly PadState[] _seen = new PadState[MaxControllers];
+
 	/// <summary>One pad's raw state, before the menu masks.</summary>
 	public struct PadState
 	{
@@ -794,6 +806,7 @@ public partial class GameInput : Node
 		}
 
 		ApplyPadActions(pad, joypad, ref state);
+		_seen[pad] = state;
 		bool connected = joypad >= 0 || GameDebugServer.PadConnected(pad);
 		// A MOD'S CLAIMED ACTIONS leave this pad before the guest reads it (ModInput.Withhold),
 		// and its presses join it (ModInput.Press), for the player the title says the pad is.
@@ -851,7 +864,8 @@ public partial class GameInput : Node
 			DevicePolicyOverride?.WindowFocused ?? (window is null || window.HasFocus()));
 	}
 
-	/// <summary>Said once per focus change, not once per frame.</summary>
+	/// <summary>True while the devices are muted (the window lacks focus), as Publish0 last found it: said once
+	/// per focus change, not once per frame, and the device switch's gate for mouse movement (DetectDevice).</summary>
 	private static bool _reportedUnfocused;
 
 	/// <summary>
@@ -926,6 +940,7 @@ public partial class GameInput : Node
 		ApplyPadActions(0, _padDevice[0], ref state);
 		PadState seen = state;
 		Pad0 = seen;
+		_seen[0] = seen;
 		uint buttons = state.Buttons;
 		int leftX = state.LeftX, leftY = state.LeftY, rightX = state.RightX, rightY = state.RightY;
 		GameDebugServer.RecordInputFrame(

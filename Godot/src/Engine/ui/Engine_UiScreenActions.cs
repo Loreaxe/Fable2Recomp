@@ -93,19 +93,16 @@ public static class Engine_UiScreenActions
 		=> WriteSettings(new System.Collections.Generic.Dictionary<string, string> { [key] = value });
 
 	/// <summary>
-	/// Writes <paramref name="settings"/> into refii.toml over what it holds, dropping the keys in
-	/// <paramref name="remove"/> (a mod control row put back to its default), as one write.
+	/// Writes <paramref name="settings"/> into the title's config, dropping the keys in
+	/// <paramref name="remove"/> (a control row put back to its default), as one write. Only those
+	/// keys' lines change; the rest of the player's file stays as it stands (RuntimeConfig.EditText).
 	/// </summary>
 	public static bool WriteSettings(
 		System.Collections.Generic.IReadOnlyDictionary<string, string> settings,
 		System.Collections.Generic.IEnumerable<string>? remove = null)
 	{
 		string path = Refii.Core.Engine_AppRoot.ConfigPath;
-		System.Collections.Generic.SortedDictionary<string, string> values =
-			Refii.Launcher.Core.RuntimeConfig.ReadValues(path);
-		foreach (var pair in settings) values[pair.Key] = pair.Value;
-		foreach (string key in remove ?? System.Array.Empty<string>()) values.Remove(key);
-		if (!Refii.Launcher.Core.RuntimeConfig.WriteValues(path, values, out string error))
+		if (!Refii.Launcher.Core.RuntimeConfig.EditValues(path, settings, remove ?? System.Array.Empty<string>(), out string error))
 		{
 			Godot.GD.Print($"[screen-actions] could not write settings to {path}: {error}");
 			return false;

@@ -645,9 +645,9 @@ public static class DesktopSettingMetadata
                 "Displays the current game and region on your Discord profile.",
                 Order: 40),
 
-            [Refii.Game.GameSplitView.SwitchKey] = new(
-                SettingsTab.Gameplay, "Co-op & Online Multiplayer", SettingTier.Essential, "Split-Screen Local Co-op",
-                "Gives each local player an independent camera and half of the screen.",
+            [Refii.Camera.Engine_CameraScreens.ModeKey] = new(
+                SettingsTab.Gameplay, "Co-op & Online Multiplayer", SettingTier.Essential, "Local Co-op Screen",
+                "Shared screen, split screen, or shared until the players move apart.",
                 Order: 110),
             [Refii.Game.GameSplitView.OrientationKey] = new(
                 SettingsTab.Gameplay, "Co-op & Online Multiplayer", SettingTier.Essential, "Split-Screen Orientation",

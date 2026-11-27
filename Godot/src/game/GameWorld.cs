@@ -520,6 +520,11 @@ public partial class GameWorld : Node3D
 
 	private void ApplyCameraToGodot(Transform3D transform, float fov)
 	{
+		// A mod's display offset (camera_offset) moves the picture only: everything above keeps the
+		// stated camera, and the guest is never told.
+		float[]? offset = HostBridge.GetCameraOffset(1);
+		transform = Refii.Camera.Engine_CameraViews.Offset(transform, offset);
+		fov = Refii.Camera.Engine_CameraViews.OffsetFov(fov, offset);
 		if (_cameraDirty || !_lastCameraTransform.IsEqualApprox(transform))
 		{
 			_camera.GlobalTransform = transform;
@@ -572,6 +577,7 @@ public partial class GameWorld : Node3D
 		ActiveAimFov = aimFov;
 		HostBridge.SetHostAim(true, guestForward);
 		_cameraLine.Reset(cameraTick, aimDrawn, aimFov);
+		_displayPair = false;
 		_lineDrawn = aimDrawn;
 		_aheadTurn = Basis.Identity;
 		++BlendedCameras;
@@ -703,10 +709,9 @@ public partial class GameWorld : Node3D
 
 			if (!_cameraLine.Empty)
 			{
-				_lineDrawn = _cameraLine.Advance(Refii.Entities.Engine_DrawnFrame.NowUsec,
-					Refii.Entities.Engine_DrawnFrame.DrawTick);
+				_lineDrawn = AdvanceCameraLine(out float tornFov);
 				Transform3D drawnTorn = DrawMouseLook(_lineDrawn);
-				ApplyCameraToGodot(drawnTorn, _cameraLine.DrawnScalar);
+				ApplyCameraToGodot(drawnTorn, tornFov);
 				SampleCameraTrace(drawnTorn.Origin, CameraCarried, cameraTick);
 				_split.Follow(_camera);
 			}
@@ -719,8 +724,15 @@ public partial class GameWorld : Node3D
 			LastMouseLook = lookAfter;
 		}
 
-		bool snap = camera.Flag;
+		// A cut is the stated cut byte on ANY push since the last statement taken, not only the
+		// newest: a frame that takes two pushes still lands the first one's cut (Manager.Cuts).
 		bool stepComplete = Refii.Core.Engine_GuestFrame.Changed;
+		bool snap = camera.Flag || drawnManager!.Cuts != _cameraCutsSeen;
+		if (stepComplete)
+		{
+			_cameraCutsSeen = drawnManager!.Cuts;
+		}
+
 		bool wantsHostAim = lookBefore is not null && lookAfter is { } wholeAim &&
 			Refii.Ui.Engine_UiInputMode.KeyboardMouse &&
 			wholeAim.Mode == Refii.Core.Engine_MouseLook.ModeAim &&
@@ -800,9 +812,7 @@ public partial class GameWorld : Node3D
 		int how;
 		if (!stepComplete && !_cameraLine.Empty)
 		{
-			drawn = _cameraLine.Advance(Refii.Entities.Engine_DrawnFrame.NowUsec,
-				Refii.Entities.Engine_DrawnFrame.DrawTick);
-			drawnFov = _cameraLine.DrawnScalar;
+			drawn = AdvanceCameraLine(out drawnFov);
 			++CarriedCameras;
 			how = CameraCarried;
 		}
@@ -813,6 +823,7 @@ public partial class GameWorld : Node3D
 			// A stated snap (`live+0x34`) restarts the history rather than gliding across it, and
 			// so does a jump the bodies treat as a teleport — the two restart together.
 			_cameraLine.Reset(cameraTick, stated, fov);
+			TakeDisplayStep(drawnManager!, restart: true);
 			++LiveOnlyCameras;
 			drawn = stated;
 			how = CameraReset;
@@ -822,9 +833,8 @@ public partial class GameWorld : Node3D
 			// On the bodies' clock and rule (Engine_TickTimeline): moved by the stated motion
 			// every frame, steered toward the guest's blend at the world's draw point.
 			_cameraLine.Observe(cameraTick, stated, fov);
-			drawn = _cameraLine.Advance(Refii.Entities.Engine_DrawnFrame.NowUsec,
-				Refii.Entities.Engine_DrawnFrame.DrawTick);
-			drawnFov = _cameraLine.DrawnScalar;
+			TakeDisplayStep(drawnManager!, restart: false);
+			drawn = AdvanceCameraLine(out drawnFov);
 			++BlendedCameras;
 			how = CameraObserved;
 		}
@@ -845,6 +855,86 @@ public partial class GameWorld : Node3D
 		}
 	}
 
+
+	/// <summary>The drawn manager's cut count at the last statement taken (Engine_CameraRig.Manager.Cuts).</summary>
+	private uint _cameraCutsSeen;
+
+	/// <summary>The two stated steps the camera line is drawing between, and whether they are
+	/// consecutive pushes of the drawn manager (Engine_CameraDisplay shapes only such a pair).</summary>
+	private Refii.Camera.Engine_CameraDisplay.Step _displayFrom;
+	private Refii.Camera.Engine_CameraDisplay.Step _displayTo;
+	private uint _displayPush;
+	private bool _displayPair;
+
+	/// <summary>
+	/// The step the camera line just took, kept beside it: the drawn manager's live block and how
+	/// its step made it, with the push before it as the step it is drawn from. A restart, a
+	/// manager whose previous push is unknown, or pushes taken more than one at a time leave no pair.
+	/// </summary>
+	private void TakeDisplayStep(Refii.Camera.Engine_CameraRig.Manager manager, bool restart)
+	{
+		if (manager.Live is not { } live)
+		{
+			_displayPair = false;
+			return;
+		}
+
+		if (!restart && manager.Pushes == _displayPush)
+		{
+			return;
+		}
+
+		_displayPair = !restart && manager.Pushes == _displayPush + 1u && manager.Previous is { Known: true };
+		_displayPush = manager.Pushes;
+		_displayTo = new Refii.Camera.Engine_CameraDisplay.Step(live, manager.LiveEase);
+		_displayFrom = _displayPair
+			? new Refii.Camera.Engine_CameraDisplay.Step(manager.Previous!.Value, manager.PreviousEase)
+			: _displayTo;
+	}
+
+	/// <summary>
+	/// THE DRAWN CAMERA BETWEEN TWO STATED STEPS. The camera line moves the camera on the bodies'
+	/// clock and rule (Engine_TickTimeline: the straight blend of the stated pair at the shared draw
+	/// point). Where the easing law gives the step a shape of its own (a blend under
+	/// Camera.InterpolateFor, a rolled camera), the drawn camera is moved by the difference between
+	/// the law's pose and the straight blend at the line's own phase (Engine_CameraDisplay), in the
+	/// camera's frame, so a turn of the whole history (the mouse's) leaves it unchanged. The
+	/// difference is nothing at each stated step and for every step the law does not shape, where
+	/// the picture is the line's alone.
+	/// </summary>
+	private Transform3D AdvanceCameraLine(out float fov)
+	{
+		Transform3D drawn = _cameraLine.Advance(Refii.Entities.Engine_DrawnFrame.NowUsec,
+			Refii.Entities.Engine_DrawnFrame.DrawTick);
+		fov = _cameraLine.DrawnScalar;
+		if (!_displayPair || !Refii.Camera.Engine_CameraDisplay.Shaped(_displayFrom, _displayTo))
+		{
+			return drawn;
+		}
+
+		float phase = (float)_cameraLine.Phase(Refii.Entities.Engine_DrawnFrame.DrawTick);
+		if (!(phase > 0f) || phase >= 1f)
+		{
+			return drawn;
+		}
+
+		if (Refii.Camera.Engine_CameraFeed.AsGuestCamera(
+				Refii.Camera.Engine_CameraDisplay.Evaluate(_displayFrom, _displayTo, phase)) is not { } law ||
+			Refii.Camera.Engine_CameraFeed.AsGuestCamera(
+				Refii.Camera.Engine_CameraDisplay.Blend(_displayFrom.Block, _displayTo.Block, phase)) is not { } straight ||
+			!TryStatedCamera(law, out Transform3D lawDrawn, out float lawFov) ||
+			!TryStatedCamera(straight, out Transform3D straightDrawn, out float straightFov))
+		{
+			return drawn;
+		}
+
+		++ShapedCameras;
+		fov += lawFov - straightFov;
+		return drawn * (straightDrawn.AffineInverse() * lawDrawn);
+	}
+
+	/// <summary>Frames whose drawn camera took the law's shape between two stated steps; run total.</summary>
+	public static long ShapedCameras;
 
 	/// <summary>
 	/// A whole read of the mouse's account, paired with the camera read inside it. A turn the

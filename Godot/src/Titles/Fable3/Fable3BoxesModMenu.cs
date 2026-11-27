@@ -19,6 +19,12 @@ public partial class Fable3Boxes
 	private string _modMenuRoot = string.Empty;
 	private uint _menuWasDown;
 
+	/// <summary>The player the menu was opened for (Engine_UiModMenus.Standalone.Player): the menu takes that player's pad.</summary>
+	private int _modMenuPlayer = Fable3ActingPlayer.One;
+
+	/// <summary>The buttons down on the pad of the player the menu stands for.</summary>
+	private uint ModMenuPad() => Refii.Game.GameInput.Seen(Fable3ActingPlayer.PadOf(_modMenuPlayer)).Buttons;
+
 	/// <summary>A mod's menu stands and has the pad.</summary>
 	public static bool ModMenuUp { get; private set; }
 
@@ -44,7 +50,7 @@ public partial class Fable3Boxes
 
 		ModMenuUp = true;
 		Engine_UiModMenus.Focus(_modMenu, _modMenuRoot, Engine_UiCommandList.HostList);
-		uint down = Refii.Game.GameInput.Pad0.Buttons;
+		uint down = ModMenuPad();
 		uint pressed = down & ~_menuWasDown;
 		_menuWasDown = down;
 		if (!input)
@@ -122,7 +128,8 @@ public partial class Fable3Boxes
 		view.Bind(template.Build());
 		_modMenu = view;
 		_modMenuRoot = request.Menu;
-		_menuWasDown = Refii.Game.GameInput.Pad0.Buttons;
+		_modMenuPlayer = request.Player == Fable3ActingPlayer.Two ? Fable3ActingPlayer.Two : Fable3ActingPlayer.One;
+		_menuWasDown = ModMenuPad();
 		Engine_UiModMenus.StandaloneOpened(view, request.Menu, request.Player);
 		QueueRedraw();
 	}

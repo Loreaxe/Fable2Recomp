@@ -133,19 +133,220 @@ public static class RuntimeConfig
         }
     }
 
+    /// <summary>
+    /// Sets <paramref name="set"/> and removes <paramref name="remove"/> in the file at
+    /// <paramref name="configPath"/>, every other line kept byte for byte (<see cref="EditText"/>).
+    /// A file that does not exist yet is written whole (<see cref="WriteValues"/>). The file is the
+    /// active title's; <see cref="EditValuesForTitle"/> names another.
+    /// </summary>
+    public static bool EditValues(
+        string configPath,
+        IReadOnlyDictionary<string, string> set,
+        IEnumerable<string> remove,
+        out string error) =>
+        EditValuesForTitle(Refii.Core.Engine_Title.Active, configPath, set, remove, out error);
+
+    /// <summary>
+    /// <see cref="EditValues"/> on the file of <paramref name="title"/>: a new key's description and
+    /// format come from that title's table, and a file that does not exist yet is written whole from it.
+    /// ONLY WHAT CHANGES IS TOUCHED: a key the file already holds at that value (as <see cref="ReadValues"/>
+    /// reads it: `"60"` and `60` are the same 60) keeps its line as written, and a key to remove that the
+    /// file does not hold is nothing to do; with nothing left, the file is not opened for writing. Every
+    /// writer of a title's file goes through here or through <see cref="EnsureDefaultsForTitle"/>, which
+    /// does too, so a launch with nothing changed leaves the file's bytes and time as they were.
+    /// </summary>
+    public static bool EditValuesForTitle(
+        Refii.Core.Engine_Title title,
+        string configPath,
+        IReadOnlyDictionary<string, string> set,
+        IEnumerable<string> remove,
+        out string error)
+    {
+        error = string.Empty;
+        if (!File.Exists(configPath))
+        {
+            SortedDictionary<string, string> values = ReadValues(configPath);
+            foreach (var pair in set) values[pair.Key] = pair.Value;
+            foreach (string key in remove) values.Remove(key);
+            return WriteValuesForTitle(title, configPath, values, out error);
+        }
+
+        try
+        {
+            (Dictionary<string, string> changing, List<string> removing) = StillToDo(ReadValues(configPath), set, remove);
+            if (changing.Count == 0 && removing.Count == 0)
+            {
+                return true;
+            }
+
+            string before = File.ReadAllText(configPath);
+            string after = EditText(before, changing, removing, title);
+            if (after != before)
+            {
+                File.WriteAllText(configPath, after, new UTF8Encoding(false));
+            }
+
+            return true;
+        }
+        catch (Exception exception)
+        {
+            error = exception.Message;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// THE FILE IS THE PLAYER'S: only the named keys change. A set key keeps its line's place with
+    /// the new value (a later line of the same key, or a dotted key under it, goes: a key is held
+    /// once); a key the file lacks goes in before the "# Other" block, else at the end, under its
+    /// definition's description; a removed key's line goes, with the line above it when that is its
+    /// definition's description. Every other line — order, comments, values, keys of another title
+    /// or build — stays as it stands. Keys after a <c>[section]</c> header are not top-level and are
+    /// never matched; new keys go in before the first header.
+    /// </summary>
+    internal static string EditText(string text, IReadOnlyDictionary<string, string> set, IEnumerable<string> remove) =>
+        EditText(text, set, remove, Refii.Core.Engine_Title.Active);
+
+    /// <summary><see cref="EditText(string, IReadOnlyDictionary{string, string}, IEnumerable{string})"/> with <paramref name="title"/>'s table.</summary>
+    internal static string EditText(
+        string text, IReadOnlyDictionary<string, string> set, IEnumerable<string> remove, Refii.Core.Engine_Title title)
+    {
+        string newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        bool endsWithNewline = text.EndsWith('\n');
+        var lines = new List<string>(text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'));
+        if (endsWithNewline && lines.Count > 0 && lines[^1].Length == 0)
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
+        var removed = new HashSet<string>(remove, StringComparer.Ordinal);
+        var placed = new HashSet<string>(StringComparer.Ordinal);
+        var definitions = new Dictionary<string, RuntimeCVarDefinition>(StringComparer.Ordinal);
+        foreach (RuntimeCVarDefinition known in RuntimeCVarSet.For(title))
+        {
+            definitions.TryAdd(known.Name, known);
+        }
+
+        RuntimeCVarDefinition? Find(string key) =>
+            definitions.TryGetValue(key, out RuntimeCVarDefinition? found) ? found : FindDefinition(key);
+        string Formatted(string key, string value) =>
+            Find(key) is { } definition ? FormatTomlValue(definition, value) : FormatUnknownValue(value);
+        var output = new List<string>(lines.Count + set.Count * 2);
+        int firstSection = -1;
+        int otherHeader = -1;
+        foreach (string line in lines)
+        {
+            string trimmed = StripTomlComment(line).Trim();
+            if (firstSection < 0 && trimmed.Length > 1 && trimmed[0] == '[' && trimmed[^1] == ']')
+            {
+                firstSection = output.Count;
+            }
+
+            if (firstSection < 0 && otherHeader < 0 && line.Trim() == "# Other")
+            {
+                otherHeader = output.Count;
+            }
+
+            int equals = trimmed.IndexOf('=');
+            string key = firstSection < 0 && equals > 0 ? trimmed[..equals].Trim() : string.Empty;
+            if (key.Length == 0)
+            {
+                output.Add(line);
+                continue;
+            }
+
+            if (removed.Contains(key) && !set.ContainsKey(key))
+            {
+                if (output.Count > 0 && Find(key) is { Description.Length: > 0 } gone &&
+                    output[^1].Trim() == "# " + gone.Description)
+                {
+                    output.RemoveAt(output.Count - 1);
+                }
+
+                continue;
+            }
+
+            if (set.TryGetValue(key, out string? value))
+            {
+                if (placed.Add(key))
+                {
+                    output.Add(key + " = " + Formatted(key, value));
+                }
+
+                continue;
+            }
+
+            if (ParentIn(key, set))
+            {
+                continue;
+            }
+
+            output.Add(line);
+        }
+
+        var added = new List<string>();
+        foreach ((string key, string value) in set)
+        {
+            if (placed.Contains(key))
+            {
+                continue;
+            }
+
+            if (Find(key) is { Description.Length: > 0 } definition)
+            {
+                added.Add("# " + definition.Description);
+            }
+
+            added.Add(key + " = " + Formatted(key, value));
+        }
+
+        if (added.Count > 0)
+        {
+            int at = firstSection >= 0 ? firstSection : otherHeader >= 0 ? otherHeader : output.Count;
+            while (at > 0 && at <= output.Count && (firstSection >= 0 || otherHeader >= 0) && output[at - 1].Trim().Length == 0)
+            {
+                --at;
+            }
+
+            output.InsertRange(at, added);
+        }
+
+        string result = string.Join(newline, output);
+        return endsWithNewline || output.Count == 0 ? result + newline : result;
+    }
+
+    /// <summary>Whether a dotted <paramref name="key"/> sits under a key being set (TOML cannot hold both).</summary>
+    private static bool ParentIn(string key, IReadOnlyDictionary<string, string> set)
+    {
+        for (int dot = key.IndexOf('.'); dot > 0; dot = key.IndexOf('.', dot + 1))
+        {
+            if (set.ContainsKey(key[..dot]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static bool EnsureDefaults(string configPath, out string error) =>
         EnsureDefaultsForTitle(Refii.Core.Engine_Title.Active, configPath, out error);
 
     /// <summary>
     /// Ensures <paramref name="configPath"/> exists and carries current default roots and preset upgrades
-    /// for <paramref name="title"/>.
+    /// for <paramref name="title"/>. A file that does not exist yet is written whole from the title's
+    /// table; an existing one is EDITED: only the keys the defaults pass changed or removed are
+    /// touched (<see cref="EditValues"/>), every other line — another title's keys, unknown keys,
+    /// comments, order — stays as it stands. The pass never drops a key it did not mean to.
     /// </summary>
     public static bool EnsureDefaultsForTitle(
         Refii.Core.Engine_Title title, string configPath, out string error)
     {
         error = string.Empty;
         SortedDictionary<string, string> values = ReadValues(configPath);
-        bool changed = !File.Exists(configPath);
+        var before = new SortedDictionary<string, string>(values, StringComparer.Ordinal);
+        bool exists = File.Exists(configPath);
+        bool changed = !exists;
 
         changed |= PopulateDefaultRoots(values, configPath);
         changed |= AdoptFixtureShadowDefault(values);
@@ -161,7 +362,71 @@ public static class RuntimeConfig
             changed |= DesktopGraphicsPresets.Upgrade(values);
         }
 
-        return changed ? WriteValuesForTitle(title, configPath, values, out error) : true;
+        if (!changed)
+        {
+            return true;
+        }
+
+        if (!exists)
+        {
+            return WriteValuesForTitle(title, configPath, values, out error);
+        }
+
+        (Dictionary<string, string> set, List<string> remove) = Changes(before, values);
+        return set.Count == 0 && remove.Count == 0 || EditValuesForTitle(title, configPath, set, remove, out error);
+    }
+
+    /// <summary>
+    /// What of an edit is still to do against the file's <paramref name="current"/> values: the keys of
+    /// <paramref name="set"/> the file does not hold at that value, the keys of <paramref name="remove"/> it holds.
+    /// </summary>
+    internal static (Dictionary<string, string> Set, List<string> Remove) StillToDo(
+        IReadOnlyDictionary<string, string> current, IReadOnlyDictionary<string, string> set, IEnumerable<string> remove)
+    {
+        var changing = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach ((string key, string value) in set)
+        {
+            if (!current.TryGetValue(key, out string? held) || held != value)
+            {
+                changing[key] = value;
+            }
+        }
+
+        var removing = new List<string>();
+        foreach (string key in remove)
+        {
+            if (current.ContainsKey(key) && !changing.ContainsKey(key))
+            {
+                removing.Add(key);
+            }
+        }
+
+        return (changing, removing);
+    }
+
+    /// <summary>The keys <paramref name="after"/> sets to a new value, and the keys it no longer holds.</summary>
+    internal static (Dictionary<string, string> Set, List<string> Remove) Changes(
+        IReadOnlyDictionary<string, string> before, IReadOnlyDictionary<string, string> after)
+    {
+        var set = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach ((string key, string value) in after)
+        {
+            if (!before.TryGetValue(key, out string? was) || was != value)
+            {
+                set[key] = value;
+            }
+        }
+
+        var remove = new List<string>();
+        foreach (string key in before.Keys)
+        {
+            if (!after.ContainsKey(key))
+            {
+                remove.Add(key);
+            }
+        }
+
+        return (set, remove);
     }
 
     internal static bool PopulateDefaultRoots(IDictionary<string, string> values, string configPath)

@@ -106,12 +106,16 @@ REX_EXTERN(rex_lhGuiScreenSet_EnsureLoaded) {
 //   - the two openers (display_box_hooks.cpp), with their own arguments;
 //   - the screen setter, back to 1 / 0 for every id but the boxes' own (0x8236e71c: `if ( !v9 )`,
 //     v9 set for 19, 4, 5, 3 and 9) — stated from its argument in mod_events.cpp;
-//   - `sub_8236FF58(mgr)` (disc `sub_82338150`), `*(a1 + 40) = 1; *(a1 + 44) = 0`, below;
+//   - `sub_8236FF58(mgr)` (disc `sub_82338150`), below — the whole body is `*(a1 + 40) = 1; *(a1 + 44)
+//     = 0` (0x8236FF6C / 0x8236FF74) and one UI sound, `sub_82371E80(&ev, G, 0x83497F08
+//     "SE_GUI_PREVIOUS_PAGE", 0)` with its release (0x8236FF8C / disc 0x82338184 with 0x8349884C): the
+//     two stores are kept, the sound is dropped;
 //   - the world map's stop-travelling question `sub_826C7E90` (disc `sub_825A3DC0`), which opens a
 //     menu box and then writes 4 / 7 (0x826c8084): stated when a menu box opened inside it.
 REX_EXTERN(rex_lhGuiManager_ClearModalState) {
     REX_FUNC_PROLOGUE();
-    __imp__rex_lhGuiManager_ClearModalState(ctx, base);
+    refii::vfs::StoreGuestU32(base, ctx.r3.u32 + 40u, 1u);
+    refii::vfs::StoreGuestU32(base, ctx.r3.u32 + 44u, 0u);
     refii_bridge_stated_modal(1u, 0u);
 }
 
@@ -145,7 +149,10 @@ REX_EXTERN(rex_lhGuiTabStrip_Show) {
 // are the opener `sub_826A2C88(handler, isPlayerOne)` (`(*(*a1 + 32))(a1, a2 == 0)` 0x826a2cb8)
 // and the screens that hand the menu back through `lhGuiManager_FindScreenHandler(owner, 0)`
 // (0x826a6fb0, 0x826b18f0, 0x826cccf4, 0x827d0050, 0x827e146c, 0x82805578). The guest reads it
-// back as `*(FindScreenHandler(owner, 0) + 4) == 1` (`sub_8236E400` 0x8236e430).
+// back as `*(FindScreenHandler(owner, 0) + 4) == 1` (`sub_8236E400` 0x8236e430). A statement of player
+// one makes that test false whatever the GUI mode, so it is the owner at once (the screen being entered
+// reads it in its own OnEnter: the item books' listed hero); player two's waits for the tick's own
+// asking of the GUI-mode gate (guest_tick_pump.cpp StateMenuOwner).
 REX_EXTERN(rex_lhFolded_StoreWordAt4) {
     const uint32_t self = ctx.r3.u32;
     const uint32_t value = ctx.r4.u32;
@@ -153,6 +160,9 @@ REX_EXTERN(rex_lhFolded_StoreWordAt4) {
     const uint32_t vtable = refii::vfs::LoadGuestU32(base, self);
     if (vtable == refii::guest::Address(0x820CDE18u)) {
         g_pause_player_two.store(value == 1u ? 1u : 0u, std::memory_order_relaxed);
+        if (value != 1u) {
+            refii_bridge_set_menu_owner_two(0);
+        }
     }
 }
 

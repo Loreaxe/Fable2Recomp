@@ -56,8 +56,23 @@ local function ApplyLock(p, on)
 	end
 end
 
+-- The camera frames the mod's lock while it stands (camera_lock_frame): stated when a lock is set or
+-- cleared and held equal to S.Locked on every tick.
+S.Framed = {}
+local function FrameLocks()
+	for p = 1, 2 do
+		local hero = Refii.player_hero(p)
+		local want = hero ~= nil and S.Locked[hero] ~= nil
+		if S.Framed[p] ~= want then
+			S.Framed[p] = want
+			Refii.camera_lock_frame(p, want)
+		end
+	end
+end
+
 local function Unlock(hero, p, why)
 	S.Locked[hero] = nil
+	FrameLocks()
 	if S.Reticles ~= nil and S.Reticles[hero] ~= nil then
 		Refii.unmark(S.Reticles[hero].id)
 		S.Reticles[hero] = nil
@@ -102,6 +117,7 @@ local function Toggle(p)
 		return
 	end
 	S.Locked[hero] = true
+	FrameLocks()
 	ApplyLock(p, true)
 	ReleaseIfNothingToLock(hero, p)
 	Refii.log("Souls Combat: lock-on ON")
@@ -123,6 +139,7 @@ for p = 1, 2 do Refii.input_claim(p, kAction, true) end
 -- (On Fable III a `pairs` loop must have exactly two variables: the VM walks kpairs inline only then,
 -- and `for hero in pairs(t)` runs zero times.)
 Refii.on("tick", function()
+	FrameLocks()
 	for p = 1, 2 do
 		local hero = Refii.player_hero(p)
 		if hero ~= nil then
@@ -153,6 +170,7 @@ end)
 Refii.on("hero_gone", function(e)
 	if IsLocked(e.hero) then
 		S.Locked[e.hero] = nil
+		FrameLocks()
 		Refii.cancel(DropKey(e.hero))
 		if S.Reticles[e.hero] ~= nil then
 			Refii.unmark(S.Reticles[e.hero].id)

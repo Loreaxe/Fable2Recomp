@@ -158,8 +158,9 @@ public class OwnWordsTests
 			foreach (string key in new[]
 			{
 				Engine_UiCoopNotices.LocalJoined, Engine_UiCoopNotices.LocalLeft, Engine_UiCoopNotices.Progression,
-				Engine_UiCoopNotices.PressStart, Engine_UiCoopModeRow.PendingNote, "REFII_F2_COOP_MODE_SHARED",
-				"REFII_F2_COOP_MODE_SIDE", "REFII_F2_COOP_MODE_STACKED", "REFII_PLAYER_1", "REFII_PLAYER_2",
+				Engine_UiCoopNotices.PressStart, "REFII_F2_COOP_MODE_SHARED", "REFII_F2_COOP_MODE_SIDE",
+				"REFII_F2_COOP_MODE_STACKED", "REFII_F2_COOP_MODE_HYBRID_SIDE", "REFII_F2_COOP_MODE_HYBRID_STACKED",
+				"REFII_PLAYER_1", "REFII_PLAYER_2",
 			})
 			{
 				AssertThat(Engine_OwnWords.Find(key, "en-uk")).IsNotNull();

@@ -236,6 +236,40 @@ void refii_mod_run_ticks(PPCContext* ctx, uint8_t* base, float seconds);
 /// mods' Lua. True when it ran without error. Guest tick thread only (a tick callback or a hook).
 extern "C" int32_t refii_mod_run_game_lua(PPCContext* ctx, uint8_t* base, const char* chunk);
 
+/// STATES ONE VALUE OF `player`'s CAMERA (1 or 2) for the mods: the camera mod API's shape calls
+/// (camera_tune, camera_frame, camera_focus, camera_combat_blend, camera_interest, camera_pitch_hold,
+/// camera_lock_frame, camera_mode_allow), the display offset (camera_offset) and the game's own screen shake
+/// (camera_shake: "{kind='quake',level=0.6,seconds=0.4}"), made in the game VM as `Refii.<call>(player, <arguments>)`
+/// with the owner "native". `call` is the call's name; `arguments` what follows the player, written as
+/// the Lua call writes it ("{pitch_speed=0.09}", "0", "true,{shared=true}", "nil" to let it go; empty
+/// or null for none). What is stated is kept in the game VM as plain values, applied by the title's
+/// core camera chunk where its camera scripts read their own, and never reaches a save. 1 when the
+/// call ran. Guest tick thread only.
+extern "C" int32_t refii_mod_camera_state(PPCContext* ctx, uint8_t* base, int32_t player, const char* call,
+                                          const char* arguments);
+
+/// THE CAMERA'S READ CALLS, the same values Lua's Refii.camera_* and Godot's RefiiHost.camera_* answer
+/// (src/runtime/include/core/camera_views.h). Guest axes; angles in degrees. Any thread.
+/// The REFII camera screens camera_screen_mode answers.
+#define REFII_CAMERA_SCREEN_SHARED 0
+#define REFII_CAMERA_SCREEN_SPLIT_VERTICAL 1
+#define REFII_CAMERA_SCREEN_SPLIT_HORIZONTAL 2
+#define REFII_CAMERA_SCREEN_HYBRID 3
+/// The pose `player`'s picture is drawn with this frame: position, forward, up, fov (horizontal), vfov
+/// (the drawn view's vertical angle), cut (1 / 0). 0 when no picture of that player is drawn here.
+extern "C" int32_t refii_mod_camera_pose(int32_t player, float* out12);
+/// The block the game's readers see for `player` at its last tick (its camera manager's getter; the
+/// shared camera's on a shared screen): position, forward, up, fov (horizontal), cut. 0 before one.
+extern "C" int32_t refii_mod_camera_stated(int32_t player, float* out11);
+/// The part of the window `player`'s picture fills: x, y, width, height (0..1 from the top left).
+extern "C" int32_t refii_mod_camera_view(int32_t player, float* out4);
+/// The co-op screen chosen (REFII_CAMERA_SCREEN_*), -1 before the shell stated one; `split` (may be
+/// null) 1 while two views are drawn.
+extern "C" int32_t refii_mod_camera_screen_mode(int32_t* split);
+/// The line through point (x, y) of `player`'s view (each 0..1 from its top left; 0.5, 0.5 the
+/// centre), from the drawn camera: origin, then the unit direction. 0 when not drawn here.
+extern "C" int32_t refii_mod_camera_ray(int32_t player, float x, float y, float* out6);
+
 /// The integer value of the Lua expression `expr` in [lo, hi], by a binary search of assertions —
 /// a handful of chunk runs, so read it when it can have changed (see refii_mod_lua_generation),
 /// not every tick. False when the expression is not a number in that range.

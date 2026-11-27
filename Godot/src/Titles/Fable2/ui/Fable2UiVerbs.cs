@@ -6,7 +6,7 @@ namespace Refii.Titles.Fable2;
 using Refii.Ui;
 
 /// <summary>
-/// Fable 2's own verbs — the inventory, quest, sale, ability, shop, property and mod-ability rows,
+/// Fable 2's own verbs — the inventory, ability, shop, property and mod-ability rows,
 /// and the pause book's levers — declared for the catalog (<see cref="Engine_UiVerbs.Game"/>) and
 /// answered on the shell's dispatcher when the title installs.
 /// </summary>
@@ -14,10 +14,6 @@ public static class Fable2UiVerbs
 {
 	public static readonly Engine_UiVerb Inventory = new(Engine_UiInventorySource.InventoryAction, "Inventory:<op>:<record>",
 		"an inventory operation on the simulation (use, equip, gift...), run on the guest's tick; on the items and clothing books it is posted as the book's own row lever", Engine_UiVerbs.Anywhere);
-	public static readonly Engine_UiVerb Quest = new(Engine_UiQuestSource.QuestAction, "Quest:select:<record>",
-		"makes a quest primary through the world map's own answer", Engine_UiVerbs.Anywhere);
-	public static readonly Engine_UiVerb Sale = new(Engine_UiQuestSource.SaleAction, "Sale:<...>",
-		"a world-map sale row's answer", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb Ability = new(Engine_UiAbilitySource.AbilityAction, "Ability:learn|unlearn:<1..14>",
 		"buys one level of an ability through the guest's own purchase, or gives one back through its own unlearn (the row's Y asks first)", Engine_UiVerbs.Anywhere);
 	public static readonly Engine_UiVerb Furniture = new(Engine_UiFurniturePage.FurnitureAction, "Furniture:upgrade:<level>",
@@ -84,7 +80,7 @@ public static class Fable2UiVerbs
 	/// <summary>Every verb Fable 2 adds to the shell's.</summary>
 	public static readonly IReadOnlyList<Engine_UiVerb> All = new[]
 	{
-		Inventory, Quest, Sale, Ability, Furniture, Decoration, RealEstate, Crime, Query, Shop, PropertyRepair,
+		Inventory, Ability, Furniture, Decoration, RealEstate, Crime, Query, Shop, PropertyRepair,
 		PropertyRepairAll, Partner, ModBuy,
 		OptionsPage, PauseTab, PauseSaving, PauseQuit, PauseCoop, PauseHenchmanQuit, PauseOwned, MiniGameConfirm,
 	};
@@ -112,52 +108,6 @@ public static class Fable2UiVerbs
 		{
 			string action = context.Command;
 
-			// A dye is CHOSEN, not used: the press opens the dye list and the simulation is
-			// untouched until a target is picked.
-			if (action.StartsWith(Engine_UiDyeFlow.SelectAction, System.StringComparison.Ordinal))
-			{
-				if (uint.TryParse(action[Engine_UiDyeFlow.SelectAction.Length..], out uint dye))
-				{
-					Engine_UiDyeFlow.Begin(dye);
-				}
-
-				return Engine_UiCommandResult.Done;
-			}
-
-			// An augment is CHOSEN the same way: the press opens the target list.
-			if (action.StartsWith(Engine_UiAugmentFlow.SelectAction, System.StringComparison.Ordinal))
-			{
-				if (uint.TryParse(action[Engine_UiAugmentFlow.SelectAction.Length..], out uint augment))
-				{
-					Engine_UiAugmentFlow.Begin(augment);
-				}
-
-				return Engine_UiCommandResult.Done;
-			}
-
-			// A remover the same way, for the strip list.
-			if (action.StartsWith(Engine_UiAugmentFlow.SelectRemoverAction, System.StringComparison.Ordinal))
-			{
-				if (uint.TryParse(action[Engine_UiAugmentFlow.SelectRemoverAction.Length..], out uint remover))
-				{
-					Engine_UiAugmentFlow.BeginRemove(remover);
-				}
-
-				return Engine_UiCommandResult.Done;
-			}
-
-			// The attach or strip itself goes to the pump; the names are kept now for its
-			// verdict's message, since a successful attach consumes the augment.
-			if (action.StartsWith(Engine_UiAugmentFlow.ApplyAction, System.StringComparison.Ordinal) ||
-				action.StartsWith(Engine_UiAugmentFlow.RemoveAction, System.StringComparison.Ordinal))
-			{
-				string[] pair = action[(action.IndexOf(':', Engine_UiInventorySource.InventoryAction.Length) + 1)..].Split(':');
-				if (pair.Length == 2 && uint.TryParse(pair[0], out uint augment) && uint.TryParse(pair[1], out uint target))
-				{
-					Engine_UiAugmentFlow.Names = (Engine_UiInventorySource.LabelFor(augment), Engine_UiInventorySource.LabelFor(target));
-				}
-			}
-
 			// A joiner's weapon pick changes the record; the host equips it. The id is decimal.
 			const string equip = Engine_UiInventorySource.InventoryAction + "equip:";
 			if (CoopSession.IsClient && action.StartsWith(equip, System.StringComparison.Ordinal) &&
@@ -168,28 +118,16 @@ public static class Fable2UiVerbs
 			}
 
 			// On a ported item screen (items 15, clothing 16, gift 25) the row's consequence is its lever, with
-			// the acting player and the ticket the guest spawned the row with (Fable2PortedScreens).
+			// the acting player and the row's own id — the ticket the guest spawned it with (Engine_UiItemRows).
 			uint screen = Engine_UiSource.Current.GetPauseState() is { } pause ? pause.ScreenId : 0u;
 			Refii.Host.HostBridge.PostFrontEndAction(
-				Fable2PortedScreens.ItemLever(screen, Engine_UiSource.Current.ActingPlayer, action,
-					Fable2PortedScreens.TicketOf(Engine_UiMenuSources.SpawnedRows(), context.Row)) ?? action);
+				Fable2PortedScreens.ItemLever(screen, Engine_UiSource.Current.ActingPlayer, action, context.RowId) ?? action);
 			return Engine_UiCommandResult.Done;
 		});
 
-		// `Quest:select:<record>` — the world map's quest rows. The pump turns the record into the
-		// guest's own row ordinal and delivers event 42 to screen 23, whose handler asks "make this
-		// your primary quest?" and commits through `QuestTracker.SetAsPrimary`. `Sale:` likewise.
-		//
 		// `Ability:learn:<1..14>` — the abilities screen. The guest's own answer to one of those
 		// rows is a single two-argument call that reads nothing from the screen or the menu
 		// (`sub_8246C970` / `sub_8246CF48`), posted as `Ability:<p>:learn:<n>` for the acting player.
-		Engine_UiCommandHandler pump = (_, context) =>
-		{
-			Refii.Host.HostBridge.PostFrontEndAction(context.Command);
-			return Engine_UiCommandResult.Done;
-		};
-		set.Register(Fable2UiVerbs.Quest, pump);
-		set.Register(Fable2UiVerbs.Sale, pump);
 		set.Register(Fable2UiVerbs.Ability, (_, context) =>
 		{
 			Engine_UiSource.Current.PostFrontEndAction(

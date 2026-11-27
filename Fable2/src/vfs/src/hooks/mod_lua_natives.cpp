@@ -96,9 +96,12 @@
 
 #include <rex/logging.h>
 
+#include "core/achievement_statement.h"
 #include "core/guest_build.h"
+#include "core/joiner_use_text.h"
 #include "core/mod_values.h"
 #include "core/refii_mod.h"
+#include "core/payload_bridge.h"
 #include "core/rex_payload_bridge.h"
 #include "hooks/ppc_externs.h"
 
@@ -106,15 +109,25 @@
 extern "C" int RefiiCoopSplitScreen(void);
 extern "C" uint32_t RefiiCoopPlayerDog(uint8_t* base, int player);
 extern "C" void RefiiCoopSetPartnerDog(uint32_t dog);
+/// Player two brought a hero (a character from a save), not the plain henchman (guest_tick_pump.cpp).
+extern "C" int RefiiCoopGetOwnHero(void);
 extern "C" void RefiiCoopSetJobWorker(int player);
 extern "C" void RefiiCoopPartnerScreen(int on);
+extern "C" int RefiiCoopPartnerCameraUpdating(void);
+extern "C" void RefiiPlayerIconsFromCamera(int on);
+extern "C" int RefiiCoopPartnerCameraGeneration(void);
 extern "C" void RefiiCoopSetEstateBuyer(int player);
+extern "C" int32_t RefiiEstateBuyerOpens(PPCContext* ctx, uint8_t* base, int32_t stated);
 extern "C" void RefiiEndRedecorating(PPCContext* ctx, uint8_t* base, uint32_t entity);
 extern "C" void refii_bridge_estate_intent_post(const char* text);
+extern "C" void refii_bridge_camera_offset_set(int32_t player, const float* seven, int32_t on);
+extern "C" void refii_bridge_coop_tether_stated(float distance, float separation);
 extern "C" uint32_t refii_household_resolve_uid(PPCContext* ctx, uint8_t* base, uint64_t uid);
 extern "C" void refii_household_context(int32_t on);
+extern "C" int32_t refii_household_received_item(PPCContext* ctx, uint8_t* base, uint32_t hash);
+extern "C" int32_t refii_household_carry_target(char* out, uint32_t capacity);
+extern "C" void refii_household_state_use_target(PPCContext* ctx, uint8_t* base);
 extern "C" void refii_household_forward_speech(uint8_t* base, uint32_t speaker, float seconds);
-extern "C" int32_t refii_household_children_two(uint8_t* base);
 extern "C" int32_t refii_household_follower_two(PPCContext* ctx, uint8_t* base, int32_t index, uint32_t* entity,
                                                 uint32_t* flags);
 
@@ -142,10 +155,16 @@ PPC_EXTERN_FUNC(rex_CECGroupMind_AddGroupMinds);
 
 namespace refii::vfs {
 bool WriteModEventField(int32_t kind, const char* field, double value);
+// coop_estate_statements.cpp: the host has stated this sale sign's building here.
+bool EstateStatedSign(PPCContext& ctx, uint8_t* base, uint32_t sign);
+// display_box_hooks.cpp: a wide LHString handle's text.
+std::string ReadStatedWideLhString(uint8_t* base, uint32_t handle);
 // guest_tick_pump.cpp: a component off an entity by id, the guest's own layout.
 uint32_t EntityComponent(uint8_t* base, uint32_t entity, uint32_t id);
 // mod_commands.cpp: the camera per player.
 void ModCameraStated(PPCContext& ctx, uint8_t* base, uint32_t hero, int32_t mode);
+void ModCameraZoomStated(PPCContext& ctx, uint8_t* base, uint32_t hero, const char* set, int32_t level,
+                         const float* values);
 bool ModCameraHold(PPCContext& ctx, uint8_t* base, uint32_t hero, int32_t* mode, float* fov, float* pitch, float* blend,
                    int32_t* flags, uint32_t* revision);
 void ModCameraHeld(uint8_t* base, uint32_t hero, int32_t bits);
@@ -1201,6 +1220,13 @@ REFII_LUA_NATIVE(NativeSetPartnerDog) {
   RESULTS(0);
 }
 
+// Refii._two_is_hero(): whether player two brought a hero (a character from a save) rather than
+// standing as the plain henchman — the one statement every hero-only feature of the core Lua keys on.
+REFII_LUA_NATIVE(NativeTwoIsHero) {
+  lua.PushBoolean(RefiiCoopGetOwnHero() != 0);
+  RESULTS(1);
+}
+
 // Refii._job_worker(p) / Refii._estate_buyer(p): the core Lua's statements of who works the
 // running job and who the real-estate screen about to open buys for (0 none, 1, 2).
 // Core only: Refii._restore_group_minds() -> count. Every group-mind component in the world
@@ -1273,9 +1299,270 @@ REFII_LUA_NATIVE(NativePartnerScreen) {
   RESULTS(0);
 }
 
-REFII_LUA_NATIVE(NativeEstateBuyer) {
-  RefiiCoopSetEstateBuyer(lua.Int(1));
+// Refii._partner_player_icons(on): player two's camera's GUI.SetShouldDrawPlayerIcons, stated for player two's
+// half (stated value 25: 1 off, 2 on; the core camera chunk's wrap, CoopHeroLua.cs) instead of the one HUD's.
+REFII_LUA_NATIVE(NativePartnerPlayerIcons) {
+  refii_bridge_stated_value(25u, lua.Boolean(1) ? 2u : 1u);
   RESULTS(0);
+}
+
+// Refii._camera_player_icons(on): true around a camera's own GUI.SetShouldDrawPlayerIcons (SACCamera:Activate /
+// :Deactivate, the core camera chunk's wrap), so the native's send to the session's partner is skipped: a
+// camera's switch is its own machine's (coop_player_icons.cpp RefiiPlayerIconsStayHere).
+REFII_LUA_NATIVE(NativeCameraPlayerIcons) {
+  RefiiPlayerIconsFromCamera(lua.Boolean(1) ? 1 : 0);
+  RESULTS(0);
+}
+
+// Refii._partner_camera_update(): true while player two's camera manager updates in local co-op, its
+// selection and its mode's frame update both (coop_hero_hooks.cpp RefiiCoopPartnerCameraUpdating).
+REFII_LUA_NATIVE(NativePartnerCameraUpdate) {
+  lua.PushBoolean(RefiiCoopPartnerCameraUpdating() != 0);
+  RESULTS(1);
+}
+
+// Refii._partner_camera_manager(): which camera manager player two's is, a number that moves on at every
+// Player built with one (a join, a re-join); 0 before the first (coop_hero_hooks.cpp
+// RefiiCoopPartnerCameraGeneration).
+REFII_LUA_NATIVE(NativePartnerCameraManager) {
+  lua.PushNumber(static_cast<double>(RefiiCoopPartnerCameraGeneration()));
+  RESULTS(1);
+}
+
+// Refii._estate_buyer(player) -> opens: before the sale sign's GUI.DisplayRealEstateScreen, the player the
+// opener runs as. States the buyer the screen's binding takes (RefiiCoopEstateBuyer) as
+// RefiiEstateBuyerOpens answers it (hero two on an online joiner, mod_events.cpp); false: no building
+// for that buyer, the screen is not opened.
+REFII_LUA_NATIVE(NativeEstateBuyer) {
+  const int32_t stated = lua.Int(1);
+  const int32_t buyer = RefiiEstateBuyerOpens(&lua.ctx, lua.base, stated);
+  RefiiCoopSetEstateBuyer(buyer);
+  REXLOG_INFO("Refii estate: GUI.DisplayRealEstateScreen asked as player {}, buyer {}, frame {}", stated, buyer,
+              refii::mods::LoadU32(lua.base, refii::guest::Address(0x83319650u)));
+  lua.PushBoolean(buyer != 0);
+  RESULTS(1);
+}
+
+uint32_t EntityArgument(Lua& lua, int32_t index);
+
+// Core co-op only, an online joiner: Refii._estate_look(sign) tells the host this machine is about to
+// open the sale sign `sign` (the `look` intent, mod_events.cpp ReplayEstateIntent), so the host
+// states its building's book here (coop_estate_statements.cpp); Refii._estate_ready(sign, frames) —
+// the host's statement for that building has arrived; `frames` is how many world frames the caller
+// still waits, and on the last one an unanswered sign is logged. `sign` is the script's own
+// ItemBeingUsed, a game Entity userdata (EntityArgument; a handle number is taken too).
+REFII_LUA_NATIVE(NativeEstateLook) {
+  const uint32_t sign = EntityArgument(lua, 1);
+  const uint64_t uid = sign != 0u ? (static_cast<uint64_t>(refii::mods::LoadU32(lua.base, sign + 20u)) << 32) |
+                                        refii::mods::LoadU32(lua.base, sign + 24u)
+                                  : 0u;
+  if (uid == 0u) {
+    REXLOG_WARN("Refii estate: the joiner's sale sign is no live entity here; the host is not asked for its book");
+    RESULTS(0);
+    return;
+  }
+  char text[64];
+  std::snprintf(text, sizeof(text), "look:%016llX:0", static_cast<unsigned long long>(uid));
+  refii_bridge_estate_intent_post(text);
+  REXLOG_INFO("Refii estate: the joiner asks the host for the book of sale sign {:016X}, frame {}", uid,
+              refii::mods::LoadU32(lua.base, refii::guest::Address(0x83319650u)));
+  RESULTS(0);
+}
+
+REFII_LUA_NATIVE(NativeEstateReady) {
+  const uint32_t sign = EntityArgument(lua, 1);
+  const int32_t frames = lua.Int(2);
+  const bool ready = sign != 0u && refii::vfs::EstateStatedSign(lua.ctx, lua.base, sign);
+  if (ready || frames == 1) {
+    const uint64_t uid = sign != 0u ? (static_cast<uint64_t>(refii::mods::LoadU32(lua.base, sign + 20u)) << 32) |
+                                          refii::mods::LoadU32(lua.base, sign + 24u)
+                                    : 0u;
+    if (ready) {
+      REXLOG_INFO("Refii estate: the host's book of sale sign {:016X} is here; the page opens on it", uid);
+    } else {
+      REXLOG_WARN("Refii estate: no book from the host for sale sign {:016X} in time; the page is not opened", uid);
+    }
+  }
+  lua.PushBoolean(ready);
+  RESULTS(1);
+}
+
+namespace {
+constexpr int32_t kTypeUserdata = 7;
+
+/// The record hash of the inventory item a Lua InventoryItem userdata holds: its body is the item's
+/// handle (`*body` the item — what `Lua_GUI_DisplayReceivedItem`'s core `sub_82304EF8` tests, TU1
+/// 0x82304F0C `lwz r11,0(r4)`), the record hash at item+4 (`CECInventory_FindItemByRecordHash`
+/// compares it, 0x824F1CE4). 0 for anything else, an Entity userdata included.
+uint32_t ItemRecord(Lua& lua, int32_t index) {
+  if (lua.Type(index) != kTypeUserdata) {
+    return 0u;
+  }
+  PPCContext check = lua.Work();
+  check.r4.s64 = index;
+  check.r5.u32 = refii::guest::Address(kEntityTypeName);
+  rex_lhLua_IsFableType(check, lua.base);
+  if (check.r3.u32 != 0) {
+    return 0u;
+  }
+  PPCContext data = lua.Work();
+  data.r4.s64 = index;
+  rex_lua_touserdata(data, lua.base);
+  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
+  const uint32_t body = data.r3.u32;
+  const uint32_t item = plausible(body) ? refii::mods::LoadU32(lua.base, body) : 0u;
+  if (!plausible(item)) {
+    return 0u;
+  }
+  const uint32_t count = refii::mods::LoadU32(lua.base, item + 12u);
+  return count >= 1u && count <= 0xFFFFu ? refii::mods::LoadU32(lua.base, item + 4u) : 0u;
+}
+}  // namespace
+
+// Core co-op only. Refii._item_record(item) — the record hash ("0x…") of a game InventoryItem
+// userdata, or nil (ItemRecord above).
+REFII_LUA_NATIVE(NativeItemRecord) {
+  const uint32_t hash = ItemRecord(lua, 1);
+  if (hash != 0u) {
+    lua.PushHash(hash);
+  } else {
+    lua.PushNil();
+  }
+  RESULTS(1);
+}
+
+// Core co-op only, an online joiner. Refii._received_item(hash) opens the received card on this
+// player's own item of that record (a host run's GUI.DisplayReceivedItem); true when opened.
+REFII_LUA_NATIVE(NativeReceivedItem) {
+  lua.PushBoolean(refii_household_received_item(&lua.ctx, lua.base, lua.Hash(1)) != 0);
+  RESULTS(1);
+}
+
+// Core co-op only, an online joiner. Refii._use_carried(item, class [, target uid]) — the host uses
+// this item of hero two's as the script `class` for its hero two, the hero's target as given
+// (`carry|<hash>|<class>|<uid>`, mod_events.cpp). True when sent.
+REFII_LUA_NATIVE(NativeUseCarried) {
+  const uint32_t hash = ItemRecord(lua, 1);
+  char name[72];
+  lua.String(2, name, sizeof(name));
+  char aimed[32];
+  lua.String(3, aimed, sizeof(aimed));
+  const unsigned long long target = std::strtoull(aimed, nullptr, 16);
+  const bool ok = refii_mod_coop_mode(lua.base) == 3 && hash != 0u && refii::coop::UseClassName(name);
+  if (ok) {
+    char text[120];
+    std::snprintf(text, sizeof(text), "carry|%08X|%s|%016llX", hash, name, target);
+    refii_bridge_estate_intent_post(text);
+  }
+  lua.PushBoolean(ok);
+  RESULTS(1);
+}
+
+// Core co-op only, the host. Refii._use_stated_target() — the target ("0x…") the joiner's hero had
+// when it used the carried item whose run is being made now, or nil.
+REFII_LUA_NATIVE(NativeUseStatedTarget) {
+  char text[40];
+  if (refii_household_carry_target(text, sizeof(text)) != 0) {
+    lua.PushString(text);
+  } else {
+    lua.PushNil();
+  }
+  RESULTS(1);
+}
+
+// Core co-op only, an online joiner, once a world frame. Refii._use_target_state() states this hero's
+// use target to the host when it changes (mod_events.cpp refii_household_state_use_target).
+REFII_LUA_NATIVE(NativeUseTargetState) {
+  refii_household_state_use_target(&lua.ctx, lua.base);
+  RESULTS(0);
+}
+
+// Core co-op only. Refii._dog_name(dog) — the name its player gave the dog: its naming component's
+// (comp20) LHString at +52 when that holds text (what the co-op kit samples, guest_tick_pump.cpp), or nil.
+REFII_LUA_NATIVE(NativeDogName) {
+  const uint32_t naming = refii_mod_component(lua.base, lua.Entity(1), 20u);
+  const uint32_t custom = naming != 0u ? refii::mods::LoadU32(lua.base, naming + 52u) : 0u;
+  std::string name;
+  if (custom >= 0x10000u && custom < 0xC0000000u && refii::mods::LoadU32(lua.base, custom + 4u) != 0u) {
+    name = refii::vfs::ReadStatedWideLhString(lua.base, naming + 52u);
+  }
+  if (name.empty() || name.size() > 60u) {
+    lua.PushNil();
+  } else {
+    lua.PushString(name.c_str());
+  }
+  RESULTS(1);
+}
+
+namespace {
+/// A creature's scars: its morph component's (comp116) vector of 12-byte entries at +24..+28, which
+/// `Morph.RemoveRandomScar` (TU1 0x825F32B0 / disc 0x8248B3E8) picks from and erases.
+bool Scars(uint8_t* base, uint32_t entity, uint32_t* morph, uint32_t* first, uint32_t* count) {
+  *morph = refii_mod_component(base, entity, 116u);
+  if (*morph == 0u) {
+    return false;
+  }
+  *first = refii::mods::LoadU32(base, *morph + 24u);
+  const uint32_t last = refii::mods::LoadU32(base, *morph + 28u);
+  if (last < *first || (last - *first) % 12u != 0u || (last - *first) > 12u * 256u) {
+    return false;
+  }
+  *count = (last - *first) / 12u;
+  return true;
+}
+}  // namespace
+
+// Core co-op only. Refii._scars(e) — the scars as text, one "a.b.c" (the entry's three words, hex)
+// per scar joined by ",", or nil without a morph component.
+REFII_LUA_NATIVE(NativeScars) {
+  uint32_t morph = 0u, first = 0u, count = 0u;
+  if (!Scars(lua.base, lua.Entity(1), &morph, &first, &count)) {
+    lua.PushNil();
+    RESULTS(1);
+    return;
+  }
+  std::string text;
+  for (uint32_t i = 0; i < count && i < 16u; ++i) {
+    char entry[32];
+    std::snprintf(entry, sizeof(entry), "%s%x.%x.%x", i == 0u ? "" : ",", refii::mods::LoadU32(lua.base, first + 12u * i),
+                  refii::mods::LoadU32(lua.base, first + 12u * i + 4u), refii::mods::LoadU32(lua.base, first + 12u * i + 8u));
+    text += entry;
+  }
+  lua.PushString(text.c_str());
+  RESULTS(1);
+}
+
+// Core co-op only, an online joiner. Refii._scar_remove(e, index) — the host's scar removal, the
+// scar it chose (0-based), done here as `Morph.RemoveRandomScar` does it after its pick: the entries
+// after it moved down one, the end back 12 bytes, the dirty byte +16 set, then its refresh
+// `sub_825F2518(comp116)` (its erase TU1 0x825F3320..0x825F3384; disc `sub_8248A650`). True when removed.
+REFII_LUA_NATIVE(NativeScarRemove) {
+  uint32_t morph = 0u, first = 0u, count = 0u;
+  const int32_t index = lua.Int(2);
+  if (refii_mod_coop_mode(lua.base) != 3 || !Scars(lua.base, lua.Entity(1), &morph, &first, &count) || index < 0 ||
+      static_cast<uint32_t>(index) >= count) {
+    lua.PushBoolean(false);
+    RESULTS(1);
+    return;
+  }
+  for (uint32_t at = first + 12u * static_cast<uint32_t>(index); at + 12u < first + 12u * count; at += 12u) {
+    for (uint32_t w = 0; w < 12u; w += 4u) {
+      refii::mods::StoreU32(lua.base, at + w, refii::mods::LoadU32(lua.base, at + 12u + w));
+    }
+  }
+  refii::mods::StoreU32(lua.base, morph + 28u, first + 12u * (count - 1u));
+  lua.base[morph + 16u] = 1u;
+  PPCContext work = refii::mods::Frame(lua.ctx);
+  work.r3.u64 = morph;
+  lua.PushBoolean(refii::mods::CallGuest(work, lua.base, refii::guest::Address(0x825F2518u)));
+  RESULTS(1);
+}
+
+// Core co-op only, an online joiner: Refii._estate_blocked() — the host's copy of this machine's hero holds
+// CUTSCENE_RULE_NO_PROPERTY_SCREEN (coop_estate_statements.cpp), the rule the sale sign's script asks.
+REFII_LUA_NATIVE(NativeEstateBlocked) {
+  lua.PushBoolean(refii::vfs::EstateBlockedForTwo());
+  RESULTS(1);
 }
 
 // Core co-op only: Refii._household(action, uid, value) sends player two's household action to the
@@ -1339,11 +1626,6 @@ REFII_LUA_NATIVE(NativeForwardSpeech) {
   RESULTS(0);
 }
 
-// Core co-op only: Refii._children_two() — how many children hero two's family records hold.
-REFII_LUA_NATIVE(NativeChildrenTwo) {
-  lua.PushNumber(refii_household_children_two(lua.base));
-  RESULTS(1);
-}
 
 REFII_LUA_NATIVE(NativeLocalHero) {
   lua.PushHandle(refii_mod_local_hero(lua.base));
@@ -1430,6 +1712,41 @@ REFII_LUA_NATIVE(NativePlayerSaveText) {
     refii_mod_player_save_text(lua.Int(1), key, text.c_str());
   }
   RESULTS(0);
+}
+
+// ACHIEVEMENTS PER CHARACTER, as the machine that plays the hero states them (core/achievement_statement.h):
+// the statement in player p's store, the same text Godot's RefiiHost twins read, so both surfaces answer
+// alike — and on both co-op machines, the partner's hero included.
+static refii::achievements::Statement AchievementStatement(int32_t player) {
+  char text[REFII_MOD_PLAYER_TEXT_MAX + 1];
+  if ((player != 1 && player != 2) ||
+      refii_mod_player_text(player, refii::achievements::kStatementKey, text, sizeof(text)) <= 0) {
+    return {};
+  }
+  return refii::achievements::ParseStatement(text);
+}
+
+// Refii.achievement_unlocked(p, id): whether the hero player p plays has unlocked achievement id.
+REFII_LUA_NATIVE(NativeAchievementUnlocked) {
+  const refii::achievements::Statement statement = AchievementStatement(lua.Int(1));
+  const int32_t id = lua.Int(2);
+  lua.PushBoolean(statement.valid && id > 0 && refii::achievements::Holds(statement.hero, static_cast<uint32_t>(id)));
+  RESULTS(1);
+}
+
+// Refii.achievements(p): the ids the hero player p plays has unlocked, ascending, "id,id,…" ("" for none).
+REFII_LUA_NATIVE(NativeAchievements) {
+  const refii::achievements::Statement statement = AchievementStatement(lua.Int(1));
+  lua.PushString(statement.valid ? refii::achievements::IdList(statement.hero).c_str() : "");
+  RESULTS(1);
+}
+
+// Refii.character_id(p): the character id of the hero player p plays (the one its saves carry in
+// refii_save.json), "" before the game bound one or when p plays no hero.
+REFII_LUA_NATIVE(NativeCharacterId) {
+  const refii::achievements::Statement statement = AchievementStatement(lua.Int(1));
+  lua.PushString(statement.valid ? statement.character.c_str() : "");
+  RESULTS(1);
 }
 
 REFII_LUA_NATIVE(NativePlayerValueHash) {
@@ -1824,6 +2141,80 @@ REFII_LUA_NATIVE(NativeCameraStated) {
   const uint32_t hero = EntityArgument(lua, 1);
   if (hero != 0u) {
     refii::vfs::ModCameraStated(lua.ctx, lua.base, hero, lua.Int(2));
+  }
+  RESULTS(0);
+}
+
+// Refii._camera_zoom_stated(hero, set, level, combat, string_length, cage_radius, max_cage_radius, height,
+// focal_offset, fov, max_coop_distance): the core chunk's statement of the zoom level hero's camera uses.
+REFII_LUA_NATIVE(NativeCameraZoomStated) {
+  const uint32_t hero = EntityArgument(lua, 1);
+  char set[64];
+  lua.String(2, set, sizeof(set));
+  float values[8];
+  for (int32_t i = 0; i < 8; ++i) {
+    values[i] = static_cast<float>(lua.Number(4 + i));
+  }
+  if (hero != 0u) {
+    refii::vfs::ModCameraZoomStated(lua.ctx, lua.base, hero, set, lua.Int(3), values);
+  }
+  RESULTS(0);
+}
+
+// Refii._camera_read(what, p [, x, y]): the camera's read calls (refii_mod_requests.h), flat for the
+// preamble's Refii.camera_* — 1 pose (12 numbers), 2 stated (11), 3 view (4), 4 screen (mode, split),
+// 5 ray (6); nil where there is none.
+REFII_LUA_NATIVE(NativeCameraRead) {
+  const int32_t what = lua.Int(1);
+  const int32_t player = lua.Int(2);
+  float out[12] = {};
+  int32_t count = 0;
+  if (what == 1 && refii_mod_camera_pose(player, out) != 0) {
+    count = 12;
+  } else if (what == 2 && refii_mod_camera_stated(player, out) != 0) {
+    count = 11;
+  } else if (what == 3 && refii_mod_camera_view(player, out) != 0) {
+    count = 4;
+  } else if (what == 4) {
+    int32_t split = 0;
+    out[0] = static_cast<float>(refii_mod_camera_screen_mode(&split));
+    out[1] = static_cast<float>(split);
+    count = 2;
+  } else if (what == 5) {
+    const float x = lua.Type(3) == kTypeNumber ? static_cast<float>(lua.Number(3)) : 0.5f;
+    const float y = lua.Type(4) == kTypeNumber ? static_cast<float>(lua.Number(4)) : 0.5f;
+    if (refii_mod_camera_ray(player, x, y, out) != 0) {
+      count = 6;
+    }
+  }
+  if (count == 0) {
+    lua.PushNil();
+    RESULTS(1);
+    return;
+  }
+  for (int32_t i = 0; i < count; ++i) {
+    lua.PushNumber(out[i]);
+  }
+  RESULTS(count);
+}
+
+// Refii._camera_offset_stated(p, on, right, up, back, yaw, pitch, roll, fov): the display offset the
+// camera store resolved for player p (Engine_ModLuaCamera.cs), for the shell's drawn frame only.
+REFII_LUA_NATIVE(NativeCameraOffsetStated) {
+  float seven[7];
+  for (int32_t i = 0; i < 7; ++i) {
+    seven[i] = static_cast<float>(lua.Number(3 + i));
+  }
+  refii_bridge_camera_offset_set(lua.Int(1), seven, lua.Boolean(2) ? 1 : 0);
+  RESULTS(0);
+}
+
+// Refii._coop_tether_stated(distance, separation): the core camera chunk's statement each camera tick of the
+// co-op leash — the distance its camera last stated to Debug.SetLimitCharacterDistance and the heroes' head-to-head
+// separation, as the leash sub_821A0298 measures it — for hybrid's split (Engine_CameraScreens).
+REFII_LUA_NATIVE(NativeCoopTetherStated) {
+  if (lua.Type(1) == kTypeNumber && lua.Type(2) == kTypeNumber) {
+    refii_bridge_coop_tether_stated(static_cast<float>(lua.Number(1)), static_cast<float>(lua.Number(2)));
   }
   RESULTS(0);
 }
@@ -2841,12 +3232,19 @@ Native g_natives[] = {
     {"player_value_hash", &NativePlayerValueHash, 0},
     {"player_save_hash", &NativePlayerSaveHash, 0},
     {"player_here", &NativePlayerHere, 0},
+    {"achievement_unlocked", &NativeAchievementUnlocked, 0},
+    {"achievements", &NativeAchievements, 0},
+    {"character_id", &NativeCharacterId, 0},
     {"event_replica", &NativeEventReplica, 0},
     {"attack_mode", &NativeAttackMode, 0},
     {"camera_mode", &NativeCameraMode, 0},
     {"_camera_override", &NativeCameraOverride, 0},
     {"fov", &NativeCameraFov, 0},
     {"_camera_stated", &NativeCameraStated, 0},
+    {"_camera_zoom_stated", &NativeCameraZoomStated, 0},
+    {"_camera_read", &NativeCameraRead, 0},
+    {"_camera_offset_stated", &NativeCameraOffsetStated, 0},
+    {"_coop_tether_stated", &NativeCoopTetherStated, 0},
     {"_camera_hold", &NativeCameraHold, 0},
     {"_camera_held", &NativeCameraHeld, 0},
     {"hide_part", &NativeHidePart, 0},
@@ -2854,17 +3252,32 @@ Native g_natives[] = {
     {"player_dog", &NativePlayerDog, 0},
     {"player_for", &NativePlayerFor, 0},
     {"_set_partner_dog", &NativeSetPartnerDog, 0},
+    {"_two_is_hero", &NativeTwoIsHero, 0},
     {"_restore_group_minds", &NativeRestoreGroupMinds, 0},
     {"_job_worker", &NativeJobWorker, 0},
     {"_estate_buyer", &NativeEstateBuyer, 0},
+    {"_estate_look", &NativeEstateLook, 0},
+    {"_estate_ready", &NativeEstateReady, 0},
+    {"_estate_blocked", &NativeEstateBlocked, 0},
+    {"_item_record", &NativeItemRecord, 0},
+    {"_use_carried", &NativeUseCarried, 0},
+    {"_use_stated_target", &NativeUseStatedTarget, 0},
+    {"_use_target_state", &NativeUseTargetState, 0},
+    {"_received_item", &NativeReceivedItem, 0},
+    {"_dog_name", &NativeDogName, 0},
+    {"_scars", &NativeScars, 0},
+    {"_scar_remove", &NativeScarRemove, 0},
     {"_household", &NativeHousehold, 0},
     {"_by_uid", &NativeByUid, 0},
     {"_end_redecorating", &NativeEndRedecorating, 0},
     {"_followers_two", &NativeFollowersTwo, 0},
     {"_household_context", &NativeHouseholdContext, 0},
-    {"_children_two", &NativeChildrenTwo, 0},
     {"_forward_speech", &NativeForwardSpeech, 0},
     {"_partner_screen", &NativePartnerScreen, 0},
+    {"_partner_player_icons", &NativePartnerPlayerIcons, 0},
+    {"_camera_player_icons", &NativeCameraPlayerIcons, 0},
+    {"_partner_camera_update", &NativePartnerCameraUpdate, 0},
+    {"_partner_camera_manager", &NativePartnerCameraManager, 0},
     {"_consent_ask", &NativeConsentAsk, 0},
     {"_key_taken", &NativeKeyTaken, 0},
     {"_consent_answer", &NativeConsentAnswer, 0},

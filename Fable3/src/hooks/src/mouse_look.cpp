@@ -116,6 +116,7 @@
 #include <rex/logging.h>
 #include <rex/ppc.h>
 
+#include "coop_camera.h"
 #include "core/mouse_look_common.h"
 #include "core/payload_bridge.h"
 #include "../../vfs/include/fable3_guest_build.h"
@@ -1193,9 +1194,14 @@ void StateWheel(const uint8_t* base, uint32_t hero, int32_t mode) {
 }  // namespace refii::fable3::mouselook
 
 // The camera manager's update (r3 the manager): the mouse's turn handed before, its account
-// stated after.
+// stated after. Player two's manager in a couch game (coop_camera_hooks.cpp) takes no mouse: the mouse
+// is player one's.
 REX_EXTERN(rex_CameraManager_Update) {
   const uint32_t manager = ctx.r3.u32;
+  if (manager != 0u && manager == refii::fable3::coopcam::PartnerManagerTicking()) {
+    __imp__rex_CameraManager_Update(ctx, base);
+    return;
+  }
   BeforeCameraUpdate(ctx, base, manager);
   __imp__rex_CameraManager_Update(ctx, base);
   AfterCameraUpdate(ctx, base, manager);

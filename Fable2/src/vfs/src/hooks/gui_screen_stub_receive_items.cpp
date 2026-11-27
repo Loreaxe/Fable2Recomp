@@ -23,7 +23,6 @@
 #include "hooks/ppc_externs.h"
 #include "vfs_hooks_private.h"
 
-PPC_EXTERN_FUNC(__imp__rex_CGUIReceiveItems_OnLeave);
 
 using namespace refii::vfs::stub;
 using refii::guest::Address;
@@ -43,8 +42,7 @@ using refii::mods::StoreU32;
 // (0x8253824C / 0x82538348), the other three leave it to the first Update (0x82537058). That draw is the
 // one call that presents every card, and it is where the card is stated.
 //
-// OnLeave (TU1 0x82536F70 / disc 0x82402710) stays the guest's: the base exit, the scroll region's
-// buffer, the preview's Hide, +325 = 0. It runs on close and on replace, and states the card down.
+// OnLeave (TU1 0x82536F70 / disc 0x82402710) runs on close and on replace, and states the card down.
 
 namespace {
 
@@ -147,12 +145,20 @@ REX_EXTERN(rex_lhGuiReceiveItemsScreen_OnScreenAction) {
   Said("received item (8)", "OnScreenAction", ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 }
 
-// OnLeave TU1 0x82536F70 / disc 0x82402710: the guest's body whole, then the card stated down — on
-// close, and on replace before the next item's card.
+// OnLeave (+36) TU1 0x82536F70 / disc 0x82402710, kept whole in the guest's order: the base exit
+// `sub_826D5C30(h)` (0x82536F84 / 0x82583490); the scroll region's nodes freed `sub_827A0E18(h+32)`
+// (0x82536F8C / 0x828581B0); the preview's release `sub_828C3FD8(h+96)` (0x82536F94 / 0x82834DA0); h+325
+// = 0 (0x82536F9C). Then the card stated down — on close, and on replace before the next item's card.
 REX_EXTERN(rex_CGUIReceiveItems_OnLeave) {
   REX_FUNC_PROLOGUE();
-  __imp__rex_CGUIReceiveItems_OnLeave(ctx, base);
+  const uint32_t h = ctx.r3.u32;
+  const Scratch s = Claim(ctx);
+  Call(ctx, base, s.frame, 0x826D5C30u, {h});
+  Call(ctx, base, s.frame, 0x827A0E18u, {h + 32u});
+  Call(ctx, base, s.frame, 0x828C3FD8u, {h + 96u});
+  base[h + 325u] = 0u;
   refii::mods::PostEvent(kCardKind, "up=0");
+  Said("received item (8)", "OnLeave", h);
 }
 
 // ---- THE LEVERS -----------------------------------------------------------------------------

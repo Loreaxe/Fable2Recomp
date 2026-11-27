@@ -41,7 +41,7 @@ REX_EXTERN(__imp__rex_TopBox_Post);
 REX_EXTERN(__imp__rex_TopBox_RemoveFromChannel);
 REX_EXTERN(__imp__rex_TopBox_Clear);
 // Disc only: TU3 has no counterpart (its answers post through the generic sub_824D1BC0, stated by
-// RefiiF3TopBoxAnswered), so the TU3 payload loads without it.
+// RefiiF3TopBoxAnswered and the replaced hold step), so the TU3 payload loads without it.
 extern "C" __attribute__((weak)) REX_FUNC(__imp__rex_TopBox_Answer);
 
 namespace {
@@ -209,9 +209,9 @@ REX_EXTERN(rex_TopBox_Answer) {
   __imp__rex_TopBox_Answer(ctx, base);
 }
 
-/// TU3's hold and press answers (sub_824D1910, sub_824D1B08), on their `bl sub_824D1BC0` (0x824D1A0C,
-/// 0x824D1BA0): r3 is the answer, which sub_824D1BC0 posts as message 101. Not the function itself:
-/// the hold box and the button box answer through it too.
+/// TU3's press answer (sub_824D1B08), on its `bl sub_824D1BC0` (0x824D1BA0): r3 is the answer, which
+/// sub_824D1BC0 posts as message 101. Not the function itself: the hold box and the button box answer
+/// through it too. The hold's answer is stated by the replaced hold step (topbox_answer.cpp).
 void RefiiF3TopBoxAnswered(PPCRegister& answer) {
   Statement("@TopBox.Answer").Add(Number(static_cast<float>(static_cast<int32_t>(answer.u32)))).Post();
 }

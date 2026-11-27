@@ -4,8 +4,9 @@ namespace Refii.Ui;
 /// A HOLD-TO-ACCEPT METER ON GODOT'S CLOCK: it fills while its button is held and drains at the same
 /// rate when it is let go, clamped to [0, 1], and accepts on the step its fill crosses full — once
 /// per crossing, so a press held past full accepts once and a second accept needs the fill to drop
-/// and climb again. The title states how long a full hold takes; the meter knows no device, so a pad
-/// button, a key and a mouse held on the prompt are one hold.
+/// and climb again. The title states how long a full hold takes, or the two rates of a hold that drains
+/// at another speed than it fills; the meter knows no device, so a pad button, a key and a mouse held
+/// on the prompt are one hold.
 /// </summary>
 public sealed class Engine_UiHoldMeter
 {
@@ -23,6 +24,23 @@ public sealed class Engine_UiHoldMeter
 		float before = Progress;
 		float step = Seconds <= 0.0 ? 1f : (float)(delta / Seconds);
 		Progress = System.Math.Clamp(Progress + (held ? step : -step), 0f, 1f);
+		return Progress >= 1f && before < 1f;
+	}
+
+	/// <summary>
+	/// Moves the fill by <paramref name="delta"/> seconds at the title's stated rates — fill per second
+	/// while held, drain per second when let go (a guest that fills and drains at different speeds);
+	/// true on the step it reaches full. A rate of 0 or less leaves the fill where it is.
+	/// </summary>
+	public bool Step(double delta, bool held, double fillPerSecond, double drainPerSecond)
+	{
+		float before = Progress;
+		double rate = held ? fillPerSecond : -drainPerSecond;
+		if (held ? fillPerSecond > 0.0 : drainPerSecond > 0.0)
+		{
+			Progress = System.Math.Clamp(Progress + (float)(delta * rate), 0f, 1f);
+		}
+
 		return Progress >= 1f && before < 1f;
 	}
 

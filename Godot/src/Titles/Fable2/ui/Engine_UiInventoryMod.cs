@@ -173,7 +173,7 @@ public static partial class Engine_UiInventorySource
 		ItemDetail? detail = Engine_ItemDetails.BuildOne(Globals!, record.RecordId);
 		Vector3 rotation = pieces.Count != 0 ? new Vector3(Mathf.Pi, 0f, 0f) : detail?.PreviewRotation ?? Vector3.Zero;
 		var facts = new ModItemFacts(name, description, IconOf(record), ModelOf(record.RecordId), pieces.ToArray(), category, value, WeaponClassOf(record.RecordId),
-			Engine_UiItemStats.For(record.RecordId, Strings), Acts(UseOperation, record), rotation, detail?.PreviewRotationAxis ?? 0);
+			Engine_UiItemStats.For(record.RecordId, Strings), UsableFromInventory(record.RecordId), rotation, detail?.PreviewRotationAxis ?? 0);
 		// Without the string book an item has no description and its stats no labels: kept only once it has.
 		if (Strings is not null)
 		{
@@ -213,8 +213,10 @@ public static partial class Engine_UiInventorySource
 			case "outfit":
 				return string.Create(CultureInfo.InvariantCulture, $"{prefix}{operation}:{record}");
 			case "remove":
-				return category != Category.Suits && NoneRows.TryGetValue(category, out (string Suffix, int EventType, uint Id) none)
-					? string.Create(CultureInfo.InvariantCulture, $"{prefix}unequip:{none.EventType}")
+				// The slot's None row's event, 91 (Hats, 17) .. 97 (Masks, 23): `sub_826CC340(type − 91)` maps it
+				// back to the category (0x826D3F6C); the Outfits' 90 strips every piece and is not a slot.
+				return category is >= Category.Hats and <= Category.Accessories
+					? string.Create(CultureInfo.InvariantCulture, $"{prefix}unequip:{category + 74}")
 					: null;
 			default:
 				return null;

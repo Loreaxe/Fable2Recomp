@@ -53,16 +53,9 @@ public static class Fable2Bridge
 
 	private static uint[]? _coopSessionWords;
 	private static uint[]? _coopWords;
-	private static readonly uint[] _dyeStateWords = new uint[160 * DyeStateWords];
-
-	/// <summary>Words per entry of <c>RefiiHostGetDyeStates</c>: item, record, flags.</summary>
-	private const int DyeStateWords = 3;
 	private static readonly byte[] _estateIntent = new byte[128];
 	private static float[]? _exitRequestAt;
-	private static uint[]? _furnitureWords;
 	private static readonly byte[] _properties = new byte[32768];
-	private static byte[]? _shopFrontText;
-	private static uint[]? _shopFrontWords;
 	private static byte[]? _topBoxLiteral;
 
 	public static (uint Generation, ulong Result) GetNewGameState()
@@ -175,6 +168,34 @@ public static class Fable2Bridge
 	/// <summary>The things whose use prompt only player two sees this frame (player one's half hides them).</summary>
 	public static int GetPlayerOneHiddenPrompts(uint[] into) =>
 		TryGetAbiVersion() is null || !IsGuestUp ? 0 : RefiiHostGetPlayerOneHiddenPrompts(into, into.Length);
+
+	private static readonly uint[] _targetedPairs = new uint[64 * 2];
+	private static readonly Dictionary<uint, int> _targetedBy = new();
+	private static ulong _targetedFrame = ulong.MaxValue;
+
+	/// <summary>
+	/// The players targeting <paramref name="thing"/> as the guest's targeted setter left them
+	/// (lhECTargeted_SetTargetedByPlayer, target_highlight.cpp): bit 0 player one, bit 1 player two,
+	/// 0 when no player targets it. Read once per process frame.
+	/// </summary>
+	public static int TargetedBy(uint thing)
+	{
+		ulong frame = Godot.Engine.GetProcessFrames();
+		if (frame != _targetedFrame)
+		{
+			_targetedFrame = frame;
+			_targetedBy.Clear();
+			int pairs = TryGetAbiVersion() is null || !IsGuestUp
+				? 0
+				: RefiiHostGetTargetedBy(_targetedPairs, _targetedPairs.Length / 2);
+			for (int i = 0; i < pairs; ++i)
+			{
+				_targetedBy[_targetedPairs[i * 2]] = (int)(_targetedPairs[i * 2 + 1] & 3u);
+			}
+		}
+
+		return thing != 0u && _targetedBy.TryGetValue(thing, out int mask) ? mask : 0;
+	}
 
 	/// <summary>Player two's own hold-to-use meter: the fraction 0..1 and whether they hold A.</summary>
 	public static (float Fraction, bool Pressed) GetPlayerTwoHold()
@@ -726,8 +747,8 @@ public static class Fable2Bridge
 		uint RecordId, int Count, int Category, bool Viewed, uint Item = 0);
 
 	/// <summary>
-	/// Names the region to sample. The pump answers one tick later — it cannot know which row
-	/// is highlighted, and sampling calls eleven guest providers so it has to run over there.
+	/// Names the region whose minimap keys the pump samples: the region row's own id less 999. The
+	/// pump answers one tick later — the key and scenario are guest calls, made on its thread.
 	/// </summary>
 	public static void SetWorldMapRegion(uint index)
 	{
@@ -892,38 +913,6 @@ public static class Fable2Bridge
 
 		return known == 0u ? default : DecodeRealEstate(true, words, occupant);
 	}
-
-	/// <summary>Reads screen 28's building. See <see cref="RealEstate"/>.</summary>
-	public static RealEstate GetRealEstate()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		uint[] words = _realEstateWords ??= new uint[15];
-		byte[] occupant = _realEstateOccupant ??= new byte[128];
-		occupant[0] = 0;
-		uint known;
-		try
-		{
-			known = RefiiHostGetRealEstate(words, (uint)words.Length,
-				occupant, (uint)occupant.Length);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
-
-		return DecodeRealEstate(known != 0u, words, occupant);
-	}
-
-	private static RealEstate DecodeRealEstate(bool known, uint[] words, byte[] occupant) =>
-		new(
-			known, words[0], words[1], words[2] != 0u, words[3] != 0u,
-			(int)words[4], (int)words[5], (int)words[6], (int)words[7], (int)words[8],
-			(int)words[9], (int)words[10], (int)words[11], (int)words[12], words[13],
-			occupant[0] == 0 ? string.Empty : Utf8(occupant), words[14]);
 
 	/// <summary>
 	/// The hero's completed quests, UNSORTED. The page's order is descending by the GDB property
@@ -1096,118 +1085,13 @@ public static class Fable2Bridge
 			words[11]);
 	}
 
-	/// <summary>Every live sale and shortage, in the guest's own order — sales first.</summary>
-	public static List<Sale> GetSaleDetails()
-	{
-		var sales = new List<Sale>();
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return sales;
-		}
-
-		const int max = 32;
-		const int stride = 5;
-		uint[] words = new uint[max * stride];
-		uint found;
-		try
-		{
-			found = RefiiHostGetSales(words, (uint)words.Length);
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return sales;
-		}
-
-		for (uint i = 0; i < found && i < max; ++i)
-		{
-			uint at = i * stride;
-			sales.Add(new Sale(
-				words[at], words[at + 1], words[at + 2], (int)words[at + 3],
-				System.BitConverter.Int32BitsToSingle((int)words[at + 4])));
-		}
-
-		return sales;
-	}
-
-	public static List<(uint NameKey, bool IsShortage)> GetSales()
-	{
-		var sales = new List<(uint, bool)>();
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return sales;
-		}
-
-		const int max = 32;
-		const int stride = 5;
-		uint[] words = new uint[max * stride];
-		uint found;
-		try
-		{
-			found = RefiiHostGetSales(words, (uint)words.Length);
-		}
-		catch (System.DllNotFoundException)
-		{
-			return sales;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return sales;
-		}
-
-		for (uint i = 0; i < found && i < max; ++i)
-		{
-			float multiplier =
-				System.BitConverter.Int32BitsToSingle((int)words[(i * stride) + 4]);
-			sales.Add((words[i * stride], multiplier > 1f));
-		}
-
-		return sales;
-	}
-
-	public static List<(uint NameHash, uint Ordinal)> GetFastTravelRegions()
-	{
-		var regions = new List<(uint, uint)>();
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return regions;
-		}
-
-		const int max = 64;
-		uint[] words = new uint[max * 2];
-		uint found;
-		try
-		{
-			found = RefiiHostGetFastTravelRegions(words, (uint)words.Length);
-		}
-		catch (System.DllNotFoundException)
-		{
-			return regions;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return regions;
-		}
-
-		for (uint i = 0; i < found && i < max; ++i)
-		{
-			regions.Add((words[i * 2], words[(i * 2) + 1]));
-		}
-
-		return regions;
-	}
-
-	/// <summary>One entry in the hero's quest log. `RecordId` is the quest DEFINITION's GDB key —
-	/// the same currency the item lists use — and the flags are the guest's own state bytes.</summary>
 	/// <summary>
-	/// One quest as the world map's pages need it. Every number is a plain field on the quest
-	/// object, named by the save serialiser `sub_825237C8`: `Rating` at +28 (the star strip's
-	/// slide, written unclamped), `RewardRenown` +32, `RewardMoney` +36,
-	/// `CurrentObjectiveParameter` +40 (the `%1` every task line substitutes) and
-	/// `DaysRemaining` +44.
-	///
-	/// <paramref name="Primary"/> and <paramref name="Active"/> choose the banner the quest
-	/// page opens with; <paramref name="TaskCount"/> is the length of the task vector at
-	/// +104/+108, whose tags come across separately — see <see cref="GetQuestTasks"/>.
+	/// One entry in the hero's quest log. `RecordId` is the quest DEFINITION's GDB key and the flags
+	/// are the guest's own state bytes; every number is a plain field on the quest object, named by
+	/// the save serialiser `sub_825237C8`: `Rating` +28, `RewardRenown` +32, `RewardMoney` +36,
+	/// `CurrentObjectiveParameter` +40, `DaysRemaining` +44; <paramref name="TaskCount"/> is the length
+	/// of the task vector at +104/+108. Read for the minimaps' quest markers (the world map's minimap
+	/// page and the minimap mod).
 	/// </summary>
 	public readonly record struct QuestEntry(
 		uint RecordId, bool Unlocked, bool Completed, bool Failed, bool OnWorldMap, bool Viewed,
@@ -1220,158 +1104,8 @@ public static class Fable2Bridge
 		uint ObjectiveEntity = 0);
 
 	/// <summary>
-	/// One job's journey — distance and travel time, already worded by the guest's own
-	/// providers. <paramref name="Record"/> says which quest the answer is FOR: the pump replies
-	/// a tick after the ask, so a page that has moved on must not draw the previous row's numbers.
-	/// An empty <paramref name="Travel"/> is a real answer for a job under an hour away.
-	/// </summary>
-	public readonly record struct QuestJourney(
-		bool Known, uint Record, string Distance, string Travel, string Region, string Prompt,
-		string Days)
-	{
-		public bool IsFor(uint record) => Known && Record == record && record != 0u;
-	}
-
-	/// <summary>
-	/// Whether the trail is following a sale or a family member instead of the primary quest —
-	/// the quest log's TrailOverrideInfo at +40. While it is, the world map shows the primary
-	/// quest as merely active (`sub_829A3260`). See RefiiHostGetQuestTrailOverride.
-	/// </summary>
-	public static bool QuestTrailOverridden()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return false;
-		}
-
-		try
-		{
-			return RefiiHostGetQuestTrailOverride() != 0u;
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return false;
-		}
-	}
-
-	/// <summary>Names the quest whose journey the pump should answer for next.</summary>
-	public static void SetQuestTravel(uint record)
-	{
-		if (TryGetAbiVersion() is null)
-		{
-			return;
-		}
-
-		try
-		{
-			RefiiHostSetQuestTravel(record);
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-		}
-	}
-
-	/// <summary>Reads back the journey — see <see cref="QuestJourney"/>.</summary>
-	public static QuestJourney GetQuestTravel()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		var distance = new byte[64];
-		var travel = new byte[64];
-		var region = new byte[64];
-		var prompt = new byte[64];
-		var days = new byte[64];
-		try
-		{
-			uint known = RefiiHostGetQuestTravel(
-				out uint record, distance, (uint)distance.Length, travel, (uint)travel.Length,
-				region, (uint)region.Length, prompt, (uint)prompt.Length, days, (uint)days.Length);
-			return new QuestJourney(
-				known != 0u, record, Utf8(distance), Utf8(travel), Utf8(region), Utf8(prompt),
-			Utf8(days));
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return default;
-		}
-	}
-
-	/// <summary>
-	/// One quest's task lines, as Babel TAGS in the guest's own order — the LAST is the current
-	/// task and everything before it is completed. Position is what decides that; the
-	/// `Succeeded` byte beside each tag is stored and never read by the page.
-	/// </summary>
-	public static List<string> GetQuestTasks(uint recordId)
-	{
-		var tasks = new List<string>();
-		if (TryGetAbiVersion() is null || !IsGuestUp || recordId == 0u)
-		{
-			return tasks;
-		}
-
-		var packed = new byte[2048];
-		try
-		{
-			if (RefiiHostGetQuestTasks(recordId, packed, (uint)packed.Length) == 0u)
-			{
-				return tasks;
-			}
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return tasks;
-		}
-
-		foreach (string tag in Utf8(packed).Split('\t'))
-		{
-			if (tag.Length != 0)
-			{
-				tasks.Add(tag);
-			}
-		}
-
-		return tasks;
-	}
-
-	public static Furniture GetFurniture()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		uint[] words = _furnitureWords ??= new uint[15];
-		try
-		{
-			if (RefiiHostGetFurniture(words, (uint)words.Length) == 0u)
-			{
-				return default;
-			}
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return default;
-		}
-
-		int count = (int)System.Math.Min(words[5], 8u);
-		var values = new int[count];
-		for (int i = 0; i < count; ++i)
-		{
-			values[i] = unchecked((int)words[7 + i]);
-		}
-
-		return new Furniture(
-			true, words[1] != 0u, unchecked((int)words[2]), unchecked((int)words[3]),
-			unchecked((int)words[4]), values,
-			System.BitConverter.Int32BitsToSingle(unchecked((int)words[6])));
-	}
-
-	/// <summary>
-	/// One quest's task lines' completed flags, index-parallel with <see cref="GetQuestTasks"/>
-	/// (`quest+104` entries, byte +4). Empty when the quest has none or the guest is down.
+	/// One quest's task lines' completed flags, in the task vector's order (`quest+104` entries,
+	/// byte +4). Empty when the quest has none or the guest is down.
 	/// </summary>
 	public static bool[] GetQuestTaskStates(uint recordId)
 	{
@@ -1463,252 +1197,6 @@ public static class Fable2Bridge
 
 	[System.ThreadStatic]
 	private static uint[]? _questWords;
-
-	/// <summary>
-	/// The items the hero is WEARING, by GDB record id — what a clothing list must not offer
-	/// again. Empty when nothing is worn, when the guest is down, and also when the walk saw the
-	/// container move under it (a push reallocates); see the native side.
-	/// </summary>
-	/// <summary>
-	/// One shop row's ASKING PRICE — what the shop charges, which is not the item's worth.
-	/// </summary>
-	/// <param name="Record">The item's GDB record — what the ticket names, read where the price reads it.</param>
-	public readonly record struct ShopPrice(bool Known, uint Ticket, int Price, uint Record)
-	{
-		public bool IsFor(uint ticket) => Known && Ticket == ticket && ticket != 0u;
-	}
-
-	/// <summary>Names the row whose price the pump should answer for next.</summary>
-	public static void SetShopPrice(uint ticket, bool sell)
-	{
-		if (TryGetAbiVersion() is null)
-		{
-			return;
-		}
-
-		try
-		{
-			RefiiHostSetShopPrice(ticket, sell ? 1u : 0u);
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-		}
-	}
-
-	/// <summary>Reads back the asking price — see <see cref="ShopPrice"/>.</summary>
-	public static ShopPrice GetShopPrice()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		try
-		{
-			uint known = RefiiHostGetShopPrice(out uint ticket, out int price, out uint record);
-			return new ShopPrice(known != 0u, ticket, price, record);
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return default;
-		}
-	}
-
-	/// <summary>
-	/// ONE family member's page, in the guest's own field order.
-	///
-	/// Ten of the eleven are already-formatted text the collector wrote into the record —
-	/// `sub_829B04E0` sets them with `sub_82425DD0`, which takes formatted text rather than a
-	/// tag — so they are shown as they arrive. <see cref="Region"/> is the exception and IS a
-	/// Babel tag, because the page sets it with `sub_82425F40`.
-	/// </summary>
-	public readonly record struct FamilyDetails(
-		bool Known, string Name, string Children, string Region, string Distance, string Travel,
-		string Note, string DailyUpkeep, string TotalUpkeep, string Happiness,
-		string HomeHappiness, string UpkeepHappiness, string Prompt);
-
-	/// <summary>
-	/// The page for the family member at <paramref name="index"/> — the row's own id, which is
-	/// the ordinal the guest's page indexes by.
-	/// </summary>
-	public static FamilyDetails GetFamilyDetails(uint index)
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		const int fields = 12;
-		const int stride = 192;
-		byte[] block = new byte[fields * stride];
-		uint found;
-		try
-		{
-			found = RefiiHostGetFamilyDetails(index, block, stride, fields);
-		}
-		catch (System.DllNotFoundException)
-		{
-			return default;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return default;
-		}
-
-		if (found == 0u)
-		{
-			return default;
-		}
-
-		string Field(int at)
-		{
-			if (at >= found)
-			{
-				return string.Empty;
-			}
-
-			int start = at * stride;
-			int end = System.Array.IndexOf(block, (byte)0, start, stride);
-			int length = (end < 0 ? start + stride : end) - start;
-			return length > 0 ? Encoding.UTF8.GetString(block, start, length) : string.Empty;
-		}
-
-		return new FamilyDetails(
-			true, Field(0), Field(1), Field(2), Field(3), Field(4), Field(5), Field(6),
-			Field(7), Field(8), Field(9), Field(10), Field(11));
-	}
-
-	/// <summary>
-	/// The world map's family members, in the order the guest's own collector produced them.
-	///
-	/// Sampled by the pump while the world map is up (`sub_8246F020`, freed with
-	/// `sub_826C9450`) rather than walked here — the read goes through an entity-UID map and a
-	/// component-20 name fallback, and the guest already has the function for it.
-	/// </summary>
-	public static List<string> GetFamily()
-	{
-		var family = new List<string>();
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return family;
-		}
-
-		const int max = 32;
-		const int stride = 64;
-		byte[] names = new byte[max * stride];
-		uint found;
-		try
-		{
-			found = RefiiHostGetFamily(names, stride, max);
-		}
-		catch (System.DllNotFoundException)
-		{
-			return family;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return family;
-		}
-
-		for (uint i = 0; i < found && i < max; ++i)
-		{
-			int start = (int)i * stride;
-			int end = System.Array.IndexOf(names, (byte)0, start, stride);
-			int length = (end < 0 ? start + stride : end) - start;
-			if (length > 0)
-			{
-				family.Add(Encoding.UTF8.GetString(names, start, length));
-			}
-		}
-
-		return family;
-	}
-
-	/// <summary>
-	/// One garment's dye state, by the guest's own test (<c>sub_826CAFA8</c>), and the item
-	/// instance it was read off (<see cref="InventoryRecord.Item"/>).
-	/// </summary>
-	public readonly record struct DyeState(bool Slot1, bool Slot2, bool Worn, uint Item = 0);
-
-	/// <summary>
-	/// Which of the hero's garments are dyed, keyed by item record: for each record, the instance
-	/// a dye press acts on — the worn one, else the first the inventory lists (the pump's
-	/// `Inventory:dye` takes the worn target first, else `sub_824F1C90`'s find). The sampler
-	/// reports per instance, worn first then the inventory in list order, so the first entry of
-	/// a record is that one. Sampled on the guest's GUI tick, so it is current while a book is
-	/// open; a record not listed has not been sampled.
-	/// </summary>
-	public static Dictionary<uint, DyeState> GetDyeStates()
-	{
-		var states = new Dictionary<uint, DyeState>();
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return states;
-		}
-
-		uint found;
-		try
-		{
-			found = RefiiHostGetDyeStates(_dyeStateWords, (uint)_dyeStateWords.Length);
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return states;
-		}
-
-		for (uint i = 0; i < found && (i * DyeStateWords) + 2 < _dyeStateWords.Length; ++i)
-		{
-			uint flags = _dyeStateWords[(i * DyeStateWords) + 2];
-			states.TryAdd(_dyeStateWords[(i * DyeStateWords) + 1],
-				new DyeState((flags & 1u) != 0, (flags & 2u) != 0, (flags & 4u) != 0,
-					_dyeStateWords[i * DyeStateWords]));
-		}
-
-		return states;
-	}
-
-	/// <summary>
-	/// The augment pairs socketed into one inventory record — (PrimaryType, SecondaryType) GDB
-	/// record ids, secondary 0 when there is none — off the item's own instance record, which
-	/// is what `sub_82469AE8` prints on the weapon page. Null when no record of that id carries
-	/// one: the item was never seeded, and the definition's `InitialAugmentations` stand.
-	/// </summary>
-	public static (uint Primary, uint Secondary)[]? GetItemAugments(uint recordId)
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp || recordId == 0u)
-		{
-			return null;
-		}
-
-		const int max = 16;
-		uint[] words = new uint[max * 2];
-		uint found;
-		try
-		{
-			found = RefiiHostGetItemAugments(recordId, words, (uint)words.Length);
-		}
-		catch (System.DllNotFoundException)
-		{
-			return null;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return null;
-		}
-
-		if (found == uint.MaxValue)
-		{
-			return null;
-		}
-
-		var pairs = new (uint, uint)[System.Math.Min(found, max)];
-		for (int i = 0; i < pairs.Length; ++i)
-		{
-			pairs[i] = (words[i * 2], words[(i * 2) + 1]);
-		}
-
-		return pairs;
-	}
 
 	public static List<InventoryRecord> GetHeroInventory()
 	{
@@ -1896,57 +1384,6 @@ public static class Fable2Bridge
 		}
 
 		return records;
-	}
-
-	/// <summary>The shop's front page as its writer computes it — see <c>ShopFront</c> in hero_derived.h.</summary>
-	public readonly record struct ShopFront(
-		bool Known, bool Trader, bool Crier, bool HasKeeperName, bool Owner, bool SaleKnown,
-		float Stars, float Wealth, float OwnerDiscount, float Love, float Hate, float Fear,
-		float Special, float SaleFactor, int SaleDays,
-		string NameKey, string AnecdoteKey, string KeeperName, string TitleKey);
-
-	public static ShopFront GetShopFront()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		uint[] w = _shopFrontWords ??= new uint[11];
-		byte[] text = _shopFrontText ??= new byte[512];
-		System.Array.Clear(text);
-		try
-		{
-			if (RefiiHostGetShopFront(w, (uint)w.Length, text, (uint)text.Length) == 0u)
-			{
-				return default;
-			}
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return default;
-		}
-
-		var pieces = new string[4];
-		int at = 0;
-		for (int i = 0; i < 4; ++i)
-		{
-			int end = System.Array.IndexOf(text, (byte)0, at);
-			if (end < 0)
-			{
-				end = text.Length;
-			}
-
-			pieces[i] = Encoding.UTF8.GetString(text, at, end - at);
-			at = System.Math.Min(end + 1, text.Length);
-		}
-
-		static float F(uint bits) => System.BitConverter.Int32BitsToSingle(unchecked((int)bits));
-		uint flags = w[1];
-		return new ShopFront(
-			true, (flags & 1u) != 0u, (flags & 2u) != 0u, (flags & 4u) != 0u, (flags & 8u) != 0u,
-			(flags & 16u) != 0u, F(w[2]), F(w[3]), F(w[4]), F(w[5]), F(w[6]), F(w[7]), F(w[8]),
-			F(w[9]), unchecked((int)w[10]), pieces[0], pieces[1], pieces[2], pieces[3]);
 	}
 
 	/// <summary>The co-op screen's decision state (screen 24) — see <c>CoopScreen</c> in hero_derived.h.
@@ -2227,6 +1664,9 @@ public static class Fable2Bridge
 	private static extern int RefiiHostGetPlayerOneHiddenPrompts(uint[] outThings, int capacity);
 
 	[DllImport(Library)]
+	private static extern int RefiiHostGetTargetedBy(uint[] outPairs, int capacityPairs);
+
+	[DllImport(Library)]
 	private static extern int RefiiHostGetPlayerTwoHold(out float fraction, out int pressed);
 
 	[DllImport(Library)]
@@ -2293,32 +1733,7 @@ public static class Fable2Bridge
 	private static extern uint RefiiHostGetPlayerTwoHud(ref uint target, [Out] byte[] text, uint capacity);
 
 	[DllImport(Library)]
-	private static extern uint RefiiHostGetDyeStates([Out] uint[] outWords, uint wordCapacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetFamily([Out] byte[]? outNames, uint stride, uint capacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetFamilyDetails(
-		uint index, [Out] byte[] outFields, uint stride, uint count);
-
-	[DllImport(Library)]
-	private static extern void RefiiHostSetShopPrice(uint ticket, uint sell);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetShopPrice(out uint outTicket, out int outPrice, out uint outRecord);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetQuestLog(uint[] outWords, uint wordCapacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetQuestTrailOverride();
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetFastTravelRegions([Out] uint[]? outWords, uint wordCapacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetSales(uint[] outWords, uint wordCapacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostPauseTabsAvailable();
@@ -2331,32 +1746,10 @@ public static class Fable2Bridge
 	private static extern void RefiiHostSetWorldMapRegion(uint index);
 
 	[DllImport(Library)]
-	private static extern uint RefiiHostGetQuestTasks(uint recordId, byte[] packed, uint capacity);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetQuestTaskStates(uint recordId, byte[] completed, uint capacity);
 
 	[DllImport(Library)]
-	private static extern uint RefiiHostGetFurniture(uint[] words, uint capacity);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetCoopState(uint[] words, uint capacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetShopFront(uint[] words, uint capacity, byte[] text, uint textCapacity);
-
-	[DllImport(Library)]
-	private static extern void RefiiHostSetQuestTravel(uint record);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetQuestTravel(
-		out uint outRecord, byte[] distance, uint distanceCapacity, byte[] travel,
-		uint travelCapacity, byte[] region, uint regionCapacity, byte[] prompt,
-		uint promptCapacity, byte[] days, uint daysCapacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetRealEstate(
-		uint[] words, uint wordCapacity, byte[] occupant, uint occupantCapacity);
 
 	[DllImport(Library)]
 	private static extern void RefiiHostRequestPropertyEstate(ulong uid);
@@ -2397,9 +1790,6 @@ public static class Fable2Bridge
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetPlayerInventory(int player, uint[]? outWords, uint wordCapacity);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetItemAugments(uint recordId, uint[] outWords, uint wordCapacity);
 
 	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
 	private static extern int RefiiHostGetPubGame(

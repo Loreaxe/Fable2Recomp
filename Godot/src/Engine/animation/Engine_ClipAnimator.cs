@@ -714,9 +714,6 @@ public sealed class Engine_ClipAnimator : System.Threading.IThreadPoolWorkItem, 
 	/// <summary>The skeleton's parent table, read once — see Apply.</summary>
 	private int[]? _parents;
 
-	private int _emptyControllerStreak;
-	private int _emptySkipRemaining;
-
 	/// <summary>
 	/// Advances this rig's clips and, when <paramref name="writeBones"/>, poses the skeleton.
 	/// </summary>
@@ -773,29 +770,9 @@ public sealed class Engine_ClipAnimator : System.Threading.IThreadPoolWorkItem, 
 		uint guestFrame = Refii.Core.Engine_GuestFrame.Frame;
 		if (guestFrame == 0u || guestFrame != _readFrame || entity != _readEntity)
 		{
-			if (entity == _readEntity && _emptySkipRemaining > 0)
-			{
-				--_emptySkipRemaining;
-				_readFrame = guestFrame;
-			}
-			else
-			{
-				_readCount = HostBridge.GetEntityAnimState(entity, _read, out _readFlags);
-				_readFrame = guestFrame;
-				_readEntity = entity;
-				if (_readCount == 0 && (_readFlags & 10u) == 0u)
-				{
-					if (++_emptyControllerStreak >= 3)
-					{
-						_emptySkipRemaining = 15;
-					}
-				}
-				else
-				{
-					_emptyControllerStreak = 0;
-					_emptySkipRemaining = 0;
-				}
-			}
+			_readCount = HostBridge.GetEntityAnimState(entity, _read, out _readFlags);
+			_readFrame = guestFrame;
+			_readEntity = entity;
 		}
 
 		_leaves.Clear();

@@ -14,23 +14,30 @@ namespace Refii.Core;
 /// plus <see cref="Second"/>" is the whole set, and a system that culls, ranks or budgets by what
 /// is in view asks for every view rather than <c>GetViewport().GetCamera3D()</c>: a thing in
 /// either player's view is in view.</para>
+/// <para>OPEN, AND DRAWN. The two views are built once (<see cref="Open"/>) and kept for the whole
+/// local co-op game; the screen splits and rejoins by drawing them or the window (<see cref="Split"/>),
+/// with nothing built or freed. Hybrid's swap is one of those, so a system that keeps something per
+/// view builds it while the views are open and draws it while they are drawn.</para>
 /// <para>A system that MUST draw per view (an overlay that mirrors a camera into its own
-/// viewport, a per-view shader constant) is told which views exist through
-/// <see cref="ViewsChanged"/> and builds an instance per view.</para>
+/// viewport, a per-view shader constant) is told through <see cref="ViewsChanged"/>, raised when
+/// the views open or close and when the screen splits or rejoins.</para>
 /// </remarks>
 public static class Engine_Views
 {
-	/// <summary>Player two's camera while the screen is split, else null.</summary>
+	/// <summary>Player two's camera while the views are open, else null.</summary>
 	public static Camera3D? Second { get; private set; }
 
-	/// <summary>Player two's view while the screen is split, else null.</summary>
+	/// <summary>Player two's view while the views are open, else null.</summary>
 	public static SubViewport? SecondViewport { get; private set; }
 
-	/// <summary>Player one's view while the screen is split, else null (the window draws).</summary>
+	/// <summary>Player one's view while the views are open, else null.</summary>
 	public static SubViewport? FirstViewport { get; private set; }
 
-	/// <summary>Whether the world is drawn through two views right now.</summary>
-	public static bool Split => Second is { } camera && GodotObject.IsInstanceValid(camera);
+	/// <summary>Whether the two views exist (they may not be drawn: see <see cref="Split"/>).</summary>
+	public static bool Open => Second is { } camera && GodotObject.IsInstanceValid(camera);
+
+	/// <summary>Whether the world is drawn through the two views right now (else the window draws it).</summary>
+	public static bool Split => _drawn && Open;
 
 	/// <summary>
 	/// How the split view divides the window: false side by side (player one left, player two
@@ -39,22 +46,62 @@ public static class Engine_Views
 	/// </summary>
 	public static bool Stacked { get; private set; }
 
-	/// <summary>Raised when the screen splits or rejoins.</summary>
+	/// <summary>Raised when the views open or close, and when the screen splits or rejoins.</summary>
 	public static event System.Action? ViewsChanged;
 
 	private static readonly List<Camera3D> Scratch = new(2);
+	private static bool _drawn;
 
-	/// <summary>Set by the split view when the screen splits (both non-null) or rejoins (nulls).</summary>
+	/// <summary>Set by the split view when it builds its views (all non-null) or frees them (nulls).</summary>
 	public static void SetSplit(SubViewport? first, SubViewport? second, Camera3D? secondCamera)
 	{
 		FirstViewport = first;
 		SecondViewport = second;
 		Second = secondCamera;
+		if (secondCamera is null)
+		{
+			_drawn = false;
+			ShownRects[0] = null;
+			ShownRects[1] = null;
+		}
+
+		ViewsChanged?.Invoke();
+	}
+
+	/// <summary>Set by the split view when it starts or stops drawing its open views.</summary>
+	public static void SetDrawn(bool drawn)
+	{
+		if (drawn == _drawn)
+		{
+			return;
+		}
+
+		_drawn = drawn;
 		ViewsChanged?.Invoke();
 	}
 
 	/// <summary>Set by the split view when it lays its views out side by side or stacked.</summary>
 	public static void SetStacked(bool stacked) => Stacked = stacked;
+
+	private static readonly Rect2I?[] ShownRects = new Rect2I?[2];
+
+	/// <summary>
+	/// The part of view <paramref name="view"/>'s picture (0 player one's, 1 player two's) its half shows, in
+	/// that view's own pixels: the whole view at rest; during hybrid's swap the view draws a picture twice the
+	/// half along the divider's axis and the half shows a part of it (Refii.Camera.Engine_CameraSwap.Shown).
+	/// Something projected through the view's camera lands in the half at its pixel minus this rect's position.
+	/// </summary>
+	public static Rect2I Shown(int view, Vector2I viewSize) =>
+		view is 0 or 1 && ShownRects[view] is { } rect ? rect : new Rect2I(Vector2I.Zero, viewSize);
+
+	/// <summary>Set by the split view each frame it draws: the part of each view its half shows (null: all of it).</summary>
+	public static void SetShown(int view, Rect2I? shown)
+	{
+		if (view is 0 or 1)
+		{
+			ShownRects[view] = shown;
+		}
+	}
 
 	/// <summary>
 	/// The cameras drawing the world: <paramref name="primary"/> (the window's), or on split

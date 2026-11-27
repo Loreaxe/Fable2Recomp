@@ -99,6 +99,53 @@ public static class Engine_UiTextBoxFit
 		return (x, y);
 	}
 
+	/// <summary>
+	/// THE PLACES A SLIDE WRITES, as <see cref="ChainPosition"/>'s per-ordinal statement: an element the
+	/// <paramref name="slide"/> carries a `position.x` / `position.y` command for stands there (the slide's
+	/// write replaces the file's own attribute, as entering the slide does), every other element keeps
+	/// what <paramref name="under"/> states (or the file's). So a page that moves its rows on its slide is
+	/// read where that page stands them, by the one chain rule. A null slide states nothing new.
+	/// </summary>
+	public static System.Func<int, (float? X, float? Y)> SlideStated(BgfSlide? slide, System.Func<int, (float? X, float? Y)>? under)
+	{
+		System.Func<int, (float? X, float? Y)> beneath = under ?? (_ => default);
+		if (slide is null)
+		{
+			return beneath;
+		}
+
+		var moved = new System.Collections.Generic.Dictionary<int, (float? X, float? Y)>();
+		foreach (BgfSlideEntry entry in slide.Entries)
+		{
+			float? x = null, y = null;
+			foreach (BgfAttribute command in entry.Commands ?? System.Array.Empty<BgfAttribute>())
+			{
+				float? value = command.Type == BgfValueType.Float ? command.AsFloat()
+					: command.Type is BgfValueType.Int1 or BgfValueType.Int2 ? command.AsInt()
+					: null;
+				if (command.Id == PositionX)
+				{
+					x = value;
+				}
+				else if (command.Id == PositionY)
+				{
+					y = value;
+				}
+			}
+
+			if (x is not null || y is not null)
+			{
+				moved[entry.ElementOrdinal] = (x, y);
+			}
+		}
+
+		return ordinal =>
+		{
+			(float? X, float? Y) below = beneath(ordinal);
+			return moved.TryGetValue(ordinal, out (float? X, float? Y) on) ? (on.X ?? below.X, on.Y ?? below.Y) : below;
+		};
+	}
+
 	/// <summary>The pivot summed up the chain over the running scale (`sub_82818C30`).</summary>
 	public static (float X, float Y) ChainPivot(Engine_BgfDocument document, int ordinal)
 	{

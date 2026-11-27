@@ -1817,7 +1817,8 @@ constexpr const char* kKindNames[REFII_EVENT_COUNT] = {
     "job_earnings", "job_worked", "job_multiplier", "job_summary", "guild_message", "title_changed",
     "title_unlocked", "chapter_progress", "scar_added", "scar_removed", "age_changed", "hero_stage",
     "clothing_worn", "clothing_removed", "clothing_dyed", "pub_game_started", "pub_game_finished",
-    "village_wealth", "gargoyle_destroyed"
+    "village_wealth", "gargoyle_destroyed", "camera_cut", "camera_blend", "camera_screen_changed",
+    "camera_zoom_changed", "camera_tick"
 };
 
 enum class Enc : uint8_t { kHandle, kU32, kU64, kI32, kF32, kBool, kStr };
@@ -2642,6 +2643,29 @@ int32_t RunKind(int32_t kind, const std::vector<TypedSubscription>& subs, const 
     case REFII_EVENT_GARGOYLE_DESTROYED:
       return Run<GargoyleDestroyedEvent>(subs, fields, length, out, capacity, {
           F(GargoyleDestroyedEvent, level, kStr), F(GargoyleDestroyedEvent, player, kI32)});
+    case REFII_EVENT_CAMERA_CUT:
+      return Run<CameraCutEvent>(subs, fields, length, out, capacity, {F(CameraCutEvent, player, kI32)});
+    case REFII_EVENT_CAMERA_BLEND:
+      return Run<CameraBlendEvent>(subs, fields, length, out, capacity, {
+          F(CameraBlendEvent, player, kI32), F(CameraBlendEvent, ticks, kI32)});
+    case REFII_EVENT_CAMERA_SCREEN_CHANGED:
+      return Run<CameraScreenChangedEvent>(subs, fields, length, out, capacity, {
+          F(CameraScreenChangedEvent, mode, kI32), F(CameraScreenChangedEvent, split, kBool),
+          F(CameraScreenChangedEvent, previous, kI32), F(CameraScreenChangedEvent, reason, kI32)});
+    case REFII_EVENT_CAMERA_ZOOM_CHANGED:
+      return Run<CameraZoomChangedEvent>(subs, fields, length, out, capacity, {
+          F(CameraZoomChangedEvent, player, kI32), F(CameraZoomChangedEvent, set, kStr),
+          F(CameraZoomChangedEvent, previous_set, kStr), F(CameraZoomChangedEvent, level, kI32),
+          F(CameraZoomChangedEvent, combat, kF32), F(CameraZoomChangedEvent, string_length, kF32),
+          F(CameraZoomChangedEvent, cage_radius, kF32), F(CameraZoomChangedEvent, max_cage_radius, kF32),
+          F(CameraZoomChangedEvent, height, kF32), F(CameraZoomChangedEvent, focal_offset, kF32),
+          F(CameraZoomChangedEvent, fov, kF32), F(CameraZoomChangedEvent, max_coop_distance, kF32)});
+    case REFII_EVENT_CAMERA_TICK:
+      return Run<CameraTickEvent>(subs, fields, length, out, capacity, {
+          F(CameraTickEvent, player, kI32), F(CameraTickEvent, x, kF32), F(CameraTickEvent, y, kF32),
+          F(CameraTickEvent, z, kF32), F(CameraTickEvent, fx, kF32), F(CameraTickEvent, fy, kF32),
+          F(CameraTickEvent, fz, kF32), F(CameraTickEvent, ux, kF32), F(CameraTickEvent, uy, kF32),
+          F(CameraTickEvent, uz, kF32), F(CameraTickEvent, fov, kF32), F(CameraTickEvent, cut, kBool)});
     default:
       return 0;
   }

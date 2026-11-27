@@ -92,16 +92,18 @@ public static class Engine_UiDetailPages
 	/// <see cref="Engine_UiOwnedBook.HostTextures"/>. Empty for a screen with none.
 	/// </summary>
 	public static IReadOnlyDictionary<string, uint> Textures(
-		uint screenId, Engine_UiExpandableMenu.Item? row) =>
-		Provider(screenId)?.Textures(Row(screenId, row)) ?? Engine_UiPageProviders.NoTextures;
+		uint screenId, Engine_UiExpandableMenu.Item? row,
+		Refii.Host.HostBridge.WorldMapRegion worldMap = default) =>
+		Provider(screenId)?.Textures(Row(screenId, row) with { WorldMap = worldMap }) ?? Engine_UiPageProviders.NoTextures;
 
 	/// <summary>
 	/// Elements this screen's provider switches on or off outright — see
 	/// <see cref="Engine_UiOwnedBook.HostActive"/>. Empty for a screen with none.
 	/// </summary>
 	public static IReadOnlyDictionary<string, bool> Active(
-		uint screenId, Engine_UiExpandableMenu.Item? row) =>
-		Provider(screenId)?.Active(Row(screenId, row)) ?? Engine_UiPageProviders.NoActive;
+		uint screenId, Engine_UiExpandableMenu.Item? row,
+		Refii.Host.HostBridge.WorldMapRegion worldMap = default) =>
+		Provider(screenId)?.Active(Row(screenId, row) with { WorldMap = worldMap }) ?? Engine_UiPageProviders.NoActive;
 
 	/// <summary>
 	/// Elements whose opacity this screen's provider states outright — see
@@ -153,8 +155,9 @@ public static class Engine_UiDetailPages
 
 	/// <summary>Elements this screen's provider TURNS — see <see cref="Engine_UiOwnedBook.HostRotations"/>.</summary>
 	public static IReadOnlyDictionary<string, float> Rotations(
-		uint screenId, Engine_UiExpandableMenu.Item? row = null) =>
-		Provider(screenId)?.Rotations(Row(screenId, row)) ?? Engine_UiPageProviders.NoRotations;
+		uint screenId, Engine_UiExpandableMenu.Item? row = null,
+		Refii.Host.HostBridge.WorldMapRegion worldMap = default) =>
+		Provider(screenId)?.Rotations(Row(screenId, row) with { WorldMap = worldMap }) ?? Engine_UiPageProviders.NoRotations;
 
 	/// <summary>Elements this screen's provider tints — see <see cref="Engine_UiOwnedBook.HostTints"/>.</summary>
 	public static IReadOnlyDictionary<string, Godot.Color> Tints(

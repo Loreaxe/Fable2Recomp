@@ -1,5 +1,7 @@
 namespace Refii.Titles.Fable3;
 
+using System;
+
 /// <summary>
 /// What a press on Fable 3's boxes, menu box and Options screen means, as the guest tick action
 /// that carries Godot's answer to the box's own answer function (Fable3/src/hooks/src/
@@ -21,12 +23,24 @@ namespace Refii.Titles.Fable3;
 /// The TopBox: its own input with the pressed, held and released codes of A or Y. The pause screen's message box: the screen input
 /// sub_825CE380 with 72 (GUI_SELECT, 0x825CE3B4), or 76 on its download form (0x825CE3D8). The
 /// menu box: its highlight sub_825F9F38(MB, row) then its select sub_825FA850(MB), or its cancel
-/// (`+13 = 1`, the close; 0x825FA0F0). The Options screen: one game action into its handler
-/// sub_825CA410 — 29/30 up/down, 31/32 left/right, 74 A, 75 B, 77 Y — or a row stated to the
-/// row setters its own steps call (disc sub_825CBC68 / sub_825CBD80), or on pages 3 and 4, which
-/// have none, stepped to through the handler at its own repeat rate. The save menu: a row its own
+/// (`+13 = 1`, the close; 0x825FA0F0). The Options screen, whose cursor and working values are
+/// Godot's: A, B, Y or START into its own handler (TU3 sub_825F4F30 / disc sub_825CA410), a list
+/// page's row through the row setters its own steps call (sub_825F68A0 / sub_825CBC68, sub_825F69B8 /
+/// sub_825CBD80) then A, and a settings row's working value, which its own left / right setters bring
+/// the box to (options_hooks.cpp). The save menu: a row its own
 /// two steps are called toward (disc sub_8296CC38 / sub_8296CCF8, 0.3 s a row), accepted through
-/// its input sub_8296C918 with 72.
+/// its input sub_8296C918 with 72. THE BOX SCREENS Godot owns (<see cref="OwnsScreen"/>; TU3 /
+/// disc handlers in display_box_hooks.cpp's header): hero status B (75) closes; a promise A (74) signs
+/// while unsigned and B (75) closes once signed, for the pad of player record 1; the king's schedule A
+/// (74) from player one closes; the quest summary's cursor is Godot's, stated as a list row (`row`),
+/// picked with 72 (`select`, message event 156) or left with 73; the wedding picker's tier is Godot's,
+/// handed with 41 (`accept`, event 69, only an affordable tier) or 42 (`decline`, event 70), each move
+/// of it stated (`tier`) so the guest still plays the step's cue; the chat channel's mute is Godot's,
+/// each change stated (`mute`, its cue), saved with 72 (`chat`) or left with 73; the stats pages' cursor is
+/// Godot's (`stats-row`), A is 72 (`stats-open`), B 73 (`stats-back`), Y on the friends' board 77
+/// (`stats-card`, the gamer card). Each handler keeps its own player test, so a lever it refuses does
+/// nothing and Godot follows only what the guest then states (`@Box.Close`, `@Screen.Cursor`,
+/// `@Screen.StatsPage`, the promise's slide).
 /// </remarks>
 public static class Fable3BoxAnswers
 {
@@ -49,6 +63,186 @@ public static class Fable3BoxAnswers
 	/// </summary>
 	public const double CardHoldSeconds = 1.0;
 
+	/// <summary>The box-manager screens (by element root) whose pad, cursor and working value Godot owns.</summary>
+	public static bool OwnsScreen(string? root) => root is Fable3ScreenModel.HeroStatus or Fable3ScreenModel.Promises or
+		Fable3ScreenModel.Schedule or Fable3ScreenModel.Quests or Fable3ScreenModel.Stats or
+		Fable3BoxScreenModel.WeddingPicker or Fable3BoxScreenModel.ChatChannel || Fable3SessionBoxAnswers.Owns(root);
+
+	/// <summary>
+	/// What a press or a pointer pick means on an owned box screen: the tick action to post (or none)
+	/// and Godot's own working values after it (null = unchanged).
+	/// </summary>
+	public readonly record struct ScreenStep(string? Lever, int? Tier = null, bool? Muted = null, int? Cursor = null,
+		int? Sleep = null, int? Sex = null, bool? StatsAchievements = null, bool OpenAchievements = false)
+	{
+		public bool Any => Lever is not null || Tier is not null || Muted is not null || Cursor is not null || Sleep is not null ||
+			Sex is not null || StatsAchievements is not null || OpenAchievements;
+	}
+
+	/// <summary>
+	/// The step for <paramref name="press"/> on the owned screen <paramref name="root"/> whose box is
+	/// <paramref name="address"/>, for <paramref name="player"/>. <paramref name="screen"/> is the box's
+	/// record (the stated cursor, page and windows, Godot's tier); <paramref name="muted"/> the chat
+	/// channel's working value now.
+	/// </summary>
+	public static ScreenStep ForScreen(string root, uint address, Press press, Fable3ScreenState screen, bool muted = false,
+		int player = Fable3ActingPlayer.One)
+	{
+		string box = "box:" + Fable3ActingPlayer.Field(player) + ":" +
+			address.ToString("X8", System.Globalization.CultureInfo.InvariantCulture) + ":";
+		int cursor = screen.Cursor ?? 0;
+		switch (root)
+		{
+			case Fable3ScreenModel.HeroStatus:
+				return new(press.B ? box + "close" : null);
+			case Fable3ScreenModel.Promises:
+				return new(press.A ? box + "accept" : press.B ? box + "close" : null);
+			case Fable3ScreenModel.Schedule:
+				return new(press.A ? box + "accept" : null);
+			case Fable3ScreenModel.Quests:
+				if (press.Up || press.Down)
+				{
+					// The guest bounds the row against its list; a row it has not is refused there.
+					int row = cursor + (press.Down ? 1 : -1);
+					return new ScreenStep(row >= 0 ? box + "row:" + Int(row) : null);
+				}
+
+				return new(press.A ? box + "select:" + Int(cursor) : press.B ? box + "close" : null);
+			case Fable3BoxScreenModel.WeddingPicker:
+				if (press.Up || press.Down)
+				{
+					// The guest's own clamp: up to 0, down to 2 (TU3 0x82B90F80 / 0x82B90FEC). `tier` states
+					// the move, for the step's cue.
+					int tier = System.Math.Clamp(screen.Tier + (press.Down ? 1 : -1), 0, 2);
+					return tier != screen.Tier ? new ScreenStep(box + "tier:" + Int(tier), tier) : default;
+				}
+
+				return new(press.A ? box + "accept:" + Int(screen.Tier) : press.B ? box + "decline:" + Int(screen.Tier) : null);
+			case Fable3BoxScreenModel.ChatChannel:
+				if (press.Left || press.Right)
+				{
+					// The guest's rule (TU3 sub_829BB608): left mutes only from audible, right unmutes only
+					// from muted. `mute` states the change, for its cue.
+					bool to = press.Left;
+					return to != muted ? new ScreenStep(box + "mute:" + (to ? "1" : "0"), null, to) : default;
+				}
+
+				return new(press.A ? box + "chat:" + (muted ? "1" : "0") : press.B ? box + "close" : null);
+			case Fable3ScreenModel.Stats:
+			{
+				int page = screen.StatsPage is 3 or 4 ? screen.StatsPage.Value : 2;
+				bool known = screen.StatsWindows.TryGetValue(page, out (int Start, int Count, int Rows) window);
+				// THE ACHIEVEMENTS CATEGORY, the host's, past the guest's last category (Fable3ScreenModel's
+				// StatsPage): reached by Down from the last, left by Up; A opens the achievements page.
+				if (page == 2 && screen.StatsAchievements)
+				{
+					return press.Up ? new ScreenStep(null, StatsAchievements: false)
+						: press.A ? new ScreenStep(null, StatsAchievements: false, OpenAchievements: true)
+						: press.B ? new ScreenStep(box + "stats-back", StatsAchievements: false)
+						: default;
+				}
+
+				if (press.Up || press.Down)
+				{
+					int row = cursor + (press.Down ? 1 : -1);
+					if (page == 2 && press.Down && known && row == window.Count)
+					{
+						return new ScreenStep(null, StatsAchievements: true);
+					}
+
+					return new(row >= 0 && (!known || row < window.Count) ? box + "stats-row:" + Int(row) : null);
+				}
+
+				if (press.A && page != 4)
+				{
+					return new(box + "stats-open:" + Int(cursor));
+				}
+
+				if (press.Y && page == 4)
+				{
+					return new(box + "stats-card:" + Int(cursor));
+				}
+
+				return new(press.B ? box + "stats-back" : null);
+			}
+
+			default:
+				return Fable3SessionBoxAnswers.ForScreen(root, address, press, screen, player);
+		}
+	}
+
+	/// <summary>
+	/// The step for the pointer on the drawn row named <paramref name="rowName"/> of an owned screen
+	/// (the models' row names end in the row's index in the stated window): resting on it moves Godot's
+	/// cursor there, a click picks it. <paramref name="clicked"/> is a left click on the row.
+	/// </summary>
+	public static ScreenStep PointScreen(string root, uint address, string rowName, bool clicked, Fable3ScreenState screen,
+		bool muted = false, int player = Fable3ActingPlayer.One)
+	{
+		string box = "box:" + Fable3ActingPlayer.Field(player) + ":" +
+			address.ToString("X8", System.Globalization.CultureInfo.InvariantCulture) + ":";
+		int digits = rowName.Length;
+		while (digits > 0 && rowName[digits - 1] is >= '0' and <= '9')
+		{
+			--digits;
+		}
+
+		int index = digits < rowName.Length
+			? int.Parse(rowName.AsSpan(digits), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture)
+			: -1;
+		int cursor = screen.Cursor ?? 0;
+		switch (root)
+		{
+			case Fable3ScreenModel.Quests when index >= 0:
+			{
+				// The window's selected slot is the cursor's row (sub_829BCA18's `selected`, `@Screen.QuestRow`).
+				int selectedSlot = 0;
+				foreach ((int slot, (uint _, bool selected, bool _)) in screen.QuestRows)
+				{
+					if (selected)
+					{
+						selectedSlot = slot;
+						break;
+					}
+				}
+
+				int row = cursor - selectedSlot + index;
+				return row < 0 ? default : new ScreenStep(box + (clicked ? "select:" : "row:") + Int(row));
+			}
+
+			case Fable3ScreenModel.Stats when rowName == Fable3ScreenModel.StatsAchievementsRow:
+				return clicked ? new ScreenStep(null, StatsAchievements: false, OpenAchievements: true)
+					: screen.StatsAchievements ? default : new ScreenStep(null, StatsAchievements: true);
+			case Fable3ScreenModel.Stats when index >= 0:
+			{
+				int page = screen.StatsPage is 3 or 4 ? screen.StatsPage.Value : 2;
+				int row = (screen.StatsWindows.TryGetValue(page, out (int Start, int Count, int Rows) window) ? window.Start : 0) + index;
+				if (screen.StatsAchievements && !clicked)
+				{
+					return new ScreenStep(box + "stats-row:" + Int(row), StatsAchievements: false);
+				}
+
+				if (!clicked)
+				{
+					return row == cursor ? default : new ScreenStep(box + "stats-row:" + Int(row));
+				}
+
+				return page == 4 ? default : new ScreenStep(box + "stats-open:" + Int(row));
+			}
+
+			case Fable3BoxScreenModel.WeddingPicker when index is >= 0 and <= 2:
+				return clicked ? new ScreenStep(box + "accept:" + Int(index), index) :
+					index != screen.Tier ? new ScreenStep(box + "tier:" + Int(index), index) : default;
+			case Fable3BoxScreenModel.ChatChannel:
+				return clicked ? new ScreenStep(box + "mute:" + (muted ? "0" : "1"), null, !muted) : default;
+			default:
+				return Fable3SessionBoxAnswers.PointScreen(root, address, rowName, clicked, screen, player);
+		}
+	}
+
+	private static string Int(int value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+	public const int ActionStart = 14;
 	public const int ActionUp = 29;
 	public const int ActionDown = 30;
 	public const int ActionLeft = 31;
@@ -122,6 +316,46 @@ public static class Fable3BoxAnswers
 		"topbox:" + Fable3ActingPlayer.Field(player) + ":" + (a ? "a" : "y") + ":" + (down ? "down" : "up");
 
 	/// <summary>
+	/// Godot's hold fill of the TopBox's A or Y, in thousandths, for <paramref name="player"/>:
+	/// `topbox:&lt;p&gt;:&lt;a|y&gt;:fill:&lt;0..1000&gt;` (topbox_answer.cpp's replaced hold step takes it as the progress).
+	/// </summary>
+	public static string TopBoxFill(bool a, int thousandths, int player = Fable3ActingPlayer.One) =>
+		"topbox:" + Fable3ActingPlayer.Field(player) + ":" + (a ? "a" : "y") + ":fill:" +
+		System.Math.Clamp(thousandths, 0, 1000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+	/// <summary>
+	/// An emotion choice's button for <paramref name="player"/>, as the game's action
+	/// <paramref name="code"/> (<see cref="Fable3GameActions.EmotionPressed"/> going down,
+	/// <see cref="Fable3GameActions.EmotionReleased"/> coming up): `emotion:&lt;p&gt;:&lt;code&gt;`
+	/// (emotion_choice_answer.cpp runs the choice UI's own input with it).
+	/// </summary>
+	public static string Emotion(int code, int player = Fable3ActingPlayer.One) =>
+		"emotion:" + Fable3ActingPlayer.Field(player) + ":" + code.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+	/// <summary>
+	/// The world icon's hold button (A) going down or coming up for <paramref name="player"/>:
+	/// `worldicon:&lt;p&gt;:hold:&lt;down|up&gt;` (world_icon_hold.cpp runs the icon registry's own input).
+	/// </summary>
+	public static string WorldIconHold(bool down, int player = Fable3ActingPlayer.One) =>
+		"worldicon:" + Fable3ActingPlayer.Field(player) + ":hold:" + (down ? "down" : "up");
+
+	/// <summary>
+	/// A HUD d-pad direction for <paramref name="player"/>, as the game's action <paramref name="code"/>
+	/// (<see cref="Fable3GameActions.GuiUp"/>.. going down, <see cref="Fable3GameActions.GuiUpReleased"/>..
+	/// coming up): `dpad:&lt;p&gt;:&lt;code&gt;` (hud_dpad_use.cpp runs the d-pad widget's own input).
+	/// </summary>
+	public static string Dpad(int code, int player = Fable3ActingPlayer.One) =>
+		"dpad:" + Fable3ActingPlayer.Field(player) + ":" + code.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+	/// <summary>
+	/// A game action for <paramref name="player"/> into the interaction mode up, as its
+	/// <paramref name="code"/> (<see cref="Fable3GameActions"/>): `interaction:&lt;p&gt;:&lt;code&gt;`
+	/// (interaction_mode_input.cpp runs the interaction manager's own input with it).
+	/// </summary>
+	public static string Interaction(int code, int player = Fable3ActingPlayer.One) =>
+		"interaction:" + Fable3ActingPlayer.Field(player) + ":" + code.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+	/// <summary>
 	/// Picks row <paramref name="row"/> (0-based) of the open menu box for <paramref name="player"/>, or
 	/// null: the guest's mapper selects for player one alone (`cmpwi r4,1`, TU3 0x82B512D4).
 	/// </summary>
@@ -159,29 +393,19 @@ public static class Fable3BoxAnswers
 		return next >= rows ? 0 : next < 0 ? rows - 1 : next;
 	}
 
-	/// <summary>The Options screen's game action for a press, or null; A wins over a direction pressed with it.</summary>
-	public static int? OptionsAction(Press press) =>
-		press.A ? ActionA :
-		press.B ? ActionB :
-		press.Y ? ActionY :
-		press.Up ? ActionUp :
-		press.Down ? ActionDown :
-		press.Left ? ActionLeft :
-		press.Right ? ActionRight :
-		null;
-
 	/// <summary>
-	/// The tick action for an Options game action by <paramref name="player"/>: `options:&lt;p&gt;:&lt;action&gt;`.
-	/// The screen's handler takes its own hero's player alone (options_hooks.cpp).
+	/// The tick action for an Options game action by <paramref name="player"/>: `options:&lt;p&gt;:&lt;action&gt;`
+	/// with 74 A, 75 B, 77 Y or 14 START. The screen's handler takes its own hero's player alone
+	/// (options_hooks.cpp).
 	/// </summary>
 	public static string Options(int action, int player = Fable3ActingPlayer.One) =>
 		"options:" + Fable3ActingPlayer.Field(player) + ":" + action.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
 	/// <summary>
-	/// The tick action that states the Options screen's 0-based <paramref name="row"/> (the
-	/// screen's own rows are 1-based) and, with <paramref name="accept"/>, has A pressed on it
-	/// once the cursor is there, for <paramref name="player"/>: `options-row:&lt;p&gt;:&lt;row&gt;[:accept]`
-	/// (options_hooks.cpp). Null for no row.
+	/// The tick action that states Godot's cursor on the Options screen's 0-based <paramref name="row"/>
+	/// (the screen's own rows are 1-based) and, with <paramref name="accept"/>, has A pressed on it,
+	/// for <paramref name="player"/>: `options-row:&lt;p&gt;:&lt;row&gt;[:accept]` (options_hooks.cpp). On a
+	/// settings page it is the guest row the screen's own cursor is walked to. Null for no row.
 	/// </summary>
 	public static string? OptionsRow(int row, bool accept, int player = Fable3ActingPlayer.One) =>
 		row < 0 ? null :
@@ -189,24 +413,18 @@ public static class Fable3BoxAnswers
 		(row + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + (accept ? ":accept" : string.Empty);
 
 	/// <summary>
-	/// Whether a click on a row of Options page <paramref name="page"/> also accepts it: on the list
-	/// pages (1 Options, 2 Save Management, 5 Multiplayer) A enters or asks; on the settings pages
-	/// (3, 4) A commits the whole page and leaves it (sub_825F70F8, 0x825F6144), so a click there only
-	/// puts the cursor on the row.
+	/// The tick action that hands the guest Godot's working <paramref name="value"/> of Options settings
+	/// page <paramref name="page"/>'s 1-based <paramref name="guestRow"/> (a bar 0..1 on the 0.025 grid, a
+	/// toggle 0 / 1, a count), for <paramref name="player"/>:
+	/// `options-value:&lt;p&gt;:&lt;page&gt;:&lt;row&gt;:&lt;value&gt;` (options_hooks.cpp; dropped there on any
+	/// other page). Null for no row or a value below 0.
 	/// </summary>
-	public static bool OptionsClickAccepts(int page) => page is 1 or 2 or 5;
-
-	/// <summary>
-	/// The game actions a wheel's <paramref name="steps"/> are on an Options settings page's cursor
-	/// row: each notch up is a right step (32), each down a left step (31) — the row's own setters,
-	/// applied live as the pad's left and right are.
-	/// </summary>
-	public static int[] OptionsWheelSteps(int steps)
-	{
-		var actions = new int[System.Math.Abs(steps)];
-		System.Array.Fill(actions, steps > 0 ? ActionRight : ActionLeft);
-		return actions;
-	}
+	public static string? OptionsValue(int page, int guestRow, float value, int player = Fable3ActingPlayer.One) =>
+		guestRow < 1 || value < 0f || float.IsNaN(value) ? null :
+		"options-value:" + Fable3ActingPlayer.Field(player) + ":" +
+		page.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" +
+		guestRow.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" +
+		value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
 
 	/// <summary>The save menu's rows: 1 Save, 2 Save and Quit, 3 Quit, 4 Character Management.</summary>
 	public const int SaveMenuRows = 4;

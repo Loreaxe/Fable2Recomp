@@ -54,6 +54,13 @@ public partial class Engine_ScreenSpaceAoEffect : CompositorEffect
 
 	private static string TextureGlobal(int view) => view == 0 ? GlobalTextureName : GlobalTextureSecondName;
 
+	/// <summary>
+	/// The pass whose AO each view's global holds now. Two cameras run a pass for view 0 — the window's
+	/// and player one's split view (Refii.Game.GameSplitView) — and only the one drawing runs, so the
+	/// one that runs claims the global and only the holder clears it.
+	/// </summary>
+	private static readonly Engine_ScreenSpaceAoEffect?[] _publishers = new Engine_ScreenSpaceAoEffect?[2];
+
 	private RenderingDevice? _rd;
 	private Rid _traceShader;
 	private Rid _tracePipeline;
@@ -276,7 +283,8 @@ public partial class Engine_ScreenSpaceAoEffect : CompositorEffect
 			_outSize = outSize;
 			PublishOutTexture(_outAoTex);
 		}
-		else if (!_publishedValid)
+		else if (!_publishedValid ||
+			(View is >= 0 and < 2 && !ReferenceEquals(System.Threading.Volatile.Read(ref _publishers[View]), this)))
 		{
 			PublishOutTexture(_outAoTex);
 		}
@@ -290,23 +298,35 @@ public partial class Engine_ScreenSpaceAoEffect : CompositorEffect
 		}
 
 		_publishedValid = true;
+		if (System.Threading.Interlocked.Exchange(ref _publishQueued, 1) == 1)
+		{
+			return;
+		}
+
 		int view = View;
 		Callable.From(() =>
 		{
-			if (_released || !rid.IsValid || view is < 0 or >= 2)
+			System.Threading.Volatile.Write(ref _publishQueued, 0);
+			Rid current = _outAoTex;
+			if (_released || !_publishedValid || !current.IsValid || view is < 0 or >= 2)
 			{
 				return;
 			}
 
 			Texture2Drd texture = _textures[view] ??= new Texture2Drd();
-			texture.TextureRdRid = rid;
+			texture.TextureRdRid = current;
 			RenderingServer.GlobalShaderParameterSet(TextureGlobal(view), texture);
 			if (view == 0)
 			{
 				RenderingServer.GlobalShaderParameterSet(GlobalValidName, 1.0f);
 			}
+
+			System.Threading.Volatile.Write(ref _publishers[view], this);
 		}).CallDeferred();
 	}
+
+	/// <summary>1 while a publish is queued for the main thread.</summary>
+	private int _publishQueued;
 
 	private void SetInactive()
 	{
@@ -320,7 +340,7 @@ public partial class Engine_ScreenSpaceAoEffect : CompositorEffect
 		{
 			Callable.From(() =>
 			{
-				if (!_publishedValid)
+				if (!_publishedValid && ReferenceEquals(_publishers[0], this))
 				{
 					RenderingServer.GlobalShaderParameterSet(GlobalValidName, 0.0f);
 				}
@@ -495,7 +515,15 @@ public partial class Engine_ScreenSpaceAoEffect : CompositorEffect
 		_released = true;
 		_publishedValid = false;
 
-		if (_globalsRegistered)
+		// Only the pass holding the global gives it up (see _publishers): player one's split view,
+		// freed when local co-op ends, is not what the window draws through after it.
+		bool holds = View is >= 0 and < 2 && ReferenceEquals(_publishers[View], this);
+		if (holds)
+		{
+			_publishers[View] = null;
+		}
+
+		if (_globalsRegistered && (holds || releaseStaticFallbacks))
 		{
 			if (View == 0)
 			{
@@ -530,7 +558,7 @@ public partial class Engine_ScreenSpaceAoEffect : CompositorEffect
 			_globalsRegistered = false;
 		}
 
-		if (View is >= 0 and < 2 && _textures[View] is { } texture)
+		if ((holds || releaseStaticFallbacks) && View is >= 0 and < 2 && _textures[View] is { } texture)
 		{
 			texture.TextureRdRid = default;
 			_textures[View] = null;

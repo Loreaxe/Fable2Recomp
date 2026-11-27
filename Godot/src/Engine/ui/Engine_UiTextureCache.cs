@@ -121,7 +121,7 @@ public sealed class Engine_UiTextureCache
 		{
 			if (cached is null || GodotObject.IsInstanceValid(cached))
 			{
-				return cached;
+				return Engine_UiKeyGlyphs.ForSurface(cached);
 			}
 
 			_resolved.Remove(virtualPath);
@@ -163,9 +163,10 @@ public sealed class Engine_UiTextureCache
 
 		++Loaded;
 
-		// A controller button's art becomes the keycap proxy the device switch redraws.
+		// A controller button's art becomes the keycap proxy the device switch redraws; the cache keeps
+		// the shared proxy, and a player-two surface is handed player two's twin (Engine_UiKeyGlyphs.ForSurface).
 		Texture2D wrapped = Engine_UiKeyGlyphs.Wrap(virtualPath, texture);
 		_resolved[virtualPath] = wrapped;
-		return wrapped;
+		return Engine_UiKeyGlyphs.ForSurface(wrapped);
 	}
 }

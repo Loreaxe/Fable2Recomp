@@ -5,6 +5,7 @@
 //
 // Slot layout (vtable): +8 OnEnter, +16 Update, +20 OnMenuEvent(h, event), +24
 // OnScreenAction(h, code, player), +36 OnExit. TU1 / disc addresses on each function.
+#include <atomic>
 #include <cstdint>
 #include <initializer_list>
 #include <string>
@@ -23,7 +24,6 @@ using refii::guest::Address;
 using refii::mods::LoadU32;
 using refii::mods::StoreU32;
 
-// ---- UPGRADE FURNITURE (26; disc 25) — vtable 0x820CECEC / 0x820C18E8 ------------------------
 // ---- THE VILLAGER CARD (10, both builds) — vtable 0x820CF944 / 0x820C075C --------------------
 //
 // h+24 "open", h+28 the target entity, h+32 "keyboard pending", h+34 the keyboard's 17-unit buffer,
@@ -33,12 +33,8 @@ using refii::mods::StoreU32;
 // captions, the name line, the rename prompt's slide, traits and meters — through the text and float
 // registries, once.
 //
-// Two slots stay the guest's. Update (TU1 0x826CC9A8 / disc 0x825836D0) is the rename itself, kept
-// whole with the base child tick it starts with (`sub_826D5D00`, 0x826CC9B8): while h+32 is set and the XOVERLAPPED's result has left 997 (0x826CC9C8), `XGetOverlappedResult`
-// (0x826CC9E0) — non-zero clears the latch; zero, with the target still renameable (`sub_823A3C40`
-// 0x826CCB38), writes the buffer as the creature's explicit name (comp20+0x34, 0x826CCB5C), tells the
-// hero's family record (`sub_823A81D8` 0x826CCB64) and restates the name line (`sub_823FEB28`
-// 0x826CCB8C). OnExit (0x826CC9A0 / 0x825836C8) is the close helper `sub_826CCC10`.
+// Update (TU1 0x826CC9A8 / disc 0x825836D0) is the rename itself, ported below. OnExit (0x826CC9A0 / 0x825836C8) is `b sub_826CCC10`, the close helper, ported
+// (gui_screen_stub_shared.cpp).
 //
 // The keyboard the rename asks for is the platform's, and the host is the platform: keyboard_ui.cpp.
 
@@ -47,6 +43,55 @@ namespace {
 constexpr uint32_t kQueryVtable = 0x820CF944u;
 
 }  // namespace
+
+// Update TU1 0x826CC9A8 / disc 0x825836D0. Kept, the rename whole: while h+32 is set (`lbz r11,0x20(r30)`
+// 0x826CC9BC) and the XOVERLAPPED h+76 has left 997 (`cmplwi r11,0x3E5` 0x826CC9D0),
+// `XGetOverlappedResult(h+76, 0, 1)` (0x826CC9E0 / disc 0x82CBC558); on 0, the text registry
+// `(*(*(*(G+32)+32)+28))[6]` (0x826CC9F8..0x826CCA24), the target's component 20 (the inline lookup on
+// `*(h+28)`, 0x826CCA2C..0x826CCB1C) and, when it is renameable (`sub_823A3C40(comp20)` 0x826CCB38 / disc
+// `sub_824321F8`): the keyboard's buffer as a string `lhWideString_CtorFromWStr(&name, h+34)` (0x826CCB50),
+// written as the creature's explicit name `lhCharString_AssignIfDifferent(comp20+52, &name)` (0x826CCB5C),
+// the hero told `Lua_Creature_InformPlayerOfNameChange(comp20)` (0x826CCB64 / 0x82436748), and the name
+// line restated — `sub_823C8510(&name, *(h+28))` (0x826CCB78 / disc `sub_828C8440`) into
+// `lhGuiRegistry_SetText(registry, *(0x8349B108), text)` (0x826CCB8C / disc `sub_8257C720` with
+// 0x83498ADC); then h+32 = 0 whatever the result (0x826CCB98). Dropped: the base child tick
+// `sub_826D5D00(h)` (0x826CC9B8 / 0x82583560: each child's vf+12 with 1/30, the row list's vf+8).
+REX_EXTERN(rex_lhGuiQueryScreen_Update) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  static std::atomic<bool> said{false};
+  if (!said.exchange(true)) {
+    Said("villager card (10)", "Update", h, base[h + 0x20u]);
+  }
+  if (base[h + 0x20u] == 0u || LoadU32(base, h + 0x4Cu) == 997u) {
+    return;
+  }
+  const Scratch s = Claim(ctx);
+  const uint32_t name = s.data;  // the new name, then the entity's display name
+  const uint32_t result = Call(ctx, base, s.frame, 0x82CC2D80u, {h + 0x4Cu, 0u, 1u});
+  bool renamed = false;
+  if (result == 0u) {
+    const uint32_t registries = LoadU32(base, LoadU32(base, Gui(base) + 32u) + 32u);
+    const uint32_t begin = LoadU32(base, registries + 28u);
+    const uint32_t end = LoadU32(base, registries + 32u);
+    const uint32_t registry = Plausible(begin) && ((end - begin) >> 2) > 6u ? LoadU32(base, begin + 24u) : 0u;
+    const uint32_t target = LoadU32(base, h + 28u);
+    const uint32_t comp20 = Plausible(target) ? refii_mod_component(base, target, 20u) : 0u;
+    if (registry != 0u && comp20 != 0u && (Call(ctx, base, s.frame, 0x823A3C40u, {comp20}) & 0xFFu) != 0u) {
+      StoreU32(base, name, 0u);
+      Call(ctx, base, s.frame, 0x822D6408u, {name, h + 0x22u});
+      Call(ctx, base, s.frame, 0x822B88A8u, {comp20 + 0x34u, name});
+      Call(ctx, base, s.frame, 0x823A81D8u, {comp20});
+      Call(ctx, base, s.frame, 0x821C67F8u, {name});
+      const uint32_t text = Call(ctx, base, s.frame, 0x823C8510u, {name, target});
+      Call(ctx, base, s.frame, 0x823FEB28u, {registry, LoadU32(base, Address(0x8349B108u)), text});
+      Call(ctx, base, s.frame, 0x821C67F8u, {name});
+      renamed = true;
+    }
+  }
+  base[h + 0x20u] = 0u;
+  Said("villager card (10)", "Update (the keyboard answered)", h, result, renamed ? 1u : 0u);
+}
 
 // OnScreenAction TU1 0x826CCBA8 / disc 0x825838D0, any player's: nothing while the keyboard is
 // pending (`lbz r11, 0x20(r3); bne` 0x826CCBB4); 37 B the close helper `sub_826CCC10(h)` and
@@ -80,8 +125,8 @@ bool DispatchQuery(PPCContext& ctx, uint8_t* base, uint32_t player, const std::s
                 base[h + 0x20u] != 0u ? "pending" : "not asked for (the target takes no name)");
     return true;
   }
-  // B: the close helper `sub_826CCC10(h)` / 0x82583938 (h+24 cleared, the card's registration undone,
-  // its close sound), then `ExitScreen(QM, 1)`.
+  // B: the close helper `sub_826CCC10(h)` / 0x82583938, ported (gui_screen_stub_shared.cpp: h+24
+  // cleared, the card's registration undone), then `ExitScreen(QM, 1)`.
   Call(ctx, base, s.frame, 0x826CCC10u, {h});
   Call(ctx, base, s.frame, 0x8236ED98u, {LoadU32(base, Gui(base) + 28u), 1u});
   REXLOG_INFO("Refii guest-tick pump: Query:{}:close — the card closed, the screen left", player);

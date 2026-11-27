@@ -27,6 +27,11 @@ inline constexpr uint32_t kFable3AppearanceSublistOffset = 0x0Cu;
 /// alive byte (`+0x18`) is 0 (Fable 2 comp 20, Fable 3 comp 24).
 inline constexpr uint32_t kAppearanceDeadCreature = 8u;
 
+/// Bit 4 (`16u`) of EntityAppearance.Flags: the guest leaves that dead creature lying —
+/// `CECCreature_FinishDeath` ran on it since its constructor. Fable 2 states it; Fable 3 does not
+/// yet (its FinishDeath on component 24 is unread).
+inline constexpr uint32_t kAppearanceGuestCorpse = 16u;
+
 /// Returns true if `creature_component` is plausible and its `alive` byte at `+0x18` is 0.
 template <typename Memory>
 bool IsDeadCreature(const Memory& memory, uint32_t creature_component) {

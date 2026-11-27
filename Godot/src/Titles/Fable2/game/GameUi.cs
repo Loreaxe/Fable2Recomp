@@ -474,6 +474,7 @@ public partial class GameUi : Node, IGameTitleUi
 		_guiNatives.Register("@Preview.Remove", Engine_UiPreviewFigures.Remove);
 		_guiNatives.Register("@PreviewItem.Set", Engine_UiPreviewItems.Set);
 		_guiNatives.Register("@PreviewItem.Hide", Engine_UiPreviewItems.Hide);
+		_guiNatives.Register("@PageFill", Engine_UiPageFills.Filled);
 		_guiNatives.Register("@Logbook.Stats", Engine_UiLogbookPage.StatsFilled);
 		_guiNatives.Register("@ExpressionWheel.Item", _wheelItems.State);
 		_guiNatives.Register("@PauseMap.Key", _pauseMapKey.State);
@@ -1800,23 +1801,6 @@ public partial class GameUi : Node, IGameTitleUi
 			}
 		}
 
-		// A QUEST ROW SEEN IS VIEWED. The guest's highlight tick clears a quest's "!" on the row
-		// its cursor stands on (`Quest+78 = 1` in `sub_829AF638`/`sub_829AFE58`); that cursor no
-		// longer moves, so ours states it. The pump writes the flag and moves the data generation,
-		// and the re-read above restates the row, its header and (on the next pause build) the tab.
-		// An ITEM row needs no post: the item books' ported Update keeps the guest's page fill for
-		// the row stated here, which writes the item's own flag (`*(item+20) = 1`, `sub_829B5160` /
-		// `sub_829B6310`) and moves the data generation itself.
-		if (_screenMenu?.Script.Highlighted is { Unviewed: true, EventType: 42 or 43 } seen)
-		{
-			uint id = ((uint)seen.IdHigh << 16) | ((uint)seen.IdLow & 0xFFFFu);
-			if (id != 0u && id != _viewedPosted)
-			{
-				_viewedPosted = id;
-				HostBridge.PostFrontEndAction($"{Engine_UiQuestSource.QuestAction}viewed:0x{id:X8}");
-			}
-		}
-
 		// The detail page follows our cursor because the guest's cannot: screen 14 fills its
 		// right-hand page on a highlight-change edge keyed off the GUEST's Lua highlight, which
 		// stops moving once Godot owns the cursor — see Engine_UiAbilityPage.
@@ -1870,18 +1854,18 @@ public partial class GameUi : Node, IGameTitleUi
 					sliders,
 					abilityBook.Book?.Strings);
 				abilityBook.HostTextures =
-					Engine_UiDetailPages.Textures(state.ScreenId, _screenMenu?.Script.Highlighted);
+					Engine_UiDetailPages.Textures(state.ScreenId, _screenMenu?.Script.Highlighted, worldMap);
 				abilityBook.HostPositions =
 					Engine_UiDetailPages.Positions(state.ScreenId, sliders, _screenMenu?.Script.Highlighted, hero);
 				abilityBook.HostActive =
-					Engine_UiDetailPages.Active(state.ScreenId, _screenMenu?.Script.Highlighted);
+					Engine_UiDetailPages.Active(state.ScreenId, _screenMenu?.Script.Highlighted, worldMap);
 				// The opacity claims ride here too: this path marks the frame filled, so the owned
 				// screen driver that also sets them stands down, and without this line no item
 				// book ever received one (the clothing footer, the shop's front-page parchment).
 				abilityBook.HostOpacity =
 					Engine_UiDetailPages.Opacities(state.ScreenId, _screenMenu?.Script.Highlighted);
 				abilityBook.HostRotations =
-					Engine_UiDetailPages.Rotations(state.ScreenId, _screenMenu?.Script.Highlighted);
+					Engine_UiDetailPages.Rotations(state.ScreenId, _screenMenu?.Script.Highlighted, worldMap);
 				abilityBook.HostTints =
 					Engine_UiDetailPages.Tints(state.ScreenId, _screenMenu?.Script.Highlighted);
 				if (state.ScreenId == Engine_UiDetailPages.OptionsScreenId)
@@ -2103,6 +2087,16 @@ public partial class GameUi : Node, IGameTitleUi
 			return true;
 		}
 
+		// Y on the clothing book: the screen's own code 39 (in dye mode the held dye on the highlighted
+		// target's second layer), through the book's lever.
+		if (Fable2Input.MenuFlipPressed && state.ScreenId == Fable2PortedScreens.Clothing)
+		{
+			uint depth = PostScreenButton(state.ScreenId, Engine_UiScreenInput.Unlearn);
+			GD.Print($"[game-ui] screen {state.ScreenId}: Y forwarded as " +
+				$"{Fable2PortedScreens.Lever(state.ScreenId, Engine_UiScreenInput.Unlearn, Engine_UiSource.Current.ActingPlayer) ?? $"ScreenAction({Engine_UiScreenInput.Unlearn})"} — queue depth {depth}");
+			return true;
+		}
+
 		// The right-hand page first: the wheel over it scrolls it, its bar drags it. The list
 		// takes only what lands on its own rows or bar, so the two sides never share a notch.
 		PointerPage(_books.Book(state.ScreenId));
@@ -2131,7 +2125,6 @@ public partial class GameUi : Node, IGameTitleUi
 			//
 			// Refresh on the PRESS: a host-owned fold changes the visible list immediately and
 			// states nothing the follower would run on.
-			bool held = Engine_UiDyeFlow.Active || Engine_UiAugmentFlow.Active;
 
 			// The shared A arm (`sub_826D58F0`) plays the select cue below the root
 			// (`SE_GUI_MENU_BOX_SELECT` 0x826D59B0, skipped when `IsHighlightedItemAtRoot`);
@@ -2142,11 +2135,6 @@ public partial class GameUi : Node, IGameTitleUi
 				if (belowRoot)
 				{
 					Cue(frontEnd: false, "select");
-				}
-
-				if ((Engine_UiDyeFlow.Active || Engine_UiAugmentFlow.Active) != held)
-				{
-					pressed.FollowDyeFlow();
 				}
 
 				_screenMenuView?.Refresh();
@@ -2193,17 +2181,6 @@ public partial class GameUi : Node, IGameTitleUi
 				_screenMenuView?.Refresh();
 				GD.Print($"[game-ui] screen {state.ScreenId}: B collapsed one level — " +
 					$"cursor {menu.Script.CurrentHighlightIdx}/{menu.Script.Visible.Count}");
-				return true;
-			}
-
-			// B at the top of a held list (a dye's, an augment's) puts it away and returns to the
-			// items; the guest's screen never left them.
-			if (Engine_UiDyeFlow.Active || Engine_UiAugmentFlow.Active)
-			{
-				Engine_UiDyeFlow.End();
-				Engine_UiAugmentFlow.End();
-				_screenMenu?.FollowDyeFlow();
-				_screenMenuView?.Refresh();
 				return true;
 			}
 
@@ -2658,6 +2635,7 @@ public partial class GameUi : Node, IGameTitleUi
 			Values = _hudTwo?.Values ?? _hud.Values,
 			Position = new Vector3(0f, 0f, 50f),
 			ResolveTexture = _worldIcons.ResolveTexture,
+			GlyphPlayer = 2,
 			Visible = false,
 			ProcessMode = ProcessModeEnum.Disabled,
 		};
@@ -2775,13 +2753,7 @@ public partial class GameUi : Node, IGameTitleUi
 		if (_hudTwo is not null && GodotObject.IsInstanceValid(_hudTwo))
 		{
 			_hudTwo.Window = window;
-			bool suppressed = !split || _fullCutscene || _hudAddress == 0;
-			_hudTwo.Suppressed = suppressed;
-			ProcessModeEnum hudTwoMode = suppressed ? ProcessModeEnum.Disabled : ProcessModeEnum.Inherit;
-			if (_hudTwo.ProcessMode != hudTwoMode)
-			{
-				_hudTwo.ProcessMode = hudTwoMode;
-			}
+			_hudTwo.Park(!split || _fullCutscene || _hudAddress == 0);
 		}
 
 		_spells.Window = window;
@@ -3780,13 +3752,15 @@ public partial class GameUi : Node, IGameTitleUi
 				// A prompt on a pooled HUD element: the element draws it, Godot places it. The
 				// off-screen hero and henchman markers (types 52/53, the guest's own test in
 				// `sub_82824D60`) are pinned inside the edge. On split screen the hero's marker
-				// is for player two, so it is pinned inside player two's half through player
-				// two's camera; the icons layer stands in player one's seat, so the point is
+				// is for player two (Engine_HudSpriteView.PartnerMarkerHalf; the guest tests and
+				// switches it by player two's camera, coop_player_icons.cpp), so it is pinned
+				// inside player two's half through player two's camera; the icons layer stands in
+				// player one's seat, so the point is
 				// carried into that seat's canvas. On split screen a use prompt is drawn in each
 				// half whose player sees its thing (Fable2Bridge.GetPlayerTwoPrompts /
 				// GetPlayerOneHiddenPrompts): player one's by their layer, player two's by theirs.
 				bool prompt = sprite.Type is not (52u or 53u);
-				Vector2? placed = split && sprite.Type == 52u
+				Vector2? placed = split && sprite.Type is (52u or 53u) && Engine_HudSpriteView.PartnerMarkerHalf(sprite.Type) == 1
 					? ProjectOffScreenMarker(_spriteViews[1], sprite.Anchor, sprite.Entity) is { } theirs
 						? (Vector2?)_spriteViews[0].Frame.FromCanvas(_spriteViews[1].Frame.ToCanvas(theirs))
 						: null
@@ -3893,7 +3867,7 @@ public partial class GameUi : Node, IGameTitleUi
 	private System.Func<Vector3, float?>? _markerDistanceTwo;
 
 	/// <summary>A view camera's squared distance to a guest point, for a marker's size; null with no camera.</summary>
-	private static float? MarkerDistanceSquared(SpriteView view, Vector3 guest) =>
+	private static float? MarkerDistanceSquared(Engine_HudSpriteView view, Vector3 guest) =>
 		view.Camera is { } camera && GodotObject.IsInstanceValid(camera)
 			? camera.GlobalPosition.DistanceSquaredTo(GameWorld.GuestToGodot(guest))
 			: null;
@@ -3923,41 +3897,8 @@ public partial class GameUi : Node, IGameTitleUi
 	private readonly System.Collections.Generic.HashSet<uint> _promptsOneHidden = new();
 	private readonly uint[] _promptsTwoBuffer = new uint[64];
 
-	/// <summary>
-	/// One camera the world sprites are projected through, and the seat they land in: the
-	/// window's camera on the whole window, or one player's view camera and half on split screen.
-	/// </summary>
-	private sealed class SpriteView
-	{
-		public Camera3D? Camera;
-
-		/// <summary>The camera's own viewport, in pixels — what <c>UnprojectPosition</c> answers in.</summary>
-		public Vector2 Viewport;
-
-		public Engine_UiSeats.Frame Frame;
-
-		/// <summary>
-		/// Whether the scene-depth line of sight applies: a view whose depth is captured (each
-		/// view's own, Engine_FxDepthCaptureEffect.View).
-		/// </summary>
-		public bool TestSight = true;
-
-		/// <summary>Cached world-to-viewport projector updated once per frame.</summary>
-		public readonly Refii.Core.Engine_CameraProjector Projector = new();
-
-		/// <summary>A pixel on the camera's viewport, in the seat's own pixels.</summary>
-		public Vector2 SeatPixel(Vector2 pixel) =>
-			Viewport == Frame.Window || Viewport.X <= 0f || Viewport.Y <= 0f
-				? pixel
-				: pixel * (Frame.Window / Viewport);
-
-		/// <summary>Whether a viewport pixel lies inside the view.</summary>
-		public bool Shows(Vector2 pixel) =>
-			pixel.X >= 0f && pixel.Y >= 0f && pixel.X <= Viewport.X && pixel.Y <= Viewport.Y;
-	}
-
 	/// <summary>[0] player one's (or the whole window's), [1] player two's while split.</summary>
-	private readonly SpriteView[] _spriteViews = { new(), new() };
+	private readonly Engine_HudSpriteView[] _spriteViews = { new(), new() };
 
 	/// <summary>Whether the sprite layers carry seat transforms a shared screen must undo.</summary>
 	private bool _spriteLayersSeated;
@@ -3970,23 +3911,9 @@ public partial class GameUi : Node, IGameTitleUi
 	/// </summary>
 	private bool SeatSpriteViews(Camera3D windowCamera, Vector2 window)
 	{
-		Camera3D? one = Engine_Views.FirstViewport is { } first && GodotObject.IsInstanceValid(first)
-			? first.GetCamera3D()
-			: null;
-		bool split = Engine_Views.Split && one is not null &&
-			Engine_Views.SecondViewport is { } second && GodotObject.IsInstanceValid(second);
-
-		SpriteView mine = _spriteViews[0];
-		mine.Camera = split ? one : windowCamera;
-		mine.Viewport = split ? (Vector2)Engine_Views.FirstViewport!.Size : window;
-		mine.Frame = Engine_UiSeats.Of(window, split ? Engine_UiSeats.Seat.PlayerOne : Engine_UiSeats.Seat.Whole);
-		mine.TestSight = true;
-
-		SpriteView theirs = _spriteViews[1];
-		theirs.Camera = split ? Engine_Views.Second : null;
-		theirs.Viewport = split ? (Vector2)Engine_Views.SecondViewport!.Size : Vector2.Zero;
-		theirs.Frame = Engine_UiSeats.Of(window, Engine_UiSeats.Seat.PlayerTwo);
-		theirs.TestSight = split;
+		Engine_HudSpriteView mine = _spriteViews[0];
+		Engine_HudSpriteView theirs = _spriteViews[1];
+		bool split = Engine_HudSpriteView.Aim(mine, theirs, windowCamera, window, testSight: true);
 
 		_spriteWindow = mine.Frame.Window;
 
@@ -4057,34 +3984,18 @@ public partial class GameUi : Node, IGameTitleUi
 	/// <paramref name="clip"/> an anchor outside the half's view is not drawn rather than drawn
 	/// over the other player's picture; the whole window keeps no such test, as before.
 	/// </summary>
-	private Engine_HudWorldSprites.Placed? PlaceIn(SpriteView view, Vector3 guest, uint entity, bool clip)
-	{
-		if (view.Camera is not { } camera ||
-			!view.Projector.Update(camera, view.Viewport, Engine.GetProcessFrames()))
-		{
-			return null;
-		}
+	private Engine_HudWorldSprites.Placed? PlaceIn(Engine_HudSpriteView view, Vector3 guest, uint entity, bool clip) =>
+		view.Place(AnchorOf(guest, entity), clip);
 
-		Vector3 world = entity != 0u && GameEntities.Current is { } entities
+	/// <summary>
+	/// A guest anchor in Godot's world: ridden on its entity's drawn body and head bone when one is
+	/// bound (WorldAnchorFor), else the WORLD's conversion, not the model handedness — the anchor is a
+	/// guest world point with its up-lift on guest Z, and `(x, y, -z)` put that lift into depth.
+	/// </summary>
+	private static Vector3 AnchorOf(Vector3 guest, uint entity) =>
+		entity != 0u && GameEntities.Current is { } entities
 			? entities.WorldAnchorFor(entity, guest)
 			: GameWorld.GuestToGodot(guest);
-
-		if (!view.Projector.TryProject(world, out Vector2 pixel, out float depth))
-		{
-			return null;
-		}
-
-		if (clip && !view.Frame.IsWhole && !view.Shows(pixel))
-		{
-			return null;
-		}
-
-		return new Engine_HudWorldSprites.Placed(
-			view.Frame.FromPixel(view.SeatPixel(pixel)),
-			view.TestSight
-				? new Vector3(pixel.X / view.Viewport.X, pixel.Y / view.Viewport.Y, depth)
-				: new Vector3(-1f, 0f, 0f));
-	}
 
 	/// <summary>
 	/// A guest world anchor in canvas units, or null when it is behind the camera — the
@@ -4097,32 +4008,8 @@ public partial class GameUi : Node, IGameTitleUi
 	private Vector2? ProjectWorldSprite(Vector3 guest, uint entity) => ProjectWorldSpriteIn(_spriteViews[0], guest, entity);
 
 	/// <summary><see cref="ProjectWorldSprite"/> through one view's camera, into that view's seat.</summary>
-	private static Vector2? ProjectWorldSpriteIn(SpriteView view, Vector3 guest, uint entity = 0u)
-	{
-		if (view.Camera is not { } camera ||
-			!view.Projector.Update(camera, view.Viewport, Engine.GetProcessFrames()))
-		{
-			return null;
-		}
-
-		// The WORLD's conversion, not the model handedness: the anchor is a guest world
-		// point with its up-lift on guest Z, and `(x, y, -z)` put that lift into depth.
-		// When an entity is bound, ride its host-interpolated body and head bone (WorldAnchorFor).
-		Vector3 world = entity != 0u && GameEntities.Current is { } entities
-			? entities.WorldAnchorFor(entity, guest)
-			: GameWorld.GuestToGodot(guest);
-		if (!view.Projector.TryProject(world, out Vector2 pixel, out _))
-		{
-			return null;
-		}
-
-		if (!view.Frame.IsWhole && !view.Shows(pixel))
-		{
-			return new Vector2(100000f, 100000f);
-		}
-
-		return view.Frame.FromPixel(view.SeatPixel(pixel));
-	}
+	private static Vector2? ProjectWorldSpriteIn(Engine_HudSpriteView view, Vector3 guest, uint entity = 0u) =>
+		view.Project(AnchorOf(guest, entity));
 
 	/// <summary>
 	/// The off-screen partner markers (`HeroOffScreenWorldIcon` / `HenchmanOffScreenWorldIcon`,
@@ -4133,7 +4020,7 @@ public partial class GameUi : Node, IGameTitleUi
 	/// vector math is not reproduced — the reflected point is extended to the edge instead. On
 	/// a half, "the screen" is that half.
 	/// </summary>
-	private Vector2? ProjectOffScreenMarker(SpriteView view, Vector3 guest, uint entity = 0u)
+	private Vector2? ProjectOffScreenMarker(Engine_HudSpriteView view, Vector3 guest, uint entity = 0u)
 	{
 		if (view.Camera is not { } camera || !GodotObject.IsInstanceValid(camera) ||
 			view.Viewport.X <= 0f || view.Viewport.Y <= 0f)
@@ -5000,9 +4887,6 @@ public partial class GameUi : Node, IGameTitleUi
 	/// <summary>The bridge's UI data generation the open list last re-read at (<see cref="HostBridge.UiDataGeneration"/>).</summary>
 	private uint _uiDataSeen;
 
-	/// <summary>The last row this cursor marked viewed, so a resting cursor posts it once.</summary>
-	private uint _viewedPosted;
-
 	/// <summary>The screen the book page was last reset for (the stated screen id).</summary>
 	private uint _pageScreen = uint.MaxValue;
 
@@ -5589,6 +5473,8 @@ public partial class GameUi : Node, IGameTitleUi
 		if (!HostBridge.IsInGame)
 		{
 			Engine_UiPreviewItems.Reset();
+			Engine_UiPageFills.Reset();
+			Engine_UiItemRows.Reset();
 		}
 
 		uint statedScreen = IsRevealed && HostBridge.GetPauseState() is { } pause ? pause.ScreenId : 0u;
@@ -8514,13 +8400,13 @@ public partial class GameUi : Node, IGameTitleUi
 
 			case "status":
 				Engine_UiJoinRequests.StatusIndex = int.TryParse(argument, out int status) ? status : 0;
-				Engine_UiNetworkSource.Say($"Your status is now: {Engine_UiJoinRequests.Statuses[Engine_UiJoinRequests.StatusIndex]}.");
+				Engine_UiNetworkSource.Say(Engine_UiNetworkWords.StatusNow(Engine_UiJoinRequests.StatusIndex));
 				break;
 
 			case "greet":
 				{
 					int greeting = int.TryParse(argument, out int id) ? id : 0;
-					Answer(greeting >= 1 && greeting <= Engine_UiJoinRequests.Greetings.Length && NetBridge.SendPlayerSignal(greeting),
+					Answer(greeting >= 1 && greeting <= Engine_UiNetworkWords.GreetingCount && NetBridge.SendPlayerSignal(greeting),
 						"Sent to your friends.", "That could not be sent — RexNet is not up.");
 					break;
 				}

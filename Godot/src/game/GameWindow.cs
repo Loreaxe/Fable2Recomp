@@ -62,56 +62,9 @@ public partial class GameWindow : Node
 		GameWindowSettings settings = GameWindowSettings.Load();
 		GD.Print($"[game] window: {settings}");
 
-		DisplayServer.WindowSetSize(settings.Size, Main);
-
-		// Centre on the configured monitor; an out-of-range index falls back to the primary.
-		int monitor = settings.Monitor < DisplayServer.GetScreenCount() ? settings.Monitor : 0;
-		Vector2I screen = DisplayServer.ScreenGetSize(monitor);
-		Vector2I effectiveUiSize = settings.Fullscreen && screen.X > 0 && screen.Y > 0 ? screen : settings.Size;
-		Refii.Textures.Engine_TexSemantic.UpdateUiMaxEdgeForResolution(effectiveUiSize.X, effectiveUiSize.Y);
-		DisplayServer.WindowSetPosition(
-			((screen - settings.Size) / 2) + DisplayServer.ScreenGetPosition(monitor), Main);
-
-		if (settings.Fullscreen)
-		{
-			DisplayServer.WindowSetMode(DisplayServer.WindowMode.Fullscreen, Main);
-		}
-		else
-		{
-			// The shell came up minimised so the launcher's blank scene never flashed; the
-			// game's window has to undo that.
-			DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed, Main);
-		}
-
-		DisplayServer.WindowMoveToForeground(Main);
-
-		// AND THE ROOT VIEWPORT DRAWS 1:1, which a child Window gave us for free and the main
-		// window does not.
-		//
-		// `project.godot` sets the base viewport to 1280x760 with `stretch/mode=canvas_items`
-		// — sized for the LAUNCHER, whose chrome needs the extra forty pixels. The game asks
-		// for 1280x720, so the moment it draws into the root instead of its own window that
-		// mismatch is stretched across the frame and everything sits low. Disabling the stretch
-		// makes the viewport match the window exactly, which is what the child window did.
-		// THE BASE SIZE HAS TO MOVE TOO, not just the scale mode.
-		//
-		// `project.godot` sets the base viewport to 1280x760 for the LAUNCHER's chrome. Turning
-		// the stretch off was not enough on its own: the root viewport kept reporting 760 while
-		// the OS window was 720, so the frame was composed 40 rows taller than the window and
-		// everything sat low with the bottom cropped. The run said so plainly — the UI logged
-		// `window=(1280, 760)` against a 720-tall window.
-		//
-		// Set through the root WINDOW rather than DisplayServer: the node's `Size` moves the
-		// viewport and the OS window together, where `DisplayServer.WindowSetSize` moves only
-		// the latter and leaves the viewport on the project's base.
 		Window root = GetTree().Root;
-		root.ContentScaleMode = Window.ContentScaleModeEnum.Disabled;
-		root.ContentScaleAspect = Window.ContentScaleAspectEnum.Ignore;
-		root.ContentScaleSize = settings.Size;
-		root.Size = settings.Size;
-
-		DisplayServer.WindowSetFlag(
-			DisplayServer.WindowFlags.Borderless, settings.Borderless, Main);
+		Vector2I screen = ApplyWindowShape(root, settings);
+		DisplayServer.WindowMoveToForeground(Main);
 
 		// THE FRAME CAP IS THE DRAWING RATE, NOT THE SIM. `GameSession` advances the guest on
 		// its own fixed step with a catch-up ceiling, so capping frames here changes how often
@@ -767,6 +720,89 @@ public partial class GameWindow : Node
 		}
 
 		return configuredMaxFps > 0 ? System.Math.Min(configuredMaxFps, UnfocusedMaxFps) : UnfocusedMaxFps;
+	}
+
+	/// <summary>
+	/// THE WINDOW'S SHAPE from the config: its size, centred on the configured monitor (an
+	/// out-of-range index falls back to the primary), fullscreen or windowed, the root viewport drawn
+	/// 1:1 at the size, the borderless flag. The opening and the in-game Display rows
+	/// (<see cref="ApplyDisplaySettings"/>) both shape it here. Answers the monitor's size.
+	/// </summary>
+	private static Vector2I ApplyWindowShape(Window root, GameWindowSettings settings)
+	{
+		const int Main = (int)DisplayServer.MainWindowId;
+		DisplayServer.WindowSetSize(settings.Size, Main);
+
+		// Centre on the configured monitor; an out-of-range index falls back to the primary.
+		int monitor = settings.Monitor < DisplayServer.GetScreenCount() ? settings.Monitor : 0;
+		Vector2I screen = DisplayServer.ScreenGetSize(monitor);
+		Vector2I effectiveUiSize = settings.Fullscreen && screen.X > 0 && screen.Y > 0 ? screen : settings.Size;
+		Refii.Textures.Engine_TexSemantic.UpdateUiMaxEdgeForResolution(effectiveUiSize.X, effectiveUiSize.Y);
+		DisplayServer.WindowSetPosition(
+			((screen - settings.Size) / 2) + DisplayServer.ScreenGetPosition(monitor), Main);
+
+		if (settings.Fullscreen)
+		{
+			DisplayServer.WindowSetMode(DisplayServer.WindowMode.Fullscreen, Main);
+		}
+		else
+		{
+			// The shell came up minimised so the launcher's blank scene never flashed; the
+			// game's window has to undo that.
+			DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed, Main);
+		}
+
+		// AND THE ROOT VIEWPORT DRAWS 1:1, which a child Window gave us for free and the main
+		// window does not.
+		//
+		// `project.godot` sets the base viewport to 1280x760 with `stretch/mode=canvas_items`
+		// — sized for the LAUNCHER, whose chrome needs the extra forty pixels. The game asks
+		// for 1280x720, so the moment it draws into the root instead of its own window that
+		// mismatch is stretched across the frame and everything sits low. Disabling the stretch
+		// makes the viewport match the window exactly, which is what the child window did.
+		// THE BASE SIZE HAS TO MOVE TOO, not just the scale mode.
+		//
+		// `project.godot` sets the base viewport to 1280x760 for the LAUNCHER's chrome. Turning
+		// the stretch off was not enough on its own: the root viewport kept reporting 760 while
+		// the OS window was 720, so the frame was composed 40 rows taller than the window and
+		// everything sat low with the bottom cropped. The run said so plainly — the UI logged
+		// `window=(1280, 760)` against a 720-tall window.
+		//
+		// Set through the root WINDOW rather than DisplayServer: the node's `Size` moves the
+		// viewport and the OS window together, where `DisplayServer.WindowSetSize` moves only
+		// the latter and leaves the viewport on the project's base.
+		root.ContentScaleMode = Window.ContentScaleModeEnum.Disabled;
+		root.ContentScaleAspect = Window.ContentScaleAspectEnum.Ignore;
+		root.ContentScaleSize = settings.Size;
+		root.Size = settings.Size;
+
+		DisplayServer.WindowSetFlag(
+			DisplayServer.WindowFlags.Borderless, settings.Borderless, Main);
+		return screen;
+	}
+
+	/// <summary>
+	/// The Display rows' commit in game (<see cref="Refii.Ui.Engine_UiDisplayOptions"/>): the config
+	/// the launcher's own model just wrote, taken by the open window at once — its shape, then the
+	/// frame cap, vsync and the 3D scale for the new size — as the opening took it.
+	/// </summary>
+	public static void ApplyDisplaySettings()
+	{
+		if (_current is not { } window || !IsInstanceValid(window) || !window.IsInsideTree() ||
+			window.GetTree()?.Root is not { } root || !IsInstanceValid(root))
+		{
+			return;
+		}
+
+		GameWindowSettings settings = GameWindowSettings.Load();
+		GD.Print($"[game] window from the Display rows: {settings}");
+		window._windowSettings = settings;
+		ApplyWindowShape(root, settings);
+		Viewport view = window.GetViewport();
+		if (IsInstanceValid(view))
+		{
+			window.ApplyViewportQualityAndVsync(root, view, settings, root.Size, scheduleMailboxSettle: true);
+		}
 	}
 
 	private void UpdateEffectiveMaxFps()

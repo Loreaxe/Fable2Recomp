@@ -721,6 +721,116 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiNetPartnerName(char* out, uint32_t capacity)
 #endif
 }
 
+/// States this player's achievements to everyone who sees their presence (the rich KV
+/// `kRichKeyPlayerAchievements`, shadow rexnet.h): the bytes are Godot's (Engine_AchievementWire), stated
+/// again only when they change. Empty clears them.
+REFII_HOST_ABI_EXPORT int RefiiNetSetPlayerAchievements(const uint8_t* bytes, uint32_t len) {
+#if defined(REXGLUE_ENABLE_REXNET)
+    rex::net::RexNet* net = Net();
+    if (net == nullptr) {
+        return 0;
+    }
+    net->SetPlayerAchievements(bytes, len);
+    return 1;
+#else
+    (void)bytes;
+    (void)len;
+    return 0;
+#endif
+}
+
+#if defined(REXGLUE_ENABLE_REXNET)
+extern "C++" {
+namespace {
+/// The value of rich KV `key` in a presence blob (`[count u8]` then per KV `[key u16 LE][type][len]
+/// [bytes]`, RexNet::PushRichLocked), as lowercase hex; empty when it is not there.
+std::string RichHex(const std::vector<uint8_t>& rich, uint16_t key) {
+    static const char* kDigits = "0123456789abcdef";
+    if (rich.empty()) {
+        return {};
+    }
+    const uint8_t* p = rich.data();
+    const uint8_t* end = p + rich.size();
+    uint8_t count = *p++;
+    while (count-- && p + 4 <= end) {
+        const uint16_t at = static_cast<uint16_t>(p[0] | (p[1] << 8));
+        const uint8_t len = p[3];
+        p += 4;
+        if (p + len > end) {
+            break;
+        }
+        if (at == key) {
+            std::string hex;
+            for (uint8_t i = 0; i < len; ++i) {
+                hex.push_back(kDigits[p[i] >> 4]);
+                hex.push_back(kDigits[p[i] & 0xF]);
+            }
+            return hex;
+        }
+        p += len;
+    }
+    return {};
+}
+}  // namespace
+}  // extern "C++"
+#endif
+
+/// THE ACHIEVEMENTS A PLAYER'S MACHINE STATES (RefiiNetSetPlayerAchievements on theirs), for viewing
+/// their orb or their hero: one record, `hex`, the bytes as they were sent; 0 when they stated none or
+/// this node has not heard them. `peer_text` names the player; empty names the co-op partner (the
+/// connection the co-op channel talks to). Read from their presence (a friend's), else from the
+/// shard beat their orb rides on.
+REFII_HOST_ABI_EXPORT uint32_t RefiiNetPeerAchievements(const char* peer_text, char* out, uint32_t capacity) {
+#if defined(REXGLUE_ENABLE_REXNET)
+    rex::net::RexNet* net = Net();
+    if (net == nullptr) {
+        return 0;
+    }
+
+    RexNetPeerId peer{};
+    if (peer_text == nullptr || peer_text[0] == '\0') {
+        const uint32_t partner = RefiiCoopChannelPeer();
+        bool found = false;
+        for (const rex::net::RexNet::Connection& connection : net->SnapshotConnections()) {
+            if (partner != 0u && connection.virtual_ip == partner) {
+                peer = connection.peer;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return 0;
+        }
+    } else if (!ParsePeer(peer_text, peer)) {
+        return 0;
+    }
+
+    std::string hex;
+    if (std::optional<rex::net::RexNet::PresenceInfo> presence = net->GetPresence(peer)) {
+        hex = RichHex(presence->rich, rex::net::kRichKeyPlayerAchievements);
+    }
+    if (hex.empty()) {
+        for (const rex::net::RexNet::ShardMember& member : net->SnapshotShardMembers()) {
+            if (SamePeerId(member.peer, peer)) {
+                hex = RichHex(member.rich, rex::net::kRichKeyPlayerAchievements);
+                break;
+            }
+        }
+    }
+    if (hex.empty()) {
+        return 0;
+    }
+    std::string row;
+    Field(row, hex, '\n');
+    return Emit(row, out, capacity);
+#else
+    (void)peer_text;
+    (void)out;
+    (void)capacity;
+    return 0;
+#endif
+}
+
 extern "C" uint32_t RefiiGamerCardRequest(uint64_t* xuid);
 
 /// THE GAMER CARD AN ORB ASKED FOR (`XamShowGamerCardUIForXUID`, the orb box's Interact), as
@@ -832,20 +942,32 @@ REFII_HOST_ABI_EXPORT int RefiiNetAddFriendByCode(const char* code, const char* 
 #endif
 }
 
-/// `action`: 0 accept request, 1 dismiss request, 2 remove friend, 3 accept invite,
-/// 4 decline invite, 5 invite this peer to our session, 6 join this peer's session (a friend's
-/// from their presence, anyone else's from the shard beat their orb rides on).
-///
-/// 3 AND 6 GO THROUGH `AcceptInvite`, NOT `InviteReply`. Only `AcceptInvite` arms
-/// `pending_accept_`; `InviteReply` just answers the sender. Without the arm, the session
-/// descriptor that arrives next never fills `accepted_invite_`, no `kXNotifyLiveInviteAccepted`
-/// is raised, and the guest's `XInviteGetAcceptedInfo` fails — the reply is sent and nothing
-/// joins.
-REFII_HOST_ABI_EXPORT int RefiiNetPeerAction(const char* peer_text, int action) {
+namespace {
+
+const char* PeerActionName(int action) {
+    switch (action) {
+        case 0: return "accept request";
+        case 1: return "dismiss request";
+        case 2: return "remove friend";
+        case 3: return "accept invite";
+        case 4: return "decline invite";
+        case 5: return "invite";
+        case 6: return "join";
+        default: return "unknown action";
+    }
+}
+
+/// RefiiNetPeerAction's work; `why` names the outcome for its one log line.
+int PeerActionRun(const char* peer_text, int action, const char*& why) {
 #if defined(REXGLUE_ENABLE_REXNET)
     rex::net::RexNet* net = Net();
     RexNetPeerId peer{};
-    if (net == nullptr || !ParsePeer(peer_text, peer)) {
+    if (net == nullptr) {
+        why = "RexNet is not up";
+        return 0;
+    }
+    if (!ParsePeer(peer_text, peer)) {
+        why = "not a peer id";
         return 0;
     }
 
@@ -862,13 +984,16 @@ REFII_HOST_ABI_EXPORT int RefiiNetPeerAction(const char* peer_text, int action) 
             for (const rex::net::RexNet::InviteInfo& invite : net->PendingInvites()) {
                 if (SamePeerId(invite.peer, peer)) {
                     if (!NetStillUp(net)) {
+                        why = "RexNet went down";
                         return 0;
                     }
                     net->AcceptInvite(invite);
+                    why = "armed on the invite's session";
                     return 1;
                 }
             }
 
+            why = "no invite from that peer is pending";
             return 0;
         }
 
@@ -877,7 +1002,8 @@ REFII_HOST_ABI_EXPORT int RefiiNetPeerAction(const char* peer_text, int action) 
             // the host peer and the 16-byte session id — and presence already carries both for
             // a friend who is hosting, so nothing new has to be resolved.
             std::optional<rex::net::RexNet::PresenceInfo> presence = net->GetPresence(peer);
-            if (!presence.has_value() || !presence->has_session) {
+            const bool from_presence = presence.has_value() && presence->has_session;
+            if (!from_presence) {
                 // NOT A FRIEND: an orb of a player who shows to everyone. The shard's beat
                 // carries their session id, and the shard is this title's, so the title is ours.
                 presence.reset();
@@ -893,17 +1019,41 @@ REFII_HOST_ABI_EXPORT int RefiiNetPeerAction(const char* peer_text, int action) 
                     }
                 }
             }
-            if (!presence.has_value() || !presence->has_session || !NetStillUp(net)) {
+            if (!NetStillUp(net)) {
+                why = "RexNet went down";
                 return 0;
+            }
+
+            // NO SESSION HEARD OF: ASK THE HOST. Presence reaches only a mutual friend, and the
+            // shard only a peer placed in the host's shard — a host that hosts is pinned to the
+            // shard it was in, which a joiner may never enter. The host serves its descriptor to
+            // whoever asks (a public session), so the accept is armed for that host's session,
+            // whichever it is, and the answer resolves it; no answer is the accept's timeout.
+            if (!presence.has_value() || !presence->has_session) {
+                if (std::optional<rex::net::RexNet::AcceptedInvite> joined = net->accepted_invite();
+                    joined.has_value() && GuestAlreadyJoined(net, peer, joined->session_id)) {
+                    why = "the guest is already in that session; not re-armed";
+                    return 1;
+                }
+
+                rex::system::KernelState* state = rex::system::kernel_state();
+                rex::net::RexNet::InviteInfo ask;
+                ask.peer = peer;
+                ask.title_id = state != nullptr ? state->title_id() : 0u;
+                ask.session_id = {};
+                net->AcceptInvite(ask);
+                net->SessionQuery(peer);
+                why = "no session known (neither presence nor the shard beat); asked the host for it";
+                return 1;
             }
 
             // ALREADY IN THAT GAME: the press is answered as the join it already is.
             if (GuestAlreadyJoined(net, peer, presence->session_id)) {
-                REXLOG_INFO(
-                    "RefiiNetPeerAction: join to the session the guest is already in; not re-armed");
+                why = "the guest is already in that session; not re-armed";
                 return 1;
             }
             if (!NetStillUp(net)) {
+                why = "RexNet went down";
                 return 0;
             }
 
@@ -916,19 +1066,47 @@ REFII_HOST_ABI_EXPORT int RefiiNetPeerAction(const char* peer_text, int action) 
             // The arm resolves on the HOST'S DESCRIPTOR, which arrives as a search result — so
             // the search is part of the join, not a separate step the player has to take.
             if (!NetStillUp(net)) {
+                why = "RexNet went down after the arm";
                 return 0;
             }
             net->SessionSearch();
+            why = from_presence ? "armed on the session their presence states; searching"
+                                : "armed on the session the shard beat states; searching";
             return 1;
         }
 
-        default: return 0;
+        default:
+            why = "no such action";
+            return 0;
     }
 #else
     (void)peer_text;
     (void)action;
+    why = "RexNet is not built in";
     return 0;
 #endif
+}
+
+}  // namespace
+
+/// `action`: 0 accept request, 1 dismiss request, 2 remove friend, 3 accept invite,
+/// 4 decline invite, 5 invite this peer to our session, 6 join this peer's session (a friend's
+/// from their presence, anyone else's from the shard beat their orb rides on).
+///
+/// 3 AND 6 GO THROUGH `AcceptInvite`, NOT `InviteReply`. Only `AcceptInvite` arms
+/// `pending_accept_`; `InviteReply` just answers the sender. Without the arm, the session
+/// descriptor that arrives next never fills `accepted_invite_`, no `kXNotifyLiveInviteAccepted`
+/// is raised, and the guest's `XInviteGetAcceptedInfo` fails — the reply is sent and nothing
+/// joins.
+///
+/// Every call is logged once with its outcome: each is a player's press on a friend, request or invite.
+REFII_HOST_ABI_EXPORT int RefiiNetPeerAction(const char* peer_text, int action) {
+    const char* why = "";
+    const int done = PeerActionRun(peer_text, action, why);
+    REXLOG_INFO("RefiiNetPeerAction: {} {} — {}{}{}", PeerActionName(action),
+                peer_text != nullptr && peer_text[0] != '\0' ? peer_text : "(no peer)", done != 0 ? "done" : "refused",
+                why[0] != '\0' ? ": " : "", why);
+    return done;
 }
 
 /// Our session's 16-byte id as 32 hex digits, or 0 when we are not hosting one. With the peer

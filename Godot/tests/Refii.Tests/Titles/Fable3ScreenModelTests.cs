@@ -40,10 +40,16 @@ public class Fable3ScreenModelTests
 		Fable3ScreenPage page = Fable3ScreenModel.Compose(Fable3ScreenModel.HeroStatus, stated, None, Resolve)!.Value;
 		AssertThat(page.Title).IsEqual("<GUI_TEXT_HERO_STATUS_TITLE>");
 		AssertThat(page.Rows.Count).IsEqual(4);
-		AssertThat(page.Rows[0].Line).IsEqual("<TEXT_GUI_STRENGTH>    ■■■■□□");
-		AssertThat(page.Rows[1].Line).IsEqual("<TEXT_GUI_WILL>    ■■■■■■");
-		AssertThat(page.Rows[2].Line).IsEqual("<TEXT_GUI_MORALITY>    " + Fable3OptionsModel.Slider(0.75f));
-		AssertThat(page.Rows[3].Line).IsEqual("Hammer    ■■");
+		AssertThat(page.Rows[0].Line).IsEqual("<TEXT_GUI_STRENGTH>");
+		AssertThat(page.Rows[0].Pips == (4, 6)).IsTrue();
+		AssertThat(page.Rows[1].Line).IsEqual("<TEXT_GUI_WILL>");
+		AssertThat(page.Rows[1].Pips == (6, 6)).IsTrue();
+		AssertThat(page.Rows[2].Line).IsEqual("<TEXT_GUI_MORALITY>");
+		AssertThat(page.Rows[2].Bar == 0.75f).IsTrue();
+		AssertThat(page.Rows[2].Pips.HasValue).IsFalse();
+		AssertThat(page.Rows[3].Line).IsEqual("Hammer");
+		AssertThat(page.Rows[3].Pips == (2, 2)).IsTrue();
+		NoRowSpellsArtWithCharacters(page);
 		AssertThat(page.Cursor).IsFalse();
 		AssertThat(page.Prompts.Count).IsEqual(1);
 		AssertThat(page.Prompts[0].Button).IsEqual("B");
@@ -58,20 +64,25 @@ public class Fable3ScreenModelTests
 			["StatsBox.Table.Categories.Details.CompStatisticCategories1.Categories.Category01"] = Text("Money"),
 			["StatsBox.Table.Categories.Details.CompStatisticCategories2.Categories.Category01"] = Text("stale"),
 		};
-		var screen = new Fable3ScreenState { Kind = "stats", Fields = new[] { 2, 1, 0, 0 } };
+		var screen = new Fable3ScreenState { Cursor = 1 };
 		screen.StatsWindows[2] = (0, 2, 8);
 
 		Fable3ScreenPage page = Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value;
-		AssertThat(page.Rows.Count).IsEqual(2);
+		// The guest's two categories, then the host's Achievements category (the list's end is in view).
+		AssertThat(page.Rows.Count).IsEqual(3);
 		AssertThat(page.Rows[0].Line).IsEqual("Combat");
+		AssertThat(page.Rows[2].Name).IsEqual(Fable3ScreenModel.StatsAchievementsRow);
 		AssertThat(page.Selected).IsEqual(1);
 		AssertThat(page.Title).IsEqual("<TEXT_GUI_STATS_SCREEN_TITLE>");
+		screen.StatsAchievements = true;
+		AssertThat(Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value.Selected).IsEqual(2);
+		screen.StatsAchievements = false;
 
 		stated["StatsBox.Table.FullStatistics.Details.CompStatisticDetails0.Statistics.Title.Statistic"] = Text("Gold earned");
 		stated["StatsBox.Table.FullStatistics.Details.CompStatisticDetails0.Statistics.Title.Score"] = Text("120");
 		stated["StatsBox.Table.FullStatistics.Details.CompStatisticDetails1.Statistics.Title.Statistic"] = Text("Gold spent");
 		screen.StatsPage = 3;
-		screen.Fields = new[] { 3, 7, 1, 0 };
+		screen.Cursor = 7;
 		screen.StatsWindows[3] = (6, 12, 6);
 		page = Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value;
 		AssertThat(page.Rows.Count).IsEqual(2);
@@ -104,23 +115,47 @@ public class Fable3ScreenModelTests
 	}
 
 	[TestCase]
-	public void ScheduleTicksAreTheRowCallsAndDropAbsentDays()
+	public void ScheduleIsItsShowsStatementsWithNoElementWritten()
 	{
-		var stated = new Dictionary<string, Probe>
+		System.Func<uint, string?> before = Fable3Elements.TagText;
+		Fable3Elements.TagText = tag => tag switch
 		{
-			["KingsSchedule.Tasks.Task1"] = Text("Hold court"),
-			["KingsSchedule.Tasks.Task2"] = Text("Feast"),
-			["KingsSchedule.Tasks.Task3"] = Text("old"),
+			0x11u => "Hold court",
+			0x22u => "Feast",
+			0xA1u => "The Queen's Schedule",
+			0xD1u => "Day %1",
+			_ => null,
 		};
-		var screen = new Fable3ScreenState();
-		screen.ScheduleRows[1] = (2, 0x11u);
-		screen.ScheduleRows[2] = (1, 0x22u);
-		screen.ScheduleRows[3] = (4, 0u);
+		try
+		{
+			var screen = new Fable3ScreenState { Schedule = (0xA1u, 0xD1u, 3) };
+			screen.ScheduleRows[1] = (2, 0x11u);
+			screen.ScheduleRows[2] = (1, 0x22u);
+			screen.ScheduleRows[3] = (4, 0u);
+			screen.ScheduleRows[4] = (4, 0u);
 
-		Fable3ScreenPage page = Fable3ScreenModel.Compose(Fable3ScreenModel.Schedule, stated, screen, Resolve)!.Value;
-		AssertThat(page.Rows.Count).IsEqual(2);
-		AssertThat(page.Rows[0].Line).IsEqual("■ Hold court");
-		AssertThat(page.Rows[1].Line).IsEqual("□ Feast");
+			Fable3ScreenPage page = Fable3ScreenModel.Compose(Fable3ScreenModel.Schedule, new Dictionary<string, Probe>(), screen, Resolve)!.Value;
+			AssertThat(page.Title).IsEqual("The Queen's Schedule");
+			AssertThat(page.Description).IsEqual("Day 3");
+			AssertThat(page.Rows.Count).IsEqual(2);
+			AssertThat(page.Rows[0].Line).IsEqual("Hold court");
+			AssertThat(page.Rows[0].Pips == (1, 1)).IsTrue();
+			AssertThat(page.Rows[1].Line).IsEqual("Feast");
+			AssertThat(page.Rows[1].Pips == (0, 1)).IsTrue();
+			AssertThat(page.Prompts[0].Button).IsEqual("A");
+			NoRowSpellsArtWithCharacters(page);
+
+			// Day -1: the guest shows no day line. Before the Show's statement the title is the file's tag.
+			screen.Schedule = (0xA1u, 0xD1u, -1);
+			page = Fable3ScreenModel.Compose(Fable3ScreenModel.Schedule, new Dictionary<string, Probe>(), screen, Resolve)!.Value;
+			AssertThat(page.Description).IsEqual(string.Empty);
+			page = Fable3ScreenModel.Compose(Fable3ScreenModel.Schedule, new Dictionary<string, Probe>(), new Fable3ScreenState(), Resolve)!.Value;
+			AssertThat(page.Title).IsEqual("<TEXT_GUI_KINGS_SCHEDULE_TITLE>");
+		}
+		finally
+		{
+			Fable3Elements.TagText = before;
+		}
 	}
 
 	[TestCase]
@@ -138,11 +173,44 @@ public class Fable3ScreenModelTests
 		AssertThat(page.Prompts[0].Button).IsEqual("A");
 		AssertThat(page.Prompts[0].Label).IsEqual("Accept");
 		AssertThat(page.Description).IsEqual("I promise.");
+		AssertThat(page.Rows[0].Line).IsEqual("Hero");
+		AssertThat(page.Rows[0].Pips.HasValue).IsFalse();
 
-		screen.Fields = new[] { 1 };
+		// A signs: the handler states `Promises.Buttons` 1 (TU3 0x827DAC34 / disc 0x827A3704).
+		stated["Promises.Buttons"] = State(1);
 		page = Fable3ScreenModel.Compose(Fable3ScreenModel.Promises, stated, screen, Resolve)!.Value;
 		AssertThat(page.Prompts[0].Button).IsEqual("B");
-		AssertThat(page.Rows[0].Line).IsEqual("Hero    ✓");
+		AssertThat(page.Rows[0].Line).IsEqual("Hero");
+		AssertThat(page.Rows[0].Pips == (1, 1)).IsTrue();
+		NoRowSpellsArtWithCharacters(page);
+	}
+
+	[TestCase]
+	public void PromiseOpenedSignedOffersBBeforeAnySlide()
+	{
+		var stated = new Dictionary<string, Probe> { ["Promises.Player.GamerTag"] = Text("Hero") };
+		var screen = new Fable3ScreenState { Promise = (0x1234u, true) };
+		AssertThat(Fable3ScreenModel.Signed(stated, screen)).IsTrue();
+
+		// The Show's own slide for an unsigned promise (2) wins over nothing stated.
+		stated["Promises.Buttons"] = State(2);
+		AssertThat(Fable3ScreenModel.Signed(stated, new Fable3ScreenState { Promise = (0x1234u, false) })).IsFalse();
+	}
+
+	/// <summary>
+	/// A row's mark is drawn by the template (Row.Bar, Row.Pips), never spelt in its line: the
+	/// title's fonts hold no box-drawing, block, shape or dingbat glyph (U+2500 and up), so one in
+	/// a line is drawn as the fallback glyph.
+	/// </summary>
+	public static void NoRowSpellsArtWithCharacters(Fable3ScreenPage page)
+	{
+		foreach (Fable3ScreenPage.Row row in page.Rows)
+		{
+			foreach (char c in row.Line)
+			{
+				AssertThat(c >= '\u2500' && c <= '\u27BF').OverrideFailureMessage($"row '{row.Name}' spells art with U+{(int)c:X4}: '{row.Line}'").IsFalse();
+			}
+		}
 	}
 
 	[TestCase]

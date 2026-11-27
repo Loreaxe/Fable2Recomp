@@ -117,6 +117,7 @@ public sealed class CompileCache
 
     private readonly object _gate = new();
     private readonly string _root;
+    private readonly string _compilerDirectory;
     private readonly string _recipe;
     private readonly IReadOnlyList<CompileInputRoot> _roots;
     private readonly CompileInputRoot? _trackedRoot;
@@ -136,11 +137,18 @@ public sealed class CompileCache
     /// </summary>
     public bool Complete { get; private set; } = true;
 
-    /// <summary>Relative paths read from the tracked primary root (e.g. <c>bundle/</c> or <c>recompile/</c>) across all units.</summary>
-    /// <summary>The first reason a compiled unit was not kept this run (null when every unit was): the input path
-    /// no root holds, an input that cannot be hashed, or the unit's missing precompiled-header record.</summary>
+    /// <summary>The first reason a compiled unit was not kept this run (null when every unit was): its source under
+    /// no root, a dependency no root holds or that cannot be hashed, an unreadable dependency file, or the missing
+    /// precompiled-header record together with <see cref="PchFailure"/>.</summary>
     public string? StoreFailure { get; private set; }
 
+    /// <summary>How many compiled units were not kept this run.</summary>
+    public int NotKept { get; private set; }
+
+    /// <summary>Why <see cref="StorePch"/> recorded no precompiled header this run (null when it did or was not called).</summary>
+    public string? PchFailure { get; private set; }
+
+    /// <summary>Relative paths read from the tracked primary root (e.g. <c>bundle/</c> or <c>recompile/</c>) across all units.</summary>
     public IReadOnlyCollection<string> TrackedInputs
     {
         get
@@ -160,14 +168,19 @@ public sealed class CompileCache
     /// <param name="allTrackedRelativePaths">All relative file paths present under the tracked include root, for <see cref="SameNames"/>.</param>
     /// <param name="includes">Ordered relative include directories under the tracked include root.</param>
     /// <param name="recipe">Hash of compiler identity, target, and flags that affect object output.</param>
+    /// <param name="compilerDirectory">The working directory the compiler runs in. A dependency file names an input
+    /// relative to it (zig names its own <c>lib/</c> that way when the directory contains it), so relative paths
+    /// resolve against this directory, never against this process's current directory.</param>
     public CompileCache(
         string root,
         IReadOnlyList<CompileInputRoot> roots,
         IEnumerable<string> allTrackedRelativePaths,
         IReadOnlyCollection<string> includes,
-        string recipe)
+        string recipe,
+        string compilerDirectory)
     {
         _root = root;
+        _compilerDirectory = Path.GetFullPath(compilerDirectory);
         _roots = roots;
         _trackedRoot = roots.FirstOrDefault(candidate => candidate.TrackInputsAndShadowing);
         _byFileName = FileNameIndex(allTrackedRelativePaths);
@@ -456,8 +469,10 @@ public sealed class CompileCache
         {
             _pchNames = new HashSet<string>(StringComparer.Ordinal);
             _pchId = null;
-            if (!TryNames(dependencies, output, null, out var names))
+            PchFailure = null;
+            if (!TryNames(dependencies, output, null, out var names, out string? failure))
             {
+                PchFailure = failure;
                 Complete = false;
                 return output;
             }
@@ -532,11 +547,26 @@ public sealed class CompileCache
             {
                 string? name = NameOf(source);
                 string? id = name == null ? null : UnitId(name, extraFlags);
-                if (id == null || !TryNames(dependencies, built, name, out var names) || (usesPch && _pchId == null))
+                string? failure = null;
+                List<string> names = new();
+                if (id == null)
                 {
-                    StoreFailure ??= id == null ? "no unit id for " + source
-                        : usesPch && _pchId == null ? "no precompiled-header record for " + source
-                        : _namesFailure ?? "the dependencies of " + source + " could not be read";
+                    failure = (name == null ? "a source under no root: " : "a source that cannot be hashed: ") + source;
+                }
+                else if (!TryNames(dependencies, built, name, out names, out string? namesFailure))
+                {
+                    failure = namesFailure + " for " + source;
+                }
+                else if (usesPch && _pchId == null)
+                {
+                    failure = "no precompiled-header record for " + source + ": "
+                        + (PchFailure ?? "the header was not recorded this build");
+                }
+
+                if (failure != null)
+                {
+                    StoreFailure ??= failure;
+                    NotKept++;
                     Complete = false;
                     return built;
                 }
@@ -566,6 +596,8 @@ public sealed class CompileCache
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
+                StoreFailure ??= source + " could not be written to the cache: " + error.Message;
+                NotKept++;
                 Complete = false;
                 return File.Exists(built) ? built : throw new IOException("A compiled unit could not be kept", error);
             }
@@ -926,13 +958,18 @@ public sealed class CompileCache
         return holds;
     }
 
-    private string? _namesFailure;
-
-    private bool TryNames(string dependencies, string output, string? source, out List<string> names)
+    /// <summary>
+    /// Names every input in a <c>clang -MD</c> dependency file by its root prefix. A relative path is relative to
+    /// the compiler's working directory. Fails, saying why, on a missing file or on any input that no root holds
+    /// or that cannot be hashed: a unit whose inputs cannot all be named cannot be proven current later.
+    /// </summary>
+    private bool TryNames(string dependencies, string output, string? source, out List<string> names, out string? failure)
     {
         names = new List<string>();
+        failure = null;
         if (!File.Exists(dependencies))
         {
+            failure = "no dependency file at " + dependencies;
             return false;
         }
 
@@ -942,14 +979,14 @@ public sealed class CompileCache
             set.Add(source);
         }
 
-        string outputFull = Path.GetFullPath(output);
+        string outputFull = Path.GetFullPath(output, _compilerDirectory);
         StringComparison pathComparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
         foreach (string path in CompileDepfile.Parse(File.ReadAllText(dependencies)))
         {
-            string full = Path.GetFullPath(path);
+            string full = Path.GetFullPath(path, _compilerDirectory);
             if (string.Equals(full, outputFull, pathComparison) || full.EndsWith(".pch", pathComparison))
             {
                 continue;
@@ -958,7 +995,8 @@ public sealed class CompileCache
             string? name = NameOf(full);
             if (name == null || CurrentHash(name) == null)
             {
-                _namesFailure ??= (name == null ? "an input under no root: " : "an input that cannot be hashed: ") + full;
+                failure = (name == null ? "an input under no root: " : "an input that cannot be hashed: ") + full
+                    + (path == full ? string.Empty : " (written as " + path + ")");
                 return false;
             }
 

@@ -207,8 +207,27 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
     /// <summary>This view's seat on the current <see cref="Window"/>.</summary>
     private Engine_UiSeats.Frame SeatFrame => Engine_UiSeats.Of(Window, Seat);
 
+    /// <summary>
+    /// The button glyphs this view draws (Engine_UiKeyGlyphs.Surface): player two's own pad in player
+    /// two's half; the shared set on the whole window and in player one's half.
+    /// </summary>
+    private int GlyphSurface => Seat == Engine_UiSeats.Seat.PlayerTwo ? 2 : 1;
+
     /// <summary>Whether the node carries a seat transform that a return to the whole window must undo.</summary>
     private bool _seated;
+
+    /// <summary>The seat rect last written on this view's materials (`seat_rect`), null when unbounded.</summary>
+    private Vector4? _seatRect;
+
+    /// <summary>The build the seat rect was written over; a rebuild makes new materials.</summary>
+    private int _seatRectBuild = -1;
+
+    /// <summary>Counts <see cref="Build"/> calls, so a rebuilt view is clipped again.</summary>
+    private int _builds;
+
+    private static readonly StringName SeatRectName = "seat_rect";
+
+    private static readonly Vector4 Unbounded = new(-1e9f, -1e9f, 1e9f, 1e9f);
 
     /// <summary>The shipped look, for text pieces.</summary>
     public Engine_UiTheme? Theme { get; set; }
@@ -576,9 +595,13 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
     /// <summary>The <see cref="Engine_HudModMeters.Generation"/> the meter pieces were built from.</summary>
     private int _modMetersGeneration = -1;
 
+    /// <summary>Whether the meter pieces were built for a shared couch screen (<see cref="Engine_HudModMeters.SharedScreenView"/>).</summary>
+    private bool _modMetersShared;
+
     /// <summary>
     /// The meters a call put on the HUD (<c>meter</c> on every surface), as mod pieces of this
-    /// view: rebuilt when the set changes, their values read live. A view for player two builds
+    /// view: rebuilt when the set changes or the view becomes or stops being a shared couch screen
+    /// (<see cref="Engine_HudModMeters.Rebuilds"/>), their values read live. A view for player two builds
     /// player two's; a shared couch screen (one window, local co-op) both players'.
     /// </summary>
     private void DriveModMeters(Engine_UiSeats.Frame frame)
@@ -596,13 +619,15 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
         }
 
         _modMeters.Window = frame.Window;
-        if (generation == _modMetersGeneration)
+        bool shared = Engine_HudModMeters.SharedScreenView(
+            Seat == Engine_UiSeats.Seat.Whole, LocalPlayerTwo, Refii.Core.Engine_TitleGame.Active.LocalCoop);
+        if (!Engine_HudModMeters.Rebuilds(generation, _modMetersGeneration, shared, _modMetersShared))
         {
             return;
         }
 
         _modMetersGeneration = generation;
-        bool shared = Seat == Engine_UiSeats.Seat.Whole && !LocalPlayerTwo && Refii.Core.Engine_TitleGame.Active.LocalCoop;
+        _modMetersShared = shared;
         _modMeters.Theme = Theme;
         _modMeters.StringBook = Values.Strings;
         _modMeters.Sources = Sources with
@@ -632,6 +657,8 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
     /// </summary>
     public void Build()
     {
+        using Engine_UiKeyGlyphs.SurfaceScope glyphs = Engine_UiKeyGlyphs.Surface(GlyphSurface);
+
         // The layout from the document AS IT STANDS: a mod that changed `hud.bgf`'s structure, or
         // a mod set whose `layout` blocks changed, is a new arrangement, not the old one rebuilt.
         if (Derive?.Invoke() is { } derived)
@@ -647,6 +674,7 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
 
         _built.Clear();
         _builtOnce = true;
+        ++_builds;
         _sources = null;
         // The meter copies went with the pieces: built again on the next drive.
         _modMetersGeneration = -1;
@@ -1931,7 +1959,9 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
                 ? $"{built.Piece.Id} @({built.Piece.Offset.X:0},{built.Piece.Offset.Y:0}) " +
                   $"anchor({built.Piece.Anchor.X:0.0},{built.Piece.Anchor.Y:0.0}) " +
                   $"rect {g.Position.X:0},{g.Position.Y:0} {g.Size.X:0}x{g.Size.Y:0}"
-                : $"{built.Piece.Id} NOT DRAWN";
+                : built.Node.Visible && ScreenSizedArt(built.Node) is { } wide
+                    ? $"{built.Piece.Id} screen-sized art only, rect {wide.Position.X:0},{wide.Position.Y:0} {wide.Size.X:0}x{wide.Size.Y:0}"
+                    : $"{built.Piece.Id} NOT DRAWN";
         }
 
         if (spanFrame)
@@ -2360,9 +2390,15 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
     /// <summary>A node's move by <paramref name="by"/> in this view's space.</summary>
     /// <summary>
     /// THE TOPBOX WRAPS ITS LINES AT THE BOX'S MAXIMUM WIDTH — the title's own figure, stated by
-    /// it (Fable 2: Engine_UiHudTopBox.WrapWidth); 0 leaves the lines' records alone.
+    /// it (Fable 2: Engine_UiHudTopBox.WrapWidth), kept to the same share of a view narrower than
+    /// 16:9, a split-screen half among them (<see cref="Engine_UiTopBoxLayout.WrapWidthIn"/>); 0 leaves
+    /// the lines' records alone.
     /// </summary>
     public float TopBoxWrapWidth { get; init; }
+
+    /// <summary>The visible canvas width of a 16:9 view, which the titles' wrap widths are measured on.</summary>
+    private static readonly float WideCanvasWidth =
+        Engine_HudLayout.CanvasExtent(new Vector2(Engine_HudLayout.DesignWidth, Engine_HudLayout.DesignHeight)).X;
 
 
     /// <summary>
@@ -2430,7 +2466,8 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
         }
 
         Engine_UiBindings? bindings = Bindings;
-        var wrapBox = new Vector2(TopBoxWrapWidth, 0f);
+        var wrapBox = new Vector2(
+            Engine_UiTopBoxLayout.WrapWidthIn(TopBoxWrapWidth, SeatFrame.Extent.X, WideCanvasWidth), 0f);
         foreach ((MeshInstance3D label, int ordinal) in built.LiveTextNodes)
         {
             if (!GodotObject.IsInstanceValid(label) ||
@@ -2608,6 +2645,108 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
     /// The screen bounds of every drawn mesh under a node, and the nearest depth among them —
     /// <see cref="TextBounds"/> answers for one label, and this widget is a subtree of art.
     /// </summary>
+    /// <summary>
+    /// A seated view of a title that keeps to its seat (<see cref="Engine_HudLayout.KeepsToSeat"/>)
+    /// draws nothing outside its half: the half's rect, in world space, is written as `seat_rect` on
+    /// every UI material under the view (each made the view's own first, so player one's view and
+    /// player two's never share the write). Written when the rect changes and after a rebuild; a text
+    /// re-mesh carries it (Engine_UiTheme). Back on the whole window the rect is unbounded again.
+    /// </summary>
+    private void KeepToSeat(Engine_UiSeats.Frame frame)
+    {
+        Vector4? want = null;
+        if (!frame.IsWhole && Engine_HudLayout.KeepsToSeat)
+        {
+            Transform3D parent = GetParent() is Node3D above ? above.GlobalTransform : Transform3D.Identity;
+            Vector2 half = frame.Extent * frame.Scale * 0.5f;
+            Vector3 a = parent * new Vector3(frame.Centre.X - half.X, frame.Centre.Y - half.Y, 0f);
+            Vector3 b = parent * new Vector3(frame.Centre.X + half.X, frame.Centre.Y + half.Y, 0f);
+            want = new Vector4(Mathf.Min(a.X, b.X), Mathf.Min(a.Y, b.Y), Mathf.Max(a.X, b.X), Mathf.Max(a.Y, b.Y));
+        }
+
+        if (want == _seatRect && (want is null || _seatRectBuild == _builds))
+        {
+            return;
+        }
+
+        int painted = PaintSeatRect(this, want ?? Unbounded);
+        if (want is { } rect && _seatRect is null)
+        {
+            GD.Print($"{Tag} kept to its seat: {painted} UI material(s) clipped to " +
+                $"({rect.X:0},{rect.Y:0})..({rect.Z:0},{rect.W:0})");
+        }
+
+        _seatRect = want;
+        _seatRectBuild = _builds;
+    }
+
+    /// <summary>
+    /// A label this view re-meshed after it was seated keeps to the seat. The theme carries `seat_rect` from the
+    /// material it replaces, but a label emptied to no glyphs has no material (DriveText, `Engine_UiTheme.SetMeshText`
+    /// with an empty string), so its next string starts unbounded; and <see cref="KeepToSeat"/> repaints only on a
+    /// new rect or a rebuild. Painted again here, with the label's inline icons. Inert while unseated.
+    /// </summary>
+    private void KeepReMeshedToSeat(MeshInstance3D label)
+    {
+        if (_seatRect is { } seat)
+        {
+            PaintSeatRect(label, seat);
+        }
+    }
+
+    /// <summary>Writes `seat_rect` on every UI material under <paramref name="node"/>; how many took it.</summary>
+    private static int PaintSeatRect(Node node, Vector4 rect)
+    {
+        int painted = 0;
+        if (node is MeshInstance3D mesh && mesh.MaterialOverride is ShaderMaterial existing &&
+            Engine_UiSceneBuilder.IsUiShader(existing.Shader))
+        {
+            Variant current = existing.GetShaderParameter(SeatRectName);
+            bool same = current.VariantType == Variant.Type.Vector4
+                ? current.AsVector4().IsEqualApprox(rect)
+                : rect == Unbounded;
+            if (!same && Engine_UiSceneBuilder.EnsureOwnedMaterial(mesh) is { } own)
+            {
+                own.SetShaderParameter(SeatRectName, rect);
+            }
+
+            ++painted;
+        }
+
+        for (int i = 0, count = node.GetChildCount(); i < count; ++i)
+        {
+            painted += PaintSeatRect(node.GetChild(i), rect);
+        }
+
+        return painted;
+    }
+
+    /// <summary>
+    /// For the group report only: the union of the drawn meshes <see cref="SubtreeBounds"/> leaves out as
+    /// containers (wider than half the design box), so a group whose only art is screen-sized — the credits'
+    /// `Background` (13 x 8) and `credits_logos` (10.24 x 5.12) — is not reported as not drawn. Null when there is
+    /// none, or when every such mesh is culled (`Layers` 0).
+    /// </summary>
+    private static Rect2? ScreenSizedArt(Node node)
+    {
+        Rect2? bounds = null;
+        if (node is MeshInstance3D mesh && mesh.Mesh is not null && mesh.Layers != 0u && mesh.IsVisibleInTree())
+        {
+            Aabb box = mesh.GlobalTransform * mesh.Mesh.GetAabb();
+            if (box.Size.X > Engine_HudLayout.DesignWidth * 0.5f || box.Size.Y > Engine_HudLayout.DesignHeight * 0.5f)
+            {
+                bounds = new Rect2(box.Position.X, box.Position.Y, box.Size.X, box.Size.Y);
+            }
+        }
+
+        for (int i = 0, count = node.GetChildCount(); i < count; i++)
+        {
+            bounds = Union(bounds, ScreenSizedArt(node.GetChild(i)));
+        }
+
+        return bounds;
+    }
+
     private static Rect2? SubtreeBounds(Node node, ref float behind)
     {
         Rect2? bounds = null;
@@ -3232,6 +3371,7 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
         }
 
     	using var _framePhase = Refii.Core.Engine_FramePhases.Measure("hudview");
+        using Engine_UiKeyGlyphs.SurfaceScope glyphs = Engine_UiKeyGlyphs.Surface(GlyphSurface);
 
         // A bisect lever, like `render lights=` and `render entities=`: switching the walk off
         // separates its cost from the render queue behind it, which the phase timer cannot.
@@ -3249,6 +3389,8 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
             Transform = frame.IsWhole ? Transform3D.Identity : frame.Transform(0f);
             _seated = !frame.IsWhole;
         }
+
+        KeepToSeat(frame);
 
         if (_modPieces is not null)
         {
@@ -3475,13 +3617,17 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
                     if (GodotObject.IsInstanceValid(label))
                     {
                         Theme.SetMeshText(label, live);
+                        KeepReMeshedToSeat(label);
                     }
                 }
             }
 
             Engine_UiCloneBinding.Lap(ref TicksTexts, ref mark);
 
-            Vector2 at = Engine_HudLayout.Place(built.Piece, extent);
+            // A half places a piece as the title says a half does (Engine_HudLayout.SeatedPiece); the whole
+            // window as it is.
+            Vector2 at = Engine_HudLayout.Place(
+                Seat == Engine_UiSeats.Seat.Whole ? built.Piece : Engine_HudLayout.SeatedPiece(built.Piece), extent);
 
             // The guest's own move of a piece root. A layout offset derives from the authored
             // canvas position, but the guest restates a root's position (quest text, the health
@@ -3710,6 +3856,27 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
     /// <summary>Held hidden by the owner (the full cutscene replaces the whole GUI) — the walk
     /// restates <see cref="Node3D.Visible"/> every guest frame, so a bare hide does not hold.</summary>
     public bool Suppressed { get; set; }
+
+    /// <summary>
+    /// Parks the view (suppressed, not processed, hidden this frame) or brings it back (processed;
+    /// its next walk restates <see cref="Node3D.Visible"/>). The walk is the only writer of
+    /// <see cref="Node3D.Visible"/>, so a view whose processing stops must be hidden here: player
+    /// two's half when the screen stops being split keeps nothing it drew.
+    /// </summary>
+    public void Park(bool parked)
+    {
+        Suppressed = parked;
+        ProcessModeEnum mode = parked ? ProcessModeEnum.Disabled : ProcessModeEnum.Inherit;
+        if (ProcessMode != mode)
+        {
+            ProcessMode = mode;
+        }
+
+        if (parked && Visible)
+        {
+            Visible = false;
+        }
+    }
 
     private readonly List<Engine_HudValues.Handle> _wanted = new();
 
@@ -3980,6 +4147,8 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
             horizontalAlign: record?.HorzAlign ?? 0, verticalAlign: record?.VertAlign ?? 1,
             boxWidth: record?.BoxWidth ?? 0f, boxHeight: record?.BoxHeight ?? 0f,
             wrapMode: record?.WrapMode ?? 0);
+
+        KeepReMeshedToSeat(label);
     }
 
     /// <summary>Point size for HUD text, at the layout's reference height.</summary>

@@ -511,10 +511,10 @@ public static class Fable2PageProviders
 	private sealed class RealEstateProvider : Engine_UiPageProvider
 	{
 		public IReadOnlyDictionary<string, string> Values(in Engine_UiPageContext page) =>
-			Engine_UiRealEstatePage.Values(Fable2Bridge.GetRealEstate(), page.Strings);
+			Engine_UiRealEstatePage.StatedValues();
 
 		public IReadOnlyDictionary<string, int> Slides(in Engine_UiPageContext page) =>
-			Engine_UiRealEstatePage.Slides(Fable2Bridge.GetRealEstate());
+			Engine_UiRealEstatePage.StatedSlides();
 
 		/// <summary>The page that is up — the host's page turn, as on the item books. The guest
 		/// parks the other page's `Contents` at x 430; a switched-off page needs no parking.</summary>
@@ -727,7 +727,7 @@ public static class Fable2PageProviders
 	{
 		public IReadOnlyDictionary<string, string> Values(in Engine_UiPageContext page) =>
 			Engine_UiMinimapPage.Merge(
-				Engine_UiWorldMapPage.Values(page.Row, page.WorldMap, page.Strings),
+				Engine_UiWorldMapPage.Values(page.Row, page.Strings),
 				Engine_UiMinimapPage.Values(page.Row, page.WorldMap, page.Strings));
 
 		public IReadOnlyDictionary<string, uint> Textures(in Engine_UiPageContext page) =>
@@ -742,9 +742,9 @@ public static class Fable2PageProviders
 			Engine_UiMinimapPage.Rotations(page.Row, page.WorldMap);
 
 		public IReadOnlyDictionary<string, int> Slides(in Engine_UiPageContext page) =>
-			Engine_UiWorldMapPage.Slides(page.Row, page.WorldMap);
+			Engine_UiWorldMapPage.Slides(page.Row);
 
-		/// <summary>Name the highlighted region so the pump's next answer is this cursor's.</summary>
+		/// <summary>Name the highlighted region so the pump's next minimap keys are this cursor's.</summary>
 		public void Prepare(in Engine_UiPageContext page)
 		{
 			int region = Engine_UiWorldMapPage.RegionOf(page.Row);
@@ -914,23 +914,26 @@ public static class Fable2PageProviders
 		/// writes once (`sub_826B6FE8` 0x826b70b8..e8: `GUI_SCREEN_TITLE_DECORATION`).</summary>
 		public IReadOnlyDictionary<string, string> Values(in Engine_UiPageContext page)
 		{
-			// Upgrade furniture: a row is a LEVEL, not an item — its pages are the piece's
-			// (Engine_UiFurniturePage), with the `Done` prompt both page inits write
+			// Upgrade furniture: a row is a LEVEL, not an item — its pages are what the level's
+			// two fills wrote (Engine_UiFurniturePage), with the `Done` prompt both page inits write
 			// (`sub_8299BF48`, `sub_8299CEA8`). The purse is the guest's told write.
 			if (page.ScreenId == Engine_UiFurniturePage.ScreenId)
 			{
 				var furniture = new Dictionary<string, string>(
-					Engine_UiFurniturePage.State(page.Row, page.Strings)?.Values ?? new Dictionary<string, string>());
+					Engine_UiFurniturePage.State(page.Row)?.Values ?? new Dictionary<string, string>());
 				string done = page.Strings is { } doneBook && doneBook.TryGetString("GUI_DONE", out string caption) ? caption : string.Empty;
 				furniture["Page1.Contents.PageButtons.B.B.Text"] = done;
 				furniture["Page2.Contents.PageButtons.B.B.Text"] = done;
 				return furniture;
 			}
 
-			IReadOnlyDictionary<string, string> lines = Engine_UiItemPage.Values(page.Row, page.Strings);
+			// Items, clothing and gift: their own fills' texts for the row (Engine_UiItemPage.StatedValues).
+			IReadOnlyDictionary<string, string> lines = Engine_UiItemPage.StatesPages(page.ScreenId)
+				? Engine_UiItemPage.StatedValues(page.ScreenId, page.Row)
+				: Engine_UiItemPage.Values(page.Row, page.Strings);
 
-			// The shop's front page: the guest's own answers (Engine_UiShopFrontPage).
-			if (page.ScreenId == ShopScreenId && Engine_UiShopFrontPage.State(page.Strings) is { } front)
+			// The shop's front page: what its fill wrote (Engine_UiShopFrontPage).
+			if (page.ScreenId == ShopScreenId && Engine_UiShopFrontPage.State() is { } front)
 			{
 				var shop = new Dictionary<string, string>(lines);
 				foreach ((string key, string text) in front.Values)
@@ -981,15 +984,21 @@ public static class Fable2PageProviders
 		/// </list></summary>
 		private static void RowSwitches(Dictionary<string, bool> active, in Engine_UiPageContext page)
 		{
-			bool item = page.Row is { } row && row.EventType != (int)Engine_UiMenuConstants.EventType.Submenu;
+			// Items, clothing and gift: what their own fills showed and hid for the row — the A prompt
+			// (`sub_829B4EB8` by `sub_827649C8`, 0x829B5084..0x829B5114), the dye swatch, the value lines, the dye
+			// footer's parts, the Gold row's.
+			if (Engine_UiItemPage.Stated(page.ScreenId, page.Row) is { } stated)
+			{
+				foreach ((string path, bool on) in stated.Shown)
+				{
+					active[path] = on;
+				}
+
+				return;
+			}
+
 			switch (page.ScreenId)
 			{
-				case ItemsScreenId when item:
-					bool usable = Engine_UiItemPage.Usable(page.Row);
-					active["PageButtons.A.A.Text"] = usable;
-					active["PageButtons.A.A.a_button"] = usable;
-					break;
-
 				case GiftScreenId when page.Row?.EventType == GiftGoldEventType:
 				case DecorationScreenId:
 				case Engine_UiFurniturePage.ScreenId:
@@ -1008,10 +1017,10 @@ public static class Fable2PageProviders
 		/// <summary>The dye swatch on the items book: shown and tinted to the dye's colour for a
 		/// dye (0x829b53dc, 0x829b5418), at rest (hidden) otherwise.</summary>
 		public IReadOnlyDictionary<string, Color> Tints(in Engine_UiPageContext page) =>
-			page.ScreenId == ItemsScreenId && Engine_UiItemPage.DyeColour(page.Row) is { } dye
-				? new Dictionary<string, Color> { [DyeSwatch + ".dynamic"] = dye }
+			Engine_UiItemPage.Stated(page.ScreenId, page.Row) is { } stated
+				? stated.Tints
 				: page.ScreenId == Engine_UiFurniturePage.ScreenId &&
-					Engine_UiFurniturePage.State(page.Row, page.Strings) is { } furniture
+					Engine_UiFurniturePage.State(page.Row) is { } furniture
 						? furniture.Tints
 						: NoTints;
 
@@ -1036,7 +1045,7 @@ public static class Fable2PageProviders
 					page.Row is null ||
 					page.Row.EventType == (int)Engine_UiMenuConstants.EventType.Submenu;
 				Engine_UiItemPage.ShopStatsActive(active, ShopPageElements[ShopStatsPage]);
-				if (Engine_UiShopFrontPage.State(page.Strings) is { } front)
+				if (Engine_UiShopFrontPage.State() is { } front)
 				{
 					foreach ((string key, bool on) in front.Active)
 					{
@@ -1067,14 +1076,29 @@ public static class Fable2PageProviders
 				return folder ? ShopFrontPageParchment : NoOpacities;
 			}
 
-			if (page.ScreenId == ItemsScreenId && Engine_UiItemPage.DyeColour(page.Row) is not null)
+			// Items, clothing, gift: what their fills wrote (the dye footer's Select / icon parts at 50 or 100,
+			// `sub_82426140` 0x829B5F4C..; the worn Select on page 2, 0x829B7938..), over the book's own resting
+			// opacities — the swatch held up when the fill tinted it, the clothing footer's frames.
+			if (Engine_UiItemPage.Stated(page.ScreenId, page.Row) is { } stated)
 			{
-				return DyeShown;
+				var opacities = new Dictionary<string, float>(
+					page.ScreenId == EquipmentScreenId && !folder ? EquipmentFooter : NoOpacities, System.StringComparer.Ordinal);
+				if (stated.Tints.Count != 0)
+				{
+					opacities[DyeSwatch] = 1f;
+				}
+
+				foreach ((string path, float opacity) in stated.Opacities)
+				{
+					opacities[path] = opacity;
+				}
+
+				return opacities;
 			}
 
 			if (page.ScreenId == Engine_UiFurniturePage.ScreenId)
 			{
-				return Engine_UiFurniturePage.State(page.Row, page.Strings)?.Opacities ?? NoOpacities;
+				return Engine_UiFurniturePage.State(page.Row)?.Opacities ?? NoOpacities;
 			}
 
 			return page.ScreenId == EquipmentScreenId && !folder ? EquipmentFooter : NoOpacities;
@@ -1093,9 +1117,6 @@ public static class Fable2PageProviders
 			{
 				["Foreground.Book.Pages.Page1.Contents.Footer.*"] = float.NaN,
 			};
-
-		private static readonly IReadOnlyDictionary<string, float> DyeShown =
-			new Dictionary<string, float>(System.StringComparer.Ordinal) { [DyeSwatch] = 1f };
 
 		private static readonly IReadOnlyDictionary<string, float> ShopFrontPageParchment =
 			new Dictionary<string, float>(System.StringComparer.Ordinal)
@@ -1176,7 +1197,9 @@ public static class Fable2PageProviders
 		{
 			IReadOnlyDictionary<string, int> stars = page.ScreenId == ShopScreenId
 				? ShopStarSlides(page.Row, page.Strings)
-				: Engine_UiItemPage.Slides(page.Row, page.Strings);
+				: Engine_UiItemPage.StatesPages(page.ScreenId)
+					? Engine_UiItemPage.Stated(page.ScreenId, page.Row)?.Slides ?? Engine_UiPageProviders.NoSlides
+					: Engine_UiItemPage.Slides(page.Row, page.Strings);
 
 			// THE PARCHMENT STAYS. `ModelHider` authors two slides: `Show` (1) fades
 			// `PageTexture.opacity` 100→0 — the page opens as a window for the 3D entity the
@@ -1214,7 +1237,7 @@ public static class Fable2PageProviders
 			// THE DECORATION PROMPTS (`sub_8299BF48` 0x8299bf7c, `sub_8299CEA8` 0x8299cef0: both
 			// pages' `PageButtons` on slide 10; `sub_8299C008` / `sub_8299CF80`): on the placed
 			// item (row id 0x0FFFFFFF) Y is offered (Y 1, A 2), otherwise A (Y 2, A 1).
-			if (page.ScreenId == ShopScreenId && Engine_UiShopFrontPage.State(page.Strings) is { } front)
+			if (page.ScreenId == ShopScreenId && Engine_UiShopFrontPage.State() is { } front)
 			{
 				// The front page's stars are its writer's (`2·trunc(stars)`), not a row's.
 				slides.Remove("FrontPage.Contents.StarRating");

@@ -143,11 +143,22 @@ PPC_EXTERN_FUNC(__imp__rex_lhGuiPreviewScene_DestroyRecordEntity);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiShopScreen_Open);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiPreviewObject_Set);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiPreviewObject_Hide);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_FindByName);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetShown);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetOpacity);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetTextColour);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetQuadColour);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_GoToSlide);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiShopFrontPage_Fill);
+PPC_EXTERN_FUNC(__imp__rex_lhUpgradeableFurniture_Card);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstatePage1_Fill);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstatePage2_Fill);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiPendingWeapons_Clear);
 PPC_EXTERN_FUNC(__imp__rex_lhHudExperienceCounter_ShowHeroOne);
 PPC_EXTERN_FUNC(__imp__rex_lhHudExperienceCounter_ShowHeroTwo);
 PPC_EXTERN_FUNC(__imp__rex_lhHudExperienceCounter_DecideShown);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRowTickets_Allocate);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiItemRow_Build);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRowTickets_Clear);
 PPC_EXTERN_FUNC(__imp__rex_lhMenuBox_Populate);
 PPC_EXTERN_FUNC(__imp__rex_lhMenuBox_Close);
@@ -276,6 +287,7 @@ PPC_EXTERN_FUNC(__imp__rex_CECGraphicAppearance_ReplicateAppearance); // CECGrap
 PPC_EXTERN_FUNC(__imp__rex_CECGraphicAppearance_Serialize); // CECGraphicAppearance: save/load of Alpha, TintColour, ...
 PPC_EXTERN_FUNC(__imp__rex_CECGraphicAppearance_Ctor); // CECGraphicAppearance: constructor
 PPC_EXTERN_FUNC(__imp__rex_CECGraphicAppearance_ScalarDtor); // CECGraphicAppearance: destructor
+PPC_EXTERN_FUNC(__imp__rex_CECCreature_Ctor); // CECCreature (component 20): constructor
 PPC_EXTERN_FUNC(__imp__rex_CECGraphicAppearance_ApplyDefinition); // CECGraphicAppearance vf8: the definition's flags (DisableAlphaDepthWrites +192)
 PPC_EXTERN_FUNC(__imp__rex_lhGraphicAppearanceMorph_ApplyTextureLayers); // CECGraphicAppearanceMorph: the composite submit
 PPC_EXTERN_FUNC(__imp__rex_lhGraphicAppearanceMorph_RebuildParts); // CECGraphicAppearanceMorph: rebuilds the part records
@@ -511,6 +523,7 @@ PPC_EXTERN_FUNC(__imp__rex_GameFlow_QueueCommand);
 PPC_EXTERN_FUNC(__imp__rex_GameFlow_PopCommand);
 PPC_EXTERN_FUNC(__imp__rex_lhGameFlow_Tick);
 PPC_EXTERN_FUNC(__imp__rex_lhWorld_SimTick);
+PPC_EXTERN_FUNC(__imp__rex_AIAsyncPathfinder_RunBatch);  // hooks/pathfinder_batch.cpp
 PPC_EXTERN_FUNC(__imp__rex_lhGuiWillAssignWidget_Open);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiWillAssignWidget_Show);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiWillAssignWidget_Close);
@@ -541,7 +554,6 @@ PPC_EXTERN_FUNC(__imp__rex_lhGuiCoopScreen_SetAccepted);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiCoopScreen_Finish);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiCoopScreen_SetPickerShown);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiCoopScreen_SetPickerCursor);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiManager_ClearModalState);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiWorldMapScreen_AskStopTravel);
 PPC_EXTERN_FUNC(__imp__rex_lhRenderer_FrameBody);
 PPC_EXTERN_FUNC(__imp__rex_lhRenderer_ReleasePending);

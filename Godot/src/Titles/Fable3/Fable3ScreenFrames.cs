@@ -25,33 +25,105 @@ public static class Fable3ScreenFrames
 	/// <summary>
 	/// One screen's frame: its document, the element root its rows are written under (the
 	/// <see cref="Fable3ScreenBoxes.ScreenRoot"/>), the component whose slides gate the frame, the
-	/// frame nodes' parent and the frame nodes.
+	/// frame nodes' parent, the frame nodes, and the rows its file authors on that frame
+	/// (<see cref="Column"/>; null keeps the list template's own column).
 	/// </summary>
-	public readonly record struct Frame(string Document, string Root, string SlideOwner, string Parent, string[] Art);
+	public readonly record struct Frame(string Document, string Root, string SlideOwner, string Parent, string[] Art, Column? Rows = null);
+
+	/// <summary>
+	/// The rows a frame's file authors, by element path in its document: the first row's text (its
+	/// place and alignment are the list's column), the second row's (the two rows' distance is the
+	/// pitch a page without a cursor stands its rows at) and the element where the rows' values begin
+	/// (the marks' column). <see cref="PanelOf"/> reads them from the standing document.
+	/// </summary>
+	public readonly record struct Column(string First, string? Second = null, string? Values = null);
 
 	/// <summary>
 	/// Every box screen's frame, read from its .bgf (the art-only nodes under the screen root that
 	/// the root's slides switch on).
 	/// </summary>
+	/// <remarks>
+	/// The rows, from each file's text elements (chain x, y; the .fac's halign): hero status
+	/// `Section1.Titles.Strength` (5, 160) halign 0, `.Skill` 30 below, the meters' zero
+	/// `StatusMeter_Pointer` x 257; the schedule `Tasks.Task1` (−140, 189) halign 0, `Task2` 102 below,
+	/// `TickBox1.Icon_Task` x −190; the choice boxes' `SelectionTitles.*` halign 1 (join and friends x
+	/// 78, visibility 68); the rest halign 0 — chat `SelectionTitles.General` −280, treasury `Personal
+	/// Balance` (−334, 180) with `Treasury.Treasury Balance` 30 below (its rows' pitch: 2 balances and up
+	/// to 9 transactions stand inside Large4, whose bottom line is at −253 + 50), bed `Sleep.Title` −330, food `Current.Health` −253, wedding `Group.Title` −335,
+	/// partners `GamerTag` −294, proposal `GamerInfo.Gold2` −279, divorce
+	/// `JointAssetsBreakdown.ActionDescription` −334, quest summary `Text.QuestName` −308; promises'
+	/// `Promise.Promise` halign 1 at 0. Stats states none: its pages stand their rows in different
+	/// columns (categories halign 1 at 0, statistics halign 0 at −390), and the template's own
+	/// column is the statistics page's.
+	/// </remarks>
 	public static readonly Frame[] Frames =
 	{
-		new("herostatus", Fable3ScreenModel.HeroStatus, "HeroStatus", "HeroStatus", new[] { "HeroStatus" }),
+		new("herostatus", Fable3ScreenModel.HeroStatus, "HeroStatus", "HeroStatus", new[] { "HeroStatus" },
+			new("HeroStatus.Section1.Titles.Strength", "HeroStatus.Section1.Titles.Skill",
+				"HeroStatus.Section2.Values.Morality.StatusMeter.StatusMeter_Pointer")),
 		new("statsscreen", Fable3ScreenModel.Stats, "StatsBox", "StatsBox", new[] { "Large2" }),
-		new("promises", Fable3ScreenModel.Promises, "Promises", "Promises", new[] { "Background2", "Promises" }),
-		new("questsummary", Fable3ScreenModel.Quests, "QuestSummary", "QuestSummary", new[] { "Large1" }),
-		new("kingsschedule", Fable3ScreenModel.Schedule, "KingsSchedule", "KingsSchedule", new[] { "KingsAgenda" }),
-		new("joinoptions", Fable3BoxScreenModel.JoinOptions, "OrbEmote", "OrbEmote", new[] { "Medium1" }),
-		new("visability", Fable3BoxScreenModel.Visibility, "Visibilities", "Visibilities", new[] { "Medium1" }),
-		new("friendschannel", Fable3BoxScreenModel.FriendsChannel, "FriendsChannel", "FriendsChannel", new[] { "Medium1" }),
-		new("chatchannel", Fable3BoxScreenModel.ChatChannel, "ChatChannel", "ChatChannel", new[] { "Small1" }),
-		new("treasureaccounts", Fable3BoxScreenModel.Treasury, "TreasureAccounts", "TreasureAccounts", new[] { "Large4", "Medium1" }),
-		new("bedmenubox", Fable3BoxScreenModel.BedMenu, "BedMenu", "BedMenu", new[] { "Medium2" }),
-		new("foodquerybox", Fable3BoxScreenModel.FoodQuery, "InfoBox", "InfoBox", new[] { "Medium1" }),
-		new("compweddingpicker", Fable3BoxScreenModel.WeddingPicker, "WeddingPicker", "WeddingPicker", new[] { "Medium1" }),
-		new("cooppartnersscreen", Fable3BoxScreenModel.Partners, "CoopPartnersInfoBox", "CoopPartnersInfoBox", new[] { "Large1" }),
-		new("proposalquerybox", Fable3BoxScreenModel.Proposal, "InfoBox", "MarriageProposal", new[] { "Large1", "Medium1" }),
-		new("divorcemessagebox", Fable3BoxScreenModel.Divorce, "DivorceMessageBox", "DivorceMessageBox", new[] { "Large1", "Medium1" }),
+		new("promises", Fable3ScreenModel.Promises, "Promises", "Promises", new[] { "Background2", "Promises" },
+			new("Promises.Promise.Promise")),
+		new("questsummary", Fable3ScreenModel.Quests, "QuestSummary", "QuestSummary", new[] { "Large1" },
+			new("QuestSummary.Details.QuestSummaryDetails0.Text.QuestName")),
+		new("kingsschedule", Fable3ScreenModel.Schedule, "KingsSchedule", "KingsSchedule", new[] { "KingsAgenda" },
+			new("KingsSchedule.Tasks.Task1", "KingsSchedule.Tasks.Task2", "KingsSchedule.TickBoxes.TickBox1.Icon_Task")),
+		new("joinoptions", Fable3BoxScreenModel.JoinOptions, "OrbEmote", "OrbEmote", new[] { "Medium1" },
+			new("OrbEmote.SelectionTitles.Any1")),
+		new("visability", Fable3BoxScreenModel.Visibility, "Visibilities", "Visibilities", new[] { "Medium1" },
+			new("Visibilities.SelectionTitles.Everyone")),
+		new("friendschannel", Fable3BoxScreenModel.FriendsChannel, "FriendsChannel", "FriendsChannel", new[] { "Medium1" },
+			new("FriendsChannel.SelectionTitles.Friends")),
+		new("chatchannel", Fable3BoxScreenModel.ChatChannel, "ChatChannel", "ChatChannel", new[] { "Small1" },
+			new("ChatChannel.SelectionTitles.General")),
+		new("treasureaccounts", Fable3BoxScreenModel.Treasury, "TreasureAccounts", "TreasureAccounts", new[] { "Large4", "Medium1" },
+			new("TreasureAccounts.Personal.Personal Balance", "TreasureAccounts.Treasury.Treasury Balance")),
+		new("bedmenubox", Fable3BoxScreenModel.BedMenu, "BedMenu", "BedMenu", new[] { "Medium2" },
+			new("BedMenu.Sleep.Title")),
+		new("foodquerybox", Fable3BoxScreenModel.FoodQuery, "InfoBox", "InfoBox", new[] { "Medium1" },
+			new("InfoBox.Current.Health")),
+		new("compweddingpicker", Fable3BoxScreenModel.WeddingPicker, "WeddingPicker", "WeddingPicker", new[] { "Medium1" },
+			new("WeddingPicker.Details.WeddingDetails0.Group.Title")),
+		new("cooppartnersscreen", Fable3BoxScreenModel.Partners, "CoopPartnersInfoBox", "CoopPartnersInfoBox", new[] { "Large1" },
+			new("CoopPartnersInfoBox.Details.PartnerDetails0.GamerTag")),
+		new("proposalquerybox", Fable3BoxScreenModel.Proposal, "InfoBox", "MarriageProposal", new[] { "Large1", "Medium1" },
+			new("InfoBox.MarriageProposal.GamerInfo.Gold2")),
+		new("divorcemessagebox", Fable3BoxScreenModel.Divorce, "DivorceMessageBox", "DivorceMessageBox", new[] { "Large1", "Medium1" },
+			new("DivorceMessageBox.Foreground.JointAssetsBreakdown.ActionDescription")),
 	};
+
+	/// <summary>
+	/// The panel the screen whose element root is <paramref name="root"/> stands its rows on, read
+	/// from its frame's standing document (<see cref="Fable3HudDocument.Authored"/>): the frame art's
+	/// x as the centre line, the first row's place and alignment, the pitch to the second row and the
+	/// values' x, each where the frame states it. Null for a screen with no frame or no stated rows, or
+	/// before its document stands — the template's own column.
+	/// </summary>
+	public static Fable3ListPanel? PanelOf(string? root) => PanelOf(root, PanelSlide(root));
+
+	/// <summary>
+	/// <see cref="PanelOf(string?)"/> as the screen root's slide <paramref name="slide"/> stands the frame: every
+	/// element read where that slide's position writes put it (<see cref="Fable3HudDocument.Authored"/>), so a
+	/// page whose slide moves its rows — the treasury's TransferFounds (balances −90), the proposal's Show
+	/// (`GamerInfo` to (−56, 88)), the chat channel's `General` (−179) — stands them on that page's place.
+	/// </summary>
+	public static Fable3ListPanel? PanelOf(string? root, int slide)
+	{
+		if (FrameOf(root) is not { Rows: { } rows } frame || Fable3Hud.Standing(frame.Document) is not { } document ||
+			document.Authored(rows.First, frame.SlideOwner, slide) is not { } first)
+		{
+			return null;
+		}
+
+		float centre = document.Authored(frame.Root + "." + frame.Art[0], frame.SlideOwner, slide) is { } art ? art.X : 0f;
+		float? pitch = rows.Second is { } second && document.Authored(second, frame.SlideOwner, slide) is { } next ? first.Y - next.Y : null;
+		float? values = rows.Values is { } path && document.Authored(path, frame.SlideOwner, slide) is { } value ? value.X : null;
+		return new Fable3ListPanel(centre, first.X, first.HorzAlign, first.Y, pitch, values);
+	}
+
+	/// <summary>The screen root's slide its page stands on now (<see cref="RootSlide"/>, from the front box's statements); 1 for no frame.</summary>
+	public static int PanelSlide(string? root) =>
+		root is null ? 1 : RootSlide(root, Fable3ScreenStatements.Of(Fable3ScreenBoxes.ScreenBox));
 
 	/// <summary>
 	/// The frame of the screen whose element root is <paramref name="root"/>, or null: an unknown root,
@@ -90,26 +162,27 @@ public static class Fable3ScreenFrames
 	/// <summary>
 	/// The screen root's slide that its page stands on, from the screen's own statements: the stats
 	/// page (`@Screen.StatsPage`, the Show's 2 at 0x8296D54C; 2 categories, 3 statistics, 4 friends),
-	/// the treasury page `+28` (2 both balances, 3 personal only, 4 transfer, 5 query; the Show and the
-	/// Update set it at 0x82B5A134 / 0x82B5A388), the divorce page `+172` (2 asking, 3 told, 4
-	/// confirmed: sub_82928C90 / sub_82928F78 / sub_82929378 at 0x82928CB4 / 0x82928F9C /
-	/// 0x8292939C), the bed row `+44` (slides Sleep 1 / Sex 2), the join / visibility choice `+52`
-	/// and the friends row `+36` (one slide per row), the food and proposal queries' Show (2); every
+	/// the treasury page (2 both balances, 3 personal only, 4 transfer, 5 query) as its own root write
+	/// stated it (the Show and the Update slide the root to `+28`, 0x82B5A134 / 0x82B5A388), the divorce
+	/// page by the ctor's stated mode (2 asking, 3 told, 4 confirmed: sub_82928C90 / sub_82928F78 /
+	/// sub_82929378 at 0x82928CB4 / 0x82928F9C / 0x8292939C), and Godot's cursor on the bed (slides
+	/// Sleep 1 / Sex 2), join / visibility and the friends channel (one slide per row), the food and proposal queries' Show (2); every
 	/// other screen has the one slide.
 	/// </summary>
 	public static int RootSlide(string root, Fable3ScreenState screen) => root switch
 	{
-		Fable3ScreenModel.Stats => screen.StatsPage ?? (screen.Field(0, 2) is >= 2 and <= 5 ? screen.Field(0, 2) : 2),
-		Fable3BoxScreenModel.Treasury => screen.Field(0, 3) is >= 2 and <= 5 ? screen.Field(0, 3) : 3,
-		Fable3BoxScreenModel.Divorce => Fable3BoxScreenModel.DivorcePageOf(screen.Field(1, 0)) switch
+		Fable3ScreenModel.Stats => screen.StatsPage is >= 2 and <= 5 ? screen.StatsPage.Value : 2,
+		Fable3BoxScreenModel.Treasury => screen.RootState is >= 2 and <= 5 ? screen.RootState.Value : 3,
+		Fable3BoxScreenModel.Divorce => Fable3BoxScreenModel.DivorcePageOf(screen.Divorce?.Mode ?? 0) switch
 		{
 			Fable3BoxScreenModel.DivorceKind.Told => 3,
 			Fable3BoxScreenModel.DivorceKind.Confirmed => 4,
 			_ => 2,
 		},
-		Fable3BoxScreenModel.BedMenu => screen.Field(0, 0) == 1 ? 2 : 1,
-		Fable3BoxScreenModel.JoinOptions or Fable3BoxScreenModel.Visibility => System.Math.Clamp(screen.Field(1, 1), 1, 3),
-		Fable3BoxScreenModel.FriendsChannel => System.Math.Clamp(screen.Field(0, 1), 1, 4),
+		Fable3BoxScreenModel.BedMenu => Fable3SessionBoxAnswers.CursorOf(root, screen) == 1 ? 2 : 1,
+		Fable3BoxScreenModel.JoinOptions or Fable3BoxScreenModel.Visibility =>
+			System.Math.Clamp(Fable3SessionBoxAnswers.CursorOf(root, screen) + 1, 1, 3),
+		Fable3BoxScreenModel.FriendsChannel => System.Math.Clamp(Fable3SessionBoxAnswers.CursorOf(root, screen) + 1, 1, 4),
 		Fable3BoxScreenModel.FoodQuery or Fable3BoxScreenModel.Proposal => 2,
 		_ => 1,
 	};

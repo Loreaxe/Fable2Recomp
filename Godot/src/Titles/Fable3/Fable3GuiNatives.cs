@@ -52,9 +52,14 @@ public partial class Fable3GuiNatives : Node
 		// screen_stated_hooks.cpp) and the bar and objective natives below.
 		Fable3UiStatements.Register(_router);
 		Fable3ScreenStatements.Register(_router);
+		// The real-estate and crime modes' rows as their populates pushed them (real_estate_mode.cpp).
+		Fable3PopulatedRows.Register(_router);
+		// The shop's and the pawn shop's field stores (commerce_stated_stores.cpp).
+		Fable3CommerceStores.Register(_router);
 		// The HUD's registry writers, d-pad and interaction panel (hud_hooks.cpp, interaction_hooks.cpp).
 		Fable3HudRegistry.Register(_router);
 		Fable3EndScreens.Register(_router);
+		Fable3WorldMapMode.Register(_router);
 		Fable3Reticles.Register(_router);
 
 		// ---- THE BOXES: MADE, SHOWN, DROPPED AND CLOSED (display_box_hooks.cpp) -------------
@@ -79,6 +84,7 @@ public partial class Fable3GuiNatives : Node
 
 		// ---- THE OPTIONS SCREEN: its handler's state as it returns (options_hooks.cpp) ----------
 		_router.Register("@Options.State", call => Fable3OptionsState.Stated(call));
+		_router.Register("@Options.Values", call => Fable3OptionsState.StatedValues(call));
 
 		const string queued = "queues a box; it is stated at the queue's push (@Box.Queued), as the queue shows it (@Box.Show) and as it drops it (@Box.Close)";
 		foreach (string name in new[] { "DisplayMessageBox", "DisplayYesNoQuestion", "DisplayYesNoQuestionWithTextOverride", "DisplayQuestPrimaryQuestion", "DisplayNumericAdjusterParams", "DisplayQuestBoxParams", "DisplayButtonBox", "DisplayFoodItemQueryBox", "DisplayNatalQueryBox", "DisplayDivorceMessage", "DisplayIntermissionScreen", "DisplayIntermissionScreenWithLifetime", "DisplayItemNameWithCount", "DisplayNameFromItem", "RemoveDisplayBox", "RemoveAllDisplayBoxesWithName", "DisplayDownloadMessageBox", "DisplaySaveGameIncompatibilityMessageBox", "DisplayNonInteractiveMessageBox" })
@@ -170,6 +176,9 @@ public partial class Fable3GuiNatives : Node
 		// Button2 / Button1, 0x82963F5C / 0x82964050; scroll = the list root's state 3 / 4,
 		// 0x82963D9C / 0x82964520), its texts on `LowerElements.InfoBox` (the joined rows commit to
 		// `InfoBox.TextBox.Contents.Text1`). The guest answers A/B/X/Y itself (sub_8295A178).
+		// The Sanctuary's (mode 3) list is stated as the mode keeps it, while the parser or the partner's copy
+		// fills it (interaction_guiworld.cpp, Fable3GuiWorld); its pad is Godot's.
+		Fable3GuiWorld.Register(_router);
 		const string interaction = "the mode writes its buttons, list window and texts as interactionmode.bgf elements (sub_82961340, sub_82963DE0, the InfoBox commits), drawn by the shared HUD view";
 		foreach (string name in new[] { "OpenInteractionMode", "RefreshInteractionMode", "RefreshInteractionModeForClient", "CloseInteractionMode", "CloseAnyNonCrimeRelatedInteractionModes" })
 		{
@@ -313,7 +322,7 @@ public partial class Fable3GuiNatives : Node
 		_router.Observe("RefreshWorldMap", "rebuilds the world-map object at GUI+0x54 (sub_825BED70 -> sub_824CC0E0); no surface, no shipped Lua caller");
 		_router.Observe("SetShowWorldMapKingdomCash", "writes *(*(H+0x58)+0x74), read by the world-map region panel sub_829171C0 (0x82917290) to show the kingdom's gold through the money widget (text commit 0x8281E6E0)");
 		_router.Observe("SetWorldMapExitDirectlyToGame", "writes the world map's +125, read by its close sub_824CDBB8 (0x824CDC7C) to fade and leave the Sanctuary (reason 12) — guest flow, no surface");
-		_router.Observe("ToggleWorldMap", "pushes the world-map component at GUI+0x54 (sub_8240E7A0 0x8251D3B4; pops type 12 at 0x8251D310); it presents its holder's scene (sub_8292AEA8), stated by map_table_hooks.cpp and drawn by Fable3MapTable");
+		_router.Observe("ToggleWorldMap", "pushes the world-map component at GUI+0x54 (sub_8240E7A0 0x8251D3B4); with a type-12 mode on top it only pops it (0x8251D310) and the scene stays presented, so it is never a close (the close is WorldMap.Exit, the `world-map:close:<p>` action); it presents its holder's scene (sub_8292AEA8), stated by map_table_hooks.cpp and drawn by Fable3MapTable");
 		_router.Observe("ToggleTownMapPrototype", "pushes the town-map component sub_82950FD0 (0x8251D4CC, push 0x8251D504; pops type 12 at 0x8251D47C); it presents its holder's scene (sub_8292AEA8 0x829514B8), stated by map_table_hooks.cpp and drawn by Fable3MapTable");
 		_router.Observe("DisplayRealEstateScreen", "opens interaction mode 6 (sub_825C4348(IM,6,…) 0x8251A8A8): BuildingInfo texts (commit 0x82BEA78C), its verb rows (sub_82963DE0 -> sub_82961340) and buttons are element writes drawn by the interactionmode document; the buy/sell confirmations are box-manager boxes (@Box.Queued / @Box.Show)");
 		_router.Observe("DisplayRealEstateScreenUnloaded", "opens interaction mode 6/7 for a property in an unloaded region (sub_825C4BB8 0x8251A970, same sub_82B191F0 object): element writes drawn by the interactionmode document");

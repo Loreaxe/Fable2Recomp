@@ -61,4 +61,13 @@ public static class Engine_UiInputMode
 
 	/// <summary>Bumped on every switch.</summary>
 	public static int Generation { get; private set; }
+
+	/// <summary>
+	/// Whether a mouse movement makes the keyboard and mouse the device: a real movement (more than 2 pixels)
+	/// from a pointer that reaches the game — the window has focus (the devices reach the guest), or the debug
+	/// channel drives the pointer. A desktop pointer passing over the unfocused window still sends motion events
+	/// (the window under the pointer gets them); it drives nothing, so it never turns the prompts to keycaps.
+	/// </summary>
+	public static bool MovementSwitches(float relativeLengthSquared, bool devicesReachGuest, bool pointerScripted) =>
+		relativeLengthSquared > 4f && (devicesReachGuest || pointerScripted);
 }

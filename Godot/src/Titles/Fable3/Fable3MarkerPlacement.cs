@@ -152,6 +152,14 @@ public static class Fable3MarkerPlacement
 	private static readonly uint OpacityId = Refii.Core.Engine_GameHash.AttributeId("opacity");
 
 	/// <summary>
+	/// A marker's root, placed in its screen camera's viewport pixels (<paramref name="view"/>), on the window: the
+	/// screen's top-left plus the point scaled from the viewport to the screen's size. One screen is the window
+	/// itself (origin 0, size = view); a split half is its own screen (Fable3WorldIcons.MarkerScreens).
+	/// </summary>
+	public static Vector2 OnWindow(Vector2 placed, Vector2 view, Vector2 origin, Vector2 size) =>
+		origin + (placed * (size / view));
+
+	/// <summary>
 	/// sub_82B519C8: the pixel held inside the viewport rect (x0, y0, x1, y1) = (0, 0, w, h) less its
 	/// margins — x in [x0 + 0.1w + 10, x1 - 0.1(x1 - (x0 + 0.1w)) - 10] (0x82B51A24, 0x82B51A2C /
 	/// 0x82B51A8C), y in [y0 + 0.1h + 40, y1 - 0.09h] (0x82B51A14 / 0x82B51A50, 0x82B51A28) — then

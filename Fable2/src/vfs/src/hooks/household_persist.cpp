@@ -32,14 +32,30 @@
 //     new hero. The blob starts with the hero two it was stashed from: "RHH1", its UID (BE u64).
 // ONLINE, THE JOINER'S HERO TWO IS A MIRROR. The family and property components are never sent by
 // the guest's netcode (no CECNetwork message case touches comp 136 or 69), and the economy is the
-// host's (a client's `sub_8242E578` neither changes nor sends). So the household lives on the host's
-// copy of hero two, and the joiner's own hero two shows it: the blob reaches the joiner through
+// host's (a client's `sub_8242E578` neither changes nor sends). A client does not even build the two
+// components — its build loop drops kinds 69 and 136 (`sub_8238DCC8` 0x8238DF3C's table) — so the
+// joiner builds them through RefiiCoopClientKeepsComponent (hooks/src/coop_client_components_hooks.cpp);
+// without it Restore below finds no component and the mirror stays empty. So the household lives on
+// the host's copy of hero two, and the joiner's own hero two shows it: the blob reaches the joiner through
 // the player store (ps.b), and whenever it changes the joiner empties its family (the guest's own
 // erase per record, `sub_82472EC8`, and list clear `sub_82A14D90`; no guest routine empties the
 // component and keeps it usable) and loads the blob over it — WITHOUT the post-load slot, which
 // spawns children and moves spouses (the host's world does that). The joiner's own household
 // ticks for hero two are off (mod_events.cpp, property_hooks.cpp); its household actions are the
 // host's to run.
+//
+// THE HOST HERO'S PROPERTIES REACH THE JOINER THE SAME WAY. The joiner's copy of hero one has a comp69
+// too (the client build keeps it, coop_client_components_hooks.cpp) but an empty one, so on the
+// joiner every building the host's hero owns read as for sale and its owner as the occupant's
+// (coop_estate_owner.cpp). The host stashes hero one's properties alone (no family) as a second blob,
+// `refii.properties.one`, at the same beat, and the joiner loads it over its copy of hero one, again
+// without the post-load slot; the joiner's own payout for that copy is off (property_hooks.cpp).
+//
+// ONLY A PLAYER TWO WHO BROUGHT A HERO HAS A HOUSEHOLD (RefiiCoopGetOwnHero). The plain henchman is
+// no one's spouse or landlord: nothing is restored onto them, stashed for them or written into the
+// host's save, and a hero who becomes the henchman mid-session stops being stashed at once — their
+// kept household stays as it was last stashed, for when they come back as that hero. (Their identity
+// answers 0 for the henchman too, core/hero_partners.cpp.)
 //
 // The host stashes hero two's household every few seconds while it is in the game, once it has
 // settled (restored, or found nothing to restore), and before player one's save is written; at the
@@ -59,6 +75,8 @@
 #include "core/refii_mod.h"
 #include "vfs_hooks_private.h"
 
+/// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
+extern "C" int RefiiCoopGetOwnHero(void);
 /// A player's owed half of shared rent and sales, paid (hooks/src/property_hooks.cpp).
 extern "C" int32_t RefiiPropertyPayOwed(PPCContext& ctx, uint8_t* base, int32_t player);
 // The mod API's household events (mod_events.cpp).
@@ -158,12 +176,12 @@ struct Scratch {
   }
 };
 
-/// Hero two's family and properties as bytes, empty when either is missing or the guest's
-/// stream could not be made.
-std::vector<uint8_t> Stash(const PPCContext& ctx, uint8_t* base, uint32_t hero) {
-  const uint32_t family = refii_mod_component(base, hero, kFamily);
+/// A hero's family (unless `with_family` is false) and properties as bytes, empty when one is
+/// missing or the guest's stream could not be made.
+std::vector<uint8_t> Stash(const PPCContext& ctx, uint8_t* base, uint32_t hero, bool with_family = true) {
+  const uint32_t family = with_family ? refii_mod_component(base, hero, kFamily) : 0u;
   const uint32_t properties = refii_mod_component(base, hero, kProperties);
-  if (family == 0u || properties == 0u) {
+  if ((with_family && family == 0u) || properties == 0u) {
     return {};
   }
   Scratch s(ctx);
@@ -177,9 +195,11 @@ std::vector<uint8_t> Stash(const PPCContext& ctx, uint8_t* base, uint32_t hero) 
   if (s.Open(base, file, 0x82C89940u)) {
     const uint32_t writer = s.Archive();
     s.Call(base, 0x82C8A910u, writer, s.Top());
-    s.Virtual(base, writer, kEnter, s.FamilyTag());
-    s.Virtual(base, family, kSerialize, writer, 1u, 1u);
-    s.Virtual(base, writer, kLeave);
+    if (with_family) {
+      s.Virtual(base, writer, kEnter, s.FamilyTag());
+      s.Virtual(base, family, kSerialize, writer, 1u, 1u);
+      s.Virtual(base, writer, kLeave);
+    }
     s.Virtual(base, writer, kEnter, s.PropertiesTag());
     s.Virtual(base, properties, kSerialize, writer, 1u, 1u);
     s.Virtual(base, writer, kLeave);
@@ -219,7 +239,7 @@ bool Restore(const PPCContext& ctx, uint8_t* base, uint32_t hero, const std::vec
   const uint32_t properties = refii_mod_component(base, hero, kProperties);
   const size_t skip = StashedHero(blob) != 0u ? kHeader : 0u;
   const std::vector<uint8_t> bytes(blob.begin() + static_cast<std::ptrdiff_t>(skip), blob.end());
-  if (family == 0u || properties == 0u || bytes.empty()) {
+  if (properties == 0u || bytes.empty()) {
     return false;
   }
   Scratch s(ctx);
@@ -238,7 +258,7 @@ bool Restore(const PPCContext& ctx, uint8_t* base, uint32_t hero, const std::vec
   if (s.Open(base, file, 0x82C8BF70u)) {
     const uint32_t reader = s.Archive();
     if ((s.Call(base, 0x82C8A910u, reader, s.Top()) & 0xFFu) != 0u) {
-      if ((s.Virtual(base, reader, kTryEnter, s.FamilyTag()) & 0xFFu) != 0u) {
+      if (family != 0u && (s.Virtual(base, reader, kTryEnter, s.FamilyTag()) & 0xFFu) != 0u) {
         s.Virtual(base, family, kSerialize, reader, 1u, 0u);
         s.Virtual(base, reader, kLeave);
         loaded = true;
@@ -254,7 +274,7 @@ bool Restore(const PPCContext& ctx, uint8_t* base, uint32_t hero, const std::vec
   }
   s.Virtual(base, file, kRelease);
   for (const uint32_t component : {family, properties}) {
-    if (loaded && after_load && base[component + 8u] == 0u) {
+    if (loaded && after_load && component != 0u && base[component + 8u] == 0u) {
       s.Virtual(base, component, kAfterLoad);
     }
   }
@@ -451,27 +471,6 @@ void EmptyFamily(const PPCContext& ctx, uint8_t* base, uint32_t hero) {
 
 }  // namespace
 
-// Hero two's children: every record's children list (comp136 records at *(family+20), a record's
-// children at node+20).
-extern "C" int32_t refii_household_children_two(uint8_t* base) {
-  const uint32_t two = base != nullptr ? refii_mod_player_hero(base, 2) : 0u;
-  const uint32_t family = two != 0u ? refii_mod_component(base, two, kFamily) : 0u;
-  if (family == 0u) {
-    return 0;
-  }
-  int32_t count = 0;
-  const uint32_t head = LoadU32(base, family + 20u);
-  uint32_t node = Heap(head) ? LoadU32(base, head) : 0u;
-  for (uint32_t n = 0; Heap(node) && node != head && n < 16u; ++n, node = LoadU32(base, node)) {
-    const uint32_t children = LoadU32(base, node + 20u);
-    uint32_t child = Heap(children) ? LoadU32(base, children) : 0u;
-    for (uint32_t c = 0; Heap(child) && child != children && c < 16u; ++c, child = LoadU32(base, child)) {
-      ++count;
-    }
-  }
-  return count;
-}
-
 namespace {
 
 bool FamilyEmpty(uint8_t* base, uint32_t hero) {
@@ -561,24 +560,59 @@ void PublishFollowers(const PPCContext& ctx, uint8_t* base, uint32_t two) {
 
 Household g_household;
 
-/// The joiner's mirror: the hero two it fills and the blob it last loaded.
+/// The joiner's mirror: the hero two it fills and the blob it last loaded; the copy of the host's
+/// hero one it fills with the host's properties, and that blob.
 struct Mirror {
   uint32_t hero = 0u;
   std::vector<uint8_t> loaded;
+  uint32_t one = 0u;
+  std::vector<uint8_t> one_loaded;
 };
 
 Mirror g_mirror;
 
+constexpr char kPropertiesOne[] = "refii.properties.one";
+
+/// On an online joiner: the copy of the host's hero one carries the host's property list.
+void DriveMirrorOne(PPCContext& ctx, uint8_t* base) {
+  const uint32_t one = refii_mod_player_hero(base, 1);
+  if (one == 0u || refii_mod_entity_alive(base, one) == 0) {
+    g_mirror.one = 0u;
+    g_mirror.one_loaded.clear();
+    return;
+  }
+  if (one != g_mirror.one) {
+    g_mirror.one = one;
+    g_mirror.one_loaded.clear();
+  }
+  const int32_t size = refii_bridge_player_blob_get(1, kPropertiesOne, nullptr, 0u);
+  if (size <= 0) {
+    return;
+  }
+  std::vector<uint8_t> bytes(static_cast<size_t>(size));
+  refii_bridge_player_blob_get(1, kPropertiesOne, bytes.data(), static_cast<uint32_t>(bytes.size()));
+  if (bytes == g_mirror.one_loaded) {
+    return;
+  }
+  if (!Restore(ctx, base, one, bytes, false)) {
+    REXLOG_WARN("Refii household: the host hero's properties ({} bytes) did not load onto this machine's copy",
+                bytes.size());
+  }
+  g_mirror.one_loaded = std::move(bytes);
+}
+
 /// On an online joiner: hero two shows the household the host keeps for them.
 void DriveMirror(PPCContext& ctx, uint8_t* base) {
+  DriveMirrorOne(ctx, base);
   const uint32_t two = refii_mod_player_hero(base, 2);
   if (two == 0u || refii_mod_entity_alive(base, two) == 0) {
-    g_mirror = Mirror{};
+    g_mirror.hero = 0u;
+    g_mirror.loaded.clear();
     return;
   }
   if (two != g_mirror.hero) {
-    g_mirror = Mirror{};
     g_mirror.hero = two;
+    g_mirror.loaded.clear();
   }
   const uint64_t id = refii_bridge_hero_id(2);
   const std::string key = id != 0u ? BlobKey(id) : std::string();
@@ -607,6 +641,12 @@ void StashNow(const PPCContext& ctx, uint8_t* base) {
     refii_bridge_player_blob_set(1, BlobKey(g_household.id).c_str(), bytes.data(), static_cast<uint32_t>(bytes.size()));
   }
   KeepFeelings(ctx, base, g_household.hero, g_household.id);
+  // Online, the host hero's properties for the joiner's copy of them (DriveMirrorOne).
+  const uint32_t one = refii_mod_coop_mode(base) == 2 ? refii_mod_player_hero(base, 1) : 0u;
+  const std::vector<uint8_t> ones = one != 0u ? Stash(ctx, base, one, false) : std::vector<uint8_t>{};
+  if (!ones.empty()) {
+    refii_bridge_player_blob_set(1, kPropertiesOne, ones.data(), static_cast<uint32_t>(ones.size()));
+  }
 }
 
 }  // namespace
@@ -616,6 +656,13 @@ namespace refii::vfs {
 /// Player two's household on the host: restored when their hero arrives, stashed while it stays.
 /// Guest tick thread (RunModTicks), where guest calls are legal.
 void DriveHouseholds(PPCContext& ctx, uint8_t* base, float seconds) {
+  if (RefiiCoopGetOwnHero() == 0) {
+    g_household = Household{};
+    g_mirror = Mirror{};
+    return;
+  }
+  // Online, the host's buildings as the host has them, for the joiner's screens.
+  DriveEstateStatements(ctx, base, seconds);
   if (refii_mod_player_here(1) == 0 && refii_mod_player_here(2) != 0) {
     g_household = Household{};
     DriveMirror(ctx, base);
@@ -707,7 +754,7 @@ bool HouseholdIsMirror(uint8_t* base, uint32_t hero) {
 
 /// Before player one's save is written: hero two's household as it stands goes into it.
 void StashHouseholdForSave(PPCContext& ctx, uint8_t* base) {
-  if (refii_mod_player_hero(base, 2) == g_household.hero && refii_mod_player_here(1) != 0) {
+  if (RefiiCoopGetOwnHero() != 0 && refii_mod_player_hero(base, 2) == g_household.hero && refii_mod_player_here(1) != 0) {
     StashNow(ctx, base);
   }
 }

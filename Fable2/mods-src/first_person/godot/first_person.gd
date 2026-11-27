@@ -6,18 +6,22 @@ extends Node
 ## a scene's own camera, steps aside for full cutscenes and canned actions, and never reaches a save.
 ## A hold names the player, so each player of a split screen or an online game has their own.
 ##
-## mod/camera.lua adjusts that camera for the players who hold it. It runs in the game VM on the
-## camera's own update, so it reads the hold where it reads everything else: the player value
-## first_person.held (1 held, 0 not) in the player store, written here for each player this machine
-## plays (player_here) — the store the game VM reads synchronously, kept across a Lua reload, and the
-## same on both co-op machines.
+## How the held view behaves is stated beside the hold through camera_tune, for each player this
+## machine plays (player_here): fp_view makes it the free-look view (only the look input turns it,
+## the body is not faded, a scene's framed point is faced until the player looks away), with the
+## field of view, the pitch limit, where the eye sits from the head, how the hero turns to the view
+## and whether a scene's own camera is shown through it — the settings of settings.json. The mod
+## has no camera Lua of its own.
 ##
-## Holds are cleared each time the mods' Lua loads, so they are stated again on lua_ready; a new game
-## VM also starts each player's toggle again as start_on says.
+## Holds and tunes are cleared each time the mods' Lua loads, so they are stated again on lua_ready;
+## a new game VM also starts each player's toggle again as start_on says.
 
-const HELD := "first_person.held"
+const MOD := "first_person"
 const TOGGLE := "first_person.toggle"
-const HOLD_SETTINGS := ["first_person.fov", "first_person.pitch_limit", "first_person.third_person_aim", "first_person.scenes"]
+const HOLD_SETTINGS := ["first_person.fov", "first_person.pitch_limit", "first_person.third_person_aim", "first_person.scenes",
+	"first_person.eye_forward", "first_person.eye_height", "first_person.face_camera"]
+const VIEW_OFF := { "fp_view": false, "fp_fov": false, "fp_pitch_limit": false, "fp_eye_forward": false,
+	"fp_eye_height": false, "fp_face": false, "fp_scenes": false }
 
 var host: Object
 var first_person := 8
@@ -91,22 +95,29 @@ func _wanted(p: int) -> bool:
 	return true
 
 
-# States player p's hold, or lets it go.
+# States player p's hold and how its view behaves, or lets both go. The view is stated before the
+# hold, so the camera the hold activates finds it.
 func _apply(p: int) -> void:
 	var held := _wanted(p)
+	var here: bool = host.player_here(p)
 	var fov := _setting("fov", 80.0)
 	var pitch := _setting("pitch_limit", 75.0)
 	var aim := _setting("third_person_aim", 1.0) != 0.0
-	if host.player_here(p):
-		host.player_set(p, HELD, 1.0 if held else 0.0)
-	var now := "%s/%s/%s" % [fov, pitch, aim] if held else "off"
+	var view := {
+		"fp_view": 1.0, "fp_fov": fov, "fp_pitch_limit": pitch,
+		"fp_eye_forward": _setting("eye_forward", 0.12), "fp_eye_height": _setting("eye_height", 0.05),
+		"fp_face": _setting("face_camera", 1.0), "fp_scenes": _setting("scenes", 1.0),
+	}
+	var now := "%s/%s/%s" % [view, aim, here] if held else "off/%s" % here
 	if stated[p] == now:
 		return
 	stated[p] = now
 	if held:
+		host.camera_tune(p, view if here else VIEW_OFF, MOD)
 		host.camera_override(p, first_person, { "fov": fov, "pitch_limit": pitch, "aim": aim })
 	else:
 		host.camera_override(p, 0)
+		host.camera_tune(p, VIEW_OFF, MOD)
 
 
 func _apply_both() -> void:

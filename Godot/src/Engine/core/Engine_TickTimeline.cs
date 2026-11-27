@@ -116,6 +116,21 @@ public sealed partial class Engine_TickTimeline
 	/// <summary>Frames on which a correction ran at its bound; run total.</summary>
 	public static long Saturated;
 
+	/// <summary>
+	/// Where <paramref name="drawTick"/> falls between the last two stated samples: 0 at the
+	/// previous, 1 at the newest and past it; 1 with nothing stated or no draw point.
+	/// </summary>
+	public double Phase(double drawTick)
+	{
+		if (!_started || double.IsNaN(drawTick))
+		{
+			return 1.0;
+		}
+
+		double span = _stamp - _previousStamp;
+		return span > 0.0 ? System.Math.Clamp((drawTick - _previousStamp) / span, 0.0, 1.0) : 1.0;
+	}
+
 	/// <summary>Starts over on a sample — a teleport, a load, a stated snap, the first sight of a thing.</summary>
 	public void Reset(double tick, Transform3D sample, float scalar = 0f)
 	{

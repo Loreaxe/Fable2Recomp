@@ -61,8 +61,10 @@ public static class Engine_StatedPause
 	/// The in-game GUI's statement read as a pause: a screen is up, or the guest's last game-flow
 	/// step ran no world tick (`worldHeld` 1 — the lite pause box and every other state whose step
 	/// slot does not call the world, payload_bridge.h key 19). 31 is the id `ExitScreen` leaves
-	/// when nothing is up; `uint.MaxValue` is the bridge's "no screen manager".
+	/// when nothing is up; `uint.MaxValue` is the bridge's "no screen manager". `worldHeld` 2 is the
+	/// guest's statement that its world ran under a pause (the player's own pause in an online
+	/// session): a screen is up and nothing is held.
 	/// </summary>
 	public static bool StatesPause(uint screenId, uint worldHeld = 0u) =>
-		worldHeld != 0u || (screenId != 31u && screenId != uint.MaxValue);
+		worldHeld == 1u || (worldHeld != 2u && screenId != 31u && screenId != uint.MaxValue);
 }

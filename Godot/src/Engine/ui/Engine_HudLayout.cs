@@ -210,8 +210,14 @@ public sealed partial class Engine_HudLayout
     /// <summary>A screen's piece both halves show from the one shared feed on split screen.</summary>
     public static bool SharedOnSplit(Piece piece) => Rules.SharedOnSplit(piece);
 
+    /// <summary>A piece as a seated half-view places it (<see cref="Engine_HudTitleLayout.SeatedPiece"/>).</summary>
+    public static Piece SeatedPiece(Piece piece) => Rules.SeatedPiece(piece);
+
     /// <summary>The timing meter, which belongs to whichever player armed it.</summary>
     public static bool IsExpressionMeter(Piece piece) => Rules.IsExpressionMeter(piece);
+
+    /// <summary>Whether a seated view clips to its half (<see cref="Engine_HudTitleLayout.KeepsToSeat"/>).</summary>
+    public static bool KeepsToSeat => Rules.KeepsToSeat;
 
     private readonly List<Piece> _pieces = new();
 

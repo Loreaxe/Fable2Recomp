@@ -134,6 +134,12 @@ public static class GameCodeBuild
 	public static string RecompileDirectory => Path.Combine(BinDirectory, "recompile");
 
 	/// <summary>
+	/// The working directory every zig invocation runs in. zig names the headers of its own <c>lib/</c> relative to
+	/// it in the dependency files it writes, so <see cref="CompileCache"/> resolves them against this same directory.
+	/// </summary>
+	private static string CompilerWorkingDirectory => RecompileDirectory;
+
+	/// <summary>
 	/// <c>bin/recompile/&lt;Folder&gt;</c> for <paramref name="title"/>: its own hook sources and list.
 	/// </summary>
 	public static string GetTitleRecompileDirectory(Refii.Core.Engine_Title title) =>
@@ -1324,6 +1330,12 @@ public static class GameCodeBuild
 			}
 
 			text.Append("flag=").Append(compileFlags[i]).Append('\n');
+		}
+
+		// What each install folder is renamed to in __FILE__; the folders themselves are install-specific.
+		foreach (string macroPrefix in MacroPrefixFlags(title))
+		{
+			text.Append("macro-prefix").Append(macroPrefix[macroPrefix.LastIndexOf('=')..]).Append('\n');
 		}
 
 		string orderPath = Path.Combine(StdCxxDirectory, "order.txt");
@@ -2606,6 +2618,8 @@ public static class GameCodeBuild
 			inputRoots.Add(CompileInputRoot.ImmutableToolchain("toolchain/", resolved.Root));
 		}
 
+		// The host's own headers (zig's native glibc discovery) change with the system, not with zig, so they are
+		// hashed by content: a distribution update to them is a miss, never a stale object.
 		if (!OperatingSystem.IsWindows())
 		{
 			foreach (var (prefix, sysDir) in new[]
@@ -2617,7 +2631,7 @@ public static class GameCodeBuild
 			{
 				if (Directory.Exists(sysDir))
 				{
-					inputRoots.Add(CompileInputRoot.ImmutableToolchain(prefix, sysDir));
+					inputRoots.Add(CompileInputRoot.DiskHashed(prefix, sysDir));
 				}
 			}
 		}
@@ -2634,7 +2648,8 @@ public static class GameCodeBuild
 			inputRoots,
 			allRecompileRelativePaths,
 			relativeIncludeDirs,
-			compileRecipe);
+			compileRecipe,
+			CompilerWorkingDirectory);
 
 		// Determine per-unit raw and normalized extra flags up front so we know which units miss the cache
 		// and whether any cache-miss unit needs the precompiled header.
@@ -2727,6 +2742,10 @@ public static class GameCodeBuild
 				if (pchCode == 0 && File.Exists(pchWorkPath))
 				{
 					pchUsed = cache.StorePch(pchDepPath, pchWorkPath, header, pchPathSalt);
+					if (cache.PchFailure is { } pchNotKept)
+					{
+						LogWrite("compile cache: precompiled header not recorded: " + pchNotKept);
+					}
 				}
 				else
 				{
@@ -2765,7 +2784,7 @@ public static class GameCodeBuild
 
 		if (cache.StoreFailure is { } notKept)
 		{
-			LogWrite("compile cache: units not kept for the next build: " + notKept);
+			LogWrite($"compile cache: {cache.NotKept} unit(s) not kept for the next build; first: {notKept}");
 		}
 
 		// 4. Link.
@@ -4050,7 +4069,7 @@ public static class GameCodeBuild
 			try
 			{
 				(int code, string output) = await customProcess(
-					executable, arguments, RecompileDirectory, env, control, cancellation).ConfigureAwait(false);
+					executable, arguments, CompilerWorkingDirectory, env, control, cancellation).ConfigureAwait(false);
 				return (code, LogResult(code, output));
 			}
 			catch (OperationCanceledException)
@@ -4066,7 +4085,7 @@ public static class GameCodeBuild
 		var startInfo = new ProcessStartInfo
 		{
 			FileName = executable,
-			WorkingDirectory = RecompileDirectory,
+			WorkingDirectory = CompilerWorkingDirectory,
 			UseShellExecute = false,
 			RedirectStandardOutput = true,
 			RedirectStandardError = true,

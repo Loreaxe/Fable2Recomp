@@ -393,6 +393,48 @@ public static class NetBridge
 	/// <summary>The online co-op partner's name to show, by the same rule; null when none is known.</summary>
 	public static string? PartnerName() => ReadName(buffer => RefiiNetPartnerName(buffer, (uint)buffer.Length));
 
+	/// <summary>
+	/// States this player's achievements (<see cref="Refii.Achievements.Engine_AchievementWire"/>) to everyone
+	/// who sees their presence — whoever views their orb or plays with them; empty clears them.
+	/// </summary>
+	public static bool SetPlayerAchievements(byte[] wire)
+	{
+		try
+		{
+			return RefiiNetSetPlayerAchievements(wire, (uint)wire.Length) != 0;
+		}
+		catch (DllNotFoundException)
+		{
+			return false;
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// The achievements a player's machine stated (<see cref="SetPlayerAchievements"/> on theirs), as sent;
+	/// <paramref name="peerId"/> empty names the online co-op partner. Null when none was heard.
+	/// </summary>
+	public static byte[]? PeerAchievements(string peerId)
+	{
+		string? hex = ReadName(buffer => RefiiNetPeerAchievements(peerId ?? string.Empty, buffer, (uint)buffer.Length));
+		if (hex is null || hex.Length == 0 || hex.Length % 2 != 0)
+		{
+			return null;
+		}
+
+		try
+		{
+			return Convert.FromHexString(hex);
+		}
+		catch (FormatException)
+		{
+			return null;
+		}
+	}
+
 	private static string? ReadName(Func<byte[], uint> read)
 	{
 		var buffer = new byte[256];
@@ -743,6 +785,12 @@ public static class NetBridge
 
 	[DllImport(Library)]
 	private static extern uint RefiiNetPartnerName(byte[] outText, uint capacity);
+
+	[DllImport(Library)]
+	private static extern int RefiiNetSetPlayerAchievements(byte[] wire, uint length);
+
+	[DllImport(Library)]
+	private static extern uint RefiiNetPeerAchievements([MarshalAs(UnmanagedType.LPUTF8Str)] string peerId, byte[] outText, uint capacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiNetPreviewCode([MarshalAs(UnmanagedType.LPUTF8Str)] string code, byte[] outText, uint capacity);

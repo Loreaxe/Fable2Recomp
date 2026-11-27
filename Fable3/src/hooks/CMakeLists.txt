@@ -9,6 +9,10 @@ set(REFIII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guest_build_stamp.cpp
     ${CMAKE_SOURCE_DIR}/Fable3/src/vfs/include/fable3_guest_build.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/boot_no_gpu.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/box_hold_statements.cpp
+    # Who targets each thing, stated at the guest's targeted setter for each split half's own
+    # highlight and "Interact" icon.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/target_statements.cpp
     # The Bink players' open, rect, close and the startup player's skip byte, stated for the
     # host's native playback (core/movie_state.h).
     ${CMAKE_CURRENT_SOURCE_DIR}/src/movie_player.cpp
@@ -52,12 +56,40 @@ set(REFIII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/display_box_stubs.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/topbox_answer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/save_menu_confirm.cpp
+    # The real-estate mode's two answer polls, run only on the answer of a box the mode asked with.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/real_estate_confirm.cpp
+    # The real-estate mode's rows stated, its button show cut, and the row lever.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/real_estate_mode.cpp
+    # The shop's and the pawn shop's field stores, stated at the store instructions.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/commerce_stated_stores.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/save_menu_row.cpp
+    # The session boxes (join / visibility, friends channel, co-op partners) and the family boxes
+    # (bed, divorce, treasury, marriage proposal, food query): their pad Godot's, their answers the
+    # boxes' own handlers; the divorce runs on its own confirmation's answer alone.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/session_boxes.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/family_boxes.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/divorce_confirm.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_extras.cpp
+    # The world map's close as the host asks for it: the guest's own WorldMap.Exit on the top mode.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/world_map_close.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/box_answers.h
+    # The HUD's pad from Godot, each lever through the guest's own input for that surface, which the
+    # guest's pad no longer reaches: an emotion choice's button, the world icon's hold, the d-pad,
+    # and the interaction mode's pad while the mode up is the NPC's or the dog's.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hud_levers.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interaction_guiworld.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/emotion_choice_answer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/world_icon_hold.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hud_dpad_use.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interaction_mode_input.cpp
     # The options: the appliers' values and the saved settings' read and write, stated to the
     # table the host bridge's options feed reads; the Options screen's state, its pad Godot's.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/options_hooks.cpp
+    # The world map's game mode: its enter and leave stated, its exit and close logged; its buttons
+    # Godot's, handed to its own forwarders as the player who owns it.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/map_input.cpp
+    # The pad's road into the GUI's two input receivers, counted (observe only).
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui_input_mask.cpp
     # The epilogue and credits screens, stated as the screen manager opens and closes them.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/end_screen_hooks.cpp
     # The system keyboard the guest opens (the rename), answered by the host.
@@ -65,6 +97,9 @@ set(REFIII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/keyboard_ui.h
     # No object added to a render scene the 3D Engine has already destroyed.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene_guard.cpp
+    # The disc's AI: the deferred bot deletes flushed blocking at load, save and unload, and the
+    # pathfinder worker passing over an entry no longer queued, as title update 3 does.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/bot_flush_hooks.cpp
     # The world: a level's up and down, each effect's creation, placement and end, each decal.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/world_hooks.cpp
     # Who plays an effect: the CECParticleEmitter that made its handle and the entity it is attached to.
@@ -83,6 +118,13 @@ set(REFIII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/classic_particle_hooks.cpp
     # The mouse's turn, handed whole to the active camera mode around the camera manager's update.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mouse_look.cpp
+    # Player two's own camera manager in couch co-op: the gates, its update, the selector's player-two answer.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_camera_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_camera_readers.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_particle_view.cpp
+    # Each split half's offscreen hero / partner marker: tested against that half's camera, switched by it.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_player_icons.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_camera.h
     # The per-tick Lua GC slice, run against the real clock instead of the host-granted time base.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/lua_gc_slice.cpp
     # Mods' Lua in the game VM: the composed chunks after the startup scripts, the Refii.* natives,
@@ -92,6 +134,9 @@ set(REFIII_HOOK_SOURCES
     # The gameplay seams mods hear: deaths, health, gold, renown, guild seals, abilities, the treasury,
     # quests, fast travel, the kingdom's decisions and the level edges, raised from the next tick.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mod_events_hooks.cpp
+    # Which save each user's hero comes from (the load, the join, the adoption), for the per-user
+    # achievement enumerator; the join never adopts the save player one plays.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/character_binding_hooks.cpp
     # The combat and control seams: hits, the health's take, the flinch, the block, strikes, rolls,
     # ability requests, animation events, movement's interrupt, GameActions, the target and its lock,
     # spells, the look-at flag and the cutscene statements; the action and lock helpers.
@@ -130,6 +175,8 @@ set(REFIII_HOOK_SOURCES
     # document; the mode, its objects and its pad stay the guest's.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interaction_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interaction_list_step.cpp
+    # The Sanctuary's mode (mode 3): its pad cut and Godot's `guiworld:` levers.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interaction_guiworld.cpp
     # The game mode stacks (push, pop, run), the GUI screen id's writers and the culture table
     # (build, rebuild, switch), stated to the table the host bridge's level and options feeds read.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/game_state_hooks.cpp

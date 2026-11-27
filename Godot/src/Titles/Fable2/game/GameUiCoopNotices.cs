@@ -41,8 +41,7 @@ public partial class GameUi
 
 	/// <summary>
 	/// The session transitions of this frame, told. Called by <see cref="DriveCoopHeroChannel"/>
-	/// after its poll and BEFORE any reset, so a refusal over mismatched mods is still known and
-	/// is not told as a lost connection.
+	/// after its poll.
 	/// </summary>
 	private void TellCoopTransitions(CoopSession.Phase was)
 	{
@@ -52,7 +51,7 @@ public partial class GameUi
 		}
 
 		bool told = HostBridge.IsInGame;
-		_coopNotices.Session(was, CoopSession.State, CoopSession.Side, told, _coopModsRefused);
+		_coopNotices.Session(was, CoopSession.State, CoopSession.Side);
 		_coopNotices.LocalCoop(_coopLocalSeen, CoopSession.LocalCoop, told);
 		_coopLocalSeen = CoopSession.LocalCoop;
 	}
@@ -178,7 +177,7 @@ public partial class GameUi
 		string userId = ask.UserId;
 		_joinAsked = userId;
 		Engine_UiHostBoxes.Ask(
-			$"{Engine_UiJoinRequests.Who(ask)} would like to join your game. Do you accept?",
+			Refii.Text.Engine_OwnWords.Say("REFII_F2_JOIN_ASK", Engine_UiJoinRequests.Who(ask)),
 			() => AnswerJoinAsk(userId, true),
 			() => AnswerJoinAsk(userId, false),
 			JoinAskKey(userId));
@@ -206,29 +205,81 @@ public partial class GameUi
 		}
 
 		bool canInvite = open && NetBridge.HostState() is { Hosting: true };
-		Engine_UiGamerCard.Offer offer = Engine_UiGamerCard.Decide(card, canInvite);
+		Engine_UiCardOffer.Offer offer = Engine_UiCardOffer.Decide(card, canInvite);
 		string text = Engine_UiGamerCard.Text(offer, card.Name);
-		GD.Print($"[coop-notice] gamer card {card.Request}: xuid {card.Xuid} -> '{card.Name}' {card.PeerId} " +
-			$"(friend {card.Friend}, hosting {card.Hosting}, partner {card.Partner}) -> {offer}");
-		if (!Engine_UiGamerCard.Asks(offer))
+		// Their hero and their profile total, read-only, as their machine states them.
+		if (card.Known && Engine_UiGamerCard.Achievements(Refii.Achievements.Engine_Achievements.PeerView(card.PeerId),
+				Refii.Achievements.Engine_Achievements.Count, Refii.Achievements.Engine_Achievements.TotalCount) is { } achievements)
 		{
-			_coopNotices.Tell(text);
+			text += "\n\n" + achievements;
+		}
+
+		// Their whole list, read-only, on screen 1013: offered when their machine stated it (presence, or
+		// for the co-op partner the co-op channel too).
+		string peer = card.PeerId;
+		string name = card.Name;
+		string listOf = card.Partner && Refii.Achievements.Engine_Achievements.PeerView(peer) is null ? string.Empty : peer;
+		bool viewable = card.Known && (listOf.Length == 0
+			? Refii.Achievements.Engine_Achievements.PartnerView(1) is not null
+			: Refii.Achievements.Engine_Achievements.PeerView(listOf) is not null);
+		int player = Engine_UiModMenus.MenuPlayer is 2 ? 2 : 1;
+		GD.Print($"[coop-notice] gamer card {card.Request}: xuid {card.Xuid} -> '{card.Name}' {card.PeerId} " +
+			$"(friend {card.Friend}, hosting {card.Hosting}, partner {card.Partner}) -> {offer}" +
+			(viewable ? ", their achievements viewable" : string.Empty));
+		string view = Refii.Text.Engine_OwnWords.Say("REFII_ACH_VIEW");
+		if (!Engine_UiCardOffer.Asks(offer))
+		{
+			if (!viewable)
+			{
+				_coopNotices.Tell(text);
+				return;
+			}
+
+			// A notice with one thing to do: A opens their list, B closes.
+			Engine_UiHostBoxes.Ask(text, answer =>
+				{
+					if (answer == 0)
+					{
+						OpenAchievementsOf(listOf, name, player);
+					}
+				},
+				view, null, "gamercard:" + peer);
 			return;
 		}
 
-		string peer = card.PeerId;
-		string name = card.Name;
+		void Act()
+		{
+			bool sent = NetBridge.PeerAction(peer,
+				offer == Engine_UiCardOffer.Offer.Join ? NetBridge.Act.Join : NetBridge.Act.Invite);
+			GD.Print($"[coop-notice] gamer card {offer} {name}: {(sent ? "sent" : "refused by the node")}");
+			_coopNotices.Tell(Engine_UiGamerCard.Outcome(offer, name, sent));
+		}
+
+		if (viewable)
+		{
+			// The card's question, and X for their list.
+			Engine_UiHostBoxes.Ask(text, answer =>
+				{
+					if (answer == 0)
+					{
+						Act();
+					}
+					else if (answer == 2)
+					{
+						OpenAchievementsOf(listOf, name, player);
+					}
+				},
+				Engine_UiGamerCard.Accept(offer) ?? string.Empty, Refii.Text.Engine_OwnWords.Say("REFII_BACK"), view,
+				"gamercard:" + peer);
+			return;
+		}
+
 		Engine_UiHostBoxes.Ask(text, answer =>
 			{
-				if (answer != 0)
+				if (answer == 0)
 				{
-					return;
+					Act();
 				}
-
-				bool sent = NetBridge.PeerAction(peer,
-					offer == Engine_UiGamerCard.Offer.Join ? NetBridge.Act.Join : NetBridge.Act.Invite);
-				GD.Print($"[coop-notice] gamer card {offer} {name}: {(sent ? "sent" : "refused by the node")}");
-				_coopNotices.Tell(Engine_UiGamerCard.Outcome(offer, name, sent));
 			},
 			Engine_UiGamerCard.Accept(offer), null, "gamercard:" + peer);
 	}
@@ -242,11 +293,11 @@ public partial class GameUi
 			(sent ? string.Empty : " — the node refused the reply"));
 		if (!sent)
 		{
-			_coopNotices.Tell("That request could not be answered; it may have lapsed.");
+			_coopNotices.Tell(Refii.Text.Engine_OwnWords.Say("REFII_F2_JOIN_ASK_LAPSED"));
 		}
 		else if (accept)
 		{
-			_coopNotices.Tell("Invitation sent through Discord. They join when they accept it.");
+			_coopNotices.Tell(Refii.Text.Engine_OwnWords.Say("REFII_F2_JOIN_ASK_INVITED"));
 		}
 	}
 

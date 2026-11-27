@@ -90,6 +90,7 @@ public static class ModLua
 		"\t\t\treturn Refii.ask_host(what, fn, a, b, c, d)\n" +
 		"\t\tend }, { __index = Refii, __newindex = Refii })\n" +
 		"\t\tRefii._mod_views[mod] = view\n" +
+		"\t\tif Refii._camera_view ~= nil then Refii._camera_view(view, mod) end\n" +
 		"\tend\n" +
 		"\tRefii._permanent(Refii, 'RefiiApi')\n" +
 		"\tRefii._permanent(view, 'RefiiModView.' .. mod)\n" +
@@ -722,6 +723,7 @@ public static class ModLua
 			"end\n");
 
 		text.Append(RequireRuntime);
+		text.Append(ModLuaCamera.Runtime);
 		text.Append(InfrastructureRuntime());
 		// The values IN FORCE, the live overrides over the files': what the native table holds, so
 		// a session or a reload composed after a live change starts from that change.

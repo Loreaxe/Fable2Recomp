@@ -3186,6 +3186,7 @@ public partial class GameDebugServer : Node
 						["mostActive"] = GameEntities.Current?.MostActiveRigs(),
 						["highlighted"] = Refii.Entities.Engine_EntityHighlight.HighlightedThisFrame,
 						["highlightPassChanges"] = Refii.Entities.Engine_EntityHighlight.PassChanges,
+						["highlightRebinds"] = Refii.Entities.Engine_EntityHighlight.Rebinds,
 
 						// Three separate failure causes: the guest states nothing (words stay 000000FF), the
 						// layer never resolved a render-device texture (`layerUsable` false, so the post chain has
@@ -3868,10 +3869,14 @@ public partial class GameDebugServer : Node
 					["marginTicks"] = Refii.Entities.Engine_DrawnFrame.Playhead.MarginTicks,
 					["latenessTicks"] = Refii.Entities.Engine_DrawnFrame.Playhead.LatenessTicks,
 					["cameraCarried"] = GameWorld.CarriedCameras,
+					["cameraShaped"] = GameWorld.ShapedCameras,
 					// THE C1 GATE: every block the guest's getter built beside the camera rebuilt from
 					// the statements at that point (Engine_CameraGate); the kept rows go to
 					// camera_gate.csv in the title's log folder. Armed with `trace` like the drawn trace.
 					["stated"] = Refii.Camera.Engine_CameraFeed.Report(Refii.Core.Engine_Title.Active.LogsDirectory),
+					// THE LOCAL CO-OP SCREEN: mode, drawn / told split, hybrid's state and swap, the tether as
+					// stated now (values 21 distance, 22 separation, 23 serial) and hybrid's last decision.
+					["coopScreen"] = GameSplitView.Report(),
 				});
 			}
 
@@ -4341,9 +4346,9 @@ public partial class GameDebugServer : Node
 
 		state["captureScreen"] = Engine_UiSource.Current.MenuScreenId();
 
-		// The world-map region sample as the C# side reads it RIGHT NOW — which is the half of
-		// the round-trip a blank region page cannot distinguish on its own: a nameless sample
-		// is the pump never publishing; a named one that stays blank is the match refusing it.
+		// The world-map region sample (the minimap's keys) as the C# side reads it RIGHT NOW — the
+		// half of the round-trip a blank minimap cannot distinguish on its own: a nameless sample is
+		// the pump never publishing; a named one that stays blank is the match refusing it.
 		Refii.Host.HostBridge.WorldMapRegion region = Refii.Host.HostBridge.GetWorldMapRegion();
 		// Count discriminates the halves: 7 with no name means the pump's walk works and the
 		// WANTED index never matched (the request side); 0 means the walk itself is failing.
@@ -4351,12 +4356,7 @@ public partial class GameDebugServer : Node
 		state["regionKnown"] = region.Name.Length != 0;
 		state["regionIndex"] = region.Index;
 		state["regionName"] = region.Name;
-
-		// Two of the eleven provider fields, verbatim: empty here with a NAMED sample means the
-		// pump's provider calls return nothing; text here with a blank page means the values
-		// channel loses them between the bridge and the book.
-		state["regionDistance"] = region.Distance;
-		state["regionTravel"] = region.Travel;
+		state["regionLevel"] = region.LevelName;
 		return state;
 	}
 

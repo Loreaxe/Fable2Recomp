@@ -403,7 +403,7 @@ public static class AndroidPhoneCompiler
             flags.Add("-fmacro-prefix-map=" + Path.GetFullPath(request.BundleDirectory) + "=bundle");
             flags.Add("-fmacro-prefix-map=" + Path.GetFullPath(attempt) + "=build");
             cache = new AndroidCompileCache(request.ObjectCache, request.BundleDirectory, generated, bundle.Files,
-                request.IsFable3 ? bundle.Fable3Includes : bundle.Includes, UnitRecipe(bundle, request.Title, version, lseAtomics));
+                request.IsFable3 ? bundle.Fable3Includes : bundle.Includes, UnitRecipe(bundle, request.Title, version, lseAtomics), attempt);
         }
         string[] hooks = (request.IsFable3 ? bundle.Fable3Hooks : bundle.Hooks).Select(path => Below(request.BundleDirectory, path)).ToArray();
         ModSources? mods = request.Mods?.Invoke(generated, Path.Combine(attempt, key + "_config.toml"), hooks);

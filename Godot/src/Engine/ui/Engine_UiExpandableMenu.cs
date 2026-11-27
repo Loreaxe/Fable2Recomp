@@ -727,6 +727,79 @@ public sealed class Engine_UiExpandableMenu
 	/// </summary>
 	public (int First, int Last) Window() => Window(CurrentHighlightIdx, Visible.Count);
 
+	/// <summary>The slot a still list's top row stands in: the first a player can see (slot 1 is the top gutter).</summary>
+	public const int StillTopSlot = 2;
+
+	/// <summary>
+	/// A STILL LIST'S WINDOW (the view's <c>StillRows</c>): the first row of the window, 1-based, once the
+	/// cursor is at <paramref name="highlight"/> of <paramref name="total"/> rows. The window holds
+	/// <see cref="NumVisible"/> rows and does not move while the cursor stays inside it; it moves only
+	/// as far as it must to take the cursor in, and never past the last row. So a list that fits never
+	/// moves, and no cursor move inside the window puts another row under a still pointer.
+	/// </summary>
+	public static int StillTop(int top, int highlight, int total) => StillTop(top, highlight, total, NumVisible);
+
+	/// <summary><see cref="StillTop(int, int, int)"/> for a window of <paramref name="rows"/> rows (at least one).</summary>
+	public static int StillTop(int top, int highlight, int total, int rows)
+	{
+		rows = System.Math.Max(1, rows);
+		if (highlight < top)
+		{
+			top = highlight;
+		}
+		else if (highlight > top + rows - 1)
+		{
+			top = highlight - rows + 1;
+		}
+
+		return System.Math.Clamp(top, 1, System.Math.Max(1, total - rows + 1));
+	}
+
+	/// <summary>The display index a still list's window centres the slot rule on: its top row in <see cref="StillTopSlot"/>.</summary>
+	public static int StillCentre(int top) => StillCentre(top, StillTopSlot);
+
+	/// <summary>The display index the slot rule centres on for a still window whose top row stands in <paramref name="topSlot"/>.</summary>
+	public static int StillCentre(int top, int topSlot) => top + HighlightSlot - topSlot;
+
+	/// <summary>
+	/// THE SLOTS A STILL LIST STANDS IN: its top slot and how many rows its window holds. With no band
+	/// (<paramref name="bandBottom"/> / <paramref name="bandTop"/> null, canvas y up) the window is
+	/// <see cref="NumVisible"/> rows from <see cref="StillTopSlot"/>. With a band — what the screen draws
+	/// over the list: a tab strip above, a description or the prompts below — the window starts at the
+	/// first slot from <see cref="StillTopSlot"/> whose row stands inside the band and holds every slot
+	/// after it that does, up to the last of <paramref name="slots"/>. A row is inside when its height
+	/// (<paramref name="slotY"/>, 1-based slot) lies in [bottom, top], the view's clip test, so no row of
+	/// the window is ever cut, and the cursor, which walks the window, is never under what is drawn over
+	/// the list. A band no slot stands in keeps one row, in the first slot below its top.
+	/// </summary>
+	public static (int TopSlot, int Rows) StillSlots(System.Func<int, float> slotY, int slots, float? bandBottom, float? bandTop)
+	{
+		if (bandBottom is not { } bottom || bandTop is not { } top)
+		{
+			return (StillTopSlot, System.Math.Min(NumVisible, slots - StillTopSlot + 1));
+		}
+
+		int first = StillTopSlot;
+		while (first < slots && slotY(first) > top)
+		{
+			++first;
+		}
+
+		int rows = 0;
+		for (int slot = first; slot <= slots; ++slot)
+		{
+			float y = slotY(slot);
+			if (y > top || y < bottom)
+			{
+				break;
+			}
+
+			++rows;
+		}
+
+		return (first, System.Math.Max(1, rows));
+	}
+
 	/// <summary>The window rule itself, for a caller that holds the two numbers already.</summary>
 	public static (int First, int Last) Window(int highlight, int total)
 	{

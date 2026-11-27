@@ -42,7 +42,9 @@
 #include <rex/ppc.h>
 
 #include "box_answers.h"
+#include "coop_camera.h"
 #include "gui_statements.h"
+#include "interaction_guiworld.h"
 #include "core/payload_bridge.h"
 #include "keyboard_ui.h"
 #include "mod_lua.h"
@@ -136,12 +138,17 @@ void DebugCall(PPCContext& ctx, uint8_t* base, const char* args) {
 }
 
 /// Actions the host posted (core/guest_tick_queue.h): the keyboard's answer (keyboard_ui.cpp),
-/// a box's and the menu box's answers (display_box_hooks.cpp), the TopBox's presses
-/// (topbox_answer.cpp), the Options screen's actions
-/// and row (options_hooks.cpp), the save menu's row (save_menu_row.cpp), the PC build's extras
+/// a box's and the menu box's answers (display_box_hooks.cpp), the epilogue's close and the credits'
+/// skip (end_screen_hooks.cpp), the world map's buttons (map_input.cpp), the TopBox's presses and hold fill
+/// (topbox_answer.cpp), the HUD's levers (emotion_choice_answer.cpp, world_icon_hold.cpp,
+/// hud_dpad_use.cpp, interaction_mode_input.cpp), the Sanctuary's input (interaction_guiworld.cpp), the Options
+/// screen's actions,
+/// row and working values (options_hooks.cpp), the save menu's row (save_menu_row.cpp), the PC build's extras
 /// (pc_extras.cpp) and the debug channel's `debug-gamelua:` / `debug-call:`. Any other is
 /// named in the log and dropped, never deferred, so the queue cannot hold a name forever. `ctx`
 /// is the tick's, the frame the answers call the guest below.
+/// One more: the world map's close, `world-map:close:<p>` (world_map_close.cpp); and the couch screen's
+/// split, `CoopSplitScreen:<0|1>` (coop_camera_hooks.cpp).
 void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
   const uint32_t taken = refii_bridge_guest_tick_pump_begin_drain();
   for (uint32_t i = 0; i < taken; ++i) {
@@ -168,6 +175,16 @@ void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
       refii::fable3::AnswerUiReaderAction(whole.data());
       continue;
     }
+    if (std::strncmp(name, refii::fable3::kEpilogueAction, sizeof(refii::fable3::kEpilogueAction) - 1u) == 0 ||
+        std::strncmp(name, refii::fable3::kCreditsAction, sizeof(refii::fable3::kCreditsAction) - 1u) == 0) {
+      refii::fable3::AnswerEndScreen(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kWorldMapAction, sizeof(refii::fable3::kWorldMapAction) - 1u) == 0 ||
+        std::strncmp(name, refii::fable3::kWorldMapHeldAction, sizeof(refii::fable3::kWorldMapHeldAction) - 1u) == 0) {
+      refii::fable3::AnswerWorldMap(ctx, base, name);
+      continue;
+    }
     if (std::strncmp(name, refii::fable3::kTopBoxAction, sizeof(refii::fable3::kTopBoxAction) - 1u) == 0) {
       refii::fable3::AnswerTopBox(ctx, base, name);
       continue;
@@ -176,8 +193,40 @@ void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
       refii::fable3::AnswerPcExtra(ctx, base, name);
       continue;
     }
+    if (std::strncmp(name, refii::fable3::kWorldMapCloseAction, sizeof(refii::fable3::kWorldMapCloseAction) - 1u) == 0) {
+      refii::fable3::AnswerWorldMapClose(ctx, base, name);
+      continue;
+    }
     if (std::strncmp(name, refii::fable3::kInteractionListAction, sizeof(refii::fable3::kInteractionListAction) - 1u) == 0) {
       refii::fable3::AnswerInteractionListStep(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::coopcam::kCoopSplitAction, sizeof(refii::fable3::coopcam::kCoopSplitAction) - 1u) == 0) {
+      refii::fable3::coopcam::AnswerCoopSplit(name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kEmotionChoiceAction, sizeof(refii::fable3::kEmotionChoiceAction) - 1u) == 0) {
+      refii::fable3::AnswerEmotionChoice(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kWorldIconAction, sizeof(refii::fable3::kWorldIconAction) - 1u) == 0) {
+      refii::fable3::AnswerWorldIconHold(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kHudDpadAction, sizeof(refii::fable3::kHudDpadAction) - 1u) == 0) {
+      refii::fable3::AnswerHudDpad(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kInteractionAction, sizeof(refii::fable3::kInteractionAction) - 1u) == 0) {
+      refii::fable3::AnswerInteractionInput(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kRealEstateAction, sizeof(refii::fable3::kRealEstateAction) - 1u) == 0) {
+      refii::fable3::AnswerRealEstateRow(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kGuiWorldAction, sizeof(refii::fable3::kGuiWorldAction) - 1u) == 0) {
+      refii::fable3::AnswerGuiWorld(ctx, base, name);
       continue;
     }
     if (std::strncmp(name, refii::fable3::kSaveMenuRowAction, sizeof(refii::fable3::kSaveMenuRowAction) - 1u) == 0) {
@@ -190,6 +239,10 @@ void DrainPostedActions(PPCContext& ctx, uint8_t* base) {
     }
     if (std::strncmp(name, refii::fable3::kOptionsAction, sizeof(refii::fable3::kOptionsAction) - 1u) == 0) {
       refii::fable3::AnswerOptionsAction(ctx, base, name);
+      continue;
+    }
+    if (std::strncmp(name, refii::fable3::kOptionsValueAction, sizeof(refii::fable3::kOptionsValueAction) - 1u) == 0) {
+      refii::fable3::AnswerOptionsValue(ctx, base, name);
       continue;
     }
     // The debug channel's probe of the game VM (GameDebugServer "lua" with "@game "): the chunk runs
@@ -285,6 +338,10 @@ REX_EXTERN(rex_App_TickInput) {
   const bool from_game_loop = ctx.lr == kGameLoopReturn;
 
   const uint64_t tick = refii_bridge_guest_tick_pump_observe_tick();
+  // The step the world icons' Updates are stamped with: this step's HF update (lhGameLoop_Tick's
+  // `bl GameLoop_HighFrequencyUpdate` at 0x821CBFF4, after this call at 0x821CBE80 on every path)
+  // runs the registry's tick (0x82255DF8, or through the GUI's slot 2 to 0x8225922C) after it.
+  refii_bridge_world_icons_step(tick);
   if (tick == 0u || tick == 600u || tick == 6000u || tick == 60000u) {
     REXLOG_INFO("Refii guest-tick pump: tick {} on the guest tick thread (drained {})", tick + 1,
                 refii_bridge_guest_tick_pump_drained());
@@ -296,6 +353,9 @@ REX_EXTERN(rex_App_TickInput) {
   DrainPostedActions(ctx, base);
   refii::fable3::PumpSaveMenuRow(ctx, base);
   refii::fable3::PumpTopBox(ctx, base);
+  refii::fable3::PumpWorldMap(ctx, base);
+  refii::fable3::PumpWorldIconHold(ctx, base);
+  refii::fable3::PumpGuiWorld(ctx, base);
   refii::fable3::modlua::Tick(ctx, base);
 
   const Clock::time_point before = Clock::now();

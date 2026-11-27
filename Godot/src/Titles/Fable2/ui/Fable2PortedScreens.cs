@@ -145,6 +145,10 @@ public static class Fable2PortedScreens
 			Engine_UiScreenInput.Back => screen == PauseRoot ? $"PauseClose:{player}" : "PauseBack",
 			Engine_UiScreenInput.TabPrev => $"PauseCycle:{player}:prev",
 			Engine_UiScreenInput.TabNext => $"PauseCycle:{player}:next",
+
+			// Y on the clothing book: its own code 39, the held dye on the highlighted target's second layer
+			// (`sub_826D3108(h, 1)` 0x826D52D4, the lever DispatchClothing runs).
+			Engine_UiScreenInput.Unlearn when screen == Clothing => Engine_UiSource.PlayerLever("Clothing", player, "dye2"),
 			_ => null,
 		};
 
@@ -169,7 +173,8 @@ public static class Fable2PortedScreens
 	/// `equip` is the same row answer — and `Clothing:&lt;p&gt;:remove:&lt;event type 91..97&gt;` for a None row's
 	/// `unequip`; on the gift screen `Gift:&lt;p&gt;:item:&lt;ticket&gt;:&lt;record&gt;` (the screen's own row answer: its
 	/// confirm, commit and exit). Ticket 0 names the record's first row. Null for any other command or
-	/// screen (a dye, an augment): it is posted as it stands.
+	/// screen: it is posted as it stands. `ticket` is the row's own id — the guest's ticket for that row
+	/// (Engine_UiItemRows); 0 from a list that names no row (a mod's `use_item`).
 	/// </summary>
 	public static string? ItemLever(uint screen, int player, string command, uint ticket)
 	{
@@ -196,29 +201,6 @@ public static class Fable2PortedScreens
 			(Gift, "gift") => Engine_UiSource.PlayerLever("Gift", player, $"item:{ticket}:{value}"),
 			_ => null,
 		};
-	}
-
-	/// <summary>
-	/// The population ticket the guest spawned the row named <paramref name="rowName"/> with: the id of
-	/// the first captured row of that name (an item row's name is its `NameTag` on both sides,
-	/// `sub_826CE8D0`'s String1), 0 when the capture holds none. The pump checks it against the record.
-	/// </summary>
-	public static uint TicketOf(System.Collections.Generic.IReadOnlyList<Engine_UiModel.MenuRow> captured, string rowName)
-	{
-		if (rowName.Length == 0)
-		{
-			return 0u;
-		}
-
-		foreach (Engine_UiModel.MenuRow row in captured)
-		{
-			if (string.Equals(row.Name, rowName, System.StringComparison.Ordinal))
-			{
-				return row.Id;
-			}
-		}
-
-		return 0u;
 	}
 
 	/// <summary>A Saving row (0 save and continue, 1 save and quit, 2 quit without saving), answered

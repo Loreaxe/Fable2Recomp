@@ -22,6 +22,12 @@ public partial class GameUi
 	/// <summary>The host book screen standing over the pause book, or null.</summary>
 	private Engine_UiHostScreen? _hostScreen;
 
+	/// <summary>
+	/// The standing host screen was opened from the world with no list under it (another player's
+	/// achievements from their card): it stands while no guest box is up, and B closes it back to play.
+	/// </summary>
+	private bool _hostScreenStandalone;
+
 	/// <summary>Registers this UI's verbs, openers and row conditions. Once, at ready.</summary>
 	private void RegisterCommands()
 	{
@@ -135,6 +141,7 @@ public partial class GameUi
 		Engine_UiRowConditions.Register(Engine_UiRowConditions.CoopOnline, () => CoopSession.PeerStanding && !CoopSession.LocalCoop);
 		Engine_UiRowConditions.Register(Engine_UiRowConditions.CoopClient, () => CoopSession.IsClient);
 		Engine_UiRowConditions.Register(Engine_UiRowConditions.InGame, () => HostBridge.IsInGame);
+		Engine_UiRowConditions.Register(Engine_UiRowConditions.PlayerTwoHero, () => Fable2PageProviders.CoopOwnHero);
 		Engine_UiRowConditions.Register(Engine_UiRowConditions.HasGold,
 			() => HostBridge.GetHeroVitals() is { Known: true, Gold: > 0 });
 
@@ -199,6 +206,28 @@ public partial class GameUi
 	}
 
 	/// <summary>
+	/// Another player's whole achievements list on screen 1013, read-only, from their card in the world
+	/// (<see cref="DriveGamerCard"/>): <paramref name="peer"/> their RexNet peer id ("" the co-op partner).
+	/// The screen stands on its own over play, for the player whose card it is, until B.
+	/// </summary>
+	private void OpenAchievementsOf(string peer, string name, int player)
+	{
+		if (!Engine_UiAchievementPage.ViewPeer(peer, name))
+		{
+			_coopNotices.Tell(Refii.Text.Engine_OwnWords.Say("REFII_ACH_NONE_SHARED"));
+			return;
+		}
+
+		bool menusUp = HostBridge.GetPauseState() is { ModalUp: false } state &&
+			state.ScreenId != (uint)Engine_UiModel.InGameScreen.None;
+		Engine_UiCommandResult opened = OpenHostScreen(Engine_UiAchievementPage.ScreenId, player,
+			new Engine_UiCommandContext(Engine_UiCommandList.HostList, Engine_UiAchievementPage.MenuName, string.Empty, player));
+		_hostScreenStandalone = opened.Outcome == Engine_UiCommandOutcome.Done && !menusUp;
+		GD.Print($"[coop-notice] {name}'s achievements on screen 1013 for player {player}: {opened.Outcome}" +
+			(_hostScreenStandalone ? ", standing over play" : string.Empty));
+	}
+
+	/// <summary>
 	/// A mod's screen stands where the pause book would (<see cref="Refii.Mods.ModScreen"/>): the book's
 	/// lists hidden and the pad the mod's, with the world held by the pause under it.
 	/// </summary>
@@ -259,6 +288,7 @@ public partial class GameUi
 	{
 		if (_hostScreen is not { IsOpen: true } screen)
 		{
+			_hostScreenStandalone = false;
 			return false;
 		}
 
@@ -269,7 +299,7 @@ public partial class GameUi
 		bool menusUp = pause is { ModalUp: false } state &&
 			state.ScreenId != (uint)Engine_UiModel.InGameScreen.None;
 		bool standing = HostBridge.IsInGame && IsRevealed &&
-			(menusUp || (_hostMenuView is not null && pause is not { ModalUp: true }));
+			(menusUp || ((_hostMenuView is not null || _hostScreenStandalone) && pause is not { ModalUp: true }));
 		if (!standing)
 		{
 			screen.Close();

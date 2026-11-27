@@ -471,9 +471,10 @@ public sealed class Engine_UiMenuModel
 				// `"g_Menu:RepopulateMenuFromPopulationScript( '%s' )"` — and it is the only
 				// place some screens ever state it: the gift family's widget carries no
 				// `MenuPopulationScript` attribute for us to read.
-				if (QuotedArgument(chunk.Chunk) is { Length: > 0 } script)
+				// An empty name is stated too (`'%s'` of an unset name): the list names no table then.
+				if (chunk.Chunk.Contains('\''))
 				{
-					menu.PopulationScript = script;
+					menu.PopulationScript = QuotedArgument(chunk.Chunk);
 				}
 
 				break;

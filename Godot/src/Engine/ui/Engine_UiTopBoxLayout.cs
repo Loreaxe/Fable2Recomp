@@ -119,4 +119,23 @@ public static class Engine_UiTopBoxLayout
 
 	/// <summary>The gap between rows for a body drawn at <paramref name="bodySize"/>.</summary>
 	public static float Leading(int bodySize) => System.Math.Max(1, bodySize) * LeadingOfBodySize;
+
+	/// <summary>
+	/// THE WIDTH THE LINES WRAP AT IN THIS VIEW: the title's stated width (<paramref name="statedWidth"/>,
+	/// Fable 2's Engine_UiHudTopBox.WrapWidth — the guest's own `max.x`, measured with its widescreen
+	/// adapter on a 16:9 screen) while the view shows at least a 16:9 canvas
+	/// (<paramref name="wideVisibleWidth"/>), and the same share of a narrower view's visible width
+	/// (<paramref name="visibleWidth"/>): a split-screen half (949.5 canvas units side by side against
+	/// 1265.9) wraps at three quarters of the stated width instead of running its line across the other
+	/// player's half. 0 or less states no width and is passed through.
+	/// </summary>
+	public static float WrapWidthIn(float statedWidth, float visibleWidth, float wideVisibleWidth)
+	{
+		if (statedWidth <= 0f || visibleWidth <= 0f || wideVisibleWidth <= 0f || visibleWidth >= wideVisibleWidth)
+		{
+			return statedWidth;
+		}
+
+		return statedWidth * (visibleWidth / wideVisibleWidth);
+	}
 }

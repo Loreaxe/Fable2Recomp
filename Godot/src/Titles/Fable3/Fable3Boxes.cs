@@ -72,7 +72,9 @@ public partial class Fable3Boxes : Control
 
 		Engine_UiGuiBoxes boxes = _natives.Boxes;
 		// The game's own dialog or menu box comes first; its headline, counters and messages do not hold Refii's off.
-		bool guestBox = boxes.Boxes.Count != 0 || boxes.Menu is not null;
+		// A system message box the guest waits on is the console's and stands over them (the guest cannot
+		// step until it is answered).
+		bool guestBox = (boxes.Boxes.Count != 0 || boxes.Menu is not null) && !Engine_UiSystemBoxes.Up;
 		RefiiUp = !guestBox && Refii.Host.HostBridge.IsGuestUp && RefiiShown() is not null;
 		string state = $"{RefiiShown() ?? "none"} guestBox={guestBox} guestUp={Refii.Host.HostBridge.IsGuestUp} font={_font is not null}";
 		if (state != _refiiState)
@@ -96,7 +98,7 @@ public partial class Fable3Boxes : Control
 		// The router gives the pad to a showing box (not an intermission) before the TopBox, and the
 		// menu box takes A; the hook checks the guest's own queues again (PadTakenAheadOfTopBox).
 		DriveTopBox(Refii.Game.GameInput.Pad0.Buttons, !RefiiUp && !menuUp && _natives.FrontOwned is null &&
-			boxes.Menu is null && Refii.Host.HostBridge.IsGuestUp && !Fable3HostOptions.IsOpen);
+			boxes.Menu is null && Refii.Host.HostBridge.IsGuestUp && !Fable3HostOptions.IsOpen, delta);
 
 		string shown = RefiiUp ? RefiiShown() ?? string.Empty : string.Empty;
 		if (boxes.Generation != _drawn || shown != _refiiDrawn)
@@ -128,7 +130,7 @@ public partial class Fable3Boxes : Control
 
 		if (Engine_UiHostBoxes.Question is { } question)
 		{
-			return "question:" + question.GetHashCode();
+			return "question:" + question.GetHashCode() + ":" + (Engine_UiHostBoxes.ThirdCaption?.GetHashCode() ?? 0);
 		}
 
 		return Engine_UiHostBoxes.Notice is { } notice ? "notice:" + notice.GetHashCode() : null;
@@ -136,11 +138,12 @@ public partial class Fable3Boxes : Control
 
 	private void AnswerRefii(double delta)
 	{
-		uint down = Refii.Game.GameInput.Pad0.Buttons;
-		uint pressed = down & ~_wasDown;
-		_wasDown = down;
+		// The host's own boxes are for whoever is at the screen: either local player's pad answers.
+		uint pressed = _edges.Pressed(Fable3ActingPlayer.One, PadDown(Fable3ActingPlayer.One)) |
+			_edges.Pressed(Fable3ActingPlayer.Two, PadDown(Fable3ActingPlayer.Two));
 		bool a = (pressed & Refii.Game.GameInput.ButtonA) != 0;
 		bool b = (pressed & Refii.Game.GameInput.ButtonB) != 0;
+		bool x = (pressed & Refii.Game.GameInput.ButtonX) != 0;
 		if (Engine_UiModMenuBox.Active is { } box)
 		{
 			int direction = (pressed & Refii.Game.GameInput.DpadDown) != 0 ? 1 : (pressed & Refii.Game.GameInput.DpadUp) != 0 ? -1 : 0;
@@ -155,9 +158,11 @@ public partial class Fable3Boxes : Control
 
 		if (Engine_UiHostBoxes.Question is not null)
 		{
-			if (a || b)
+			// X is the third answer of a question that has one (a guest's three-button system box).
+			bool third = x && Engine_UiHostBoxes.ThirdCaption is not null;
+			if (a || b || third)
 			{
-				Engine_UiHostBoxes.Answer(a);
+				Engine_UiHostBoxes.Answer(a ? 0 : b ? 1 : 2);
 				Refii.Core.Engine_TitleGame.Active.Input.HoldUntilReleased();
 			}
 
@@ -181,11 +186,17 @@ public partial class Fable3Boxes : Control
 
 		if (Engine_UiHostBoxes.Question is { } question)
 		{
-			DrawPanel(Engine_UiHostBoxes.PageTitle ?? string.Empty, question, new List<(string, string)>
+			var prompts = new List<(string, string)>
 			{
 				("A", Engine_UiHostBoxes.AcceptCaption ?? Label(null, "GUI_YES", strings)),
 				("B", Engine_UiHostBoxes.CancelCaption ?? Label(null, "GUI_NO", strings)),
-			}, size, scale);
+			};
+			if (Engine_UiHostBoxes.ThirdCaption is { } third)
+			{
+				prompts.Add(("X", third));
+			}
+
+			DrawPanel(Engine_UiHostBoxes.PageTitle ?? string.Empty, question, prompts, size, scale);
 			return;
 		}
 
@@ -198,17 +209,27 @@ public partial class Fable3Boxes : Control
 	/// <summary>The box last answered and how long ago: one answer per box until the guest drops it.</summary>
 	private uint _answered;
 	private double _answeredAge;
-	private uint _wasDown;
+
+	/// <summary>Each local player's presses, on that player's own pad.</summary>
+	private readonly Fable3ActingPlayer.Edges _edges = new();
+
+	/// <summary>The buttons down on local <paramref name="player"/>'s pad (GameInput.Seen: every source folded).</summary>
+	private static uint PadDown(int player) => Refii.Game.GameInput.Seen(Fable3ActingPlayer.PadOf(player)).Buttons;
 
 	/// <summary>The answer is the guest's to act on; a second press inside this is the same press.</summary>
 	private const double AnswerLatch = 0.5;
 
-	/// <summary>Reads the pad for the menu box or the front owned box and posts the answer.</summary>
+	/// <summary>
+	/// Reads each local player's pad for the menu box or the front owned box and posts the answer as
+	/// the player who pressed (<see cref="Fable3ActingPlayer"/>): the box's own handler decides whose
+	/// press counts (its owner `+28`, the adjuster's `+200`).
+	/// </summary>
 	private void Answer(Engine_UiGuiBoxes boxes, double delta)
 	{
-		uint down = Refii.Game.GameInput.Pad0.Buttons;
-		uint pressedBits = down & ~_wasDown;
-		_wasDown = down;
+		uint downOne = PadDown(Fable3ActingPlayer.One);
+		uint downTwo = PadDown(Fable3ActingPlayer.Two);
+		uint pressedOne = _edges.Pressed(Fable3ActingPlayer.One, downOne);
+		uint pressedTwo = _edges.Pressed(Fable3ActingPlayer.Two, downTwo);
 		_answeredAge += delta;
 		if (boxes.Menu is { } pointed && Refii.Host.HostBridge.IsGuestUp && !Fable3HostOptions.IsOpen && PointMenu(pointed))
 		{
@@ -220,19 +241,39 @@ public partial class Fable3Boxes : Control
 			return;
 		}
 
-		// The presses are guest pad 0's (GameInput.Pad0): player one's.
-		int player = Fable3ActingPlayer.OfPad(0);
 		if (boxes.Menu is null && _natives.FrontOwned is { Kind: "card", Box.Buttons: { ShowA: true, HoldA: true } } held)
 		{
-			HoldCard(held, (down & Refii.Game.GameInput.ButtonA) != 0 || PointerHolds("A"), delta, player);
+			// The card's handler has no player test (display_box_hooks.cpp): whoever holds fills it.
+			int holder = Fable3ActingPlayer.Holder((downOne & Refii.Game.GameInput.ButtonA) != 0, PointerHolds("A"),
+				(downTwo & Refii.Game.GameInput.ButtonA) != 0);
+			HoldCard(held, holder != 0, delta, holder != 0 ? holder : Fable3ActingPlayer.One);
 		}
 		else
 		{
 			_holding = 0u;
 		}
 
+		// Each player's press, player one's first. On the menu box either player moves and cancels
+		// and only player one selects: its mapper turns 72 into the select for player 1 alone
+		// (`cmpwi r11,0x48` / `cmpwi r4,1` / `li r29,0x1C`, TU3 0x82B512CC..0x82B512DC / disc
+		// 0x82B133D4..0x82B133E4) — Fable3BoxAnswers.MenuPick answers nothing for player two.
+		AnswerAs(boxes, Fable3ActingPlayer.One, pressedOne);
+		AnswerAs(boxes, Fable3ActingPlayer.Two, pressedTwo);
+	}
+
+	/// <summary>One player's presses on the menu box or the front owned box.</summary>
+	private void AnswerAs(Engine_UiGuiBoxes boxes, int player, uint pressedBits)
+	{
 		if (pressedBits == 0u)
 		{
+			return;
+		}
+
+		// An end screen with no box in front of it: the epilogue's close, the credits' skip.
+		if (boxes.Menu is null && _natives.FrontOwned is null &&
+			Fable3EndScreens.Answer((pressedBits & Refii.Game.GameInput.ButtonA) != 0, (pressedBits & Refii.Game.GameInput.ButtonB) != 0, player) is { } end)
+		{
+			Post(end, 0u);
 			return;
 		}
 
@@ -333,7 +374,7 @@ public partial class Fable3Boxes : Control
 	/// <summary>The left button held down on this surface's drawn <paramref name="button"/> prompt, the menus' pointer free.</summary>
 	private bool PointerHolds(string button) =>
 		Engine_UiPointer.Free && Engine_UiInputMode.KeyboardMouse && Input.IsMouseButtonPressed(MouseButton.Left) &&
-		Fable3Prompts.ButtonAt(_prompts, GetLocalMousePosition()) == button;
+		Fable3Prompts.ButtonAt(_prompts, Engine_UiPointer.LocalTo(this)) == button;
 
 	/// <summary>The prompts as last drawn, in this control's space.</summary>
 	private readonly List<(Rect2 Rect, string Button)> _prompts = new();
@@ -342,11 +383,14 @@ public partial class Fable3Boxes : Control
 	// The TopBox's buttons are its own input's (topbox_answer.cpp): their going down and up is handed
 	// to it, and it decides — the message it shows, player one's pad, press or hold, the moving hero.
 	// Only while the message up shows that button and nothing of Godot's or the guest's ahead of the
-	// TopBox has the pad; a button handed down is always handed up.
+	// TopBox has the pad; a button handed down is always handed up. A button the message asks to be
+	// held fills on Godot's clock (Fable3TopBoxHold) and its fill is stated back.
 
 	private readonly bool[] _topBoxDown = new bool[2];
+	private readonly Fable3TopBoxHold _topBoxHold = new();
+	private readonly List<string> _topBoxLevers = new();
 
-	private void DriveTopBox(uint down, bool open)
+	private void DriveTopBox(uint down, bool open, double delta)
 	{
 		Fable3UiStatements.TopBoxMessage? up = Fable3UiStatements.TopBox.Current;
 		for (int i = 0; i < 2; ++i)
@@ -364,6 +408,16 @@ public partial class Fable3Boxes : Control
 				Refii.Host.HostBridge.PostFrontEndAction(Fable3BoxAnswers.TopBox(a, false, Fable3ActingPlayer.OfPad(0)));
 			}
 		}
+
+		_topBoxLevers.Clear();
+		_topBoxHold.Step(delta, up?.Id ?? 0u,
+			new Fable3TopBoxHold.Button(up is { ShowA: true, HoldA: true }, _topBoxDown[0], Fable3UiStatements.TopBoxHeld[0]),
+			new Fable3TopBoxHold.Button(up is { ShowY: true, HoldY: true }, _topBoxDown[1], Fable3UiStatements.TopBoxHeld[1]),
+			Fable3ActingPlayer.OfPad(0), _topBoxLevers);
+		foreach (string lever in _topBoxLevers)
+		{
+			Refii.Host.HostBridge.PostFrontEndAction(lever);
+		}
 	}
 
 	/// <summary>The menu box's rows as last drawn, top to bottom, in this control's space.</summary>
@@ -375,7 +429,7 @@ public partial class Fable3Boxes : Control
 	/// (<see cref="Fable3BoxAnswers.MenuPick"/>: the guest's own highlight then select), so the
 	/// pointer needs no walk: moving onto a row highlights it, a click on a row picks that row.
 	/// A pointer at rest sets nothing, so the pad's steps stand until the mouse moves again.
-	/// Player one's, as the mouse is. True when a click picked.
+	/// The pointer's player (<see cref="Fable3ActingPlayer.Pointer"/>). True when a click picked.
 	/// </summary>
 	private bool PointMenu(Engine_UiGuiBoxes.MenuBoxModel menu)
 	{
@@ -384,7 +438,7 @@ public partial class Fable3Boxes : Control
 			return false;
 		}
 
-		Vector2 at = GetLocalMousePosition();
+		Vector2 at = Engine_UiPointer.LocalTo(this);
 		bool moved = at.DistanceSquaredTo(_pointerAt) > 4f;
 		if (moved)
 		{
@@ -397,7 +451,7 @@ public partial class Fable3Boxes : Control
 			return false;
 		}
 
-		if (Engine_UiPointer.LeftPressed && Fable3BoxAnswers.MenuPick(row, Fable3ActingPlayer.One) is { } pick)
+		if (Engine_UiPointer.LeftPressed && Fable3BoxAnswers.MenuPick(row, Fable3ActingPlayer.Pointer) is { } pick)
 		{
 			Engine_UiPointer.TakeLeft();
 			menu.Highlight = row;

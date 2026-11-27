@@ -115,8 +115,12 @@ public static partial class Engine_CorpsePolicy
     private static readonly Dictionary<uint, (CorpseDeathMode Mode, bool FromGdb)> RecordModeCache = new();
 
     /// <summary>Inputs evaluated to decide whether a retired guest entity should be kept as a corpse.</summary>
+    /// <param name="GuestLeftCorpse">
+    /// The guest leaves this creature lying: see <see cref="LeavesCorpse"/>.
+    /// </param>
     public readonly record struct CorpseCandidate(
         bool IsDeadCreature,
+        bool GuestLeftCorpse,
         bool HasSkeleton,
         bool SawVisibleWhileDead,
         bool SawEtherealWhileAlive,
@@ -612,9 +616,36 @@ public static partial class Engine_CorpsePolicy
         _ => false,
     };
 
+    /// <summary>
+    /// Whether the guest leaves a dead creature lying, the one thing a host corpse may extend.
+    /// </summary>
+    /// <remarks>
+    /// Fable 2 STATES it: <c>CECCreature_FinishDeath</c> (TU1 0x823A4290, disc 0x82432848) ran on
+    /// the creature since its constructor, which the bridge reports as
+    /// <see cref="HostBridge.EntityAppearance.GuestCorpseFlag"/>. The death switch reaches it for
+    /// DeathType 2 directly (TU1 0x823a6cb8, disc 0x82435220) and for 3 at the end of the Die
+    /// action (`CAction_Die_vf18` TU1 0x8276fb84, disc 0x82869d24, its +0x78 destroy flag clear);
+    /// 1, 4 and 6 end in <c>lhEntity_Destroy</c>; 5 (hollow-man crumble), 7 (shadow) and 8
+    /// (<c>Lua_Shard_Kill</c>) never reach FinishDeath. A title whose bridge does
+    /// not state it (<paramref name="titleStates"/> false: Fable 3, whose FinishDeath is not yet
+    /// read) keeps the record classification (<see cref="ClassifyRecord(uint, string?)"/>) and the
+    /// name exclusions.
+    /// </remarks>
+    public static bool LeavesCorpse(bool titleStates, bool statedCorpse, bool unstatedExcluded) =>
+        titleStates ? statedCorpse : !unstatedExcluded;
+
+    /// <summary>
+    /// <see cref="LeavesCorpse(bool, bool, bool)"/> with the record's death mode: a
+    /// <see cref="CorpseDeathMode.CrumbleSplode"/> record (DeathType 5) never reaches FinishDeath —
+    /// its pieces are what lies there — so its corpse stands on the classification alone.
+    /// </summary>
+    public static bool LeavesCorpse(bool titleStates, bool statedCorpse, CorpseDeathMode mode, bool unstatedExcluded) =>
+        mode == CorpseDeathMode.CrumbleSplode || LeavesCorpse(titleStates, statedCorpse, unstatedExcluded);
+
     /// <summary>Evaluates all eligibility gates for turning a retired guest entity into a persistent corpse.</summary>
     public static bool IsEligibleCorpse(in CorpseCandidate candidate) =>
         candidate.IsDeadCreature &&
+        candidate.GuestLeftCorpse &&
         candidate.HasSkeleton &&
         candidate.SawVisibleWhileDead &&
         !candidate.SawEtherealWhileAlive &&

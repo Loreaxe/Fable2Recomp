@@ -72,6 +72,71 @@
 //     78 X → 3, 81 Y → 4 (`li r3,1` 0x82B93884, 2 0x82B938A0, 3 0x82B938BC, 4 0x82B938D8, each then
 //     `bl sub_824D1BC0`); its Hide posts 0 every time (0x82B93830).
 //
+// THE BOX SCREENS GODOT OWNS (FB7; TU3 / disc, each body the one word of its vtable's +16 unless
+// said). Their cursors, tiers and working values are Godot's: a lever that names one stores it where
+// the guest's own answer reads it, after the test the guest's handler makes, then runs that handler.
+//   - hero status 0x820C69DC / 0x820C345C, sub_829BE438 / sub_82975A58: 75 sets the close byte +28
+//     (`cmpwi cr6,r10,0x4B` 0x829BE440 / 0x82975A60, `stb r10,0x1C(r11)` 0x829BE450 / 0x82975A70); no
+//     player and no shown test. `close`.
+//   - promise 0x820B3160 / 0x820AFD94, sub_827DAB30 / sub_827A3600: the pad of player record 1
+//     (`li r4,1` / `bl sub_821FF0A8` 0x827DAB48..0x827DAB5C / disc sub_821FD790 0x827A362C, `lwz r11,
+//     0x24(r30)` / `cmpw cr6,r28,r11` 0x827DAB8C..0x827DAB90 / 0x827A365C..0x827A3660) unless GAME's
+//     slot 6 answers true (`bctrl` 0x827DAB74 / 0x827A3644); 75 closes once signed (`lbz r10,0x4D(r31)`
+//     0x827DABA4, `stb r11,0x4C(r31)` 0x827DABB8 / 0x827A3688); 74 signs while unsigned (`stb r8,
+//     0x4D(r31)` 0x827DAC1C / 0x827A36EC) and posts the named message "PromiseAccepted" (`bl
+//     sub_823B6C78` 0x827DAC84 / disc sub_82450E08 0x827A3754), answering 0. `accept`, `close`.
+//   - king's schedule 0x820C6658 / 0x820C30E0, sub_829BBE90 / sub_82973428: 74 from player one alone
+//     (`cmpwi cr6,r11,0x4A` 0x829BBEA8 / 0x82973440, `cmpwi cr6,r5,1` 0x829BBEB0 / 0x82973448) plays
+//     SE_AGENDA_SCROLL_ACCEPT, clears +12 and calls its Hide (`bctrl` 0x829BBEF0 / 0x82973488). `accept`.
+//   - quest summary 0x820C6790 / 0x820C3214, sub_829BD018 / sub_829745B0: the pad +56 and shown
+//     (`lwz r11,0x38(r3)` / `cmpw cr6,r5,r11` 0x829BD028..0x829BD030 / 0x829745C0..0x829745C8, `lbz r11,
+//     0xC(r3)` 0x829BD038 / 0x829745D0); 72 posts event 156 with the FNV-1 of the cursor row's quest
+//     name (cursor `lwz r11,0x2C(r31)` 0x829BD0B4 / 0x8297464C against the list +28..+32, `li r4,0x9C`
+//     0x829BD158 / 0x829746F0, `bl sub_821CFA18` 0x829BD170 / disc sub_821CF948 0x82974708) and hides
+//     (`bctrl` 0x829BD184 / 0x8297471C); 73 hides (`bctrl` 0x829BD1D8 / 0x82974770). The stick's mover
+//     sub_829BD210 / sub_829747A8 ends `stw r6,0x2C(r31)` / `bl sub_829BC888` (0x829BD2E8..0x829BD2F8 /
+//     0x82974880..0x82974890, the seven-row window writer, whose other caller is the Show).
+//     `row:<n>` (that tail), `select:<n>`, `close`.
+//   - wedding picker 0x820DAFA0 / 0x820D85A4, sub_82B90EB8 / sub_82B5C260: shown and the pad +72
+//     (`lbz r11,0xC(r3)` 0x82B90EC8 / 0x82B5C270, `lwz r11,0x48(r3)` / `cmpw cr6,r11,r5` 0x82B90ED8..
+//     0x82B90EDC / 0x82B5C280..0x82B5C284); the switch on action - 29 (jump table read through IDA's
+//     switch info on both builds): case 12 (41) books the tier +68 when its affordable byte +88..+90 is
+//     set — event 69 with the tier (`lwz r9,0x44(r31)` 0x82B91060 / 0x82B5C408, `li r4,0x45` 0x82B910D8 /
+//     0x82B5C480) and its Hide; case 13 (42) event 70 with the tier (`li r4,0x46` 0x82B91164 /
+//     0x82B5C50C) and its Hide. `accept:<tier>`, `decline:<tier>`.
+//   - chat channel 0x820C64CC / 0x820C2F58, sub_829BB230 / sub_829727C8: the pad of the box entity's
+//     component 37 (`cmpwi cr6,r6,0x25` 0x829BB330 / 0x829728C8, `lwz r29,0x24(r11)` / `cmpw cr6,r29,
+//     r27` 0x829BB39C..0x829BB3A8 / 0x82972934..0x82972940); 72 stores the working byte +36 as the
+//     user's mute (`lbz r10,0x24(r30)` 0x829BB440 / 0x829729D8, `stb r10,0x20(r11)` 0x829BB478 /
+//     0x82972A10, `bl sub_82370548` / disc sub_82369200) and hides; 73 hides. `chat:<0|1>`, `close`.
+//   - stats 0x820C6398 / 0x820C2E28, sub_829B6158 / sub_8296DA10: shown, the entity's component-37 pad
+//     (`lwz r30,0x24(r11)` / `cmpw cr6,r30,r28` 0x829B62D0..0x829B62DC / 0x8296DB88..0x8296DB94), then
+//     the page +52's handler (2 sub_829B6348 / sub_8296DC00, 3 sub_829B64D8 / sub_8296DD90, 4
+//     sub_829B6830 / sub_8296E100). The Show caches that pad at +64 (`stw r11,0x40(r29)` 0x829B5EC0 /
+//     0x8296D740). A page's mover ends with the cursor +68 stored, on page 2 the category +72 = +68
+//     (`lwz r7,0x44(r31)` / `stw r7,0x48(r31)` 0x829B63A4..0x829B63B0 / 0x8296DC5C..0x8296DC68), and the
+//     page's writer (sub_829B7458 / sub_8296ED30, sub_829B76A0 / sub_8296EF78, sub_829B8FC0 /
+//     sub_829708B0; each has five callers, all this class's). 72 opens (page 2: `li r4,3` / `bl
+//     sub_829B73B0` 0x829B6448..0x829B6450 / 0x8296DD00..0x8296DD08; page 3 the leaderboard, `stw r9,
+//     0x4C(r28)` 0x829B67C8 / 0x8296E098), 73 goes back or hides, 77 on page 4 is the gamer card.
+//     `stats-row:<n>` (the mover's tail), `stats-open:<n>`, `stats-back`, `stats-card:<n>`.
+// A row lever states what it stored, `@Screen.Cursor(box, row)`. The session boxes (join /
+// visibility, friends channel, co-op partners) and the family boxes (divorce, bed, treasury, marriage
+// proposal, food query) are answered by session_boxes.cpp and family_boxes.cpp through this file's
+// gate (GateOwnedInput / RunOwnedHandler); the divorce confirmation's answer by divorce_confirm.cpp.
+// THE MOVERS' CUES are still the guest's call (Godot has no Fable 3 cue player yet), made by the
+// lever that replaces the move, on the mover's own condition: the quest summary's and the stats
+// pages' step DOWN alone (SE_GUI_MENU_BOX_DOWN: `dword_8359BE14` 0x829BD2B8 / disc dword_8355BA14
+// 0x82974850; `dword_8359BF2C` 0x829B6D8C / disc dword_8355BB2C 0x8296E664 — neither mover plays one
+// going up); the wedding picker's tier up / down (SE_GUI_2D_MENU_SCROLL_UP `dword_8359BF58`
+// 0x82B90FB0, _SCROLL_DOWN `dword_8359BF5C` 0x82B9101C; disc dword_8355BB58 0x82B5C358, dword_8355BB5C
+// 0x82B5C3C4), stated by `tier:<n>`, which stores the tier where the stick stored it (`stw r11,
+// 0x44(r31)` 0x82B90F94 / 0x82B91000) but not the redraw byte +0x5B; the chat channel's mute
+// (sub_829BB608 / disc sub_82972BA0: left, 31, only from audible, SE_GUI_2D_MENU_SLIDER_LEFT
+// `dword_8359BF3C` 0x829BB644 and `+0x24 = 1`; right, 32, only from muted, _SLIDER_RIGHT
+// `dword_8359BF40` 0x829BB680 and `+0x24 = 0`; disc dword_8355BB3C 0x82972BDC, dword_8355BB40
+// 0x82972C18), stated by `mute:<0|1>`.
+//
 // THE PAUSE SCREEN'S MESSAGE BOX is not a queued box. sub_825F9F38(G, text LHString, download)
 // — reached only from sub_823CDB48 (0x823CDC08) when the top mode is the GUI's — runs when
 // G+36 is 1 (0x825F9F58): +36 = 2 (0x825F9F6C), +40 = screen 42 `paper.MessageBox` (0x825F9F74),
@@ -96,6 +161,7 @@
 // closes (0x82621F78..0x82621F7C). The close sub_826222A8(MB) posts event 65 with
 // `cancelled ? 0 : row + 1` (0x82622348).
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -122,6 +188,13 @@ REX_EXTERN(__imp__rex_QuestBox_HandleInput);
 REX_EXTERN(__imp__rex_TutorialBox_HandleInput);
 REX_EXTERN(__imp__rex_AcceptHoldBox_HandleInput);
 REX_EXTERN(__imp__rex_ButtonBox_HandleInput);
+REX_EXTERN(__imp__rex_HeroStatusBox_HandleInput);
+REX_EXTERN(__imp__rex_PromiseBox_HandleInput);
+REX_EXTERN(__imp__rex_KingsSchedule_HandleInput);
+REX_EXTERN(__imp__rex_QuestSummary_HandleInput);
+REX_EXTERN(__imp__rex_WeddingPickerBox_HandleInput);
+REX_EXTERN(__imp__rex_OrbChatBox_HandleInput);
+REX_EXTERN(__imp__rex_StatsBox_HandleInput);
 REX_EXTERN(__imp__rex_GuiManager_ScreenInput);
 REX_EXTERN(__imp__rex_GuiManager_ModalReset);
 REX_EXTERN(__imp__rex_MenuBox_Open);
@@ -139,6 +212,19 @@ REX_EXTERN(rex_TutorialBox_HandleInput);
 REX_EXTERN(rex_AcceptHoldBox_HandleInput);
 REX_EXTERN(rex_ButtonBox_HandleInput);
 REX_EXTERN(rex_Box_PostButtonAnswer);
+REX_EXTERN(rex_HeroStatusBox_HandleInput);
+REX_EXTERN(rex_PromiseBox_HandleInput);
+REX_EXTERN(rex_KingsSchedule_HandleInput);
+REX_EXTERN(rex_QuestSummary_HandleInput);
+REX_EXTERN(rex_WeddingPickerBox_HandleInput);
+REX_EXTERN(rex_OrbChatBox_HandleInput);
+REX_EXTERN(rex_StatsBox_HandleInput);
+REX_EXTERN(rex_QuestSummary_Rows);
+REX_EXTERN(rex_StatsBox_WriteCategories);
+REX_EXTERN(rex_StatsBox_WriteStatistics);
+REX_EXTERN(rex_StatsBox_WriteFriends);
+REX_EXTERN(rex_GuiSound_Play);
+REX_EXTERN(rex_SoundHandle_Release);
 REX_EXTERN(rex_GuiManager_ScreenInput);
 REX_EXTERN(rex_MenuBox_Close);
 REX_EXTERN(rex_MenuBox_Highlight);
@@ -253,6 +339,21 @@ constexpr uint32_t kActionX = 76u;
 constexpr uint32_t kActionAPressed = 74u;
 constexpr uint32_t kActionYPressed = 77u;
 constexpr uint32_t kButtonBoxReleased[4] = {79u, 80u, 78u, 81u};
+/// B pressed (75), which the hero status and the promise close on.
+constexpr uint32_t kActionBPressed = 75u;
+
+/// The box screens' fields the levers store (base = the box; the header names each one's reader).
+constexpr uint32_t kQuestListBegin = 0x1Cu;
+constexpr uint32_t kQuestListEnd = 0x20u;
+constexpr uint32_t kQuestCursor = 0x2Cu;
+constexpr uint32_t kQuestOwnerPad = 0x38u;
+constexpr uint32_t kWeddingTier = 0x44u;
+constexpr uint32_t kWeddingOwnerPad = 0x48u;
+constexpr uint32_t kChatWorking = 0x24u;
+constexpr uint32_t kStatsPage = 0x34u;
+constexpr uint32_t kStatsOwnerPad = 0x40u;
+constexpr uint32_t kStatsCursor = 0x44u;
+constexpr uint32_t kStatsCategory = 0x48u;
 
 /// The pause screen's message box: SM+40 is 42 while it is up (0x825F9F74, read at 0x825F9434).
 constexpr uint32_t kScreenManager = 0x1Cu;
@@ -467,6 +568,39 @@ void Gate(PPCContext& ctx, uint8_t* base, Original original) {
   ctx.r3.u64 = 1u;
 }
 
+/// The cues the movers Godot replaced play (the header names each one's site).
+const refii::guest::Addr kQuestStepDownCue{0x8359BE14u};
+const refii::guest::Addr kStatsStepDownCue{0x8359BF2Cu};
+const refii::guest::Addr kWeddingTierUpCue{0x8359BF58u};
+const refii::guest::Addr kWeddingTierDownCue{0x8359BF5Cu};
+const refii::guest::Addr kChatMuteCue{0x8359BF3Cu};
+const refii::guest::Addr kChatUnmuteCue{0x8359BF40u};
+
+/// The guest's own cue call, `sub_823333B0(out, GUI, cue*)` then the handle's release.
+void PlayCue(PPCContext& ctx, uint8_t* base, uint32_t cue) {
+  PPCContext work = Frame(ctx);
+  const uint32_t handle = work.r1.u32 + 0x100u;
+  work.r3.u64 = handle;
+  work.r4.u64 = LoadGuestU32(base, kGuiManager);
+  work.r5.u64 = cue;
+  rex_GuiSound_Play(work, base);
+  work.r3.u64 = handle;
+  rex_SoundHandle_Release(work, base);
+}
+
+/// `@Screen.Cursor(box, row)`: the row a row lever stored.
+void StateCursor(uint32_t box, long row) {
+  Statement("@Screen.Cursor").Add(Text(Hex(box))).Add(Number(static_cast<float>(row))).Post();
+}
+
+/// Runs `writer(box)`, one of a box screen's own row writers.
+template <typename Writer>
+void RunWriter(PPCContext& ctx, uint8_t* base, Writer writer, uint32_t box) {
+  PPCContext work = Frame(ctx);
+  work.r3.u64 = box;
+  writer(work, base);
+}
+
 /// The message system's event serial, MS+0x9B0 (disc +0x980), MS = *(*(*(*(GAME+12)+28)+4)+28) —
 /// the chain the save menu's accept reads it through (0x829B5618..0x829B562C); 0 when unreadable.
 uint32_t MessageSerial(const uint8_t* base) {
@@ -491,8 +625,16 @@ bool ModalUp(const uint8_t* base) {
 
 namespace refii::fable3 {
 
-/// screen_stated_hooks.cpp: `@Screen.Fields(box, kind, true, …)` for a box-manager screen's Show.
-void StateScreenShown(const uint8_t* base, uint32_t box, const char* kind);
+void GateOwnedInput(PPCContext& ctx, uint8_t* base, GuestFunction original) { Gate(ctx, base, original); }
+
+uint32_t RunOwnedHandler(PPCContext& ctx, uint8_t* base, GuestFunction handler, uint32_t box, uint32_t action,
+                         uint32_t player) {
+  return RunHandler(ctx, base, handler, box, action, player);
+}
+
+uint32_t MessageSerialNow(const uint8_t* base) { return MessageSerial(base); }
+
+void PlayGuestCue(PPCContext& ctx, uint8_t* base, uint32_t cue) { PlayCue(ctx, base, cue); }
 
 }  // namespace refii::fable3
 
@@ -625,6 +767,7 @@ bool AnswerBoxAction(PPCContext& ctx, uint8_t* base, const char* action) {
   const size_t colon = verb_and_value.find(':');
   const std::string verb = verb_and_value.substr(0, colon);
   const long value = colon == std::string::npos ? 0 : std::strtol(verb_and_value.c_str() + colon + 1, nullptr, 10);
+  const std::string value_text = colon == std::string::npos ? std::string() : verb_and_value.substr(colon + 1);
 
   Showing showing;
   {
@@ -668,7 +811,10 @@ bool AnswerBoxAction(PPCContext& ctx, uint8_t* base, const char* action) {
       {
         const uint32_t before = MessageSerial(base);
         if (RunHandler(ctx, base, rex_QueryBox_HandleInput, box, verb == "yes" ? kActionYes : kActionNo, player) == 1u) {
-          NoteQuestionAnswered(box, verb == "yes", MessageSerial(base) != before);
+          const uint32_t after = MessageSerial(base);
+          NoteQuestionAnswered(box, verb == "yes", after != before);
+          NoteRealEstateAnswered(box, false, before, after);
+          NoteDivorceConfirmAnswered(box, verb == "yes", after != before, before);
         }
       }
       return true;
@@ -681,7 +827,16 @@ bool AnswerBoxAction(PPCContext& ctx, uint8_t* base, const char* action) {
       if (verb == "accept" && base[box + kBoxShown] != 0u) {
         StoreGuestU32(base, box + kAdjusterValue, static_cast<uint32_t>(static_cast<int32_t>(value)));
       }
-      RunHandler(ctx, base, rex_NumericAdjuster_HandleInput, box, verb == "accept" ? kActionYes : kActionNo, player);
+      {
+        // The accept posts event 69 with the value (0x8287A3F0..0x8287A434); a real-estate adjuster's
+        // poll runs on that record alone (real_estate_confirm.cpp checks the record's serial against
+        // the ones posted here). A cancel posts event 70, which no poll reads.
+        const uint32_t before = MessageSerial(base);
+        RunHandler(ctx, base, rex_NumericAdjuster_HandleInput, box, verb == "accept" ? kActionYes : kActionNo, player);
+        if (verb == "accept") {
+          NoteRealEstateAnswered(box, true, before, MessageSerial(base));
+        }
+      }
       return true;
     case kVtMessage:
       RunHandler(ctx, base, rex_MessageBox_HandleInput, box, verb == "action" ? kActionX : kActionCancel, player);
@@ -721,7 +876,141 @@ bool AnswerBoxAction(PPCContext& ctx, uint8_t* base, const char* action) {
       }
       RunHandler(ctx, base, rex_ButtonBox_HandleInput, box, kButtonBoxReleased[value - 1], player);
       return true;
+    case kVtHeroStatus:
+      if (verb != "close") {
+        return false;
+      }
+      RunHandler(ctx, base, rex_HeroStatusBox_HandleInput, box, kActionBPressed, player);
+      return true;
+    case kVtPromises:
+      if (verb != "accept" && verb != "close") {
+        return false;
+      }
+      RunHandler(ctx, base, rex_PromiseBox_HandleInput, box, verb == "accept" ? kActionAPressed : kActionBPressed,
+                 player);
+      return true;
+    case kVtKingsSchedule:
+      if (verb != "accept") {
+        return false;
+      }
+      RunHandler(ctx, base, rex_KingsSchedule_HandleInput, box, kActionAPressed, player);
+      return true;
+    case kVtQuestSummary: {
+      if (verb == "close") {
+        RunHandler(ctx, base, rex_QuestSummary_HandleInput, box, kActionCancel, player);
+        return true;
+      }
+      if (verb != "row" && verb != "select") {
+        return false;
+      }
+      // The handler's own test, made before the store: its pad and shown.
+      const uint32_t rows = (LoadGuestU32(base, box + kQuestListEnd) - LoadGuestU32(base, box + kQuestListBegin)) >> 2;
+      if (base[box + kBoxShown] == 0u || LoadGuestU32(base, box + kQuestOwnerPad) != player || value < 0 ||
+          static_cast<uint32_t>(value) >= rows) {
+        REXLOG_INFO("[fable3-boxes] answer '{}': not this box's player, or no such row of {}; refused", action, rows);
+        return false;
+      }
+      const int32_t quest_row_before = static_cast<int32_t>(LoadGuestU32(base, box + kQuestCursor));
+      StoreGuestU32(base, box + kQuestCursor, static_cast<uint32_t>(value));
+      if (verb == "row") {
+        if (value > quest_row_before) {
+          PlayCue(ctx, base, kQuestStepDownCue);
+        }
+        RunWriter(ctx, base, rex_QuestSummary_Rows, box);
+        StateCursor(box, value);
+      } else {
+        RunHandler(ctx, base, rex_QuestSummary_HandleInput, box, kActionSelect, player);
+      }
+      return true;
+    }
+    case kVtWeddingPicker: {
+      if ((verb != "accept" && verb != "decline" && verb != "tier") || value < 0 || value > 2) {
+        return false;
+      }
+      if (base[box + kBoxShown] == 0u || LoadGuestU32(base, box + kWeddingOwnerPad) != player) {
+        REXLOG_INFO("[fable3-boxes] answer '{}': not this box's player; refused", action);
+        return false;
+      }
+      const int32_t tier_before = static_cast<int32_t>(LoadGuestU32(base, box + kWeddingTier));
+      StoreGuestU32(base, box + kWeddingTier, static_cast<uint32_t>(value));
+      if (verb == "tier") {
+        if (value != tier_before) {
+          PlayCue(ctx, base, value < tier_before ? kWeddingTierUpCue : kWeddingTierDownCue);
+        }
+        return true;
+      }
+      RunHandler(ctx, base, rex_WeddingPickerBox_HandleInput, box, verb == "accept" ? kActionYes : kActionNo, player);
+      return true;
+    }
+    case kVtChatChannel: {
+      if (verb == "close") {
+        RunHandler(ctx, base, rex_OrbChatBox_HandleInput, box, kActionCancel, player);
+        return true;
+      }
+      if ((verb != "chat" && verb != "mute") || (value != 0 && value != 1)) {
+        return false;
+      }
+      if (verb == "mute") {
+        // The guest's left / right: muting only from audible, unmuting only from muted, each with its cue.
+        if (base[box + kBoxShown] != 0u && base[box + kChatWorking] != static_cast<uint8_t>(value)) {
+          PlayCue(ctx, base, value == 1 ? kChatMuteCue : kChatUnmuteCue);
+          base[box + kChatWorking] = static_cast<uint8_t>(value);
+        }
+        return true;
+      }
+      // The owner test is the handler's (the entity's component 37): a refusal puts the byte back.
+      const uint8_t before = base[box + kChatWorking];
+      base[box + kChatWorking] = static_cast<uint8_t>(value);
+      if (RunHandler(ctx, base, rex_OrbChatBox_HandleInput, box, kActionSelect, player) != 1u) {
+        base[box + kChatWorking] = before;
+        REXLOG_INFO("[fable3-boxes] answer '{}': the chat box's handler refused it", action);
+      }
+      return true;
+    }
+    case kVtStats: {
+      if (verb == "stats-back") {
+        RunHandler(ctx, base, rex_StatsBox_HandleInput, box, kActionCancel, player);
+        return true;
+      }
+      if (verb != "stats-row" && verb != "stats-open" && verb != "stats-card") {
+        return false;
+      }
+      const uint32_t page = LoadGuestU32(base, box + kStatsPage);
+      const uint32_t rows = StatsRowCount(box, static_cast<int32_t>(page));
+      if (base[box + kBoxShown] == 0u || LoadGuestU32(base, box + kStatsOwnerPad) != player || page < 2u ||
+          page > 4u || value < 0 || static_cast<uint32_t>(value) >= rows) {
+        REXLOG_INFO("[fable3-boxes] answer '{}': not this box's player, or no such row of page {}'s {}; refused",
+                    action, page, rows);
+        return false;
+      }
+      const int32_t stats_row_before = static_cast<int32_t>(LoadGuestU32(base, box + kStatsCursor));
+      StoreGuestU32(base, box + kStatsCursor, static_cast<uint32_t>(value));
+      if (verb == "stats-row" && value > stats_row_before) {
+        PlayCue(ctx, base, kStatsStepDownCue);
+      }
+      if (page == 2u) {
+        StoreGuestU32(base, box + kStatsCategory, static_cast<uint32_t>(value));
+      }
+      if (verb == "stats-row") {
+        if (page == 2u) {
+          RunWriter(ctx, base, rex_StatsBox_WriteCategories, box);
+        } else if (page == 3u) {
+          RunWriter(ctx, base, rex_StatsBox_WriteStatistics, box);
+        } else {
+          RunWriter(ctx, base, rex_StatsBox_WriteFriends, box);
+        }
+        StateCursor(box, value);
+      } else {
+        RunHandler(ctx, base, rex_StatsBox_HandleInput, box, verb == "stats-open" ? kActionSelect : kActionYPressed,
+                   player);
+      }
+      return true;
+    }
     default:
+      if (AnswerSessionBox(ctx, base, box, showing.vtable, verb, value_text, player, action) ||
+          AnswerFamilyBox(ctx, base, box, showing.vtable, verb, value_text, player, action)) {
+        return true;
+      }
       REXLOG_WARN("[fable3-boxes] answer '{}' for a box Godot does not own (vtable {:08X}); dropped", action,
                   showing.vtable);
       return false;
@@ -750,6 +1039,12 @@ REX_EXTERN(rex_BoxQueue_Push) {
   if (refii::fable3::SaveMenuAccepting()) {
     refii::fable3::NoteSaveConfirmQueued(box);
   }
+  if (refii::fable3::RealEstateAsking()) {
+    refii::fable3::NoteRealEstateConfirmQueued(box);
+  }
+  if (refii::fable3::DivorceAccepting()) {
+    refii::fable3::NoteDivorceConfirmQueued(box);
+  }
   PostQueued(base, QueueIndex(base, queue), box);
 }
 
@@ -775,6 +1070,8 @@ REX_EXTERN(rex_BoxVector_Erase) {
   }
   if (was_queued) {
     refii::fable3::NoteBoxGone(box);
+    refii::fable3::NoteRealEstateBoxGone(box);
+    refii::fable3::NoteDivorceConfirmGone(box);
     Statement("@Box.Dropped").Add(Text(Hex(box))).Post();
   }
 }
@@ -801,6 +1098,8 @@ REX_EXTERN(rex_BoxQueue_Update) {
       ShowingBoxes().erase(before);
     }
     refii::fable3::NoteBoxGone(before);
+    refii::fable3::NoteRealEstateBoxGone(before);
+    refii::fable3::NoteDivorceConfirmGone(before);
     Statement("@Box.Close").Add(Number(static_cast<float>(index))).Add(Text(Hex(before))).Post();
   }
   if (after != 0u && Plausible(after)) {
@@ -815,8 +1114,6 @@ REX_EXTERN(rex_BoxQueue_Update) {
       ShowingBoxes()[after] = Showing{index, vtable, 0u};
     }
     Statement("@Box.Show").Add(Number(static_cast<float>(index))).Add(Text(Hex(after))).Post();
-    // The Show has run (0x82624094 inside the tick): a screen's starting cursor and choices.
-    StateScreenShown(base, after, KindOf(base, after, vtable));
   }
 }
 
@@ -829,6 +1126,26 @@ REX_EXTERN(rex_QuestBox_HandleInput) { Gate(ctx, base, __imp__rex_QuestBox_Handl
 REX_EXTERN(rex_TutorialBox_HandleInput) { Gate(ctx, base, __imp__rex_TutorialBox_HandleInput); }
 REX_EXTERN(rex_AcceptHoldBox_HandleInput) { Gate(ctx, base, __imp__rex_AcceptHoldBox_HandleInput); }
 REX_EXTERN(rex_ButtonBox_HandleInput) { Gate(ctx, base, __imp__rex_ButtonBox_HandleInput); }
+// The owned box screens' pad handlers (box, ev*, player), each named in the log the first time the
+// guest's router reaches it.
+#define REFII_F3_OWNED_SCREEN(hook, what)                                                   \
+  REX_EXTERN(rex_##hook) {                                                                  \
+    static std::atomic<bool> said{false};                                                   \
+    if (!said.exchange(true)) {                                                             \
+      REXLOG_INFO("[fable3-boxes] " what ": its pad is Godot's (rex_" #hook " gated)");     \
+    }                                                                                       \
+    Gate(ctx, base, __imp__rex_##hook);                                                     \
+  }
+
+REFII_F3_OWNED_SCREEN(HeroStatusBox_HandleInput, "hero status")
+REFII_F3_OWNED_SCREEN(PromiseBox_HandleInput, "promise")
+REFII_F3_OWNED_SCREEN(KingsSchedule_HandleInput, "king's schedule")
+REFII_F3_OWNED_SCREEN(QuestSummary_HandleInput, "quest summary")
+REFII_F3_OWNED_SCREEN(WeddingPickerBox_HandleInput, "wedding picker")
+REFII_F3_OWNED_SCREEN(OrbChatBox_HandleInput, "chat channel")
+REFII_F3_OWNED_SCREEN(StatsBox_HandleInput, "stats")
+
+#undef REFII_F3_OWNED_SCREEN
 
 /// (SM, action, player): while the pause screen's message box is up, its two actions (72, and 76
 /// on the download form) are Godot's; every other action runs as the guest has it.
@@ -959,6 +1276,8 @@ REX_EXTERN(rex_ScreenManager_Destroy) {
   }
   refii::fable3::ForgetSaveMenu();
   refii::fable3::ForgetSaveConfirms();
+  refii::fable3::ForgetRealEstateConfirms();
+  refii::fable3::ForgetDivorceConfirms();
   Statement("@Screens.Destroyed").Add(Text(Hex(manager))).Post();
   __imp__rex_ScreenManager_Destroy(ctx, base);
 }

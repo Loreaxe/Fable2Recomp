@@ -14,6 +14,8 @@
 #include "core/refii_mod_events.h"
 
 extern "C" REX_FUNC(__imp__rex_CECMorph_GetWeight);
+/// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
+extern "C" int RefiiCoopGetOwnHero(void);
 extern "C" REX_FUNC(rex_CECStats_FlushAppearance);
 
 // MURGO'S MIRROR FOR BOTH PLAYERS. Each player's look is the player store's `character_morphs.*`
@@ -355,11 +357,26 @@ void RefiiMirrorCheckAge(PPCRegister& r30, PPCRegister& f13) { Judge(r30, f13, k
 // type 1. The hook stands before the compare and jumps to the add (TU1 0x8236553C -> 0x82365544,
 // disc 0x82360BDC -> 0x82360BE4), so player two gets the morph component every adult hero gets,
 // from its own CECStats (the co-op apply writes the hero's into it), its own CECAge and its scars.
-void RefiiMirrorMorphForPlayerTwo() { Once(g_said_morph, "player two's hero is given its morph component"); }
+// ONLY A HERO PLAYER TWO BROUGHT: false runs the shipped compare (`cmplw cr6, r27, r3`), so the plain
+// henchman's body stays unmorphed, as shipped; any other entity takes the add either way.
+bool RefiiMirrorMorphForPlayerTwo() {
+  if (RefiiCoopGetOwnHero() == 0) {
+    return false;
+  }
+  Once(g_said_morph, "player two's hero is given its morph component");
+  return true;
+}
 
 // The same player-two skip in ApplyTextureLayers (`sub_8220DE88`, disc `sub_8220DFC0`): the
 // definition's TextureMorphs loop (Layer / MorphTexture / OriginalTexture) is passed over for hero
 // two — `lwz r31,-8(r30)` the entity, `bl sub_828E5A78`, `cmplw cr6,r31,r3`, `beq cr6,loc_8220EF70`
 // (0x8220EB78..BC; r16/r17 are set before the branch). The hook stands on the branch and goes on to
-// the loop (TU1 0x8220EBBC -> 0x8220EBC0, disc 0x8220ECF4 -> 0x8220ECF8).
-void RefiiMirrorTextureMorphsForPlayerTwo() { Once(g_said_texture, "player two's texture morphs are applied"); }
+// the loop (TU1 0x8220EBBC -> 0x8220EBC0, disc 0x8220ECF4 -> 0x8220ECF8). For the plain henchman false
+// runs the shipped `beq` (their body keeps its own textures).
+bool RefiiMirrorTextureMorphsForPlayerTwo() {
+  if (RefiiCoopGetOwnHero() == 0) {
+    return false;
+  }
+  Once(g_said_texture, "player two's texture morphs are applied");
+  return true;
+}

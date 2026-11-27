@@ -391,18 +391,33 @@ func _to_godot(v: Vector3) -> Vector3:
 	return Vector3(-v.x, v.z, v.y)
 
 
-## The camera's line, in the game's axes, starting level with the hero so that what stands between the
-## camera and them is not what is hit. Empty with no camera.
+## The line through the middle of the portal player's own view (camera_ray: their half on a split screen),
+## in Godot's axes, starting level with the hero so that what stands between the camera and them is not
+## what is hit. Empty with no picture of that player drawn here.
 func _ray() -> Array:
-	var camera := canvas.get_viewport().get_camera_3d()
-	if camera == null:
+	var line: Dictionary = host.camera_ray(player)
+	if line.is_empty():
 		return []
-	var along := -camera.global_transform.basis.z
-	var from := camera.global_position
+	var along := _to_godot(line["direction"]).normalized()
+	var from := _to_godot(line["origin"])
 	var body = host.node_for(host.hero(player))
 	if body is Node3D:
 		from += along * maxf(0.0, along.dot(body.global_position - from))
 	return [from, along, body]
+
+
+## The pose the portal player's picture is drawn with (camera_pose), as a Godot transform, and its
+## vertical angle; empty with none drawn here.
+func _eye() -> Dictionary:
+	var pose: Dictionary = host.camera_pose(player)
+	if pose.is_empty():
+		return {}
+	var forward := _to_godot(pose["forward"]).normalized()
+	var up := _to_godot(pose["up"]).normalized()
+	var back := -forward
+	var right := up.cross(back).normalized()
+	var basis := Basis(right, back.cross(right).normalized(), back)
+	return { "transform": Transform3D(basis, _to_godot(pose["position"])), "fov": float(pose["vfov"]) }
 
 
 func _fire(which: int) -> void:
@@ -472,7 +487,7 @@ func _process(delta: float) -> void:
 	clock += delta
 	_claim()
 	_tap(delta)
-	var camera := canvas.get_viewport().get_camera_3d()
+	var eye := _eye()
 	for i in 2:
 		_read(i)
 		flash[i] = maxf(0.0, flash[i] - delta)
@@ -484,7 +499,7 @@ func _process(delta: float) -> void:
 	_dress_gun()
 	var both: bool = portals[0].get("on", false) and portals[1].get("on", false)
 	for i in 2:
-		_view(i, camera, both)
+		_view(i, eye, both)
 	canvas.queue_redraw()
 
 
@@ -508,12 +523,16 @@ func _read(i: int) -> void:
 	p.root.global_transform = Transform3D(Basis(up.cross(normal).normalized(), up.normalized(), normal.normalized()), at)
 
 
-func _view(i: int, camera: Camera3D, both: bool) -> void:
+## The view out of portal i: the portal player's drawn pose (camera_pose) carried through the pair. The
+## world, environment and far plane are the viewport camera's (Godot's render state, not the pose).
+func _view(i: int, pose: Dictionary, both: bool) -> void:
 	var p: Dictionary = portals[i]
 	p.material.set_shader_parameter("open", both)
 	var viewport: SubViewport = p.viewport
-	var near_enough: bool = camera != null and p.on and \
-		camera.global_position.distance_to(p.root.global_position) < host.setting("portal_gun.view_range", 60.0)
+	var camera := canvas.get_viewport().get_camera_3d()
+	var drawn: Transform3D = pose.get("transform", Transform3D.IDENTITY)
+	var near_enough: bool = camera != null and not pose.is_empty() and p.on and \
+		drawn.origin.distance_to(p.root.global_position) < host.setting("portal_gun.view_range", 60.0)
 	if not both or not near_enough or not p.seen.is_on_screen() or not _in_play():
 		viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 		return
@@ -527,8 +546,8 @@ func _view(i: int, camera: Camera3D, both: bool) -> void:
 	var there: Transform3D = portals[1 - i].root.global_transform
 	var turned := there * Transform3D(Basis(Vector3.UP, PI), Vector3.ZERO)
 	var eye: Camera3D = p.camera
-	eye.global_transform = turned * here.affine_inverse() * camera.global_transform
-	eye.fov = camera.fov
+	eye.global_transform = turned * here.affine_inverse() * drawn
+	eye.fov = float(pose.get("fov", camera.fov))
 	eye.environment = camera.environment
 	eye.attributes = camera.attributes
 	eye.far = camera.far

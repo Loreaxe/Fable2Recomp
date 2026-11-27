@@ -98,6 +98,7 @@
 #include "core/headless_presentation.h"
 #include "core/payload_bridge_fable2.h"
 #include "gui/gui_told_statements.h"
+#include "hooks/page_fills_stated.h"
 #include "hooks/frontend_stated.h"
 #include "hooks/ppc_externs.h"
 
@@ -627,7 +628,11 @@ void RefiiHeadlessSetText(PPCRegister& r3, PPCRegister& r4, PPCRegister& r5) {
         !refii::headless::ElementKey(r3.u32, &presentation, &serial, &id)) {
         return;
     }
-    StateText(r3.u32, WideUnits(base, r5.u32));
+    const std::vector<uint16_t> units = WideUnits(base, r5.u32);
+    if (refii::vfs::PageFillOpen()) {
+        refii::vfs::NotePageFillText(r3.u32, units);
+    }
+    StateText(r3.u32, units);
 }
 
 // SetTextFromTag's entry (TU1 0x82425F40, disc 0x823F83D8): r3 element, r4 the tag. The text is
@@ -643,7 +648,11 @@ void RefiiHeadlessSetTextFromTag(PPCRegister& r3, PPCRegister& r4) {
         !refii::headless::ElementKey(r3.u32, &presentation, &serial, &id)) {
         return;
     }
-    StateText(r3.u32, TagText(ContextOf(r3), base, r4.u32));
+    const std::vector<uint16_t> units = TagText(ContextOf(r3), base, r4.u32);
+    if (refii::vfs::PageFillOpen()) {
+        refii::vfs::NotePageFillText(r3.u32, units);
+    }
+    StateText(r3.u32, units);
 }
 
 // The quad readers' joins: `r` is the record a kind-2 node gave, 0 when the element has none — a

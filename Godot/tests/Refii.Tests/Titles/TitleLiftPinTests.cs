@@ -108,15 +108,16 @@ public class TitleLiftPinTests
 	}
 
 	/// <summary>
-	/// THE FABLE 3 HUD READS THE SAME ANSWERS. The seat rules now answer per title; Fable 3 states
-	/// none, so it must be that Fable 2's rules gave none of Fable 3's pieces an owner or a player-two
-	/// source (the two a whole-window view consults, through its value sources), and that no Fable 3
-	/// code ever stood a view in a seat (where the split-screen rules are consulted).
+	/// THE FABLE 3 HUD READS THE SAME ANSWERS ON THE WHOLE WINDOW. The seat rules answer per title;
+	/// Fable 3 states its own only for its couch pairs (Fable3HudLayout: the d-pad, money alert and
+	/// followers, each player's), so Fable 2's rules gave none of Fable 3's pieces an owner or a
+	/// player-two source, Fable 3's own give one only to the pairs, and the only Fable 3 code that stands
+	/// a view in a seat is the HUD document's split (Fable3HudDocument, camera C2f).
 	/// </summary>
 	[TestCase]
 	public void Fable3sHudPiecesGetTheAnswersTheSharedRulesGaveThem()
 	{
-		AssertThat(Fable3Hud).IsSame(Engine_HudTitleLayout.None);
+		AssertThat(Fable3Hud).IsSame(Refii.Titles.Fable3.Fable3HudLayout.Instance);
 		AssertThat(Fable3Hud.Groups.Count).IsEqual(0);
 		AssertThat(Fable3Hud.Arrangement.Count).IsEqual(0);
 
@@ -147,12 +148,19 @@ public class TitleLiftPinTests
 		foreach (string id in ids)
 		{
 			Engine_HudLayout.Piece piece = Piece(id);
-			AssertThat(Fable2HudLayout.Instance.OwnerOf(piece)).OverrideFailureMessage(id).IsEqual(Fable3Hud.OwnerOf(piece));
+			AssertThat(Fable2HudLayout.Instance.OwnerOf(piece)).OverrideFailureMessage(id).IsEqual(Engine_UiSeats.Seat.Whole);
 			AssertThat(Fable2HudLayout.Instance.PlayerTwoSourceId(id)).OverrideFailureMessage(id).IsNull();
 			AssertThat(Fable2HudLayout.Instance.PlayerOneIdOf(id)).OverrideFailureMessage(id).IsNull();
+			bool paired = Array.Exists(Refii.Titles.Fable3.Fable3HudLayout.Pairs, pair => pair.One == id || pair.Two == id);
+			if (!paired)
+			{
+				AssertThat(Fable3Hud.OwnerOf(piece)).OverrideFailureMessage(id).IsEqual(Engine_UiSeats.Seat.Whole);
+				AssertThat(Fable3Hud.PlayerTwoSourceId(id)).OverrideFailureMessage(id).IsNull();
+			}
 		}
 
-		AssertThat(seated.Count).OverrideFailureMessage("Fable 3 seats a HUD view: " + string.Join(", ", seated)).IsEqual(0);
+		AssertThat(seated).OverrideFailureMessage("Fable 3 seats a HUD view: " + string.Join(", ", seated))
+			.ContainsExactly("Fable3HudDocument.cs");
 	}
 
 	[TestCase]

@@ -45,6 +45,8 @@ add_library(refii_runtime SHARED
     ${REFII_RUNTIME_ROOT}/src/core/coop_consent.cpp
     # The names the game shows for players, by RexNet's rule.
     ${REFII_RUNTIME_ROOT}/src/core/coop_names.cpp
+    # Refii's co-op channel told that the peer left the title's session.
+    ${REFII_RUNTIME_ROOT}/src/core/coop_channel.cpp
     # The host's asset reader: Godot's bank reads, called by the payload.
     ${REFII_RUNTIME_ROOT}/src/core/host_asset_reader.cpp
     # The movie the guest states: a title's Bink hooks write it, the host bridge's movie

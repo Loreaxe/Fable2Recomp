@@ -91,13 +91,24 @@ public class ModUiDispatchTests
         AssertThat(game.Menus.ContainsKey("pause-root-coop")).IsFalse();
         Engine_UiMenuTemplate pause = game.Menus[Engine_PauseMenu.RootTemplate];
 
-        static List<string> Built(Engine_UiMenuTemplate menu, bool playerTwo) => menu.Entries
-            .Where(e => Engine_UiRowConditions.Holds(e.When, Engine_UiRowConditions.PauseFacts(playerTwo)))
+        static List<string> BuiltWith(Engine_UiMenuTemplate menu, IReadOnlyDictionary<string, bool> facts) => menu.Entries
+            .Where(e => Engine_UiRowConditions.Holds(e.When, facts))
             .Select(e => e.Name + (e.HostOnly ? "*" : string.Empty)).ToList();
+        static List<string> Built(Engine_UiMenuTemplate menu, bool playerTwo) =>
+            BuiltWith(menu, Engine_UiRowConditions.PauseFacts(playerTwo));
 
         AssertThat(string.Join(",", Built(pause, false))).IsEqual(
             "Saving,Map,Abilities,Items,Weapons,Clothing,Logbook,Achievements*,Multiplayer*,Options,Kick*");
+        // The plain henchman's book is the 360's (Abilities, Options, the way out) plus the host pages.
         AssertThat(string.Join(",", Built(pause, true))).IsEqual(
+            "Abilities*,Achievements*,Multiplayer*,Options,HenchmanQuit*");
+        // Player two standing in a hero from a save gets the hero's tabs.
+        var hero = new Dictionary<string, bool>(StringComparer.Ordinal)
+        {
+            [Engine_UiRowConditions.PlayerTwo] = true,
+            [Engine_UiRowConditions.PlayerTwoHero] = true,
+        };
+        AssertThat(string.Join(",", BuiltWith(pause, hero))).IsEqual(
             "Map*,Abilities*,Items*,Weapons*,Clothing*,Logbook*,Achievements*,Multiplayer*,Options,HenchmanQuit*");
         AssertThat(pause.Entries.Single(e => e.Name == "Achievements").Command)
             .IsEqual(Engine_UiHostScreens.OpenCommand(Engine_UiAchievementPage.ScreenId));
@@ -152,7 +163,7 @@ public class ModUiDispatchTests
         // A patch naming a "when" addresses that variant alone.
         Engine_UiTemplateSet again = Engine_UiTemplates.ComposeGame();
         again.ApplyText("{ \"menus\": { \"pause-root\": { \"patch\": true, \"entries\": [" +
-            "{ \"name\": \"Items\", \"when\": \"player-two\", \"remove\": true } ] } } }", "p2", "test");
+            "{ \"name\": \"Items\", \"when\": \"player-two, player-two-hero\", \"remove\": true } ] } } }", "p2", "test");
         List<Engine_UiMenuEntry> items = again.Menus["pause-root"].Entries.Where(e => e.Name == "Items").ToList();
         AssertThat(items.Count).IsEqual(1);
         AssertThat(items[0].When).IsEqual("!player-two");
@@ -198,7 +209,7 @@ public class ModUiDispatchTests
         foreach (JsonNode? node in (JsonArray)edited["entries"]!)
         {
             if (node is JsonObject entry && Engine_UiMenuEdit.Name(entry) == "Map" &&
-                Engine_UiMenuEdit.Text(entry, "when") == "player-two")
+                Engine_UiMenuEdit.Text(entry, "when") == "player-two, player-two-hero")
             {
                 entry["tag"] = "Atlas";
             }
@@ -207,12 +218,12 @@ public class ModUiDispatchTests
         JsonObject patch = Engine_UiMenuEdit.Patch(baseMenu, edited)!;
         JsonArray ops = (JsonArray)patch["entries"]!;
         AssertThat(ops.Count).IsEqual(1);
-        AssertThat(Engine_UiMenuEdit.Text((JsonObject)ops[0]!, "when")).IsEqual("player-two");
+        AssertThat(Engine_UiMenuEdit.Text((JsonObject)ops[0]!, "when")).IsEqual("player-two, player-two-hero");
 
         game.ApplyText(new JsonObject { ["menus"] = new JsonObject { ["pause-root"] = patch } }.ToJsonString(), "atlas", "test");
         List<Engine_UiMenuEntry> maps = game.Menus["pause-root"].Entries.Where(e => e.Name == "Map").ToList();
         AssertThat(maps.Count).IsEqual(2);
-        AssertThat(maps.Single(e => e.When == "player-two").Tag).IsEqual("Atlas");
+        AssertThat(maps.Single(e => e.When == "player-two, player-two-hero").Tag).IsEqual("Atlas");
         AssertThat(maps.Single(e => e.When == "!player-two").Tag).IsEqual("GUI_SCREEN_PAUSE_WORLD_MAP");
     }
 
@@ -279,7 +290,7 @@ public class ModUiDispatchTests
             ran.Add("inventory " + argument);
             return Engine_UiCommandResult.Done;
         });
-        set.Register(new Engine_UiVerb(Engine_UiDyeFlow.SelectAction, "x", "x", Array.Empty<Engine_UiCommandList>()), (argument, _) =>
+        set.Register(new Engine_UiVerb("Inventory:dyeselect:", "x", "x", Array.Empty<Engine_UiCommandList>()), (argument, _) =>
         {
             ran.Add("dye " + argument);
             return Engine_UiCommandResult.Done;

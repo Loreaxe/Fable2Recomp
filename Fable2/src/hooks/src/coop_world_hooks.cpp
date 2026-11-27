@@ -27,6 +27,8 @@
 #include "core/refii_mod_events.h"
 
 extern "C" uint8_t* RefiiGuestBase(void);
+/// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
+extern "C" int RefiiCoopGetOwnHero(void);
 extern "C" REX_FUNC(__imp__rex_CECInventory_AddEntity);
 extern "C" REX_FUNC(rex_lhEntity_Destroy);
 extern "C" void refii_mod_raise_collectable_taken(PPCContext* ctx, uint8_t* base, int32_t player, uint32_t entity,
@@ -72,8 +74,10 @@ uint64_t UniqueId(uint8_t* base, uint32_t entity) {
          refii::vfs::LoadGuestU32(base, entity + 0x18u);
 }
 
+/// A partner who collects for themselves: player two as a hero they brought. The plain henchman's
+/// pickup is the shipped one (it runs as hero one, and the key goes).
 bool PartnerPresent(uint8_t* base) {
-  return refii_mod_player_hero(base, 1) != 0u && refii_mod_player_hero(base, 2) != 0u;
+  return RefiiCoopGetOwnHero() != 0 && refii_mod_player_hero(base, 1) != 0u && refii_mod_player_hero(base, 2) != 0u;
 }
 
 bool IsSilverKey(PPCContext& ctx, uint8_t* base, uint32_t entity) {

@@ -286,11 +286,86 @@ public static class Engine_UiMenuSources
 		return false;
 	}
 
+	/// <summary>The title sources whose rows are the capture's under the parent their argument names last
+	/// (after its last ':'), with something stamped on: their category's caption is the population's
+	/// (<see cref="CapturesFor"/>).</summary>
+	private static readonly HashSet<string> Capturing = new(System.StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>A title's own source over the capture (see <see cref="Capturing"/>).</summary>
+	public static void RegisterGameCapturing(string name, Provider provider)
+	{
+		RegisterGame(name, provider);
+		Capturing.Add(name);
+	}
+
+	/// <summary>Whether <paramref name="source"/>'s rows are the capture's under <paramref name="name"/>:
+	/// `capture:&lt;name&gt;`, or a capturing source whose argument ends in that name.</summary>
+	public static bool CapturesFor(string source, string name)
+	{
+		if (string.Equals(source, "capture:" + name, System.StringComparison.Ordinal))
+		{
+			return true;
+		}
+
+		int colon = source.IndexOf(':');
+		return colon > 0 && Capturing.Contains(source[..colon]) &&
+			string.Equals(source[(source.LastIndexOf(':') + 1)..], name, System.StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The captured rows under <paramref name="parent"/> as the guest stated them — with the icon, the mark
+	/// and the item each carries (RefiiHostGetMenuRowItem) — for a title source that stamps its own commands
+	/// on them; empty when the capture is not the bound screen's.
+	/// </summary>
+	public static IReadOnlyList<Engine_UiModel.MenuRow> CapturedUnder(string parent)
+	{
+		if (!CaptureIsOurs())
+		{
+			return System.Array.Empty<Engine_UiModel.MenuRow>();
+		}
+
+		var under = new List<Engine_UiModel.MenuRow>();
+		foreach (Engine_UiModel.MenuRow captured in SpawnedRows())
+		{
+			if (captured.Name.Length != 0 &&
+				string.Equals(captured.Parent, parent, System.StringComparison.Ordinal))
+			{
+				under.Add(captured);
+			}
+		}
+
+		return under;
+	}
+
 	/// <summary>`capture`: the children the guest states for <paramref name="parent"/> (raw capture, no hold).</summary>
 	public static IReadOnlyList<Row> CaptureRows(string parent) =>
 		CaptureIsOurs()
 			? SpawnRows(parent, Engine_UiSource.Current.GetMenuRows(out _))
 			: None;
+
+	/// <summary>
+	/// The caption the screen's own population spawned a top-level row <paramref name="name"/> with
+	/// (its `String2`, decorations and all), or null when the capture is not this screen's or holds no
+	/// such row.
+	/// </summary>
+	public static string? CapturedCaption(string name)
+	{
+		if (!CaptureIsOurs())
+		{
+			return null;
+		}
+
+		foreach (Engine_UiModel.MenuRow captured in SpawnedRows())
+		{
+			if (captured.IsRoot && captured.Label.Length != 0 &&
+				string.Equals(captured.Name, name, System.StringComparison.Ordinal))
+			{
+				return captured.Label;
+			}
+		}
+
+		return null;
+	}
 
 	/// <summary>The last population seen whole, held across the partial window.</summary>
 	private static List<Engine_UiModel.MenuRow>? _wholeSpawn;

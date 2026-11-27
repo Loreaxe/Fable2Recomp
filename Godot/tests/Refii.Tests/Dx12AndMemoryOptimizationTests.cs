@@ -265,7 +265,7 @@ public sealed class Dx12AndMemoryOptimizationTests
 		AssertThat(uiQuad.Contains("textureGrad(detail_tex, detail_uv, detail_dx, detail_dy)", StringComparison.Ordinal)).IsTrue();
 		AssertThat(uiQuad.Contains("textureGrad(keycap_tex, UV, raw_uv_dx, raw_uv_dy)", StringComparison.Ordinal)).IsTrue();
 		AssertThat(uiQuad.Contains("textureLod(", StringComparison.Ordinal)).IsFalse();
-		int quadBranchIdx = uiQuad.IndexOf("if (has_keycap && ui_keyboard_mode)", StringComparison.Ordinal);
+		int quadBranchIdx = uiQuad.IndexOf("if (has_keycap && (glyph_player_two ? ui_keyboard_mode_two : ui_keyboard_mode))", StringComparison.Ordinal);
 		AssertThat(quadBranchIdx).IsGreater(0);
 		AssertThat(uiQuad.IndexOf("dFdx(uv)", StringComparison.Ordinal)).IsLess(quadBranchIdx);
 		AssertThat(uiQuad.IndexOf("dFdy(detail_uv)", StringComparison.Ordinal)).IsLess(quadBranchIdx);
@@ -913,7 +913,7 @@ public sealed class Dx12AndMemoryOptimizationTests
 		string depthRegBody = ExtractMethodBody(depthCapture, "public static void RegisterGlobals()");
 		AssertThat(depthRegBody.Contains("GetOrCreateFallbackDepthTexture()", StringComparison.Ordinal)).IsTrue();
 		AssertThat(depthRegBody.Contains("new Texture2Drd()", StringComparison.Ordinal)).IsFalse();
-		AssertThat(depthCapture.Contains("if (!rid.IsValid)", StringComparison.Ordinal)).IsTrue();
+		AssertThat(depthCapture.Contains("!rid.IsValid", StringComparison.Ordinal)).IsTrue();
 
 		string postFx = File.ReadAllText(Path.Combine(godotRoot, "src", "Engine", "Lighting", "Engine_PostFxEffect.cs"));
 		string postRegBody = ExtractMethodBody(postFx, "public static void RegisterGlobals()");

@@ -45,6 +45,16 @@ public partial class Engine_FxDepthCaptureEffect : CompositorEffect
 
     private static string TextureGlobal(int view) => view == 0 ? GlobalTextureName : GlobalTextureSecondName;
 
+    /// <summary>
+    /// The capture whose depth each view's global holds now. Two cameras capture for view 0 — the
+    /// window's, and player one's split view (Refii.Game.GameSplitView) — and only the one drawing
+    /// runs, so the one that runs claims the global and only the holder clears it on release.
+    /// </summary>
+    private static readonly Engine_FxDepthCaptureEffect?[] _publishers = new Engine_FxDepthCaptureEffect?[2];
+
+    /// <summary>1 while a publish is queued for the main thread.</summary>
+    private int _publishQueued;
+
     private RenderingDevice? _rd;
     private Rid _shader;
     private Rid _pipeline;
@@ -140,11 +150,27 @@ public partial class Engine_FxDepthCaptureEffect : CompositorEffect
 
         _rd.TextureClear(_target, new Color(0.0f, 0.0f, 0.0f, 0.0f), 0, 1, 0, 1);
         _targetSize = size;
-        Rid rid = _target;
+        Publish();
+    }
+
+    /// <summary>
+    /// Points this view's global at this capture's target, on the main thread: when the target is
+    /// made, and whenever this capture runs while another holds the global (the split view's player
+    /// one drew last, or released it).
+    /// </summary>
+    private void Publish()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _publishQueued, 1) == 1)
+        {
+            return;
+        }
+
         int view = View;
         Callable.From(() =>
         {
-            if (!rid.IsValid)
+            System.Threading.Volatile.Write(ref _publishQueued, 0);
+            Rid rid = _target;
+            if (_released || !rid.IsValid || view is < 0 or >= 2)
             {
                 return;
             }
@@ -156,6 +182,8 @@ public partial class Engine_FxDepthCaptureEffect : CompositorEffect
             {
                 RenderingServer.GlobalShaderParameterSet(GlobalValidName, 1.0f);
             }
+
+            System.Threading.Volatile.Write(ref _publishers[view], this);
         }).CallDeferred();
     }
 
@@ -198,7 +226,16 @@ public partial class Engine_FxDepthCaptureEffect : CompositorEffect
         }
         _released = true;
 
-        if (_globalsRegistered)
+        // Only the capture holding the global gives it up: player one's split view, freed when local
+        // co-op ends, is not what the window draws through after it, and clearing the window's
+        // depth left every FX layer, highlight and world marker untested against the scene.
+        bool holds = View is >= 0 and < 2 && ReferenceEquals(_publishers[View], this);
+        if (holds)
+        {
+            _publishers[View] = null;
+        }
+
+        if (_globalsRegistered && (holds || releaseStaticFallbacks))
         {
             if (View == 0)
             {
@@ -228,7 +265,7 @@ public partial class Engine_FxDepthCaptureEffect : CompositorEffect
             _globalsRegistered = false;
         }
 
-        if (View is >= 0 and < 2 && _textures[View] is { } texture)
+        if ((holds || releaseStaticFallbacks) && View is >= 0 and < 2 && _textures[View] is { } texture)
         {
             texture.TextureRdRid = default;
             _textures[View] = null;
@@ -292,6 +329,10 @@ public partial class Engine_FxDepthCaptureEffect : CompositorEffect
         EnsureTarget(size);
         Rid depth = buffers.GetDepthLayer(0);
         if (Refii.Core.Engine_RdHealth.IsDeviceLost || !_target.IsValid || !depth.IsValid) return;
+        if (!ReferenceEquals(System.Threading.Volatile.Read(ref _publishers[View]), this))
+        {
+            Publish();
+        }
         // The set is held by the resources it binds: the RDUniforms and their Array were three
         // finalizable wrappers per frame for a set the cache already had.
         Rid set = _set.For(_rd, stackalloc Rid[] { _sampler, depth, _target });

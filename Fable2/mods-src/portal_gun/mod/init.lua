@@ -290,6 +290,10 @@ function P.toggle(p)
 	Refii.publish("portal_gun.player", p)
 	Refii.publish("portal_gun.mode", P.On and 1 or 0)
 	P.Looked = LOOK_EVERY
+	-- The camera follows the mode at once (camera.lua states it through the camera API).
+	if PortalCamera ~= nil and PortalCamera.State ~= nil then
+		PortalCamera.State()
+	end
 end
 
 -- The hero's ranged weapon as an entity: it stands close by, on the back or in the hands.

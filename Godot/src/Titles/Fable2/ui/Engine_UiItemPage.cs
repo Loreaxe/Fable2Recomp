@@ -80,6 +80,15 @@ public static class Engine_UiItemPage
 	/// </summary>
 	private const string ShopAskingPrice = "TextElements.PriceValue";
 
+	/// <summary>The element the price display writes (`dword_8349CF34`).</summary>
+	private const string ShopPricePath = "Foreground.Book.Pages.Page1.Contents.Text.TextElements.PriceValue";
+
+	private const uint ShopScreenId = 22;
+
+	/// <summary>What the shop's row edge wrote, when it ran for the row with this ticket.</summary>
+	private static Engine_UiPageFills.Fill? ShopRowFill(uint ticket) =>
+		ticket == 0u ? null : Engine_UiPageFills.ForRow(ShopScreenId, ticket);
+
 	/// <summary>The shop page's damage row — value and its label, written together.</summary>
 	private const string ShopDamageValue = "TextElements.DamageValue";
 
@@ -99,6 +108,56 @@ public static class Engine_UiItemPage
 	private const int SubmenuEventType = 301;
 
 	private const int SpellAssignEventType = 23;
+
+	/// <summary>
+	/// Whether <paramref name="screen"/>'s pages are its own fills' statements: the items book (15:
+	/// `sub_829B5160` page 1 and `sub_829B6B50` page 2), the clothing book (16: `sub_829B6310` / `sub_829B7368`)
+	/// and the gift book (25: `sub_829AA588`), stated as the "row" fill for the highlighted row's ticket
+	/// (gui_screen_stub_items.cpp, gui_screen_stub_clothing.cpp, gui_screen_stub_gift.cpp).
+	/// </summary>
+	public static bool StatesPages(uint screen) => screen is 15 or 16 or 25;
+
+	/// <summary>The fill the book stated for <paramref name="row"/>, or null (a category, or a row whose fill has
+	/// not landed yet — one guest tick behind the cursor).</summary>
+	public static Engine_UiPageFills.Fill? Stated(uint screen, Engine_UiExpandableMenu.Item? row) =>
+		StatesPages(screen) && row is { } stated && !string.IsNullOrEmpty(stated.Name) && stated.EventType != SubmenuEventType
+			? Engine_UiPageFills.ForRow(screen, ((uint)stated.IdHigh << 16) | ((uint)stated.IdLow & 0xFFFFu))
+			: null;
+
+	/// <summary>The paths each book's fills have written, so a row's page blanks what another row's statement wrote.</summary>
+	private static readonly Dictionary<uint, HashSet<string>> StatedPaths = new();
+
+	private static HashSet<string> PathsOf(uint screen) =>
+		StatedPaths.TryGetValue(screen, out HashSet<string>? paths) ? paths : StatedPaths[screen] = new(System.StringComparer.Ordinal);
+
+	/// <summary>
+	/// A stated book's page texts, by the full path its fill named: the name, the info line, the A prompt's
+	/// caption, the value caption and amount, the description with the augment lines (`sub_82469AE8`, joined
+	/// with `&lt;bullet.img&gt;` 0x829B702C), the dye footer's apply / scrub wording, the None row's name. A path
+	/// the fill hid is blank; so is every path an earlier statement wrote until this row's lands.
+	/// </summary>
+	public static IReadOnlyDictionary<string, string> StatedValues(uint screen, Engine_UiExpandableMenu.Item? row)
+	{
+		HashSet<string> paths = PathsOf(screen);
+		var values = new Dictionary<string, string>(paths.Count, System.StringComparer.Ordinal);
+		foreach (string path in paths)
+		{
+			values[path] = string.Empty;
+		}
+
+		if (Stated(screen, row) is not { } fill)
+		{
+			return values;
+		}
+
+		foreach ((string path, string text) in fill.Texts)
+		{
+			paths.Add(path);
+			values[path] = fill.Shown.TryGetValue(path, out bool shown) && !shown ? string.Empty : text;
+		}
+
+		return values;
+	}
 
 	/// <summary>The detail values for the highlighted row, or blanks.</summary>
 	public static IReadOnlyDictionary<string, string> Values(
@@ -142,16 +201,16 @@ public static class Engine_UiItemPage
 		// THE ASKING PRICE, before the record lookup — a shop row whose GDB record does not
 		// resolve still has a price, and it is the one number on that page the item book
 		// cannot answer. On a shop row the id IS the per-population ticket, and the event
-		// type is the transaction: 30 buy, 31 sell. Asked for now and read a tick later, so
-		// the reply is checked against the row that asked for it.
+		// type is the transaction: 30 buy, 31 sell. The item page's price display
+		// `sub_82992F90` writes it — `"$"` (`word_820CEE80`) and the shopkeeper's
+		// `CECShopkeeper_BuyPrice` / `SellPrice` (0x82993148 / 0x82993150) — from the row edge,
+		// which states the row it ran for (Engine_UiPageFills, keyed by the ticket).
 		if (row.EventType == BuyEventType || row.EventType == SellEventType)
 		{
-			Fable2Bridge.SetShopPrice(id, row.EventType == SellEventType);
-
-			Fable2Bridge.ShopPrice asking = Fable2Bridge.GetShopPrice();
-			values[ShopAskingPrice] = asking.IsFor(id)
-				? "$" + asking.Price.ToString(CultureInfo.InvariantCulture)
-				: string.Empty;
+			values[ShopAskingPrice] = ShopRowFill(id) is { } rowFill &&
+				rowFill.Texts.TryGetValue(ShopPricePath, out string? asking)
+					? asking
+					: string.Empty;
 		}
 
 		ItemDetail? detail = Resolve(multi, row, id);
@@ -165,7 +224,7 @@ public static class Engine_UiItemPage
 			// is reported so the answer comes from a run rather than an assumption. A shop row
 			// whose ticket the bridge has not answered yet is pending, not unresolved.
 			bool shopPending = (row.EventType == BuyEventType || row.EventType == SellEventType) &&
-				!Fable2Bridge.GetShopPrice().IsFor(id);
+				ShopRowFill(id) is null;
 			if (!shopPending && _unresolved.Add(row.Name))
 			{
 				GD.Print($"[item-page] '{row.Name}' (type {row.EventType}, label " +
@@ -223,10 +282,9 @@ public static class Engine_UiItemPage
 		uint definition = detail.DefinitionHash != 0 ? detail.DefinitionHash : detail.RecordHash;
 		bool shopRow = row.EventType == BuyEventType || row.EventType == SellEventType;
 
-		// A shop row's item is the SHOP's, not one the hero carries: the hero's socketed copy of
-		// the same definition is not this item, so the definition's own seed is what is read.
-		Engine_UiItemStats.Stats stats = Engine_UiItemStats.For(
-			definition, strings, shopRow ? null : Socketed(definition));
+		// The books left here are the shop's, the furniture's and the decoration's (the item books state their
+		// own pages, StatedValues): a shop row's item is the SHOP's, so the definition's own seed is what is read.
+		Engine_UiItemStats.Stats stats = Engine_UiItemStats.For(definition, strings, null);
 		if (shopRow)
 		{
 			ShopStatsPage(values, stats, strings);
@@ -270,26 +328,6 @@ public static class Engine_UiItemPage
 		if (stats.Primary.Label.Length != 0)
 		{
 			string summary = $"{stats.Primary.Label} {stats.Primary.Value}";
-
-			// AN OUTFIT STATES EVERY LINE. The original prints nothing for one (no category-25
-			// handler in `sub_824698D8`); the remaster sums its pieces, and an outfit that
-			// changes two things — Attractiveness and Poshness — says both, one per line.
-			if (IsOutfitRow(row) && stats.Lines.Count > 1)
-			{
-				var lines = new System.Text.StringBuilder();
-				foreach (Engine_UiItemStats.Line line in stats.Lines)
-				{
-					if (lines.Length != 0)
-					{
-						lines.Append('\n');
-					}
-
-					lines.Append(line.Label).Append(' ').Append(line.Value);
-				}
-
-				summary = lines.ToString();
-			}
-
 			values[Info] = summary;
 			values[EquipmentInfo] = summary;
 		}
@@ -404,89 +442,22 @@ public static class Engine_UiItemPage
 	private const int ShopAugmentRows = 5;
 	private const float ShopRowPitch = 30f;
 
-	/// <summary>
-	/// The item's live augment pairs, re-read twice a second: the page is filled every frame,
-	/// the read walks the hero's inventory, and socketing an augment happens on another screen.
-	/// </summary>
-	private static (uint Primary, uint Secondary)[]? Socketed(uint definition)
-	{
-		ulong now = Time.GetTicksMsec();
-		if (definition != _socketedFor || now - _socketedAt > 500)
-		{
-			_socketedFor = definition;
-			_socketedAt = now;
-			_socketed = Fable2Bridge.GetItemAugments(definition);
-		}
-
-		return _socketed;
-	}
-
-	private static uint _socketedFor;
-
-	private static ulong _socketedAt;
-
-	private static (uint Primary, uint Secondary)[]? _socketed;
-
-	/// <summary>
-	/// THE ITEM A ROW NAMES. A shop row's id is a per-population TICKET, not a record, and its
-	/// name is a spawn label (`INV_ITEM_…_NAME_(Augmented)_0`) that is no tag either; the guest
-	/// joins it through `sub_82880BC0` to the item object and reads the record at `*obj + 4`,
-	/// which the bridge returns beside the asking price. Until that reply is for this row the
-	/// shop page has no item — never a guess from the label. Every other book's id is the
-	/// inventory's own record (`item + 4`), resolved directly.
-	/// </summary>
-	/// <summary>The item record a row names, or null for a folder or an unresolved row.</summary>
-	private static GdbCursor? RecordOf(Engine_UiExpandableMenu.Item? row)
-	{
-		if (row is null || string.IsNullOrEmpty(row.Name) ||
-			row.EventType == SubmenuEventType || row.EventType == SpellAssignEventType ||
-			Engine_GameGdb.Database is not { } multi)
-		{
-			return null;
-		}
-
-		uint id = ((uint)row.IdHigh << 16) | ((uint)row.IdLow & 0xFFFFu);
-		return Resolve(multi, row, id) is { RecordHash: not 0u } detail &&
-			multi.TryLookup(detail.RecordHash, out GdbCursor at)
-				? at
-				: null;
-	}
-
-	/// <summary>
-	/// The dye an item carries: its `DyeComponent`'s `Colour` child, integer `Red`/`Green`/`Blue`
-	/// (`sub_829B5160` 0x829b5364..0x829b53c4), at full alpha (0x829b5414). Null when the item
-	/// has none — the guest then leaves the swatch alone; it shows only for a dye.
-	/// </summary>
-	public static Color? DyeColour(Engine_UiExpandableMenu.Item? row)
-	{
-		if (RecordOf(row) is not { } at || Engine_GameGdb.Database is not { } multi ||
-			!Engine_AbilityRecords.TryRef(multi, at, "DyeComponent", out GdbCursor dye) ||
-			!Engine_AbilityRecords.TryRef(multi, dye, "Colour", out GdbCursor colour))
-		{
-			return null;
-		}
-
-		return new Color(
-			(Engine_AbilityRecords.IntOrEnumOn(colour, "Red") & 0xFF) / 255f,
-			(Engine_AbilityRecords.IntOrEnumOn(colour, "Green") & 0xFF) / 255f,
-			(Engine_AbilityRecords.IntOrEnumOn(colour, "Blue") & 0xFF) / 255f,
-			1f);
-	}
-
-	/// <summary>`sub_827649C8`: the record's `InventoryItemComponent.UsableFromInventory`.</summary>
-	public static bool Usable(Engine_UiExpandableMenu.Item? row) =>
-		RecordOf(row) is { } at && Engine_GameGdb.Database is { } multi &&
-		Engine_AbilityRecords.TryRef(multi, at, "InventoryItemComponent", out GdbCursor inv) &&
-		Engine_AbilityRecords.BoolOn(inv, "UsableFromInventory");
-
 	private static ItemDetail? Resolve(GdbMulti multi, Engine_UiExpandableMenu.Item row, uint id)
 	{
+		// A shop row's item is the record the row edge's item fill set the preview to
+		// (`sub_828C3B30(page+32, item+4)` 0x82992c5c), stated with the fill for this ticket.
 		if (row.EventType == BuyEventType || row.EventType == SellEventType)
 		{
-			Fable2Bridge.ShopPrice stated = Fable2Bridge.GetShopPrice();
-			return stated.IsFor(id) && stated.Record != 0u
-				? Engine_ItemDetails.BuildOne(multi, stated.Record)
+			return ShopRowFill(id) is { } filled && filled.Records.TryGetValue("preview", out uint record) && record != 0u
+				? Engine_ItemDetails.BuildOne(multi, record)
 				: null;
+		}
+
+		// An item book's row is the guest's own: its id is the population ticket and its item the one its row
+		// builder `sub_826CE230` was handed (Engine_UiItemRows).
+		if (row.Instance != 0u && Engine_UiItemRows.ItemOf(id) is { Record: not 0u } stated)
+		{
+			return Engine_ItemDetails.BuildOne(multi, stated.Record);
 		}
 
 		return Engine_ItemDetails.BuildOne(multi, id)
@@ -654,11 +625,6 @@ public static class Engine_UiItemPage
 			detail.PreviewRotationAxis,
 			Item: instance);
 	}
-
-	/// <summary>An outfit row — the inventory source routes its press to `Inventory:outfit`.</summary>
-	private static bool IsOutfitRow(Engine_UiExpandableMenu.Item row) =>
-		row.Command?.StartsWith(
-			Engine_UiInventorySource.InventoryAction + "outfit:", System.StringComparison.Ordinal) == true;
 
 	private const string ItemImage = "Contents.ItemImage";
 

@@ -69,6 +69,10 @@ uniform vec4 clip_rect = vec4(-1e9, -1e9, 1e9, 1e9);
 uniform sampler2D keycap_tex : source_color, filter_linear_mipmap, repeat_disable, hint_default_transparent;
 uniform bool has_keycap = false;
 global uniform bool ui_keyboard_mode;
+// A quad on a surface that is player two's alone (their half of a split screen) follows player two's
+// own pad: its keycap is player two's and the switch is player two's global (Engine_UiKeyGlyphs.PlayerTwo).
+uniform bool glyph_player_two = false;
+global uniform bool ui_keyboard_mode_two;
 
 // A menu seated in one player's half on split screen (Engine_UiPresentationHost.MenuLayer):
 // scale in xy, offset in zw. The clip compares in the menu's own laid-out space, so the seat
@@ -80,13 +84,23 @@ uniform vec4 clip_seat = vec4(1.0, 1.0, 0.0, 0.0);
 
 varying vec2 clip_world;
 
+// The seat a HUD view is drawn in on split screen (Engine_HudView.KeepToSeat): min.xy, max.xy in
+// WORLD space, the real canvas the camera draws. A half is a screen of its own, so what a seated
+// view places outside its half is off its screen, as it would be past a window edge. Unbounded
+// everywhere else, so nothing that is not seated is affected.
+uniform vec4 seat_rect = vec4(-1e9, -1e9, 1e9, 1e9);
+varying vec2 seat_world;
+
 void vertex() {
 	clip_world = ((MODEL_MATRIX * vec4(VERTEX, 1.0)).xy - clip_seat.zw) / clip_seat.xy;
+	seat_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xy;
 }
 
 void fragment() {
 	bool clipped = clip_world.x < clip_rect.x || clip_world.x > clip_rect.z ||
 		clip_world.y < clip_rect.y || clip_world.y > clip_rect.w;
+	clipped = clipped || seat_world.x < seat_rect.x || seat_world.x > seat_rect.z ||
+		seat_world.y < seat_rect.y || seat_world.y > seat_rect.w;
 
 	vec2 uv = UV * uv1_scale + uv1_offset;
 	// Precompute gradients in uniform control flow so D3D12/DXIL mipmap selection stays
@@ -112,7 +126,7 @@ void fragment() {
 	ALPHA = 0.0;
 
 	if (!should_discard) {
-		if (has_keycap && ui_keyboard_mode) {
+		if (has_keycap && (glyph_player_two ? ui_keyboard_mode_two : ui_keyboard_mode)) {
 			primary = textureGrad(keycap_tex, UV, raw_uv_dx, raw_uv_dy);
 		} else if (has_diffuse) {
 			primary = textureGrad(diffuse_tex, uv, uv_dx, uv_dy);

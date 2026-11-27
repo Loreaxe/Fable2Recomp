@@ -1822,6 +1822,43 @@ void ModCameraStated(PPCContext& ctx, uint8_t* base, uint32_t hero, int32_t mode
   refii::mods::Dispatch(e);
 }
 
+/// Refii._camera_zoom_stated(hero, set, level, combat, ...): the core chunk's statement after each
+/// SACCamera:CalculateActiveZoomLevel; raises CameraZoomChanged where the set or the combat blend
+/// (weight above 0) differs from what was last raised for the player.
+void ModCameraZoomStated(PPCContext& ctx, uint8_t* base, uint32_t hero, const char* set, int32_t level,
+                         const float* values) {
+  static std::string raised_set[2];
+  static int32_t raised_combat[2] = {-1, -1};
+  const int32_t player = refii_mod_player_of(base, hero);
+  if ((player != 1 && player != 2) || set == nullptr || values == nullptr) {
+    return;
+  }
+  const int32_t combat = values[0] > 0.0f ? 1 : 0;
+  std::string& last = raised_set[player - 1];
+  if (raised_combat[player - 1] == combat && last == set) {
+    return;
+  }
+  const std::string previous = raised_combat[player - 1] < 0 ? std::string() : last;
+  last = set;
+  raised_combat[player - 1] = combat;
+  refii::mods::CameraZoomChangedEvent e{};
+  e.ctx = &ctx;
+  e.base = base;
+  e.player = player;
+  e.set = last.c_str();
+  e.previous_set = previous.c_str();
+  e.level = level;
+  e.combat = values[0];
+  e.string_length = values[1];
+  e.cage_radius = values[2];
+  e.max_cage_radius = values[3];
+  e.height = values[4];
+  e.focal_offset = values[5];
+  e.fov = values[6];
+  e.max_coop_distance = values[7];
+  refii::mods::Dispatch(e);
+}
+
 /// Refii._camera_hold(hero): the hold stated for hero's player while it is in force — false with
 /// none, and while a FULL cutscene holds (refii_mod_in_cutscene).
 bool ModCameraHold(PPCContext& ctx, uint8_t* base, uint32_t hero, int32_t* mode, float* fov, float* pitch, float* blend,

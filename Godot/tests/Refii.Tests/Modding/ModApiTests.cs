@@ -878,7 +878,7 @@ public class ModApiTests
         AssertThat(impact.Kind).IsEqual(97);
         AssertThat(string.Join(",", impact.Fields.Select(f => f.Name))).IsEqual("spell,serial,level,caster,caster_player,struck,struck_player,x,y,z,nx,ny,nz,detonated,hits,tag");
         AssertThat(impact.Cancellable).IsFalse();
-        AssertThat(ModApi.Events.Count).IsEqual(164);  // 98 paused, 99 start_game (H.16), 100 cutscene, 101..104 Part I wave B, 105 attack_mode_changed, 106..111 Part I wave C, 112 camera_changed, 113 vortex_caught, 114 appearance_changed, 115 morph_changed, 116..118 Fable 3 (guild_seals, treasury, kingdom_decision), 119..125 shared (chest, shop, dig, demon door, drink), 126..163 wave 3 (Sanctuary, weapons, social, dog, jobs, guild, titles, scars, age, clothing, pub games, wealth, gargoyles)
+        AssertThat(ModApi.Events.Count).IsEqual(169);  // 98 paused, 99 start_game (H.16), 100 cutscene, 101..104 Part I wave B, 105 attack_mode_changed, 106..111 Part I wave C, 112 camera_changed, 113 vortex_caught, 114 appearance_changed, 115 morph_changed, 116..118 Fable 3 (guild_seals, treasury, kingdom_decision), 119..125 shared (chest, shop, dig, demon door, drink), 126..163 wave 3 (Sanctuary, weapons, social, dog, jobs, guild, titles, scars, age, clothing, pub games, wealth, gargoyles), 164..168 the camera (cut, blend, screen_changed, zoom_changed, tick)
 
         string? root = RepoRoot();
         if (root == null)
@@ -1330,7 +1330,7 @@ public class ModApiTests
         AssertThat(start.Kind).IsEqual(99);
         AssertThat(start.Fields.Select(f => f.Name).ToArray()).IsEqual(new[] { "save", "level", "new_game", "player", "commit" });
         AssertThat(start.SeamFunctions.Contains("rex_lhFrontEnd_SetStartGameTarget")).IsTrue();
-        AssertThat(ModApi.Events.Count).IsEqual(164);
+        AssertThat(ModApi.Events.Count).IsEqual(169);
         foreach (string name in new[] { "MeleeSwing", "AnimEvent" })
         {
             ModApiEvent e = ModApi.Events.Single(x => x.Name == name);
@@ -2038,7 +2038,7 @@ public class ModApiTests
         }
         string events = File.ReadAllText(Path.Combine(root, "Fable2", "src", "vfs", "include", "core", "refii_mod_events.h"));
         AssertThat(events.Contains("REFII_EVENT_APPEARANCE_CHANGED = 114,", StringComparison.Ordinal)).IsTrue();
-        AssertThat(events.Contains("REFII_EVENT_COUNT = 164,", StringComparison.Ordinal)).IsTrue();
+        AssertThat(events.Contains("REFII_EVENT_COUNT = 169,", StringComparison.Ordinal)).IsTrue();
         AssertThat(events.Contains("struct AppearanceChangedEvent : Event {", StringComparison.Ordinal)).IsTrue();
         string bus = File.ReadAllText(Path.Combine(root, "Fable2", "src", "vfs", "src", "hooks", "mod_events.cpp"));
         AssertThat(bus.Contains("case REFII_EVENT_APPEARANCE_CHANGED:", StringComparison.Ordinal)).IsTrue();

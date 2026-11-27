@@ -71,6 +71,16 @@ public sealed class Engine_CameraRig
 		public bool TargetStated;
 		public bool TargetOrientationStated;
 
+		/// <summary>The factors the last step ran on (position; orientation, four times it under a repulsion).</summary>
+		public float StepFactor = 1f;
+		public float StepTurnFactor = 1f;
+
+		/// <summary>The pose stands as the last step left it: no cut setter has placed it since.</summary>
+		public bool Stepped;
+
+		/// <summary>How the last step made the pose, for the drawing between steps (Engine_CameraDisplay).</summary>
+		public Eased Ease => new(Current, Orientation, Roll, StepFactor, StepTurnFactor, Stepped);
+
 		/// <summary>Steps whose stated factor or cut byte differed from the followed one.</summary>
 		public int FactorDisagreements;
 		public int CutDisagreements;
@@ -82,6 +92,14 @@ public sealed class Engine_CameraRig
 	/// <summary>The camera block, as the guest's getter builds it.</summary>
 	public readonly record struct Block(
 		Vector3 Position, Vector3 Up, Vector3 Forward, float HorizontalFov, bool Cut, float Shake, bool Known);
+
+	/// <summary>
+	/// How a step made a pushed block: the unrolled orientation it slerped to (comp +0xB0), the
+	/// entity's orientation (rows, shake and roll applied), the roll, the factors it ran on, and
+	/// whether the pose is the step's own (false once a cut setter has placed it).
+	/// </summary>
+	public readonly record struct Eased(
+		Engine_CameraQuat Current, Engine_CameraQuat Orientation, float Roll, float Factor, float TurnFactor, bool Stepped);
 
 	/// <summary>One camera manager: the component it shows and the blocks of its last two pushes.</summary>
 	public sealed class Manager
@@ -96,6 +114,14 @@ public sealed class Engine_CameraRig
 		public Block? Live;
 		public Block? Previous;
 		public Block? LastGuestBlock;
+
+		/// <summary>How the steps behind <see cref="Live"/> and <see cref="Previous"/> made them.</summary>
+		public Eased LiveEase;
+		public Eased PreviousEase;
+
+		/// <summary>Pushes whose block carried the cut byte; it moves once per stated cut, however
+		/// many pushes a drawn frame takes.</summary>
+		public uint Cuts;
 	}
 
 	/// <summary>A guest block stated against the rebuilt state at that point in the guest's order.</summary>
@@ -175,6 +201,9 @@ public sealed class Engine_CameraRig
 			case Call.Activate:
 				ManagerAt(statement.Manager).Activation = statement.Word;
 				break;
+			case Call.Destroy:
+				Drop(statement.Manager);
+				break;
 			case Call.GuestBlock:
 				Observe(statement);
 				break;
@@ -214,6 +243,46 @@ public sealed class Engine_CameraRig
 		_stepNested.Clear();
 	}
 
+	/// <summary>
+	/// The guest destroyed a manager (Call.Destroy): it and the components it showed are gone, so no
+	/// reader can answer it as a player's camera and a later manager or component at the same address
+	/// starts clean.
+	/// </summary>
+	private void Drop(uint address)
+	{
+		if (address == 0u)
+		{
+			return;
+		}
+
+		_managers.Remove(address);
+		var bound = new List<uint>();
+		foreach ((uint at, Component component) in _components)
+		{
+			if (component.Manager == address)
+			{
+				bound.Add(at);
+			}
+		}
+
+		foreach (uint at in bound)
+		{
+			_components.Remove(at);
+		}
+
+		_eased.RemoveAll(e => e.Component.Manager == address);
+		if (_stepComponent is { } stepped && stepped.Manager == address)
+		{
+			_stepComponent = null;
+			_stepNested.Clear();
+		}
+
+		if (_snapManager == address)
+		{
+			_snapManager = 0;
+		}
+	}
+
 	private Component ComponentAt(uint address)
 	{
 		if (!_components.TryGetValue(address, out Component? component))
@@ -249,6 +318,7 @@ public sealed class Engine_CameraRig
 				c.TargetStated = true;
 				c.Position = c.Target;
 				c.PositionKnown = true;
+				c.Stepped = false;
 				break;
 			case Call.SetDirection:
 				Aim(c, Engine_CameraQuat.FromDirection(s.Vector(0)));
@@ -286,6 +356,7 @@ public sealed class Engine_CameraRig
 			case Call.SetFovCut:
 				c.FovTarget = s.Values[0] * DegreesToRadians;
 				c.Fov = c.FovTarget;
+				c.Stepped = false;
 				break;
 			case Call.SetRoll:
 				c.RollTarget = s.Values[0] * DegreesToRadians;
@@ -293,6 +364,7 @@ public sealed class Engine_CameraRig
 			case Call.SetRollCut:
 				c.RollTarget = s.Values[0] * DegreesToRadians;
 				c.Roll = c.RollTarget;
+				c.Stepped = false;
 				break;
 			case Call.AddShake:
 				c.Shake += s.Values[0];
@@ -334,6 +406,7 @@ public sealed class Engine_CameraRig
 		c.Current = c.TargetOrientation;
 		c.Orientation = c.Current;
 		c.OrientationKnown = c.TargetOrientationStated;
+		c.Stepped = false;
 	}
 
 	/// <summary>The easing step, by the law, on the inputs it stated.</summary>
@@ -411,6 +484,9 @@ public sealed class Engine_CameraRig
 		c.Fov = (c.FovTarget - c.Fov) * f + c.Fov;
 		c.LastShake = shake;
 		c.Shake = 0f;
+		c.StepFactor = f;
+		c.StepTurnFactor = turnFactor;
+		c.Stepped = true;
 
 		if (c.Remaining != 0)
 		{
@@ -456,7 +532,14 @@ public sealed class Engine_CameraRig
 		manager.Player = s.Player;
 		manager.Drawn = (s.Flags & FlagDrawn) != 0;
 		manager.Previous = manager.Live;
+		manager.PreviousEase = manager.LiveEase;
 		manager.Live = manager.Active?.Block;
+		manager.LiveEase = manager.Active?.Ease ?? default;
+		if (manager.Live is { Cut: true })
+		{
+			++manager.Cuts;
+		}
+
 		manager.LastPushFrame = s.GuestFrame;
 		++manager.Pushes;
 

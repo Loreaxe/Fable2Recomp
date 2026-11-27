@@ -55,6 +55,15 @@ public static class CoopHeroLua
 			return fn
 		end
 
+		-- What this Lua reports goes to the refii log (Refii.log: "[mod lua] [refii] ..."). The guest's
+		-- own `print` writes to its C runtime's stdout (luaB_print TU1 0x82A26200 / `fputs`), which no
+		-- log reads. Never yields.
+		function C.Say(text)
+			if Refii ~= nil and Refii.log ~= nil then
+				Refii.log("[refii] " .. tostring(text))
+			end
+		end
+
 		-- THE FROZEN TRAMPOLINES. A saved thread keeps each frame's pc and finds the frame's function
 		-- again BY NAME on load (TU1 pluto_unpersistthread 0x82BFBA60: savedpc = the code of whatever
 		-- the name holds now + the saved pc; pluto_unpersist 0x82BFBF90 looks a permanent up in the
@@ -81,9 +90,10 @@ public static class CoopHeroLua
 		-- with it). Its fields, each set around a call and put back after it (C.WithFlag, C.RunScoped):
 		--   acting      the acting entry (C.Entry)         hidden      GetPlayerHenchman() answers nil
 		--   job         a job sign's thread                dog         GetDog() is player two's dog
-		--   sleep_user  who sleeps (SleepFunction.Sleep)   presenting  the joiner's own bed scene
-		--   silent      the host's silent bed thread       despawn     either hero's view counts
+		--   sleep_user  who sleeps (SleepFunction.Sleep)   despawn     either hero's view counts
 		--   hud_both    a HUD suggestion leaves both heroes
+		--   joiner_use  the host's run of a joiner's use   bonus_host  its bonus effects (the joiner's own)
+		--   mirror      the joiner's own run of a bonus
 		-- SAVED WITH THE GAME for every thread the save holds (below): a thread loaded mid-scope
 		-- resumes inside it. An outer scope's value waits in the Call1 frame that puts it back, which
 		-- the save carries too, so the innermost value is all a record keeps.
@@ -217,6 +227,25 @@ public static class CoopHeroLua
 			end
 		end
 
+		-- PLAYER TWO IS A HERO ONLY WHEN THEY BROUGHT ONE: a character from a save (Refii._two_is_hero,
+		-- the payload's one statement of it, refii_bridge_two_is_hero). Every hero-only rule below — the
+		-- hero the world's AI deals with, quests, shops, beds, chests and silver keys, opinion, family,
+		-- followers, gifts, property, jobs, crime, the knocked-down scars, the dog — reads player two
+		-- through C.HeroTwo(), nil for the plain henchman, so the shipped scripts treat the henchman
+		-- exactly as the 360 did (no partner of theirs: hero one acts). Presentation and the mod API
+		-- read player two as they stand: the cameras, their combat state, THE ROUTE's boxes on their
+		-- screen, Refii.run_as_player / show_to_player (C.RunAsPlayer).
+		function C.TwoIsHero()
+			return Refii ~= nil and Refii._two_is_hero ~= nil and Refii._two_is_hero() == true
+		end
+
+		function C.HeroTwo()
+			if not C.TwoIsHero() then
+				return nil
+			end
+			return C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+		end
+
 		-- The hero a script acts for, by the coroutine it runs in (its record's `acting`, above).
 		-- Outside any coroutine (a behaviour's PrepareToRun, a plain
 		-- call) it is C.MainActing: the main thread cannot yield, so it is set and restored
@@ -276,14 +305,14 @@ public static class CoopHeroLua
 				return false
 			end
 			local one = C.ShippedGetPlayerHero and C.ShippedGetPlayerHero()
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			return (one ~= nil and entity == one) or (two ~= nil and entity == two)
 		end
 
 		-- The other hero: player one for player two, else player two (nil without a partner).
 		function C.Other(hero)
 			local one = C.ShippedGetPlayerHero and C.ShippedGetPlayerHero()
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if two ~= nil and hero ~= nil and hero == two then
 				return one
 			end
@@ -334,9 +363,10 @@ public static class CoopHeroLua
 		-- Runs fn as `entity` when it is either hero: GetPlayerHero() answers that hero and
 		-- GetPlayerHenchman() the other — each the other's partner, as Fable 3's two heroes are.
 		-- Player one is pinned (C.PinOne), so the AI's nearer hero does not replace them. Any other
-		-- entity, or no partner in the game, runs fn as it stands.
-		function C.RunAs(entity, fn, ...)
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+		-- entity, or no partner in the game, runs fn as it stands. C.RunAs is the world's: a plain
+		-- henchman is no hero to it (C.HeroTwo). C.RunAsPlayer is presentation's and the mod API's:
+		-- player two as they stand, henchman or hero.
+		local function RunAsOf(two, entity, fn, ...)
 			if entity == nil or two == nil then
 				return fn(...)
 			end
@@ -348,12 +378,19 @@ public static class CoopHeroLua
 			end
 			return fn(...)
 		end
+		function C.RunAs(entity, fn, ...)
+			return RunAsOf(C.HeroTwo(), entity, fn, ...)
+		end
 		C.Permanent(C.RunAs, "RunAs")
+		function C.RunAsPlayer(entity, fn, ...)
+			return RunAsOf(C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman(), entity, fn, ...)
+		end
+		C.Permanent(C.RunAsPlayer, "RunAsPlayer")
 
 		-- Runs fn with the acting hero asked of `resolve(arg)` on every read: a hero, or nil for
 		-- player one (pinned). `resolve` must be a permanent (see the entry note above).
 		function C.RunResolved(resolve, arg, fn, ...)
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if two == nil then
 				return fn(...)
 			end
@@ -364,7 +401,7 @@ public static class CoopHeroLua
 		-- Player two while player two is nearer `entity` than player one, else nil (player one):
 		-- the native Refii.player_for's answer (see C.AIHeroFor) where the payload has it.
 		C.NearerPartner = C.Permanent(function(entity)
-			local partner = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local partner = C.HeroTwo()
 			local hero = C.ShippedGetPlayerHero and C.ShippedGetPlayerHero()
 			if entity == nil or not entity:IsAlive() or partner == nil or not partner:IsAlive() then
 				return nil
@@ -541,7 +578,7 @@ public static class CoopHeroLua
 		-- (GetGift: MessageEvents' gift event) whose sender is the giver; PrepareToRun reads it, and
 		-- the behaviour runs as them from then on (self.RefiiGiver, kept with the behaviour).
 		function C.GiftGiver(behaviour)
-			local partner = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local partner = C.HeroTwo()
 			if behaviour == nil or partner == nil or type(behaviour.GetGift) ~= "function" then
 				return nil
 			end
@@ -580,6 +617,9 @@ public static class CoopHeroLua
 		-- target of the player who is engaging — player one's when they are in range of it, else
 		-- player two's — and the distance test accepts player two targeting the giver from range.
 		local function HenchmanTargeting(entity)
+			if not C.TwoIsHero() then
+				return false
+			end
 			local henchman = GetPlayerHenchman and GetPlayerHenchman()
 			if henchman == nil or not henchman:IsAlive() then
 				return false
@@ -687,7 +727,7 @@ public static class CoopHeroLua
 			if entity == nil or Refii == nil or Refii.handle == nil or Refii.local_hero == nil then
 				return false
 			end
-			local henchman = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local henchman = C.HeroTwo()
 			return henchman ~= nil and entity == henchman and Refii.handle(entity) == Refii.local_hero()
 		end
 
@@ -744,7 +784,7 @@ public static class CoopHeroLua
 		-- own: after a load it is unknown, and an unknown ticket is a refusal, never an endless wait.
 		C.ConsentOpen = C.ConsentOpen or {}
 		function C.ConsentBegin(user, kind, detail)
-			local henchman = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local henchman = C.HeroTwo()
 			if henchman == nil or not henchman:IsAlive() or Refii == nil or Refii._consent_ask == nil then
 				return true, true
 			end
@@ -830,7 +870,7 @@ public static class CoopHeroLua
 				local item = self and self.ItemBeingUsed
 				local user = self and self.EntityUsingItem
 				if item ~= nil and user ~= nil and item:IsAlive() and Refii ~= nil and Refii._key_taken ~= nil then
-					local henchman = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+					local henchman = C.HeroTwo()
 					local player = (henchman ~= nil and user == henchman) and 2 or 1
 					if Refii._key_taken(Refii.handle(item), player) == 1 then
 						if henchman == nil or not henchman:IsAlive() then
@@ -857,16 +897,27 @@ public static class CoopHeroLua
 			C.TakeItems = C.Permanent(function(self, ...)
 				local chest = self and self.ItemBeingUsed
 				local user = self and self.EntityUsingItem
+				if C.JoinerUse() ~= nil and chest ~= nil and chest:IsAlive() then
+					C.Say("use run: a chest for player two: open " .. tostring(Chest.IsAvailable(chest) and Chest.IsOpen(chest))
+						.. ", items " .. tostring(Inventory.IsAvailable(chest) and Inventory.GetNumberOfItems(chest) or "none")
+						.. ", gold " .. tostring(Money.IsAvailable(chest) and Money.Get(chest) or "none"))
+				end
 				if chest == nil or user == nil or not chest:IsAlive() or not Chest.IsAvailable(chest) or Refii == nil
 					or Refii.uid == nil or Chest.GetNumberOfSilverKeysNeeded(chest) <= 0 then
 					return shipped(self, ...)
 				end
 				local one = C.ShippedGetPlayerHero and C.ShippedGetPlayerHero()
-				local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+				local two = C.HeroTwo()
 				local player = (two ~= nil and user == two) and 2 or 1
 				local partner = player == 2 and one or two
 				local handle = Refii.handle(chest)
 				local key = "refii.chest." .. tostring(Refii.uid(handle))
+				if player == 2 and C.JoinerUse() ~= nil then
+					C.Say("use run: a silver-key chest needs " .. tostring(Chest.GetNumberOfSilverKeysNeeded(chest))
+						.. "; player two holds " .. tostring(Inventory.IsAvailable(user)
+							and Inventory.GetNumberOfItemsOfType(user, "ObjectInventorySilverKey") or "no inventory")
+						.. " here; opened by them before: " .. tostring(Refii.player_value(player, key, 0) ~= 0))
+				end
 				if Refii.player_value(player, key, 0) ~= 0 then
 					return
 				end
@@ -945,7 +996,7 @@ public static class CoopHeroLua
 			if mode ~= 1 and mode ~= 2 then
 				return
 			end
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if two ~= nil and two:IsAlive() then
 				C.RestoreChestsNear(two)
 			end
@@ -968,7 +1019,7 @@ public static class CoopHeroLua
 			if type(message) == "table" and EMessageEventType ~= nil and
 				message.type == EMessageEventType.MESSAGE_EVENT_REVIVING_HENCHMAN then
 				local two = message.to
-				local henchman = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+				local henchman = C.HeroTwo()
 				if two ~= nil and two == henchman and two:IsAlive() and Morph ~= nil and Morph.AddRandomScar ~= nil then
 					local scars = 1
 					if Creature.IsAugmentedWithType(two, EAugmentationType.AUGMENTATION_SCAR) then
@@ -1023,7 +1074,7 @@ public static class CoopHeroLua
 			for name, shipped in pairs(OpinionReaction) do
 				if type(shipped) == "function" and not skip[name] then
 					OpinionReaction[name] = C.Permanent(function(villager, ...)
-						local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+						local two = C.HeroTwo()
 						if two == nil or villager == nil then
 							return shipped(villager, ...)
 						end
@@ -1113,7 +1164,7 @@ public static class CoopHeroLua
 		-- Runs fn (which never yields) with GetDog() answering `hero`'s own dog.
 		function C.WithDogOf(hero, fn, ...)
 			local before = C.DogPlayer
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			C.DogPlayer = (two ~= nil and hero == two) and 2 or 1
 			local results = { pcall(fn, ...) }
 			C.DogPlayer = before
@@ -1150,7 +1201,7 @@ public static class CoopHeroLua
 		-- the two does not flip heroes every frame); one hero standing, that hero. Player two, or
 		-- nil for player one.
 		function C.AIHeroFor(entity)
-			local partner = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local partner = C.HeroTwo()
 			if entity == nil or partner == nil then
 				return nil
 			end
@@ -1185,7 +1236,7 @@ public static class CoopHeroLua
 			local shipped = rawget(table_, shipped_key)
 			table_[method] = C.Permanent(function(self, ...)
 				local entity = entity_of(self, ...)
-				local partner = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+				local partner = C.HeroTwo()
 				if entity == nil or partner == nil then
 					return shipped(self, ...)
 				end
@@ -1341,7 +1392,7 @@ public static class CoopHeroLua
 			end
 			local shipped = rawget(table_, shipped_key)
 			table_[method] = C.Permanent(function(self, ...)
-				local henchman = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+				local henchman = C.HeroTwo()
 				if henchman == nil or self == nil or self.EntityUsingItem ~= henchman then
 					return shipped(self, ...)
 				end
@@ -1418,7 +1469,7 @@ public static class CoopHeroLua
 				local shipped = class[method]
 				rawset(class, "RefiiShippedScreen" .. method, shipped)
 				class[method] = C.Permanent(function(self, ...)
-					local partner = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+					local partner = C.HeroTwo()
 					if partner == nil or self == nil or Refii == nil or Refii._partner_screen == nil
 						or Dog.GetMaster(self.Entity) ~= partner then
 						return shipped(self, ...)
@@ -1591,16 +1642,690 @@ public static class CoopHeroLua
 
 		-- PROPERTY: the real-estate screen resolves its buyer natively, as hero one; opened from a
 		-- sale sign player two used (OnActionUseSaleSign runs as its user, above), it buys for
-		-- player two (coop_ui_hooks.cpp, RefiiCoopEstateBuyer).
+		-- player two (coop_ui_hooks.cpp, RefiiCoopEstateBuyer). On an online joiner it is always the
+		-- joiner's own hero. No screen opens when that buyer's use target is no sale sign with a
+		-- building (mod_events.cpp RefiiEstateBuyerOpens).
 		if GUI ~= nil and GUI.DisplayRealEstateScreen ~= nil and GUI.DisplayRealEstateScreen ~= C.DisplayRealEstateScreen then
 			local shipped = GUI.DisplayRealEstateScreen
 			C.DisplayRealEstateScreen = C.Permanent(function(...)
 				if Refii ~= nil and Refii._estate_buyer ~= nil then
-					Refii._estate_buyer(Refii.acting_player ~= nil and Refii.acting_player() or (C.Acting() ~= nil and 2 or 1))
+					local buyer = Refii.acting_player ~= nil and Refii.acting_player() or (C.Acting() ~= nil and 2 or 1)
+					if not Refii._estate_buyer(buyer == 2 and C.TwoIsHero() and 2 or 1) then
+						return
+					end
 				end
 				return shipped(...)
 			end, "DisplayRealEstateScreen")
 			GUI.DisplayRealEstateScreen = C.DisplayRealEstateScreen
+		end
+
+		-- AN ONLINE JOINER'S USES. A use makes the thing's script and hands it to
+		-- GeneralScriptManager.AddScript by name (`sub_82460CF8` 0x82460D34 / disc `sub_825B4EB0`
+		-- 0x825B4EEC): a placed thing's from `CECOnActionUse_Use` (`Create` on the class comp78+12 names,
+		-- TU1 0x82821DD4 / disc 0x82753854), a carried item's from `lhEntity_UseInventoryItem`
+		-- (0x823E1290 / disc 0x823BFC58). The script system's frame update resumes those scripts — never
+		-- on a client: `sub_82281FE0` reads the net context's session and client flags (game+0x8C,
+		-- `lbz r9,0x34` / `lbz r11,0x36`, TU1 0x82282064 / 0x82282070; disc `sub_82281CE0` 0x82281D64 /
+		-- 0x82281D70) and skips every Lua update (`bne loc_822821D4` 0x8228208C). Nor does a client build
+		-- what most of them drive (mod_events.cpp, the joiner's use: Health, Bed, Readable, Switch, Mana,
+		-- the bonus container). So the HOST runs every use of the joiner's hero two for its own copy of
+		-- that hero: a placed thing's as the joiner names it (`useat`, mod_events.cpp
+		-- rex_CECOnActionUse_Use), a carried item's through `carry` (Refii._use_carried, below) with the
+		-- target the joiner's hero had, and the world changes there, reaching the joiner the guest's own
+		-- way. The run acts for player two (CoState `acting`), so what it shows player two goes to the
+		-- joiner on THE ROUTE (below), and its questions wait for the joiner's answers there.
+		-- The joiner runs only what changes nothing but its own hero and states itself to the host
+		-- (C.JoinerRunsHere): the sale sign (its screen sends every action to the host, mod_events.cpp
+		-- EstateForwards; first it tells the host which sign, Refii._estate_look, and waits at most
+		-- C.SignWaitFrames for the host's book of that building, Refii._estate_ready), the lantern (Light
+		-- 8, SendLightActivePacket net 0xAB), the lute, trophy and ball expressions
+		-- (CECExpressionPerformer_vf14 sends net 0x10E from a client, TU1 0x82416FDC / 0x82416FE8) and
+		-- the empty scripts. Those it resumes itself, as GeneralScriptManager.Update would, once a world
+		-- frame (the camera's FrameUpdate, below), as their user. The costume suits are the host's:
+		-- clothing goes out only from a machine whose net context has +0x34 and +0x35 set
+		-- (`sub_824C5528` net 0xD6 / `sub_824BF6C0` 0xD9), and its receive puts the piece into the
+		-- receiver's own inventory before it dresses it (`sub_824C5718`: CECInventory_FindItemByRecordHash,
+		-- else CECInventory_AddOneOfRecord, then AddAndReplaceItem), so the joiner's hero and save get the
+		-- suit. The plain henchman keeps the 360's: C.HeroTwo() is nil for them, so nothing here is theirs.
+		-- A sign with no host book by C.SignWaitFrames is dropped and no page opens: a page of this
+		-- machine's own copy would show a price the host does not charge (A on the sign asks again).
+		C.JoinerSigns = C.JoinerSigns or {}
+		C.SignWaitFrames = 90
+		C.JoinerRunsHere = {}
+		for _, name in ipairs({ "OnActionUseSaleSign", "OnCarriedActionUseLantern", "OnCarriedActionUseLute",
+			"OnCarriedActionUseTrophy", "OnCarriedActionUseDogBall", "OnCarriedActionUseDye", "OnCarriedActionUseFishingRod",
+			"OnCarriedActionUseGuildSeal" }) do
+			if type(_G[name]) == "table" then
+				C.JoinerRunsHere[_G[name]] = name
+			end
+		end
+
+		-- The use class a script was made from (`OnActionUseBase:new` sets each class as its subclasses'
+		-- and instances' metatable), or false; and a class's global name.
+		function C.UseClass(script)
+			local class = getmetatable(script)
+			for _ = 1, 16 do
+				if type(class) ~= "table" then
+					return false
+				end
+				if class == OnCarriedActionUseBase or class == OnActionUseBase then
+					return getmetatable(script)
+				end
+				class = getmetatable(class)
+			end
+			return false
+		end
+
+		function C.ClassName(class)
+			if C.JoinerRunsHere[class] ~= nil then
+				return C.JoinerRunsHere[class]
+			end
+			for name, value in pairs(_G) do
+				if value == class and type(name) == "string" then
+					return name
+				end
+			end
+			return nil
+		end
+
+		function C.HostsJoiner()
+			return Refii ~= nil and Refii.coop_mode ~= nil and Refii.coop_mode() == 2
+		end
+
+		-- The use of the joiner's hero two this coroutine is the host's run of: { target = the uid its
+		-- hero targeted, or nil }, saved with the thread (C.CoState), nil anywhere else.
+		function C.JoinerUse()
+			return C.CoGet(coroutine.running(), "joiner_use")
+		end
+
+		C.JoinerUseAdded = C.Permanent(function(state, ...)
+			local co = state.script.co_update
+			if type(co) == "thread" then
+				C.CoSet(co, "joiner_use", { target = state.target })
+				C.CoSet(co, "acting", state.hero)
+			end
+			return ...
+		end, "JoinerUseAdded")
+
+		if GeneralScriptManager ~= nil and GeneralScriptManager.AddScript ~= nil
+			and GeneralScriptManager.AddScript ~= C.AddScript then
+			local shipped = GeneralScriptManager.AddScript
+			C.AddScript = C.Permanent(function(script, ...)
+				local two = C.HeroTwo()
+				if two == nil or type(script) ~= "table" or script.EntityUsingItem ~= two then
+					return shipped(script, ...)
+				end
+				local class = C.UseClass(script)
+				if not class then
+					return shipped(script, ...)
+				end
+				if C.IsJoiner() then
+					if C.JoinerRunsHere[class] ~= nil and type(script.Update) == "function" then
+						script.co_update = coroutine.create(script.Update)
+						local wait = 0
+						if class == OnActionUseSaleSign then
+							local sign = script.ItemBeingUsed
+							if Refii ~= nil and Refii._estate_look ~= nil and sign ~= nil and sign:IsAlive() then
+								Refii._estate_look(sign)
+							end
+							wait = C.SignWaitFrames
+						end
+						C.JoinerSigns[#C.JoinerSigns + 1] = { script = script, wait = wait }
+						return
+					end
+					-- A carried item the host's run uses for hero two, with what this hero targets; nothing
+					-- runs here. (The Balverine suit's class is made from OnActionUseBase, so its item is
+					-- ItemBeingUsed; an entity there is no item, Refii._use_carried refuses it.)
+					local name = C.ClassName(class)
+					local item = script.InventoryItemBeingUsed or script.ItemBeingUsed
+					local target = Targeting ~= nil and Targeting.GetTarget ~= nil and Targeting.GetTarget(two) or nil
+					local aimed = target ~= nil and target:IsAlive() and Refii.uid(target) or nil
+					if name ~= nil and item ~= nil and Refii ~= nil and Refii._use_carried ~= nil
+						and Refii._use_carried(item, name, aimed) then
+						return
+					end
+					return shipped(script, ...)
+				end
+				if C.HostsJoiner() then
+					-- The joiner runs its own sign (above).
+					if class == OnActionUseSaleSign then
+						return
+					end
+					C.Say("the joiner's " .. tostring(C.ClassName(class)) .. " runs here for player two")
+					C.WrapEntitySetPosition(two)
+					local target = Refii._use_stated_target ~= nil and Refii._use_stated_target() or nil
+					return C.Call1(C.JoinerUseAdded, { script = script, hero = two, target = target }, shipped, script, ...)
+				end
+				return shipped(script, ...)
+			end, "AddScript")
+			GeneralScriptManager.AddScript = C.AddScript
+		end
+
+		function C.JoinerSignTick()
+			if #C.JoinerSigns == 0 or Timing == nil then
+				return
+			end
+			local frame = Timing.GetWorldFrame()
+			if C.JoinerSignFrame == frame then
+				return
+			end
+			C.JoinerSignFrame = frame
+			local waiting = C.JoinerSigns
+			C.JoinerSigns = {}
+			for _, entry in ipairs(waiting) do
+				local script = entry.script
+				local sign = script.ItemBeingUsed
+				local keep = true
+				if entry.wait > 0 and sign ~= nil and sign:IsAlive() and Refii._estate_ready ~= nil
+					and not Refii._estate_ready(sign, entry.wait) then
+					entry.wait = entry.wait - 1
+					if entry.wait == 0 then
+						keep = false
+					end
+				else
+					entry.wait = 0
+					-- THE CUTSCENE RULE IS THE HOST'S: a foreground cutscene's NO_PROPERTY_SCREEN is set on the
+					-- host's copy of this hero, never on this machine's (the client runs no Lua update), so while
+					-- the script runs its rule test asks the host's answer (Refii._estate_blocked,
+					-- coop_estate_statements.cpp); every other rule stays this copy's.
+					local shipped_rule = Player ~= nil and Player.IsInteractiveCutsceneRuleSet or nil
+					if shipped_rule ~= nil and Refii._estate_blocked ~= nil then
+						Player.IsInteractiveCutsceneRuleSet = function(hero, rule)
+							if rule == 65536 then
+								return Refii._estate_blocked()
+							end
+							return shipped_rule(hero, rule)
+						end
+					end
+					local ok, err = coroutine.resume(script.co_update, script)
+					if shipped_rule ~= nil then
+						Player.IsInteractiveCutsceneRuleSet = shipped_rule
+					end
+					if not ok then
+						C.Say("the joiner's use script failed: " .. tostring(err))
+						keep = false
+					elseif coroutine.status(script.co_update) == "dead" then
+						keep = false
+					end
+				end
+				if keep then
+					C.JoinerSigns[#C.JoinerSigns + 1] = entry
+				end
+			end
+		end
+
+		-- THE JOINER'S TARGET, once a world frame on the joiner: its hero's use target goes to the host
+		-- when it changes (mod_events.cpp `usetarget`), where the host's interact for the joiner's
+		-- request reads it (coop_estate_owner.cpp rex_CECUseTarget_Target) — the villager the joiner
+		-- talks to, the shopkeeper, the travel agent.
+		function C.JoinerTargetTick()
+			if Refii ~= nil and Refii._use_target_state ~= nil and C.IsJoiner() and C.HeroTwo() ~= nil then
+				Refii._use_target_state()
+			end
+		end
+
+		-- THE HOST'S RUN OF A JOINER'S USE (C.JoinerUse). It acts for player two, so THE ROUTE sends what
+		-- it shows them to the joiner — boxes, info boxes, the gold card, tutorials, fades, movies, the
+		-- d-pad, volume, the canned-action camera, a door's locked message, guild messages, every Player
+		-- call on hero two's copy — and its questions wait there for the joiner's answer. What the route
+		-- cannot carry by itself is stated here:
+		--   * the received card: an inventory item is no entity, so it goes by its record
+		--     (Refii._received_item on the joiner, whose own item it shows; the item itself `invadd`);
+		--   * the waits on this machine's own UI (GUI.IsUIActive, IsDisplayBoxActive, SleepMenu.IsVisible)
+		--     answer no: the joiner's boxes queue on the joiner;
+		--   * the sleep menu is `SleepMenu_Show`'s own box (TU1 0x8243D5A8 / disc 0x825EE158: the title
+		--     SLEEP_LENGTH, the rows SLEEP_FOR_SIX_HOURS, _TWELVE_HOURS, _TWENTYFOUR_HOURS, _SEVEN_DAYS)
+		--     asked as GUI.ShowMenuBox on the route; its answer is the bed's sleep type as the box's
+		--     handler stores it (`sub_8243D328` / disc `sub_825EDED8`: the menu box message's +28 into
+		--     the bed's comp182 +16);
+		--   * hero two's body is the joiner's: an action set on it plays there (RefiiCoop.JoinerAct, a
+		--     question answered when it has played), and its teleport and facing are set there; an
+		--     OPEN_CHEST action's own effect, `Lua_Chest_Open` on the chest (NAction__CAction_OpenChest
+		--     vf19 TU1 0x8276DC58 — the anim event's PERFORM, which CAction_OnAnimEvent 0x82709938 runs
+		--     on any machine), is then made here, where the chest is the world's (`sub_82594C20` sends
+		--     its state from the authority, `sub_82214AF8`) — so the script's `Chest.IsOpen` wait ends;
+		--   * a target the script asks of hero two (Targeting.GetTarget: rings, the photo) is the one the
+		--     joiner's hero had (the `carry` statement's);
+		--   * hero two's own unreplicated state: inventory adds and removes (`invadd`, `invdel`: no
+		--     CECInventory function builds a net message), counted stats and achievements
+		--     (Refii._household_context, mod_events.cpp `stat` / `ach`), the had-a-sex-change flag and
+		--     sobering up (both machines), a scar's removal (one pick, here; the same scar there);
+		--   * the dog's rename screen opens on the joiner for player two's dog, and the name comes back;
+		--   * speakers the run makes talk (SaySimLine, Talk.Talk: the knock-door answer) are heard there.
+		-- Gold, morality, purity, renown, experience, health, age, clothing, the entity type, time,
+		-- doors and chests are the host's and the guest sends them on.
+		function C.JoinerShows(class, tag, name, make)
+			if type(class) ~= "table" or type(class[name]) ~= "function" or rawget(class, "RefiiJoinerShown" .. name) ~= nil then
+				return
+			end
+			local shipped = class[name]
+			rawset(class, "RefiiJoinerShown" .. name, shipped)
+			class[name] = C.Permanent(make(shipped), "JoinerUse." .. tag .. "." .. name)
+		end
+
+		-- A command for the joiner on the route (nothing when it cannot travel).
+		function C.JoinerCommand(name, ...)
+			if C.RouteRemote ~= nil and C.RouteRemote(2) and not C.CoGet(coroutine.running(), "bonus_host") then
+				C.RouteOut(2, name, { mode = "c" }, ...)
+			end
+		end
+
+		C.UseSleepAnswered = C.Permanent(function(state, value)
+			local sleep_type = ESleepType.SLEEP_NONE
+			if value ~= nil and value >= 1 and value <= 4 then
+				sleep_type = value
+			end
+			if state.bed ~= nil and state.bed:IsAlive() then
+				Bed.SetSleepType(state.bed, sleep_type)
+			end
+		end, "UseSleepAnswered")
+
+		C.JoinerShows(GUI, "GUI", "DisplayReceivedItem", function(shipped)
+			return function(item, ...)
+				if C.JoinerUse() == nil then
+					return shipped(item, ...)
+				end
+				local hash = Refii._item_record(item)
+				C.Say("use run: the received card " .. tostring(hash) .. " goes to the joiner")
+				if hash ~= nil then
+					C.JoinerCommand("Refii._received_item", hash)
+				end
+			end
+		end)
+		for _, name in ipairs({ "IsUIActive", "IsDisplayBoxActive" }) do
+			C.JoinerShows(GUI, "GUI", name, function(shipped)
+				return function(...)
+					if C.JoinerUse() ~= nil then
+						return false
+					end
+					return shipped(...)
+				end
+			end)
+		end
+		C.JoinerShows(SleepMenu, "Sleep", "ShowSleepMenu", function(shipped)
+			return function(bed, ...)
+				if C.JoinerUse() == nil then
+					return shipped(bed, ...)
+				end
+				return C.Call1(C.UseSleepAnswered, { bed = bed }, GUI.ShowMenuBox, {}, "SLEEP_LENGTH", "SLEEP_FOR_SIX_HOURS",
+					"SLEEP_FOR_TWELVE_HOURS", "SLEEP_FOR_TWENTYFOUR_HOURS", "SLEEP_FOR_SEVEN_DAYS")
+			end
+		end)
+		C.JoinerShows(SleepMenu, "Sleep", "IsVisible", function(shipped)
+			return function(...)
+				if C.JoinerUse() ~= nil then
+					return false
+				end
+				return shipped(...)
+			end
+		end)
+		-- Counted for the joiner: the natives forward while the household context stands (they never
+		-- yield, so pcall is safe).
+		for _, name in ipairs({ "ModifyTrackedStat", "UnlockAchievement" }) do
+			C.JoinerShows(Stats, "Stats", name, function(shipped)
+				return function(...)
+					if C.JoinerUse() == nil or Refii._household_context == nil then
+						return shipped(...)
+					end
+					if C.CoGet(coroutine.running(), "bonus_host") then
+						return nil
+					end
+					Refii._household_context(true)
+					local results = { pcall(shipped, ...) }
+					Refii._household_context(false)
+					if not results[1] then
+						error(results[2], 0)
+					end
+					return unpack(results, 2, table.maxn(results))
+				end
+			end)
+		end
+		-- Hero two's inventory, restated to the joiner. The natives never yield (pcall is safe); an
+		-- item's record is read before it goes.
+		function C.UseInventoryNote(action, hash, count)
+			if hash ~= nil and Refii._household ~= nil and not C.CoGet(coroutine.running(), "bonus_host") then
+				C.Say("use run: " .. action .. " " .. tostring(hash) .. " x" .. tostring(count or 1) .. " for the joiner")
+				Refii._household(action, hash, count or 1)
+			end
+		end
+		for _, name in ipairs({ "AddItem", "AddItemOfType", "AddEntity" }) do
+			C.JoinerShows(Inventory, "Inventory", name, function(shipped)
+				return function(entity, ...)
+					if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() then
+						return shipped(entity, ...)
+					end
+					local results = { pcall(shipped, entity, ...) }
+					if not results[1] then
+						error(results[2], 0)
+					end
+					C.UseInventoryNote("invadd", results[2] ~= nil and Refii._item_record(results[2]) or nil)
+					return unpack(results, 2, table.maxn(results))
+				end
+			end)
+		end
+		C.JoinerShows(Inventory, "Inventory", "RemoveItem", function(shipped)
+			return function(entity, item, ...)
+				if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() then
+					return shipped(entity, item, ...)
+				end
+				local hash = Refii._item_record(item)
+				local results = { pcall(shipped, entity, item, ...) }
+				if not results[1] then
+					error(results[2], 0)
+				end
+				C.UseInventoryNote("invdel", hash)
+				return unpack(results, 2, table.maxn(results))
+			end
+		end)
+		C.JoinerShows(Inventory, "Inventory", "RemoveItemOfType", function(shipped)
+			return function(entity, name, ...)
+				if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() or type(name) ~= "string" then
+					return shipped(entity, name, ...)
+				end
+				local before = Inventory.GetNumberOfItemsOfType(entity, name)
+				local results = { pcall(shipped, entity, name, ...) }
+				if not results[1] then
+					error(results[2], 0)
+				end
+				if Inventory.GetNumberOfItemsOfType(entity, name) < before then
+					C.UseInventoryNote("invdel", Refii.hash(name))
+				end
+				return unpack(results, 2, table.maxn(results))
+			end
+		end)
+		-- A gift the run gives (a ring) leaves the joiner's inventory only when its villager keeps it:
+		-- the host's acceptance goes to the joiner (`giftkept`, mod_events.cpp), a refusal is refunded
+		-- on the host's copy.
+
+		-- The target the joiner's hero had when it used the carried item (rings, the photo).
+		C.JoinerShows(Targeting, "Targeting", "GetTarget", function(shipped)
+			return function(entity, ...)
+				local use = C.JoinerUse()
+				if use == nil or use.target == nil or entity == nil or entity ~= C.HeroTwo() or Refii._by_uid == nil then
+					return shipped(entity, ...)
+				end
+				local handle = Refii._by_uid(use.target)
+				local target = handle ~= nil and Refii.entity(handle) or nil
+				if target ~= nil and target:IsAlive() then
+					return target
+				end
+				return shipped(entity, ...)
+			end
+		end)
+
+		-- HERO TWO'S BODY IS PLAYED ON THE JOINER. An action set on it in the run plays there, and the
+		-- run waits until it has played (a route question); a chest's opening action then opens the
+		-- chest here, as the action's own PERFORM would have.
+		C.JoinerActAfter = C.Permanent(function(state, values)
+			local played = type(values) == "table" and values[1] or false
+			if played and state.chest ~= nil and state.chest:IsAlive() and Chest.IsAvailable(state.chest)
+				and not Chest.IsOpen(state.chest) then
+				Chest.Open(state.chest)
+			end
+			local chest = state.chest ~= nil and state.chest:IsAlive() and Chest.IsAvailable(state.chest)
+			C.Say("use run: the joiner answered its action: " .. tostring(played)
+				.. (chest and ("; the chest is open here: " .. tostring(Chest.IsOpen(state.chest))) or ""))
+			return played
+		end, "JoinerActAfter")
+		C.JoinerShows(Action, "Action", "SetCurrentAction", function(shipped)
+			return function(entity, action, ...)
+				if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() or type(action) ~= "table"
+					or not C.RouteRemote(2) then
+					return shipped(entity, action, ...)
+				end
+				local out = C.RouteOut(2, "RefiiCoop.JoinerAct", { mode = "q", default = { false } }, entity, action)
+				if out == nil then
+					C.Say("use run: hero two's action " .. tostring(action.Anim or action.Type) .. " cannot travel; set here")
+					return shipped(entity, action, ...)
+				end
+				C.Say("use run: hero two's action " .. tostring(action.Anim or action.Type) .. " plays on the joiner (question "
+					.. tostring(out.id) .. ")")
+				local chest = nil
+				if EScriptableAction ~= nil and action.Type == EScriptableAction.OPEN_CHEST then
+					chest = action.Target
+				end
+				return C.Call1(C.JoinerActAfter, { chest = chest }, C.Wait1, C.RouteAnswerPoll, out, coroutine.yield)
+			end
+		end)
+		for _, name in ipairs({ "TeleportToPosition", "SetFacingVector" }) do
+			C.JoinerShows(Physics, "Physics", name, function(shipped)
+				return function(entity, ...)
+					if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() or not C.RouteRemote(2) then
+						return shipped(entity, ...)
+					end
+					C.JoinerCommand("Physics." .. name, entity, ...)
+				end
+			end)
+		end
+
+		-- `entity:SetPosition(pos)` (the use dummy the chest, switch, knock and tap scripts stand their
+		-- user on) is a method of the Entity userdata's metatable: on hero two in a run it is set on the
+		-- joiner's own hero (RefiiCoop.JoinerSetPosition). Wrapped once, on the first run, through the
+		-- metatable of hero two itself.
+		function C.WrapEntitySetPosition(entity)
+			if C.EntitySetPositionWrapped or entity == nil then
+				return
+			end
+			C.EntitySetPositionWrapped = true
+			local mt = getmetatable(entity)
+			local methods = type(mt) == "table" and rawget(mt, "__index") or nil
+			if type(methods) ~= "table" or type(methods.SetPosition) ~= "function" then
+				C.Say("the Entity metatable has no SetPosition to wrap; the joiner's hero is not stood on use dummies")
+				return
+			end
+			local shipped = methods.SetPosition
+			methods.SetPosition = C.Permanent(function(self, ...)
+				if C.JoinerUse() ~= nil and self ~= nil and self == C.HeroTwo() and C.RouteRemote(2) then
+					C.JoinerCommand("RefiiCoop.JoinerSetPosition", self, ...)
+					return
+				end
+				return shipped(self, ...)
+			end, "JoinerUse.Entity.SetPosition")
+		end
+		function RefiiCoop.JoinerSetPosition(hero, ...)
+			if hero ~= nil and hero:IsAlive() then
+				return hero:SetPosition(...)
+			end
+		end
+
+		-- The joiner's half of a routed action: set on its own hero, answered once it has played.
+		C.JoinerActPoll = C.Permanent(function(hero)
+			local done = hero == nil or not hero:IsAlive() or not Action.IsPerformingAnyAction(hero)
+			if done then
+				C.Say("joiner: the host's action has played")
+			end
+			return done, true
+		end, "JoinerActPoll")
+		function RefiiCoop.JoinerAct(hero, action)
+			if hero == nil or not hero:IsAlive() or type(action) ~= "table" or not Action.SetCurrentAction(hero, action) then
+				C.Say("joiner: the host's action " .. tostring(type(action) == "table" and (action.Anim or action.Type) or action)
+					.. " was not set on this hero")
+				return false
+			end
+			C.Say("joiner: playing the host's action " .. tostring(action.Anim or action.Type))
+			return C.Wait1(C.JoinerActPoll, hero, coroutine.yield)
+		end
+
+		-- Speakers the run makes talk are heard on the joiner (mod_events.cpp ForwardSpeech).
+		C.JoinerShows(Talk, "Talk", "Talk", function(shipped)
+			return function(speaker, ...)
+				if C.JoinerUse() ~= nil and speaker ~= nil and Refii._forward_speech ~= nil then
+					Refii._forward_speech(Refii.handle(speaker), 15.0)
+				end
+				return shipped(speaker, ...)
+			end
+		end)
+
+		-- Both machines' copies of hero two: the flag the sex change keeps (the entity type itself is
+		-- the host's to change — lhEntityManager_ChangeEntityType sends net 3 only from a machine whose
+		-- net context has +0x34/+0x35, TU1 0x82365288..0x823652DC / disc 0x82360928..0x82360938, and
+		-- the receive retypes, case 0 of `sub_82392250`; Player.ChangePlayerEntityType stays off the
+		-- route, C.RouteKeep), and sobering up.
+		C.JoinerShows(Gender, "Gender", "SetHasHadSexChange", function(shipped)
+			return function(entity, ...)
+				if C.JoinerUse() ~= nil and entity ~= nil and entity == C.HeroTwo() then
+					C.JoinerCommand("Gender.SetHasHadSexChange", entity, ...)
+				end
+				return shipped(entity, ...)
+			end
+		end)
+		C.JoinerShows(PlayerDrunkenness, "Drunk", "SoberUp", function(shipped)
+			return function(entity, ...)
+				if C.JoinerUse() ~= nil and entity ~= nil and entity == C.HeroTwo() then
+					C.JoinerCommand("PlayerDrunkenness.SoberUp", entity, ...)
+				end
+				return shipped(entity, ...)
+			end
+		end)
+
+		-- A scar's removal is ONE pick, the host's: `Morph.RemoveRandomScar` (TU1 0x825F32B0 / disc
+		-- 0x8248B3E8) draws from the players' generator and erases that entry; the joiner erases the
+		-- same one (Refii._scar_remove), and its own run of a bonus draws none.
+		C.JoinerShows(Morph, "Morph", "RemoveRandomScar", function(shipped)
+			return function(entity, ...)
+				if C.CoGet(coroutine.running(), "mirror") then
+					return nil
+				end
+				if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() or Refii._scars == nil then
+					return shipped(entity, ...)
+				end
+				local before = Refii._scars(entity) or ""
+				local results = { pcall(shipped, entity, ...) }
+				if not results[1] then
+					error(results[2], 0)
+				end
+				local after = Refii._scars(entity) or ""
+				if before ~= after then
+					local index, at = 0, 1
+					for scar in string.gmatch(before, "[^,]+") do
+						local kept = string.match(after, "[^,]+", at)
+						if kept ~= scar then
+							break
+						end
+						at = at + #scar + 1
+						index = index + 1
+					end
+					if C.RouteRemote(2) then
+						C.RouteOut(2, "Refii._scar_remove", { mode = "c" }, entity, index)
+					end
+				end
+				return unpack(results, 2, table.maxn(results))
+			end
+		end)
+
+		-- The dog's rename screen is its player's: for player two's dog it opens on the joiner, and the
+		-- name given there is the dog's here too (Creature.SetPlayerDefinedName, as the co-op kit names it).
+		C.JoinerRenamed = C.Permanent(function(state, values)
+			local name = type(values) == "table" and values[1] or nil
+			if type(name) == "string" and name ~= "" and state.dog ~= nil and state.dog:IsAlive() then
+				Creature.SetPlayerDefinedName(state.dog, name)
+			end
+		end, "JoinerRenamed")
+		C.JoinerShows(Dog, "Dog", "TriggerRenameScreen", function(shipped)
+			return function(dog, ...)
+				if C.JoinerUse() == nil or dog == nil or C.PartnerDog == nil or dog ~= C.PartnerDog() or not C.RouteRemote(2) then
+					return shipped(dog, ...)
+				end
+				local out = C.RouteOut(2, "RefiiCoop.JoinerRenameDog", { mode = "q", default = { false } }, dog)
+				if out == nil then
+					return shipped(dog, ...)
+				end
+				return C.Call1(C.JoinerRenamed, { dog = dog }, C.Wait1, C.RouteAnswerPoll, out, coroutine.yield)
+			end
+		end)
+		-- The screen stands from the frame after it is asked for until its player closes it.
+		C.JoinerRenameIdle = C.Permanent(function(state)
+			state.frames = (state.frames or 0) + 1
+			return state.frames > 2 and not GUI.IsUIActive(), true
+		end, "JoinerRenameIdle")
+		C.JoinerRenameAfter = C.Permanent(function(dog)
+			if dog == nil or not dog:IsAlive() or Refii._dog_name == nil then
+				return false
+			end
+			return Refii._dog_name(Refii.handle(dog)) or false
+		end, "JoinerRenameAfter")
+		function RefiiCoop.JoinerRenameDog(dog)
+			if dog == nil or not dog:IsAlive() then
+				return false
+			end
+			Dog.TriggerRenameScreen(dog)
+			return C.Call1(C.JoinerRenameAfter, dog, C.Wait1, C.JoinerRenameIdle, { frames = 0 }, coroutine.yield)
+		end
+
+		-- POTIONS, FOOD, DRINK AND BOOKS CHANGE THE JOINER'S OWN HERO TOO. ApplyBonusEffects changes the
+		-- host's world — health, mana, experience orbs, morality, purity, the dog — and the user's own
+		-- hero: age, physique, will, scars, the expressions it knows, its drunkenness, its counted stats,
+		-- the item. Of those only the age travels (Lua_Age_SetAge's `sub_82535B10` sends net 0xA9 from
+		-- the host, its +0x34/+0x35 test): physique, expressions, drunkenness, stats and the inventory
+		-- are each machine's own copy, and the joiner's save is written from its own. So the host's run
+		-- tells the joiner first (RefiiCoop.JoinerMirror on the route: the item's record and the script
+		-- class) and the joiner runs the same shipped function on its own hero, with the host's part
+		-- left out there (orbs, drain, morality, purity, the dog, the scar pick; health, mana and the
+		-- bonus container have no component on a client). The host's run then shows, counts and
+		-- restates nothing (CoState `bonus_host`): the joiner's own run does, and takes the item from
+		-- its own inventory.
+		if type(OnCarriedActionUseBase) == "table" and type(OnCarriedActionUseBase.ApplyBonusEffects) == "function"
+			and rawget(OnCarriedActionUseBase, "RefiiShippedBonus") == nil then
+			local shipped = OnCarriedActionUseBase.ApplyBonusEffects
+			rawset(OnCarriedActionUseBase, "RefiiShippedBonus", shipped)
+			OnCarriedActionUseBase.ApplyBonusEffects = C.Permanent(function(self, ...)
+				if C.JoinerUse() == nil or type(self) ~= "table" or Refii._item_record == nil then
+					return shipped(self, ...)
+				end
+				local hash = Refii._item_record(self.InventoryItemBeingUsed)
+				local name = C.ClassName(getmetatable(self))
+				if hash ~= nil and name ~= nil then
+					C.JoinerCommand("RefiiCoop.JoinerMirror", hash, name)
+				end
+				return C.WithFlag("bonus_host", true, shipped, self, ...)
+			end, "JoinerUse.ApplyBonusEffects")
+		end
+
+		-- The joiner's run of a host's bonus leaves the host's part to the host.
+		function C.MirrorSkips(class, tag, name)
+			C.JoinerShows(class, tag, name, function(shipped)
+				return function(...)
+					if C.CoGet(coroutine.running(), "mirror") then
+						return nil
+					end
+					return shipped(...)
+				end
+			end)
+		end
+		C.MirrorSkips(ExperienceReward, "MirrorReward", "SpawnExperienceOrbs")
+		C.MirrorSkips(Experience, "MirrorExperience", "Drain")
+		C.MirrorSkips(Stats, "MirrorStats", "ModifyMorality")
+		C.MirrorSkips(Stats, "MirrorStats", "ModifyPurity")
+		for _, name in ipairs({ "RaiseSniffingLevelTo", "RaiseCombatLevelTo", "UnlockTrickIfNecessary", "PerformCommand" }) do
+			C.MirrorSkips(Dog, "MirrorDog", name)
+		end
+		C.MirrorSkips(OnCarriedActionUseBase, "MirrorBase", "ApplyDogChange")
+
+		-- `JoinerMirror` from the host (a route command, run in its own thread as this player): the item
+		-- of that record in this hero's own inventory, used as `name`'s script would use it.
+		function RefiiCoop.JoinerMirror(hash, name)
+			local hero = C.HeroTwo()
+			local class = type(name) == "string" and _G[name] or nil
+			if hero == nil or type(class) ~= "table" or not Inventory.IsAvailable(hero) then
+				return
+			end
+			local item = nil
+			for i = 0, Inventory.GetNumberOfItems(hero) - 1 do
+				local candidate = Inventory.GetItemByIndex(hero, i)
+				if candidate ~= nil and Refii._item_record(candidate) == hash then
+					item = candidate
+					break
+				end
+			end
+			if item == nil then
+				C.Say("the host's " .. tostring(name) .. " names item " .. tostring(hash) .. ", which this hero does not hold")
+				return
+			end
+			local co = coroutine.running()
+			C.CoSet(co, "mirror", true)
+			C.CoSet(co, "dog", true)
+			-- The class's own `new` (OnCarriedActionUseBase:new) makes it the instance's metatable and index.
+			return C.RunAs(hero, OnCarriedActionUseBase.ApplyBonusEffects, class:new({ InventoryItemBeingUsed = item, EntityUsingItem = hero }))
 		end
 
 		-- GUARDS fine and arrest the criminal they chase; shipped, the fine and the sleep tidy-up
@@ -1619,7 +2344,7 @@ public static class CoopHeroLua
 		-- bodies carry one. A villager in exactly one hero's family runs as that hero; in both or
 		-- neither, as the hero the AI runs for.
 		C.FamilyHeroOf = C.Permanent(function(entity)
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if entity == nil or two == nil or PlayerFamily == nil or not entity:IsAlive() then
 				return nil
 			end
@@ -1640,7 +2365,7 @@ public static class CoopHeroLua
 
 		-- The hero a villager is married to (player two first), or nil.
 		function C.SpouseOf(villager)
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if villager == nil or two == nil or PlayerFamily == nil then
 				return nil
 			end
@@ -1680,7 +2405,7 @@ public static class CoopHeroLua
 		-- (`sub_82427750`: comp+771), part of the per-hero opinion block the opinion scope swaps
 		-- (mod_events.cpp kOpinionRegions {770, 3}), so asked as each hero it answers for each.
 		C.FianceOf = C.Permanent(function(villager)
-			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if villager == nil or two == nil or OpinionReaction == nil or not OpinionReaction.IsAvailable(villager) then
 				return nil
 			end
@@ -1786,7 +2511,7 @@ public static class CoopHeroLua
 		-- handle and flags, 1 engaged, 2 following for sex, 4 married), and on the joiner the follow
 		-- queries for its own hero two answer from that list.
 		function C.JoinerTwo(hero)
-			local partner = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local partner = C.HeroTwo()
 			return hero ~= nil and partner ~= nil and hero == partner and Refii ~= nil and Refii.coop_mode ~= nil
 				and Refii._followers_two ~= nil and Refii.coop_mode() == 3
 		end
@@ -1830,120 +2555,35 @@ public static class CoopHeroLua
 			end
 		end
 
-		-- ONLINE, PLAYER TWO'S BED IS PARTLY THE HOST'S. On the joiner the bed runs as shipped for its
-		-- player (the menus, the fade, their own stats), but the partners, the pregnancy and the baby,
-		-- the partner's opinion, the deeds and the gold are the host's world: SexFunction.Begin there
-		-- would find no partner (SexFunction.SexPartners is filled by the host's follow behaviours) and
-		-- a client's money changes nothing. So the joiner's Begin for its hero two also goes to the
-		-- host (`sex:<bed uid>:<condom>`), which runs the bed's own payment (the prostitutes' and the
-		-- inn's, as OnActionUseBed:Update/Sex reckon them) and Begin for its hero two in a thread of
-		-- its own, silent: no fade, movie, sound, tutorial, message box or achievement on the host.
-		C.HostThreads = C.HostThreads or {}
-		function C.Silence(class, name, answer)
-			if type(class) ~= "table" or type(class[name]) ~= "function" or rawget(class, "RefiiSilent" .. name) then
-				return
-			end
-			local shipped = class[name]
-			rawset(class, "RefiiSilent" .. name, shipped)
-			class[name] = C.Permanent(function(...)
-				if C.CoGet(coroutine.running(), "silent") then
-					return answer
+		-- RETIRED NAMES. Player two's bed online was once run twice — on the joiner for its picture, on
+		-- the host in a silent thread — and is now the host's run of the joiner's use (THE HOST'S RUN OF
+		-- A JOINER'S USE, above). A permanent's name is never retired, so each name that path registered
+		-- keeps a compatible stub: a pass-through to the function it wrapped, or, for a wait's poll or an
+		-- after, the end of the wait.
+		for name, path in pairs({ ["Silent.FadeScreenOut"] = "GUI.FadeScreenOut", ["Silent.FadeScreenIn"] = "GUI.FadeScreenIn",
+			["Silent.IsScreenFading"] = "GUI.IsScreenFading", ["Silent.SetDPadEnabled"] = "GUI.SetDPadEnabled",
+			["Silent.PlayLocalisedMovie"] = "GUI.PlayLocalisedMovie", ["Silent.DisplayMessageBox"] = "GUI.DisplayMessageBox",
+			["Silent.SetShouldDrawWorldIcons"] = "Debug.SetShouldDrawWorldIcons",
+			["Silent.SetSoundEffectVolume"] = "Sound.SetSoundEffectVolume", ["Silent.DisplayTutorial"] = "TutorialManager.DisplayTutorial",
+			["Presenting.ModifyTrackedStat"] = "Stats.ModifyTrackedStat", ["Presenting.UnlockAchievement"] = "Stats.UnlockAchievement",
+			["AwaitVerdict.FadeScreenIn"] = "GUI.FadeScreenIn", ["BirthSpouse.AdoptWithSpouse"] = "PlayerFamily.AdoptWithSpouse" }) do
+			C.Permanent(function(...)
+				local fn = C.RouteFunction(path, true)
+				if fn ~= nil then
+					return fn(...)
 				end
-				return shipped(...)
-			end, "Silent." .. name)
+			end, name)
 		end
-		C.Silence(GUI, "FadeScreenOut")
-		C.Silence(GUI, "FadeScreenIn")
-		C.Silence(GUI, "IsScreenFading", false)
-		C.Silence(GUI, "SetDPadEnabled")
-		C.Silence(GUI, "PlayLocalisedMovie")
-		C.Silence(GUI, "DisplayMessageBox")
-		C.Silence(Debug, "SetShouldDrawWorldIcons")
-		C.Silence(Sound, "SetSoundEffectVolume")
-		C.Silence(TutorialManager, "DisplayTutorial")
-
-		-- THE JOINER'S OWN BED SCENE IS ITS PRESENTATION. Its Begin finds no partner (they are the
-		-- host's), so what it would count is wrong and what it would show is incomplete: its tracked
-		-- stats and achievements are left to the host's (sent here, mod_events.cpp `stat`/`ach`), and
-		-- its fade-in waits for the host's verdict (RefiiCoop.SexVerdict: the partner, a child born,
-		-- the first) to play what a birth plays — the PREGNANT line with the sound down for five
-		-- seconds, Childbirth.bik for the first child, the baby tutorial after the fade.
-		for _, name in ipairs({ "ModifyTrackedStat", "UnlockAchievement" }) do
-			if Stats ~= nil and type(Stats[name]) == "function" and not rawget(Stats, "RefiiPresenting" .. name) then
-				local shipped = Stats[name]
-				rawset(Stats, "RefiiPresenting" .. name, shipped)
-				Stats[name] = C.Permanent(function(...)
-					if C.CoGet(coroutine.running(), "presenting") then
-						return nil
-					end
-					return shipped(...)
-				end, "Presenting." .. name)
-			end
+		C.Permanent(function() return true, nil end, "VerdictPoll")
+		C.Permanent(function() return true end, "FramePoll")
+		for _, name in ipairs({ "VerdictAfter", "BirthAfter", "TutorialAfter", "HostBedSexThread" }) do
+			C.Permanent(function() end, name)
 		end
-		if GUI ~= nil and GUI.FadeScreenIn ~= nil and not rawget(GUI, "RefiiAwaitVerdict") then
-			local shipped = GUI.FadeScreenIn
-			rawset(GUI, "RefiiAwaitVerdict", shipped)
-			GUI.FadeScreenIn = C.Permanent(function(...)
-				local co = coroutine.running()
-				if not C.CoGet(co, "presenting") then
-					return shipped(...)
-				end
-				C.CoSet(co, "presenting", nil)
-				local limit = Timing.GetWorldFrame() + Timing.GetTickRate() * 45.0
-				return C.Call1(C.VerdictAfter, { n = select("#", ...), ... }, C.Wait1, C.VerdictPoll, { limit = limit },
-					coroutine.yield)
-			end, "AwaitVerdict.FadeScreenIn")
-		end
-		-- The host's verdict, or none once the limit passes.
-		C.VerdictPoll = C.Permanent(function(state)
-			if C.SexVerdict == nil and type(state) == "table" and Timing.GetWorldFrame() < (state.limit or 0) then
-				return false
-			end
-			local verdict = C.SexVerdict
-			C.SexVerdict = nil
-			return true, verdict
-		end, "VerdictPoll")
-		-- A birth: the PREGNANT line (the host's partner speaking, it arrives with the scene's chatter)
-		-- under five seconds of quiet, then Childbirth.bik for the first child; then the fade itself
-		-- (the function the wait was wrapped over), then the baby tutorial.
-		C.VerdictAfter = C.Permanent(function(args, verdict)
-			if type(verdict) == "table" and verdict.born then
-				Sound.SetSoundEffectVolume(0.0)
-				local until_frame = Timing.GetWorldFrame() + Timing.GetTickRate() * 5.0
-				return C.Call1(C.BirthAfter, { args = args, verdict = verdict }, C.Wait1, C.FramePoll, until_frame, coroutine.yield)
-			end
-			return C.Call1(C.TutorialAfter, verdict or false, rawget(GUI, "RefiiAwaitVerdict"), unpack(args, 1, args.n))
-		end, "VerdictAfter")
-		C.FramePoll = C.Permanent(function(until_frame)
-			return Timing.GetWorldFrame() >= (until_frame or 0)
-		end, "FramePoll")
-		C.BirthAfter = C.Permanent(function(state)
-			Sound.SetSoundEffectVolume(1.0)
-			if state.verdict.first then
-				GUI.PlayLocalisedMovie("Childbirth.bik")
-			end
-			return C.Call1(C.TutorialAfter, state.verdict, rawget(GUI, "RefiiAwaitVerdict"), unpack(state.args, 1, state.args.n))
-		end, "BirthAfter")
-		C.TutorialAfter = C.Permanent(function(verdict, ...)
-			if type(verdict) == "table" and verdict.born and TutorialManager ~= nil
-				and not TutorialManager.HasDisplayedTutorial(ETutorialType.TUTORIAL_BABY) then
-				TutorialManager.DisplayTutorial(ETutorialType.TUTORIAL_BABY)
-			end
-			return ...
-		end, "TutorialAfter")
 
 		if SexFunction ~= nil and SexFunction.Begin ~= nil and SexFunction.Begin ~= C.SexBegin then
 			local shipped = SexFunction.Begin
 			-- C.SexHero is the hero having sex while Begin runs (BehaviourAvoidSex's hero).
 			C.SexBegin = C.Permanent(function(hero, bed, ...)
-				if bed ~= nil and C.JoinerTwo(hero) and Refii._household ~= nil and Refii.uid(bed) ~= nil then
-					local condom = Player ~= nil and Player.IsWearingCondom ~= nil and Player.IsWearingCondom(hero)
-					Refii._household("sex", Refii.uid(bed), condom and 1 or 0)
-					if coroutine.running() ~= nil then
-						C.SexVerdict = nil
-						return C.WithFlag("presenting", true, shipped, hero, bed, ...)
-					end
-				end
 				local before = C.SexHero
 				C.SexHero = hero
 				return C.Call1(C.SexHeroLeave, before, shipped, hero, bed, ...)
@@ -1955,116 +2595,18 @@ public static class CoopHeroLua
 			return ...
 		end, "SexHeroLeave")
 
-		C.HostBedSexThread = C.Permanent(function(hero, bed, condom)
-			return C.RunAs(hero, function()
-				local owner = OwnedEntity.IsAvailable(bed) and OwnedEntity.GetOwner(bed) or nil
-				local trespass, cost = false, 0
-				if owner ~= nil and owner:IsAlive() then
-					local bar = Building.IsBuildingOfType(owner, EBuildingType.BUILDING_BAR)
-					trespass = not PlayerProperties.IsOwnedByPlayer(hero, owner) and not bar
-					if bar then
-						cost = Building.GetCostToSleepHere(owner) or 0
-					end
-				end
-				local whores = 0
-				for _, follower in ipairs(Follow.GetListOfFollowers(hero) or {}) do
-					if Villager.GetOccupation(follower) == EJobType.JOB_WHORE and not PlayerFamily.IsMarriedTo(hero, follower) then
-						whores = whores + 1
-					end
-				end
-				local total = cost + whores * GDB.GetRecord("WhoreMultipliers"):GetS32("Cost")
-				if total > 0 then
-					Money.Modify(hero, -total)
-				end
-				if condom == 1 then
-					Player.SetWearingCondom(hero, true)
-				end
-				-- What the bed's own Sex charges a hero after Begin (onactionusebed main.3 pc 303–362):
-				-- the prostitutes' morality and purity, +10 morality for protection. Morality is the
-				-- host's (a client's change applies only when received), so it is charged here.
-				local multipliers = GDB.GetRecord("WhoreMultipliers")
-				SexFunction.HenchmanHavingSex = false
-				local before = SexFunction.FrameLastHadChild
-				C.BirthSpouse = nil
-				SexFunction.Begin(hero, bed, trespass, owner)
-				if Stats.IsAvailable(hero) then
-					Stats.ModifyMorality(hero, multipliers:GetS32("MoralityModifier") * whores)
-					Stats.ModifyPurity(hero, multipliers:GetFloat("PurityModifier") * whores)
-					if condom == 1 then
-						Stats.ModifyMorality(hero, 10.0)
-					end
-				end
-				-- The verdict for the joiner's own presentation (mod_events.cpp `sexdone`).
-				local born = SexFunction.FrameLastHadChild ~= before
-				local first = born and Refii._children_two ~= nil and Refii._children_two() == 1
-				local partner = born and C.BirthSpouse ~= nil and Refii.uid(C.BirthSpouse) or "0x1"
-				Refii._household("sexdone", partner, (born and 1 or 0) + (first and 2 or 0))
-			end)
-		end, "HostBedSexThread")
-
-		-- THE CHATTER GOES TO THE JOINER. Every line a partner is told to say in the silent thread
-		-- (the comments, the PREGNANT line) is played later by the villager's AI; its speaker is marked
-		-- so those lines reach the joiner's screen too (mod_events.cpp ForwardSpeech).
+		-- THE CHATTER GOES TO THE JOINER. Every line a speaker is told to say in the host's run of a
+		-- joiner's use (the bed's partners, the PREGNANT line) is played later by the villager's AI; its
+		-- speaker is marked so those lines reach the joiner's screen too (mod_events.cpp ForwardSpeech).
 		if ScriptFunction ~= nil and ScriptFunction.SaySimLine ~= nil and not rawget(ScriptFunction, "RefiiForwardSpeech") then
 			local shipped = ScriptFunction.SaySimLine
 			rawset(ScriptFunction, "RefiiForwardSpeech", shipped)
 			ScriptFunction.SaySimLine = C.Permanent(function(speaker, ...)
-				if C.CoGet(coroutine.running(), "silent") and speaker ~= nil and Refii._forward_speech ~= nil then
+				if C.CoGet(coroutine.running(), "joiner_use") ~= nil and speaker ~= nil and Refii._forward_speech ~= nil then
 					Refii._forward_speech(Refii.handle(speaker), 15.0)
 				end
 				return shipped(speaker, ...)
 			end, "Forward.SaySimLine")
-		end
-
-		-- Which spouse a birth in the silent thread was with (the joiner's verdict).
-		if PlayerFamily ~= nil and PlayerFamily.AdoptWithSpouse ~= nil and not rawget(PlayerFamily, "RefiiBirthSpouse") then
-			local shipped = PlayerFamily.AdoptWithSpouse
-			rawset(PlayerFamily, "RefiiBirthSpouse", shipped)
-			PlayerFamily.AdoptWithSpouse = C.Permanent(function(hero, spouse, ...)
-				if C.CoGet(coroutine.running(), "silent") then
-					C.BirthSpouse = spouse
-				end
-				return shipped(hero, spouse, ...)
-			end, "BirthSpouse.AdoptWithSpouse")
-		end
-
-		function C.HostBedSex(bed, condom)
-			local hero = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
-			if bed == nil or hero == nil or not hero:IsAlive() then
-				return
-			end
-			local co = coroutine.create(C.HostBedSexThread)
-			C.CoSet(co, "silent", true)
-			C.HostThreads[#C.HostThreads + 1] = { co = co, args = { hero, bed, condom } }
-		end
-
-		-- The host's threads run once a world frame (from the per-hero FrameUpdate, below).
-		function C.HouseholdTick()
-			local frame = GetWorldFrame ~= nil and GetWorldFrame() or 0
-			if C.HouseholdFrame == frame or #C.HostThreads == 0 then
-				return
-			end
-			C.HouseholdFrame = frame
-			for i = #C.HostThreads, 1, -1 do
-				local thread = C.HostThreads[i]
-				if coroutine.status(thread.co) == "dead" then
-					table.remove(C.HostThreads, i)
-				else
-					-- Player two's stats counted while it runs go to the joiner (mod_events.cpp).
-					if Refii._household_context ~= nil then
-						Refii._household_context(true)
-					end
-					local ok, err = coroutine.resume(thread.co, unpack(thread.args))
-					if Refii._household_context ~= nil then
-						Refii._household_context(false)
-					end
-					thread.args = {}
-					if not ok then
-						print("[refii] player two's bed on the host: " .. tostring(err))
-						table.remove(C.HostThreads, i)
-					end
-				end
-			end
 		end
 
 		-- QUEST PROGRESS IS THE WORLD'S. Code acting for player two still records quests on player
@@ -2114,7 +2656,7 @@ public static class CoopHeroLua
 		-- the camera (SetCameraOverride is per hero), the stats. The partner is neither ghosted
 		-- nor hidden (Fable 3 has no henchman to put away).
 		C.JobWorker = C.Permanent(function(sign)
-			local partner = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
+			local partner = C.HeroTwo()
 			local hero = C.ShippedGetPlayerHero and C.ShippedGetPlayerHero()
 			if sign == nil or partner == nil or not partner:IsAlive() then
 				return hero
@@ -2219,7 +2761,7 @@ public static class CoopHeroLua
 		-- partner standing).
 		function C.HeroesFor(entity)
 			local one = C.ShippedGetPlayerHero()
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if two == nil or not two:IsAlive() then
 				return { one }
 			end
@@ -2255,7 +2797,7 @@ public static class CoopHeroLua
 		-- player one's results.
 		function C.RunAsBoth(fn, ...)
 			local results = { C.RunAs(C.ShippedGetPlayerHero(), fn, ...) }
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if two ~= nil and two:IsAlive() then
 				C.RunAs(two, fn, ...)
 			end
@@ -2284,7 +2826,7 @@ public static class CoopHeroLua
 						return shipped(a, b, ...)
 					end
 					local one = C.ShippedGetPlayerHero()
-					local two = C.ShippedGetPlayerHenchman()
+					local two = C.HeroTwo()
 					if two == nil or not two:IsAlive() then
 						return shipped(a, b, ...)
 					end
@@ -2312,7 +2854,7 @@ public static class CoopHeroLua
 			if Villager ~= nil then
 				C.Wrap("Villager", method, "Hero", function(shipped)
 					return function(villager, ...)
-						local two = C.ShippedGetPlayerHenchman()
+						local two = C.HeroTwo()
 						local api = Refii ~= nil and Refii[native] or nil
 						if villager == nil or two == nil or api == nil then
 							return shipped(villager, ...)
@@ -2344,7 +2886,7 @@ public static class CoopHeroLua
 		local ICS = "InteractiveCutsceneGroupMind"
 		C.CutsceneHero = C.Permanent(function(gm)
 			local one = C.ShippedGetPlayerHero()
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if type(gm) ~= "table" or two == nil then
 				return one
 			end
@@ -2493,7 +3035,7 @@ public static class CoopHeroLua
 		function C.HouseHero(gm)
 			local house = type(gm) == "table" and gm.EntityAttachedTo or nil
 			local one = C.ShippedGetPlayerHero()
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if house == nil or two == nil or PlayerProperties == nil then
 				return nil
 			end
@@ -2516,7 +3058,7 @@ public static class CoopHeroLua
 		if MSG.MESSAGE_EVENT_INTERACTED_WITH ~= nil then
 			C.Wrap("BehaviourBase", "CommentBasedOnOpinionCheck", "Micro", function(shipped)
 				return function(self, ...)
-					if type(self) ~= "table" or self.Entity == nil or C.ShippedGetPlayerHenchman() == nil then
+					if type(self) ~= "table" or self.Entity == nil or C.HeroTwo() == nil then
 						return shipped(self, ...)
 					end
 					local hero = C.HeroSentTo(MSG.MESSAGE_EVENT_INTERACTED_WITH, self.Entity, self.LastInterrogationMessage)
@@ -2550,7 +3092,7 @@ public static class CoopHeroLua
 		-- counted up for (ExpressionPerformer.IncrementCrowdSize / DecrementCrowdSize).
 		C.Wrap("BehaviourBase", "SetMicroReactionLabelAndPriorities", "Crowd", function(shipped)
 			return function(self, label, ...)
-				if type(self) ~= "table" or C.ShippedGetPlayerHenchman() == nil then
+				if type(self) ~= "table" or C.HeroTwo() == nil then
 					return shipped(self, label, ...)
 				end
 				if label == "Notice Expression" then
@@ -2614,7 +3156,7 @@ public static class CoopHeroLua
 		-- A reaction to "the henchman" is a reaction to the other hero, judged by that hero's opinion.
 		C.Wrap("BehaviourOpinionReaction", "GetReaction", "Henchman", function(shipped)
 			return function(self, entity, target, ...)
-				if EOpinionTarget ~= nil and target == EOpinionTarget.EOT_HENCHMAN
+				if C.TwoIsHero() and EOpinionTarget ~= nil and target == EOpinionTarget.EOT_HENCHMAN
 					and not (Multiplayer ~= nil and Multiplayer.IsHenchmanInGhostMode()) then
 					local other = GetPlayerHenchman()
 					if other ~= nil and other:IsAlive() then
@@ -2657,7 +3199,7 @@ public static class CoopHeroLua
 			if C.SexHero ~= nil and C.SexHero:IsAlive() then
 				return C.SexHero
 			end
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if two ~= nil and two:IsAlive() and Follow ~= nil and Follow.IsBeingFollowedBySexPartner(two) then
 				return two
 			end
@@ -2677,7 +3219,7 @@ public static class CoopHeroLua
 		-- criminals, the one the AI runs for.
 		function C.CriminalFor(village, entity)
 			local one = C.ShippedGetPlayerHero()
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if village == nil or two == nil or VillageCrimeManager == nil then
 				return nil
 			end
@@ -2713,7 +3255,7 @@ public static class CoopHeroLua
 		end)
 		C.GuardsAttack = C.Permanent(function(self, ...)
 			local village = type(self) == "table" and self.EntityAttachedTo or nil
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if village ~= nil and two ~= nil and type(self.CriminalsAttacking) == "table" and C.ShippedIsResistingArrest ~= nil then
 				for _, hero in ipairs({ C.ShippedGetPlayerHero(), two }) do
 					local listed = false
@@ -2732,7 +3274,7 @@ public static class CoopHeroLua
 		for _, method in ipairs({ "AttackCriminal", "StopAttackingCriminal" }) do
 			C.Wrap("GuardGroupMind", method, "Crime", function(shipped)
 				return function(self, criminal, ...)
-					if C.ShippedGetPlayerHenchman() == nil or not C.IsHero(criminal) then
+					if C.HeroTwo() == nil or not C.IsHero(criminal) then
 						return shipped(self, criminal, ...)
 					end
 					return C.HideHenchman(C.WithDogOf, criminal, shipped, self, criminal, ...)
@@ -2743,7 +3285,7 @@ public static class CoopHeroLua
 		-- spawned while a hero resists arrest goes for that hero.
 		C.Wrap("VillageGroupMind", "Update", "Crime", function(shipped)
 			return function(self, ...)
-				local two = C.ShippedGetPlayerHenchman()
+				local two = C.HeroTwo()
 				local village = type(self) == "table" and self.EntityAttachedTo or nil
 				if two == nil or village == nil or C.ShippedIsResistingArrest == nil then
 					return shipped(self, ...)
@@ -2775,7 +3317,7 @@ public static class CoopHeroLua
 			IsEntityVisibleOnScreen = C.Permanent(function(entity, ...)
 				local shipped = C.ShippedIsEntityVisibleOnScreen
 				local co = coroutine.running()
-				local two = C.ShippedGetPlayerHenchman()
+				local two = C.HeroTwo()
 				if not C.CoGet(co, "despawn") or entity == nil or two == nil then
 					return shipped(entity, ...)
 				end
@@ -2854,7 +3396,7 @@ public static class CoopHeroLua
 			for _, name in ipairs({ "SpouseBehaviourGroup", "SpouseMiscBehaviourGroup", "HerosChildBehaviourGroup" }) do
 				C.Wrap("BehaviourGroupPrepareToRuns", name, "Either", function(shipped)
 					return function(entity, ...)
-						local two = C.ShippedGetPlayerHenchman()
+						local two = C.HeroTwo()
 						local results = { C.RunAs(C.ShippedGetPlayerHero(), shipped, entity, ...) }
 						if results[1] or two == nil or not two:IsAlive() then
 							return unpack(results, 1, table.maxn(results))
@@ -2865,7 +3407,7 @@ public static class CoopHeroLua
 			end
 			C.Wrap("BehaviourGroupPrepareToRuns", "HomeEmergencyBehaviourGroup", "Both", function(shipped)
 				return function(entity, ...)
-					local two = C.ShippedGetPlayerHenchman()
+					local two = C.HeroTwo()
 					if two == nil or not two:IsAlive() then
 						return shipped(entity, ...)
 					end
@@ -2881,7 +3423,7 @@ public static class CoopHeroLua
 		-- A bigamy chat: both chatters are asked about the same hero, each hero in turn.
 		C.Wrap("BehaviourVillagerChat", "IsThisADivorceConversation", "Either", function(shipped)
 			return function(self, partner, ...)
-				local two = C.ShippedGetPlayerHenchman()
+				local two = C.HeroTwo()
 				local results = { C.RunAs(C.ShippedGetPlayerHero(), shipped, self, partner, ...) }
 				if results[1] or two == nil or not two:IsAlive() then
 					return unpack(results, 1, table.maxn(results))
@@ -2923,13 +3465,13 @@ public static class CoopHeroLua
 			if Targeted.IsTargetLockedByHero(entity) or Targeted.IsTargetedByHero(entity) then
 				return true
 			end
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			return two ~= nil and two:IsAlive() and Targeting.GetTarget(two) == entity
 		end
 		C.TraderTargeter = C.Permanent(function(self)
 			local entity = type(self) == "table" and self.Entity or nil
 			local one = C.ShippedGetPlayerHero()
-			local two = C.ShippedGetPlayerHenchman()
+			local two = C.HeroTwo()
 			if entity ~= nil and two ~= nil and two:IsAlive() and Targeting.GetTarget(two) == entity
 				and Targeting.GetTarget(one) ~= entity then
 				return two
@@ -2972,7 +3514,7 @@ public static class CoopHeroLua
 			return function(self, ...)
 				local shop = type(self) == "table" and self.EntityAttachedTo or nil
 				local one = C.ShippedGetPlayerHero()
-				local two = C.ShippedGetPlayerHenchman()
+				local two = C.HeroTwo()
 				local inside = shop ~= nil and two ~= nil and two:IsAlive() and Whereabouts.GetBuildingWeAreInsideOf(two) == shop
 					and Whereabouts.GetBuildingWeAreInsideOf(one) ~= shop
 				return C.RunAs(inside and two or one, shipped, self, ...)
@@ -3096,6 +3638,7 @@ public static class CoopHeroLua
 
 		-- The joiner's side, once a world frame (from the camera's FrameUpdate).
 		C.ModeSent = C.ModeSent or {}
+		C.ModeRetryFrames = 30
 		C.ButtonLast = C.ButtonLast or {}
 		function C.StatePlayerModes()
 			if not C.IsJoiner() or Refii.player_set == nil or EPlayerMode == nil then
@@ -3109,6 +3652,26 @@ public static class CoopHeroLua
 			local hero = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
 			if hero == nil or not hero:IsAlive() or not Player.IsAvailable(hero) then
 				return
+			end
+			-- STATED AGAIN WHEN THE STORE FORGOT. C.ModeSent sends a value only when it changes, but this
+			-- machine's store of player two (the one the host's copy is restated from, player_state.cpp
+			-- `ps.s`) drops every session value when player two leaves or a new hero is set up
+			-- (refii_bridge_player_clear / refii_bridge_player_new_hero). A marker of this machine's own
+			-- (coop.q.epoch) goes with them; when it is gone, or the hero or the partner is new, every
+			-- value is stated again. One lookup a world frame; a marker that does not stick (a write refused
+			-- inside a replica dispatch) is tried again after C.ModeRetryFrames, not every frame.
+			local uid = Refii.uid ~= nil and Refii.uid(hero) or nil
+			local stands = C.RoutePeerStands()
+			local forgot = Refii.player_value(2, "coop.q.epoch", -1) < 0
+				and (C.ModeResetFrame == nil or frame - C.ModeResetFrame >= C.ModeRetryFrames or frame < C.ModeResetFrame)
+			if uid ~= C.ModeHero or stands ~= C.ModePeer or forgot then
+				C.ModeResetFrame = frame
+				C.ModeHero = uid
+				C.ModePeer = stands
+				C.ModeSent = {}
+				C.ModeEpoch = (C.ModeEpoch or 0) + 1
+				Refii.player_set(2, "coop.q.epoch", C.ModeEpoch)
+				C.Say("joiner: every stated player query goes again (epoch " .. tostring(C.ModeEpoch) .. ")")
 			end
 			local function State(key, value)
 				if C.ModeSent[key] ~= value then
@@ -3240,6 +3803,21 @@ public static class CoopHeroLua
 		-- already carries (C.CombatApply).
 		C.RouteKeep = C.RouteKeep or { IsAvailable = true, SetMidstOfCombatCounter = true, SetCloseToCombat = true,
 			SetInAnyCombat = true }
+		-- The entity type is the host's to change: the change goes out from the host only (net 3,
+		-- lhEntityManager_ChangeEntityType TU1 0x82365288 / disc 0x82360928) and retypes the joiner's copy.
+		C.RouteKeep.ChangePlayerEntityType = true
+		-- What else a script acting for player two shows them: info boxes (their params a table token),
+		-- the canned-action camera, movies, the effects volume, a door's locked message, guild messages.
+		for path, spec in pairs({ ["GUI.DisplayInfoBoxParams"] = { mode = "c", seat = true },
+			["CannedActionCamera.SwitchOn"] = { mode = "c" }, ["CannedActionCamera.SwitchOff"] = { mode = "c" },
+			["GUI.PlayMovie"] = { mode = "c" }, ["GUI.PlaySilentMovie"] = { mode = "c" }, ["GUI.PlayLocalisedMovie"] = { mode = "c" },
+			["GUI.PlayMovieWithGenderedVoice"] = { mode = "c" }, ["GUI.PlayLocalisedMovieWithGenderedVoice"] = { mode = "c" },
+			["Sound.SetSoundEffectVolume"] = { mode = "c" }, ["Door.DisplayLockedMessage"] = { mode = "c" },
+			["GuildMessages.PostWithNarrator"] = { mode = "c" } }) do
+			if C.RouteSpecs[path] == nil then
+				C.RouteSpecs[path] = spec
+			end
+		end
 
 		function C.WorldHere()
 			if Refii == nil then
@@ -3265,13 +3843,8 @@ public static class CoopHeroLua
 		end
 
 		-- The player a call made now is for, when this machine runs the world and that player is
-		-- played on the other one: player two while the code acts for them; nil otherwise. The host's
-		-- silent threads (player two's bed) show nothing anywhere.
+		-- played on the other one: player two while the code acts for them; nil otherwise.
 		function C.RouteActing()
-			local co = coroutine.running()
-			if C.CoGet(co, "silent") then
-				return nil
-			end
 			local two = C.Acting()
 			if two == nil or not two:IsAlive() or not C.WorldHere() or not C.RouteRemote(2) then
 				return nil
@@ -3290,6 +3863,12 @@ public static class CoopHeroLua
 
 		local function Escape(text)
 			return (string.gsub(text, "[%%,;|\r\n]", function(c) return string.format("%%%02X", string.byte(c)) end))
+		end
+		local function Nest(text)
+			return (string.gsub(text, "[%%,;|&:\r\n]", function(c) return string.format("%%%02X", string.byte(c)) end))
+		end
+		function C.RouteVector(value)
+			return value:GetX(), value:GetY(), value:GetZ()
 		end
 		local function Unescape(text)
 			return (string.gsub(text, "%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
@@ -3321,9 +3900,28 @@ public static class CoopHeroLua
 				return "s" .. Escape(value)
 			elseif kind == "table" and rawget(value, "RefiiRouteToken") ~= nil then
 				return "t" .. tostring(rawget(value, "RefiiRouteToken"))
+			elseif kind == "table" and getmetatable(value) == nil then
+				-- A plain table (an action, a box's params): each key and value a token, nested.
+				C.RouteDepth = (C.RouteDepth or 0) + 1
+				local parts, ok = {}, C.RouteDepth <= 4
+				for key, entry in pairs(value) do
+					local k, v = C.RouteEncode(key), C.RouteEncode(entry)
+					if k == nil or v == nil then
+						ok = false
+						break
+					end
+					parts[#parts + 1] = Nest(k) .. ":" .. Nest(v)
+				end
+				C.RouteDepth = C.RouteDepth - 1
+				return ok and ("T" .. Nest(table.concat(parts, "&"))) or nil
 			elseif kind == "userdata" and Refii ~= nil and Refii.handle ~= nil then
 				local handle = Refii.handle(value)
 				if handle == nil then
+					-- A CVector3 (a position, a facing): its three numbers.
+					local ok, x, y, z = pcall(C.RouteVector, value)
+					if ok and type(x) == "number" then
+						return string.format("v%.9g:%.9g:%.9g", x, y, z)
+					end
 					return nil
 				end
 				if value == C.ShippedGetPlayerHero() then
@@ -3361,6 +3959,27 @@ public static class CoopHeroLua
 				return C.RouteHandles[tonumber(rest)], true
 			elseif tag == "c" then
 				return caller, true
+			elseif tag == "v" then
+				local x, y, z = string.match(rest, "^([^:]+):([^:]+):([^:]+)$")
+				if x == nil or CVector3 == nil then
+					return nil, false
+				end
+				return CVector3(tonumber(x), tonumber(y), tonumber(z)), true
+			elseif tag == "T" then
+				local result = {}
+				for part in string.gmatch(Unescape(rest), "[^&]+") do
+					local k, v = string.match(part, "^([^:]*):(.*)$")
+					if k == nil then
+						return nil, false
+					end
+					local key, key_ok = C.RouteDecode(Unescape(k), caller)
+					local value, value_ok = C.RouteDecode(Unescape(v), caller)
+					if not key_ok or not value_ok or key == nil then
+						return nil, false
+					end
+					result[key] = value
+				end
+				return result, true
 			end
 			return nil, false
 		end
@@ -3374,7 +3993,7 @@ public static class CoopHeroLua
 				if token == nil then
 					if not C.RouteSaid[name] then
 						C.RouteSaid[name] = true
-						print("[refii] route: " .. name .. " has an argument that cannot travel; shown here")
+						C.Say("route: " .. name .. " has an argument that cannot travel; shown here")
 					end
 					return nil
 				end
@@ -3386,14 +4005,27 @@ public static class CoopHeroLua
 			end
 			C.RouteNext = C.RouteNext + 1
 			Refii._route_post(line)
-			return C.RouteNext
+			return C.RouteNext, string.sub(line, #parts[1] + 2)
 		end
 
-		-- A question's wait (C.Wait1): the answer the other machine sent, else — the partner gone, or
-		-- a ticket this session never opened (a save loaded mid-question) — the shipped refusal.
+		-- A question's wait (C.Wait1): the answer the other machine sent, else the shipped refusal when
+		-- the partner is gone. A ticket this session never opened is a save loaded mid-question: the
+		-- question is asked again (its line kept in the wait's state), and the wait starts over.
 		C.RouteAnswerPoll = C.Permanent(function(state)
-			if type(state) ~= "table" or C.RouteOpen[state.id] == nil or C.RouteOpen[state.id] ~= state.ticket then
-				return true, state ~= nil and state.default or {}
+			if type(state) ~= "table" then
+				return true, {}
+			end
+			if C.RouteOpen[state.id] == nil or C.RouteOpen[state.id] ~= state.ticket then
+				if state.rest == nil or not C.RoutePeerStands() or Refii == nil or Refii._route_post == nil then
+					return true, state.default or {}
+				end
+				C.RouteNext = C.RouteNext + 1
+				state.id = C.RouteNext
+				state.ticket = {}
+				C.RouteOpen[state.id] = state.ticket
+				Refii._route_post("c" .. tostring(state.id) .. "," .. state.rest)
+				C.Say("route: a question from before the load is asked again")
+				return false
 			end
 			local answer = C.RouteAnswers[state.id]
 			if answer ~= nil then
@@ -3429,14 +4061,14 @@ public static class CoopHeroLua
 			if mode == "q" and coroutine.running() == nil then
 				return nil
 			end
-			local id = C.RouteSend(p, mode, name, spec.caller, select("#", ...), ...)
+			local id, rest = C.RouteSend(p, mode, name, spec.caller, select("#", ...), ...)
 			if id == nil then
 				return nil
 			end
 			if mode == "q" then
 				local ticket = {}
 				C.RouteOpen[id] = ticket
-				return { id = id, ticket = ticket, default = spec.default or {} }
+				return { id = id, ticket = ticket, default = spec.default or {}, rest = rest }
 			elseif mode == "h" then
 				return { RefiiRouteToken = id, RefiiRoutePlayer = p, Clear = C.RouteHandleClear }
 			end
@@ -3487,11 +4119,7 @@ public static class CoopHeroLua
 		-- Player two's copy on the host: a stated player whose machine is the joiner.
 		function C.RemotePlayer(entity)
 			local two = C.ShippedGetPlayerHenchman and C.ShippedGetPlayerHenchman()
-			if entity == nil or two == nil or entity ~= two or not C.WorldHere() or not C.RouteRemote(2) then
-				return false
-			end
-			local co = coroutine.running()
-			return not C.CoGet(co, "silent")
+			return entity ~= nil and two ~= nil and entity == two and C.WorldHere() and C.RouteRemote(2)
 		end
 
 		-- A stated Player query about the remote player two (nil when not yet stated: as shipped).
@@ -3526,7 +4154,22 @@ public static class CoopHeroLua
 								return shipped(entity, ...)
 							end
 							if query ~= nil then
-								return C.StatedQuery(method, query, (...))
+								local stated = C.StatedQuery(method, query, (...))
+								local said = "stated." .. method .. "." .. tostring((...)) .. "." .. tostring(stated)
+								if stated ~= nil and C.JoinerUse() ~= nil and not C.RouteSaid[said] then
+									C.RouteSaid[said] = true
+									C.Say("use run: player two's Player." .. method .. "(" .. tostring((...)) .. ") is stated "
+										.. tostring(stated))
+								end
+								if stated ~= nil then
+									return stated
+								end
+								-- Not stated by the joiner yet: this machine's copy answers, as shipped.
+								if not C.RouteSaid["unstated." .. method] then
+									C.RouteSaid["unstated." .. method] = true
+									C.Say("route: player two's Player." .. method .. " is not stated yet; this machine's copy answers")
+								end
+								return shipped(entity, ...)
 							end
 							if not asks then
 								local id = C.RouteSend(2, "c", "Player." .. method, nil, select("#", ...) + 1, entity, ...)
@@ -3562,7 +4205,7 @@ public static class CoopHeroLua
 		-- as the route found it (not re-routed); threads resume once a world frame, oldest first, so
 		-- the calls start in the order they were made and a question waits without holding the rest.
 		C.RouteRun = C.Permanent(function(hero, fn, args)
-			return C.RunAs(hero, fn, unpack(args, 1, args.n))
+			return C.RunAsPlayer(hero, fn, unpack(args, 1, args.n))
 		end, "RouteRun")
 
 		-- The function a path names: as the route found it (unwrapped), or as it stands when `live`.
@@ -3592,7 +4235,7 @@ public static class CoopHeroLua
 		function C.RouteStep(thread, ...)
 			local results = { n = select("#", ...) - 1, select(2, ...) }
 			if not (...) then
-				print("[refii] route: " .. tostring(thread.name) .. " failed here: " .. tostring(results[1]))
+				C.Say("route: " .. tostring(thread.name) .. " failed here: " .. tostring(results[1]))
 				if thread.mode == "q" then
 					C.RouteAnswer(thread.id, { n = 0 })
 				end
@@ -3658,7 +4301,7 @@ public static class CoopHeroLua
 			if fn == nil or hero == nil then
 				if not C.RouteSaid[name] then
 					C.RouteSaid[name] = true
-					print("[refii] route: " .. tostring(name) .. " cannot run here (no such function, hero or entity)")
+					C.Say("route: " .. tostring(name) .. " cannot run here (no such function, hero or entity)")
 				end
 				if mode == "q" then
 					C.RouteAnswer(id, { n = 0 })
@@ -3734,7 +4377,10 @@ public static class CoopHeroLua
 		-- THE PLAYER-AGNOSTIC PRIMITIVES, the mod API's core: the co-op layer above and the mods
 		-- use the same calls (the Godot and native API state the same names). Refii.player_for is
 		-- native; these are defined here only where no native of the name exists.
-		--   Refii.acting_player()            1 or 2: who GetPlayerHero() means right now.
+		--   Refii.acting_player()            1 or 2: who GetPlayerHero() means right now; outside any
+		--                                    scope on an online joiner, 2, the machine's own player
+		--                                    (GetPlayerHero() there is still the guest's hero-one
+		--                                    slot, the host's hero).
 		--   Refii.run_as_player(p, fn, ...)  fn with GetPlayerHero()/GetPlayerHenchman()/
 		--                                    QuestManager.HeroEntity as player p.
 		--   Refii.combat_state(p)            midst, close_to_combat, in_any_combat for player p.
@@ -3746,14 +4392,24 @@ public static class CoopHeroLua
 		-- ============================================================================
 		if Refii ~= nil then
 			if Refii.acting_player == nil then
+				-- The guest numbers an online joiner player two on its own machine (its local player is
+				-- the players map's record 2, sub_821C7CE0; its GUI input answers 2, sub_822A4E38), and
+				-- Refii's levers and natives do the same. So a call no scope names is player two's
+				-- there; a scope that names player one (C.PinOne, the AI acting for hero one) stays 1.
 				Refii.acting_player = C.Permanent(function()
-					return C.Acting() ~= nil and 2 or 1
+					if C.Acting() ~= nil then
+						return 2
+					end
+					if C.IsJoiner() and not C.IsPinnedOne() then
+						return 2
+					end
+					return 1
 				end, "Api.acting_player")
 			end
 			if Refii.run_as_player == nil then
 				Refii.run_as_player = C.Permanent(function(player, fn, ...)
 					local hero = player == 2 and C.ShippedGetPlayerHenchman() or C.ShippedGetPlayerHero()
-					return C.RunAs(hero, fn, ...)
+					return C.RunAsPlayer(hero, fn, ...)
 				end, "Api.run_as_player")
 			end
 			if Refii.combat_state == nil then
@@ -3800,7 +4456,7 @@ public static class CoopHeroLua
 					if fn == nil then
 						return nil
 					end
-					return C.RunAs(hero, fn, ...)
+					return C.RunAsPlayer(hero, fn, ...)
 				end, "Api.show_to_player")
 			end
 		end
@@ -3832,6 +4488,9 @@ public static class CoopHeroLua
 	/// switch every frame: free (and no distance) where players roam freely — online — else the
 	/// shipped leash, which a shared screen needs. Local co-op on split screen counts as "own
 	/// cameras" too: player two's manager runs the same scripts with player two as its player.
+	/// Hybrid (Refii.Camera.Engine_CameraScreens) is free on one view as on two, and keeps the
+	/// distance stated: player one's camera states it and the heads' separation every tick
+	/// (<c>C.TetherTick</c>), and the screen splits past it.
 	/// After free roam ends with the heroes beyond the leash's distance they stay free until they
 	/// are within it (<c>C.Reuniting</c>): the leash holds every step that ends beyond it.</para>
 	/// </remarks>
@@ -3870,8 +4529,145 @@ public static class CoopHeroLua
 			return partner ~= nil and partner:IsAlive() == true
 		end
 
+		-- HYBRID: the local co-op screen the players chose (Refii._camera_read(4) answers the screen Godot draws,
+		-- Engine_CameraScreens: 3 hybrid). Its players roam free while it shows one view as well as two; it
+		-- splits when they pass the leash's distance (C.TetherTick).
+		function C.HybridScreen()
+			return C.LocalCoopCameras() and Refii ~= nil and Refii._camera_read ~= nil and Refii._camera_read(4, 0) == 3
+		end
+
+		-- The leash's switch, Debug.SetMultiPlayerHeroFree (byte_83496B82, disc byte_834969A4): its only reader is
+		-- the leash, whose first test it is (`lbz r10,byte_83496B82; bne` 0x821A0334, to the epilogue 0x821A0B44;
+		-- disc 0x821A03DC, 0x821A0BEC), so free skips the leash whole and changes nothing else. Shared screen: the
+		-- shipped leash. Split, hybrid and online: free.
 		function C.FreeRoam()
-			return C.OwnCameras()
+			return C.OwnCameras() or C.HybridScreen()
+		end
+
+		-- LOCAL CO-OP HAS TWO CAMERA MANAGERS: player two's Player is built with one in every local co-op
+		-- game, shared screen or split (coop_hero_hooks.cpp RefiiCoopSplitPlayerCamera), and it updates
+		-- after player one's each tick. Each keeps its own current camera (C.FrameUpdate below); player
+		-- two's states nothing the save or the shared screen reads (C.PartnerCameraUpdating).
+		function C.LocalCoopCameras()
+			return Multiplayer ~= nil and Multiplayer.IsLocalCoopGame ~= nil and Multiplayer.IsLocalCoopGame() == true
+		end
+
+		-- PLAYER TWO'S CAMERA UPDATE, WHOLE. One manager update (rex_lhCameraManager_Update) makes two Lua
+		-- calls: the selection, CameraManager:FrameUpdate(hero) (TU1 0x821B94EC / disc 0x821B95B4), then the
+		-- active mode's FrameUpdate(self) (0x821B9514 / 0x821B95DC). The selection only picks a camera; the
+		-- mode's update writes the saved CameraManager.CameraPosition (CameraBase:FrameUpdate /
+		-- :PureFrameUpdate, below) and states the leash (SACCamera.FrameUpdate's self_2:SetMaxCoopDistance())
+		-- and the canopy fading (CameraBase:UpdateTreeFading). So "player two's update" is the native's
+		-- answer for the whole update, not a mark around the selection call.
+		function C.PartnerCameraUpdating()
+			return Refii ~= nil and Refii._partner_camera_update ~= nil and Refii._partner_camera_update() == true
+		end
+
+		-- WHICH MANAGER IS PLAYER TWO'S: a number the native moves on at every Player built with one, a join and
+		-- every re-join after a local quit (coop_hero_hooks.cpp RefiiCoopPartnerCameraGeneration); 0 before the first.
+		function C.PartnerCameraManager()
+			local at = Refii ~= nil and Refii._partner_camera_manager ~= nil and Refii._partner_camera_manager() or 0
+			return type(at) == "number" and at or 0
+		end
+
+		-- THE SAVE KEEPS PLAYER ONE'S CAMERA. CameraBase:FrameUpdate and :PureFrameUpdate end
+		-- `CameraManager.CameraPosition = self.CurrentPosition; CameraManager.PrimedFromLoad = nil`
+		-- (camerabase.lua 234-235, 287-288), and CameraManager.GetSaveTable saves CameraPosition. Every
+		-- mode's update reaches them by name (CameraBase.FrameUpdate(self), CameraBase.PureFrameUpdate(self_2)),
+		-- and player two's mode updates last in the tick, so the global is put back after player two's
+		-- write: it holds what player one's camera wrote, as the one camera of a single-player game.
+		for _, name in ipairs({ "FrameUpdate", "PureFrameUpdate" }) do
+			local mine = C["CameraBase" .. name]
+			if CameraBase ~= nil and CameraBase[name] ~= nil and CameraBase[name] ~= mine then
+				local shipped = CameraBase[name]
+				C["CameraBase" .. name] = C.Permanent(function(self, ...)
+					if not C.PartnerCameraUpdating() then
+						return shipped(self, ...)
+					end
+					local position, primed = CameraManager.CameraPosition, CameraManager.PrimedFromLoad
+					local results = { pcall(shipped, self, ...) }
+					CameraManager.CameraPosition, CameraManager.PrimedFromLoad = position, primed
+					if not results[1] then
+						error(results[2], 0)
+					end
+					return unpack(results, 2, table.maxn(results))
+				end, "CameraBase" .. name)
+				CameraBase[name] = C["CameraBase" .. name]
+			end
+		end
+
+		function C.IsHeroOne(hero)
+			local get = C.ShippedGetPlayerHero or GetPlayerHero
+			local one = get ~= nil and get() or nil
+			return one ~= nil and hero ~= nil and GetIDFromEntity(one) == GetIDFromEntity(hero)
+		end
+
+		-- The canopy fading is one switch for the world (CameraBase:UpdateTreeFading, from each camera's
+		-- update): player one's camera states it, as the one camera of a shared screen did.
+		if Camera ~= nil and Camera.EnableTreeCanopyFading ~= nil and Camera.EnableTreeCanopyFading ~= C.EnableTreeCanopyFading then
+			local shipped = Camera.EnableTreeCanopyFading
+			C.EnableTreeCanopyFading = C.Permanent(function(...)
+				if C.PartnerCameraUpdating() then
+					return
+				end
+				return shipped(...)
+			end, "EnableTreeCanopyFading")
+			Camera.EnableTreeCanopyFading = C.EnableTreeCanopyFading
+		end
+
+		-- THE HUD'S PLAYER ICONS: a camera's statement is its own player's, anything else's is everyone's.
+		-- SACCamera:Activate and :Deactivate state GUI.SetShouldDrawPlayerIcons(true / false)
+		-- (stringandcagecamera.lua; MagicCombatCamera and TrackingCamera reach them by name); a quest states it
+		-- too (QO880_Vision's Init false, OnExit true). C.PlayerIconsFromCamera counts the calls inside a
+		-- camera's Activate / Deactivate.
+		--   - player two's camera: player two's half's switch (Refii._partner_player_icons, stated value 25,
+		--     which the hero marker's record update takes while split: coop_player_icons.cpp);
+		--   - player one's camera: the game's own switch (player one's half, or the whole screen), and this
+		--     machine's alone: Refii._camera_player_icons marks the call, so the native's send to an online
+		--     partner is skipped and a joiner's markers follow the joiner's own camera;
+		--   - anything else (a quest): the game's own switch, sent to an online partner as shipped, and player
+		--     two's half's too in local co-op.
+		for _, name in ipairs({ "Activate", "Deactivate" }) do
+			local mine = C["SAC" .. name]
+			if SACCamera[name] ~= nil and SACCamera[name] ~= mine then
+				local shipped = SACCamera[name]
+				C["SAC" .. name] = C.Permanent(function(self, ...)
+					C.PlayerIconsFromCamera = (C.PlayerIconsFromCamera or 0) + 1
+					local results = { pcall(shipped, self, ...) }
+					C.PlayerIconsFromCamera = C.PlayerIconsFromCamera - 1
+					if not results[1] then
+						error(results[2], 0)
+					end
+					return unpack(results, 2, table.maxn(results))
+				end, "SAC" .. name)
+				SACCamera[name] = C["SAC" .. name]
+			end
+		end
+		if GUI ~= nil and GUI.SetShouldDrawPlayerIcons ~= nil and GUI.SetShouldDrawPlayerIcons ~= C.SetShouldDrawPlayerIcons then
+			local shipped = GUI.SetShouldDrawPlayerIcons
+			C.SetShouldDrawPlayerIcons = C.Permanent(function(on, ...)
+				if C.PartnerCameraUpdating() then
+					if Refii ~= nil and Refii._partner_player_icons ~= nil then
+						Refii._partner_player_icons(on == true)
+					end
+					return
+				end
+				local camera = (C.PlayerIconsFromCamera or 0) > 0
+				if not camera and C.LocalCoopCameras() and Refii ~= nil and Refii._partner_player_icons ~= nil then
+					Refii._partner_player_icons(on == true)
+				end
+				if not camera or Refii == nil or Refii._camera_player_icons == nil then
+					return shipped(on, ...)
+				end
+				Refii._camera_player_icons(true)
+				local results = { pcall(shipped, on, ...) }
+				Refii._camera_player_icons(false)
+				if not results[1] then
+					error(results[2], 0)
+				end
+				return unpack(results, 2, table.maxn(results))
+			end, "SetShouldDrawPlayerIcons")
+			GUI.SetShouldDrawPlayerIcons = C.SetShouldDrawPlayerIcons
 		end
 
 		-- A CAMERA'S LOOK-AT IS ITS OWN PLAYER'S. CameraFunctions.GetSafeLookAtButtonDown(player)
@@ -3947,9 +4743,19 @@ public static class CoopHeroLua
 		--   action's camera is switched on (the normal set lists CannedActionCamera and
 		--   CombatCannedActionCamera before FirstPersonCamera; IsValid answers their Active flags) and, with
 		--   the aim flag, while RangedCombatCamera.IsValid(hero); the host answers no hold during a FULL
-		--   cutscene. hold.Written[half] is the data table written there, while the native mode word
-		--   (Player.SetOverrideCameraMode's +0xC4 / +0xC8) is still ours; Refii._camera_held states those
+		--   cutscene. hold.Written[half] is the data table written there; Refii._camera_held states those
 		--   halves, so the cutscene event leaves our LookAt out.
+		--   THE NATIVE PAIR IS NEVER THE HOLD'S. CameraManager.SetCameraOverride also calls
+		--   Player.SetOverrideCameraMode(hero, mode, scope) (cameramanager.lua line 14), which stores the
+		--   mode in the hero's Player component: `stw r4, 0xC4(r3)` Normal, `stw r4, 0xC8(r3)` LookAt
+		--   (TU1 0x823E31D4 / 0x823E31CC, disc 0x823C1B9C / 0x823C1B94) — the two words the component's
+		--   save writes as OverrideCameraModeNormal / OverrideCameraModeLookAt (CECPlayer_vf9, `addi
+		--   r5, r19, 0xC4` TU1 0x823EBDE8 / disc 0x823CA810, `0xC8` 0x823EBE14 / 0x823CA83C). So each of
+		--   the hold's own SetCameraOverride calls reads the pair first (Player.GetOverrideCameraMode:
+		--   scope 1 `lwz r3, 0xC4(r3)`, scope 2 `lwz r3, 0xC8(r3)`, TU1 0x823E31E8 / disc 0x823C1BB0)
+		--   and writes it back after: a save made under a hold holds what the game itself stated. The
+		--   scripts that ask the pair (the talk camera: InteractiveCutsceneGroupMind:SetTalkingLookAtCamera)
+		--   are answered with the hold's mode on the halves it stands on, as before.
 		C.CameraModes = C.CameraModes or {}
 		C.Holds = C.Holds or {}
 		C.CameraHalves = { { "Normal", 1 }, { "LookAt", 2 } }
@@ -3986,6 +4792,38 @@ public static class CoopHeroLua
 				return EInteractiveCutsceneRuleScope.CUTSCENE_RULE_SCOPE_NORMAL
 			end
 			return EInteractiveCutsceneRuleScope.CUTSCENE_RULE_SCOPE_LOOK_AT
+		end
+
+		function C.CameraNative(hero)
+			local get = C.ShippedGetOverrideCameraMode or Player.GetOverrideCameraMode
+			local scope = EInteractiveCutsceneRuleScope
+			return get(hero, scope.CUTSCENE_RULE_SCOPE_NORMAL), get(hero, scope.CUTSCENE_RULE_SCOPE_LOOK_AT)
+		end
+
+		function C.CameraNativeRestore(hero, normal, look_at)
+			local scope = EInteractiveCutsceneRuleScope
+			Player.SetOverrideCameraMode(hero, normal, scope.CUTSCENE_RULE_SCOPE_NORMAL)
+			Player.SetOverrideCameraMode(hero, look_at, scope.CUTSCENE_RULE_SCOPE_LOOK_AT)
+		end
+
+		if Player ~= nil and Player.GetOverrideCameraMode ~= nil and Player.GetOverrideCameraMode ~= C.GetOverrideCameraMode then
+			local shipped = Player.GetOverrideCameraMode
+			C.ShippedGetOverrideCameraMode = shipped
+			C.GetOverrideCameraMode = C.Permanent(function(hero, scope, ...)
+				local key = hero ~= nil and next(C.Holds) ~= nil and GetIDFromEntity(hero) or nil
+				local hold = key ~= nil and C.Holds[key] or nil
+				if hold ~= nil then
+					local rule = EInteractiveCutsceneRuleScope
+					if scope == rule.CUTSCENE_RULE_SCOPE_LOOK_AT and hold.Written.LookAt ~= nil then
+						return hold.Mode
+					end
+					if scope == rule.CUTSCENE_RULE_SCOPE_NORMAL and hold.Written.Normal ~= nil then
+						return hold.Mode
+					end
+				end
+				return shipped(hero, scope, ...)
+			end, "GetOverrideCameraMode")
+			Player.GetOverrideCameraMode = C.GetOverrideCameraMode
 		end
 
 		function C.CameraHold(hero)
@@ -4048,7 +4886,9 @@ public static class CoopHeroLua
 				end
 			end
 			if claim ~= 0 then
+				local normal, look_at = C.CameraNative(hero)
 				CameraManager.SetCameraOverride(hero, hold.Mode, C.CameraScope(claim), hold.Data)
+				C.CameraNativeRestore(hero, normal, look_at)
 				for _, half in ipairs(C.CameraHalves) do
 					if math.floor(claim / half[2]) % 2 == 1 then
 						hold.Written[half[1]] = hold.Data
@@ -4060,7 +4900,9 @@ public static class CoopHeroLua
 				if hold.Blend ~= nil and hold.Blend >= 0 then
 					data = { BlendInSeconds = hold.Blend }
 				end
+				local normal, look_at = C.CameraNative(hero)
 				CameraManager.SetCameraOverride(hero, default, C.CameraScope(release), data)
+				C.CameraNativeRestore(hero, normal, look_at)
 				for _, half in ipairs(C.CameraHalves) do
 					if math.floor(release / half[2]) % 2 == 1 then
 						hold.Written[half[1]] = nil
@@ -4082,16 +4924,50 @@ public static class CoopHeroLua
 		-- pluto_persist_entry), and the shipped table's CameraSave.Overrides is CameraManager.Overrides
 		-- itself (CameraManager.GetSaveTable). The core save wrapper calls this on that table: the
 		-- written copy has every half the hold stands on as the default record, the live one untouched.
+		-- PLAYER TWO'S CAMERA LEAVES NO RECORD. Player two's camera manager (every local co-op game) asks
+		-- CameraManager.GetOverriddenData(hero two) each update, which makes hero two the default record
+		-- (cameramanager.lua 59-68, NewOverrideDataForPlayer 73-74: {Normal = {CameraEnum = DEFAULT},
+		-- LookAt = {CameraEnum = DEFAULT}}), and its OnLevelLoad writes the same (258). The shipped shared
+		-- screen had one manager and no such record: the written copy leaves it out while it holds nothing
+		-- but those defaults, so the save is the one a single-player game at that spot writes. A record a
+		-- script stated for hero two stays.
+		function C.PartnerDefaultRecord(overrides)
+			if not C.LocalCoopCameras() then
+				return nil
+			end
+			local get = C.ShippedGetPlayerHenchman or GetPlayerHenchman
+			local two = get ~= nil and get() or nil
+			local key = two ~= nil and GetIDFromEntity(two) or nil
+			local record = key ~= nil and overrides[key] or nil
+			if type(record) ~= "table" then
+				return nil
+			end
+			local default = ECameraMode.CAMERA_MODE_DEFAULT
+			for _, half in ipairs(C.CameraHalves) do
+				local entry = record[half[1]]
+				if type(entry) ~= "table" or entry.CameraEnum ~= default or entry.OverrideData ~= nil then
+					return nil
+				end
+			end
+			return key
+		end
+
 		function C.CameraSaveTable(t)
 			local save = type(t) == "table" and t.CameraSave or nil
 			local overrides = type(save) == "table" and save.Overrides or nil
-			if type(overrides) ~= "table" or next(C.Holds) == nil then
+			if type(overrides) ~= "table" then
+				return
+			end
+			local partner = C.PartnerDefaultRecord(overrides)
+			if next(C.Holds) == nil and partner == nil then
 				return
 			end
 			local copy = {}
 			for id, record in pairs(overrides) do
 				local hold = C.Holds[id]
-				if hold ~= nil and type(record) == "table" then
+				if id == partner then
+					-- left out: player two's camera's own default record
+				elseif hold ~= nil and type(record) == "table" then
 					local entry = {}
 					for field, value in pairs(record) do
 						entry[field] = value
@@ -4119,6 +4995,13 @@ public static class CoopHeroLua
 		-- wrapper, so `sub_82265F90` wrote the default pose (origin, 70 degrees). The current
 		-- set, camera and priority are kept per hero here, keyed as the shipped script keys its
 		-- per-player overrides (GetIDFromEntity).
+		-- LOCAL CO-OP: player one's camera is the one camera of a single-player game, on the shipped
+		-- fields; player two's is swapped in for its manager's update and put back. Player two's
+		-- record belongs to ONE manager (C.PartnerCameraManager): hero two is entity UID 2 at every
+		-- join (lhNetManager_SetupHenchman looks it up by that UID, TU1 `li r8,2` 0x8233D1D4 ..
+		-- `bl sub_82264488` 0x8233D1F8), so a re-join after a local quit found the old manager's
+		-- camera as current, activated nothing, and the new manager's update called a mode it never
+		-- built (`addi r3,r30,0x2C; bl sub_8219A758` with r30 = 0: TU1 0x821B9510, disc 0x821B95D8).
 		if CameraManager ~= nil and CameraManager.FrameUpdate ~= nil and CameraManager.FrameUpdate ~= C.FrameUpdate then
 			local shipped = CameraManager.FrameUpdate
 			C.CameraState = C.CameraState or {}
@@ -4126,9 +5009,6 @@ public static class CoopHeroLua
 				-- Called for each hero every frame: the chest watch rides it (throttled inside).
 				if C.ChestWatch ~= nil then
 					pcall(C.ChestWatch)
-				end
-				if C.HouseholdTick ~= nil then
-					pcall(C.HouseholdTick)
 				end
 				if C.CombatApply ~= nil then
 					pcall(C.CombatApply)
@@ -4139,22 +5019,47 @@ public static class CoopHeroLua
 				if C.RouteTick ~= nil then
 					pcall(C.RouteTick)
 				end
+				if C.JoinerSignTick ~= nil then
+					pcall(C.JoinerSignTick)
+				end
+				if C.JoinerTargetTick ~= nil then
+					pcall(C.JoinerTargetTick)
+				end
 				if hero ~= nil then
 					pcall(C.CameraHold, hero)
+				end
+				if hero ~= nil and C.CamTuneFor ~= nil then
+					pcall(C.CamTuneFor, hero)
 				end
 				if hero == nil then
 					return shipped(self, hero, ...)
 				end
 				local key = GetIDFromEntity(hero)
-				if key == nil or not C.OwnCameras() then
+				local local_two = C.LocalCoopCameras()
+				if local_two and C.TetherTick ~= nil and C.IsHeroOne(hero) then
+					pcall(C.TetherTick, hero)
+				end
+				if key == nil or not (local_two or C.OwnCameras()) then
 					local result = shipped(self, hero, ...)
 					pcall(C.CameraStated, hero, self.CurrentCamera)
 					return result
 				end
+				local partner = local_two and not C.IsHeroOne(hero)
+				if local_two and not partner then
+					local result = shipped(self, hero, ...)
+					pcall(C.CameraStated, hero, self.CurrentCamera)
+					return result
+				end
+				local manager = partner and C.PartnerCameraManager() or 0
 				local state = C.CameraState[key]
-				if state == nil then
-					state = {}
+				if state == nil or state.Manager ~= manager then
+					-- An online camera keeps the pick it already made when the swap starts; player two's new
+					-- manager starts with none, so its first update activates the best camera.
+					state = partner and { Manager = manager } or { Manager = manager, Set = self.CurrentSet, Camera = self.CurrentCamera, Priority = self.CurrentSetPriority }
 					C.CameraState[key] = state
+					if partner and C.CameraModes ~= nil then
+						C.CameraModes[key] = nil
+					end
 				end
 				local set, camera, priority = self.CurrentSet, self.CurrentCamera, self.CurrentSetPriority
 				self.CurrentSet, self.CurrentCamera, self.CurrentSetPriority = state.Set, state.Camera, state.Priority
@@ -4368,10 +5273,14 @@ public static class CoopHeroLua
 			RangedCombatCamera.GetDesiredDirection = C.AimGetDesiredDirection
 		end
 
-		-- THE ROUTE's camera calls (SACCamera.AddInterestingEntity, ...): this table is new each time
-		-- the camera scripts run.
+		-- THE ROUTE's camera calls (SACCamera.AddInterestingEntity, ..., and the canned-action camera a
+		-- use script switches on for its user, CannedActionCamera.SwitchOn / SwitchOff): these tables are
+		-- new each time the camera scripts run (camera/stringandcagecamera.lua,
+		-- camera/cannedactioncamera.lua), and on the Title Update they do not exist yet when the core
+		-- chunk's own RouteWrapAll runs — so the camera of a run for player two switched on HERE.
 		if C.RouteWrapAll ~= nil then
 			C.RouteWrapAll("SACCamera")
+			C.RouteWrapAll("CannedActionCamera")
 		end
 
 		-- THE PAIR WALKS BACK INTO THE LEASH. The leash (sub_821A0298, disc sub_821A0340) zeroes every
@@ -4388,6 +5297,17 @@ public static class CoopHeroLua
 			C.SetLimitCharacterDistance = C.Permanent(function(distance, ...)
 				if type(distance) == "number" then
 					C.LeashMetres = distance
+					-- THE SHARED SCREEN'S DISTANCE (C.SharedLeashMetres). SACCamera:UpdateZoomLevel scales the zoom's
+					-- MaxCoopDistance by the hero only while the camera frames one hero: `local scale = self.Secondary
+					-- and 1 or SACCamera.CalculateScale(self.Player, ...)` (stringandcagecamera.lua 2063; CalculateScale
+					-- 1 + 0.125 x min(skill + height, 1), 548), and Secondary is nil while IsMultiplayer answers false
+					-- (C.OwnCameras: 644, 1400, 1411). So the same zoom states 13 shared and up to 14.6 split. Hybrid
+					-- splits and rejoins against the shared camera's statement, held while the screen is split.
+					if not C.LocalCoopCameras() then
+						C.SharedLeashMetres = nil
+					elseif not C.OwnCameras() then
+						C.SharedLeashMetres = distance
+					end
 				end
 				return shipped(distance, ...)
 			end, "SetLimitCharacterDistance")
@@ -4413,20 +5333,569 @@ public static class CoopHeroLua
 			return true
 		end
 
+		-- THE LEASH'S OWN MEASURE, FOR HYBRID'S SPLIT (Engine_CameraScreens). The leash measures head to head in
+		-- 3-D: each hero's Creature.GetCollisionHeadPosition (+0.1 up for both, 0x821A04B8 / disc 0x821A0560),
+		-- |other - mine| by vmsum3fp128 (0x821A07F4..0x821A082C / disc 0x821A089C..0x821A08D4), against the distance
+		-- the shared camera last stated to Debug.SetLimitCharacterDistance (C.SharedLeashMetres; C.LeashMetres
+		-- before it has stated one). Player one's camera states both each tick.
+		function C.TetherTick(hero)
+			if Refii == nil or Refii._coop_tether_stated == nil or Creature == nil or Creature.GetCollisionHeadPosition == nil then
+				return
+			end
+			local get = C.ShippedGetPlayerHenchman or GetPlayerHenchman
+			local partner = get ~= nil and get() or nil
+			if partner == nil or not partner:IsAlive() then
+				return
+			end
+			local a = Creature.GetCollisionHeadPosition(hero)
+			local b = Creature.GetCollisionHeadPosition(partner)
+			if a == nil or b == nil then
+				return
+			end
+			local dx, dy, dz = a:GetX() - b:GetX(), a:GetY() - b:GetY(), a:GetZ() - b:GetZ()
+			Refii._coop_tether_stated(C.SharedLeashMetres or C.LeashMetres, math.sqrt(dx * dx + dy * dy + dz * dz))
+		end
+
 		if SACCamera.SetMaxCoopDistance ~= C.SetMaxCoopDistance then
 			local shipped = SACCamera.SetMaxCoopDistance
 			C.SetMaxCoopDistance = C.Permanent(function(self, ...)
+				-- One camera states the leash, as on the shipped shared screen: player one's.
+				if C.PartnerCameraUpdating() then
+					return
+				end
 				local free = C.FreeRoam()
 				local reuniting = C.Reuniting(free)
 				if Debug ~= nil and Debug.SetMultiPlayerHeroFree ~= nil then
 					Debug.SetMultiPlayerHeroFree(free or reuniting)
 				end
-				if free then
+				-- Hybrid keeps the distance stated (C.LeashMetres, C.TetherTick): the leash is skipped whole
+				-- while free, so the statement only measures.
+				if free and not C.HybridScreen() then
 					return
 				end
 				return shipped(self, ...)
 			end, "SetMaxCoopDistance")
 			SACCamera.SetMaxCoopDistance = C.SetMaxCoopDistance
+		end
+
+		-- THE CAMERA MOD API'S SHAPE (ModApi.CameraShapeMeaning). What the mods state is Refii._cam[p]
+		-- (Engine_ModLuaCamera.cs); each value is applied where the camera scripts read their own:
+		--   tune      SACCamera's class fields (HeightAdjustSpeed in ProcessGameAction; the height
+		--             bounds in GetHeight and ProcessGameAction; CameraMoveDamping in FrameUpdate;
+		--             DirectionStrengthHard in CalculateDesiredDirection; InwardsRotateSpeed in
+		--             AlignToDirection), written for the player whose camera manager updates next
+		--             and put back to the shipped value when let go; RangedCombatCamera's
+		--             GetTightness, GetOffsetDegrees and the AngleLimit asked for just after
+		--             GetTightness; the held first-person view (fp_*).
+		--   frame     the explore zoom levels (MyExteriorZoomLevels / MyInteriorZoomLevels: the first
+		--             of each, or all), reshaped before CalculateActiveZoomLevel picks from them; the
+		--             shipped values are kept per level table and put back.
+		--   combat    GetDesiredCombatCamWeight's answer.
+		--   interest  the lists CalculateCentreAndCage takes foes and passers-by from, empty for the call.
+		--   focus     the centre CalculateCentreAndCage returns, slid to the camera's right and up,
+		--             eased per call.
+		--   pitch     GetHeight's decay of ManualHeightOffset undone: the clamped value put back.
+		--   lock      CalculateDesiredDirection: the lock's target framed with no look-at button held.
+		--   deny      IsValid of the camera the override set lists under a mode.
+		-- frame, combat, interest, focus, lock and deny apply to a camera framing ONE hero (not
+		-- CameraFunctions.IsMultiplayer(camera.Player)); pitch too unless stated shared; tune always.
+		-- With nothing stated every wrap is the shipped function called with its own arguments.
+		C.CamShipped = C.CamShipped or setmetatable({}, { __mode = "k" })
+		C.CamShaped = C.CamShaped or setmetatable({}, { __mode = "k" })
+		C.CamWrapped = C.CamWrapped or setmetatable({}, { __mode = "k" })
+		C.CamEmpty = {}
+		C.CamLevelKeys = { "StringLength", "CageRadius", "MaxCageRadius", "SlotWidth", "SlotDepth", "TrackAmount", "HeightOffset", "FocalOffset" }
+		C.CamTuneFields = {
+			pitch_speed = "HeightAdjustSpeed", pitch_max = "HeightOffsetUpperBound", pitch_min = "HeightOffsetLowerBound",
+			move_damping = "CameraMoveDamping", lock_strength = "DirectionStrengthHard", lock_turn_speed = "InwardsRotateSpeed",
+		}
+
+		-- What is stated for the player whose hero `hero` is; nil with nothing stated.
+		function C.CamState(hero)
+			local cam = Refii ~= nil and Refii._cam or nil
+			if cam == nil or hero == nil or not (cam[1].any or cam[2].any) then
+				return nil
+			end
+			local handle = Refii.handle(hero)
+			local p = handle ~= nil and Refii.player_of(handle) or 0
+			local state = (p == 1 or p == 2) and cam[p] or nil
+			return state ~= nil and state.any and state or nil
+		end
+
+		function C.CamOneHero(hero)
+			return not CameraFunctions.IsMultiplayer(hero)
+		end
+
+		-- One zoom level as `want` says: a frame's serial (shaped by it) or false (the shipped values).
+		function C.CamShape(level, want, frame, distance)
+			if type(level) ~= "table" or C.CamShaped[level] == want or (want == false and C.CamShaped[level] == nil) then
+				return
+			end
+			local shipped = C.CamShipped[level]
+			if shipped == nil then
+				shipped = {}
+				for _, key in ipairs(C.CamLevelKeys) do
+					shipped[key] = level[key]
+				end
+				C.CamShipped[level] = shipped
+			end
+			for _, key in ipairs(C.CamLevelKeys) do
+				level[key] = shipped[key]
+			end
+			if want ~= false then
+				if distance ~= nil then
+					level.StringLength = distance
+					level.CageRadius = distance
+					level.MaxCageRadius = distance
+				end
+				if frame.slot ~= nil then
+					level.SlotWidth = frame.slot
+					level.SlotDepth = frame.slot
+				end
+				if frame.track ~= nil then
+					level.TrackAmount = frame.track
+				end
+				if frame.height ~= nil then
+					level.HeightOffset = frame.height
+				end
+				if frame.focus_height ~= nil then
+					level.FocalOffset = frame.focus_height
+				end
+			end
+			C.CamShaped[level] = want
+		end
+
+		function C.CamShapeSet(set, want, frame, distance)
+			if type(set) ~= "table" then
+				return
+			end
+			for i, level in ipairs(set) do
+				local on = want ~= false and (i == 1 or frame.levels == "all")
+				C.CamShape(level, on and want or false, frame, distance)
+			end
+		end
+
+		-- The class fields as `state` tunes them, the shipped value for every key it does not state.
+		function C.CamTune(state)
+			local tune = state ~= nil and state.tune or nil
+			if tune == nil and not C.CamTuned then
+				return
+			end
+			local shipped = C.CamShipped[SACCamera]
+			if shipped == nil then
+				shipped = {}
+				C.CamShipped[SACCamera] = shipped
+			end
+			local any = false
+			for key, field in pairs(C.CamTuneFields) do
+				local value = tune ~= nil and tune[key] or nil
+				if value ~= nil then
+					if shipped[field] == nil then
+						shipped[field] = { SACCamera[field] }
+					end
+					SACCamera[field] = value
+					any = true
+				elseif shipped[field] ~= nil then
+					SACCamera[field] = shipped[field][1]
+				end
+			end
+			C.CamTuned = any
+		end
+
+		-- Called by the FrameUpdate wrapper above for the hero whose camera manager updates.
+		function C.CamTuneFor(hero)
+			if C.CamTuned or (Refii ~= nil and Refii._cam ~= nil and (Refii._cam[1].any or Refii._cam[2].any)) then
+				C.CamTune(C.CamState(hero))
+			end
+		end
+
+		if SACCamera.CalculateActiveZoomLevel ~= nil and C.CamWrapped[SACCamera] == nil then
+			C.CamWrapped[SACCamera] = true
+
+			local calculate_active = SACCamera.CalculateActiveZoomLevel
+			C.CamCalculateActiveZoomLevel = C.Permanent(function(self, ...)
+				local cam = Refii ~= nil and Refii._cam or nil
+				if cam ~= nil and (cam[1].frame ~= nil or cam[2].frame ~= nil or self.RefiiFramed) then
+					local state = C.CamState(self.Player)
+					local frame = state ~= nil and state.frame or nil
+					local want = frame ~= nil and C.CamOneHero(self.Player) and state.frame_serial or false
+					local distance = frame ~= nil and frame.distance or nil
+					C.CamShapeSet(self.MyExteriorZoomLevels, want, frame, distance)
+					if distance ~= nil and frame.interior_scale ~= nil then
+						distance = distance * frame.interior_scale
+					end
+					C.CamShapeSet(self.MyInteriorZoomLevels, want, frame, distance)
+					self.RefiiFramed = (cam[1].frame ~= nil or cam[2].frame ~= nil) or nil
+				end
+				calculate_active(self, ...)
+				-- The level in force now (ScaledActiveZoomLevel) is camera_zoom's, and a change of set or
+				-- of the combat blend raises camera_zoom_changed (Refii._camera_zoom_record, the preamble).
+				if Refii ~= nil and Refii._camera_zoom_record ~= nil then
+					local handle = Refii.handle(self.Player)
+					Refii._camera_zoom_record(self, handle ~= nil and Refii.player_of(handle) or 0, self.Player)
+				end
+			end, "CamCalculateActiveZoomLevel")
+			SACCamera.CalculateActiveZoomLevel = C.CamCalculateActiveZoomLevel
+
+			local combat_weight = SACCamera.GetDesiredCombatCamWeight
+			C.CamGetDesiredCombatCamWeight = C.Permanent(function(self, ...)
+				local state = C.CamState(self.Player)
+				if state ~= nil and state.combat ~= nil and C.CamOneHero(self.Player) then
+					return state.combat
+				end
+				return combat_weight(self, ...)
+			end, "CamGetDesiredCombatCamWeight")
+			SACCamera.GetDesiredCombatCamWeight = C.CamGetDesiredCombatCamWeight
+
+			-- The centre, slid by how far the ease has got.
+			function C.CamSlid(self, centre, slide)
+				local forward = self.Camera and Physics.GetFacingVector(self.Camera)
+				local share = self.RefiiFocusShare or 0
+				if forward == nil or centre == nil or share <= 0 then
+					return centre
+				end
+				return centre + CVector3(forward:GetY() * slide.right * share, -forward:GetX() * slide.right * share, slide.up * share)
+			end
+
+			local centre_and_cage = SACCamera.CalculateCentreAndCage
+			C.CamCalculateCentreAndCage = C.Permanent(function(self, ...)
+				local state = C.CamState(self.Player)
+				local interest = state ~= nil and state.interest or nil
+				local focus = state ~= nil and state.focus or nil
+				if interest == nil and focus == nil and self.RefiiFocus == nil then
+					return centre_and_cage(self, ...)
+				end
+				local one = C.CamOneHero(self.Player)
+				local sliding = focus ~= nil and one
+				if sliding then
+					self.RefiiFocus = focus
+				end
+				local slide = self.RefiiFocus
+				if slide ~= nil then
+					local share = self.RefiiFocusShare or 0
+					share = share + ((sliding and 1 or 0) - share) * slide.ease
+					self.RefiiFocusShare = share
+					if not sliding and share < 0.01 then
+						self.RefiiFocusShare = nil
+						self.RefiiFocus = nil
+						slide = nil
+					end
+				end
+				if interest == nil or not one or (interest.foes and interest.passers) then
+					if slide == nil then
+						return centre_and_cage(self, ...)
+					end
+					local centre, cage = centre_and_cage(self, ...)
+					return C.CamSlid(self, centre, slide), cage
+				end
+				local foes = self.WeightedNearbyFoes
+				local near = self.WeightedNearbyInterestingEntities
+				local high = self.WeightedNearbyInterestingEntitiesHigh
+				if not interest.foes then
+					self.WeightedNearbyFoes = C.CamEmpty
+				end
+				if not interest.passers then
+					self.WeightedNearbyInterestingEntities = C.CamEmpty
+					self.WeightedNearbyInterestingEntitiesHigh = C.CamEmpty
+				end
+				local ok, centre, cage = pcall(centre_and_cage, self, ...)
+				self.WeightedNearbyFoes = foes
+				self.WeightedNearbyInterestingEntities = near
+				self.WeightedNearbyInterestingEntitiesHigh = high
+				if not ok then
+					error(centre, 0)
+				end
+				if slide ~= nil then
+					centre = C.CamSlid(self, centre, slide)
+				end
+				return centre, cage
+			end, "CamCalculateCentreAndCage")
+			SACCamera.CalculateCentreAndCage = C.CamCalculateCentreAndCage
+
+			local get_height = SACCamera.GetHeight
+			C.CamGetHeight = C.Permanent(function(self, current_pos, centre, current_cage_radius, ...)
+				local state = C.CamState(self.Player)
+				local pitch = state ~= nil and state.pitch or nil
+				if pitch == nil or (not pitch.shared and not C.CamOneHero(self.Player)) then
+					return get_height(self, current_pos, centre, current_cage_radius, ...)
+				end
+				local held = self.ManualHeightOffset
+				if pitch.min == nil and pitch.max == nil then
+					local height = get_height(self, current_pos, centre, current_cage_radius, ...)
+					if held ~= nil then
+						self.ManualHeightOffset = math.min(math.max(held, -self.HeightOffsetLowerBound), self.HeightOffsetUpperBound)
+					end
+					return height
+				end
+				local upper, lower = SACCamera.HeightOffsetUpperBound, SACCamera.HeightOffsetLowerBound
+				local up, down = pitch.max or upper, pitch.min or lower
+				SACCamera.HeightOffsetUpperBound, SACCamera.HeightOffsetLowerBound = up, down
+				local ok, height = pcall(get_height, self, current_pos, centre, current_cage_radius, ...)
+				SACCamera.HeightOffsetUpperBound, SACCamera.HeightOffsetLowerBound = upper, lower
+				if not ok then
+					error(height, 0)
+				end
+				if held ~= nil then
+					self.ManualHeightOffset = math.min(math.max(held, -down), up)
+				end
+				return height
+			end, "CamGetHeight")
+			SACCamera.GetHeight = C.CamGetHeight
+
+			-- CalculateDesiredDirection (targetlockcamera.lua) frames a TARGET_LOCK only while the
+			-- look-at button is down; otherwise it clears TargetLockTarget, which the update set from
+			-- Targeting.GetTarget while the hero holds PLAYER_MODE_TARGET_LOCK. When the shipped pass
+			-- frames nothing, the lock branch's own statements are made for that target.
+			if SACCamera.CalculateDesiredDirection ~= nil then
+				local desired_direction = SACCamera.CalculateDesiredDirection
+				C.CamCalculateDesiredDirection = C.Permanent(function(self, ...)
+					local state = C.CamState(self.Player)
+					local lock = state ~= nil and state.lock or nil
+					if lock == nil then
+						return desired_direction(self, ...)
+					end
+					local target = self.TargetLockTarget
+					desired_direction(self, ...)
+					if self.DesiredTargetDirection ~= nil or target == nil or not target:IsAlive() then
+						return
+					end
+					if not C.CamOneHero(self.Player) or not self:IsTargetLocking() then
+						return
+					end
+					self.TargetLockTarget = target
+					local direction = self:CalculateTargetLockDesiredVector()
+					if direction == nil then
+						self.TargetLockTarget = nil
+						return
+					end
+					self.DesiredTargetDirection = direction
+					self.AvoidAligning = true
+					self.DesiredDirectionStrength = lock.strength or SACCamera.DirectionStrengthHard
+					if lock.tilt then
+						self.TiltVerticalTarget = self:CalculateTargetLockTargetPosition()
+					end
+				end, "CamCalculateDesiredDirection")
+				SACCamera.CalculateDesiredDirection = C.CamCalculateDesiredDirection
+			end
+		end
+
+		if RangedCombatCamera ~= nil and RangedCombatCamera.GetTightness ~= nil and C.CamWrapped[RangedCombatCamera] == nil then
+			C.CamWrapped[RangedCombatCamera] = true
+
+			local shipped_limit = RangedCombatCamera.AngleLimit
+			local tightness = RangedCombatCamera.GetTightness
+			C.CamGetTightness = C.Permanent(function(self, ...)
+				local state = C.CamState(self.Player)
+				local tune = state ~= nil and state.tune or nil
+				local limit = tune ~= nil and tune.ranged_pitch_limit or nil
+				if limit ~= nil then
+					self.AngleLimit = math.rad(limit)
+					self.RefiiAngleLimited = true
+				elseif self.RefiiAngleLimited then
+					self.AngleLimit = shipped_limit
+					self.RefiiAngleLimited = nil
+				end
+				if tune ~= nil and tune.ranged_tightness ~= nil then
+					return tune.ranged_tightness
+				end
+				return tightness(self, ...)
+			end, "CamGetTightness")
+			RangedCombatCamera.GetTightness = C.CamGetTightness
+
+			if RangedCombatCamera.GetOffsetDegrees ~= nil then
+				local offset = RangedCombatCamera.GetOffsetDegrees
+				C.CamGetOffsetDegrees = C.Permanent(function(self, ...)
+					local state = C.CamState(self.Player)
+					local tune = state ~= nil and state.tune or nil
+					if tune ~= nil and tune.ranged_offset ~= nil then
+						return tune.ranged_offset
+					end
+					return offset(self, ...)
+				end, "CamGetOffsetDegrees")
+				RangedCombatCamera.GetOffsetDegrees = C.CamGetOffsetDegrees
+			end
+		end
+
+		-- A mode a player may not be given by the normal set: IsValid of the camera the override set
+		-- lists under it answers false for that player's one-hero camera. The override set picks by
+		-- mode without asking (GetOverrideCamera), so a quest's or a hold's stated camera still runs.
+		function C.CamDeny()
+			local cam = Refii ~= nil and Refii._cam or nil
+			if cam == nil or CameraManager == nil or type(CameraManager.CameraSetList) ~= "table" then
+				return
+			end
+			for p = 1, 2 do
+				for mode in pairs(cam[p].deny or C.CamEmpty) do
+					for _, set in ipairs(CameraManager.CameraSetList) do
+						local class = type(set) == "table" and set.OverridesCameraValidity and
+							type(set.CameraModes) == "table" and set.CameraModes[mode] or nil
+						if type(class) == "table" and type(class.IsValid) == "function" and C.CamWrapped[class] ~= class.IsValid then
+							local valid = class.IsValid
+							local wrapped = C.Permanent(function(hero, ...)
+								local state = C.CamState(hero)
+								if state ~= nil and state.deny ~= nil and state.deny[mode] and C.CamOneHero(hero) then
+									return false
+								end
+								return valid(hero, ...)
+							end, "CamIsValid" .. mode)
+							class.IsValid = wrapped
+							C.CamWrapped[class] = wrapped
+						end
+					end
+				end
+			end
+		end
+
+		-- THE HELD FIRST-PERSON VIEW (tune fp_view, stated while a mod holds first person through
+		-- camera_override). On a FirstPersonCamera activated for such a player and not opened by the
+		-- game's own look mode (CameraFunctions.IsInFirstPerson):
+		--   Activate            fp_fov is the camera's FOV.
+		--   ProcessGameAction   only GAME_ACTION_ROTATE_CAMERA turns the view (the shipped look mode
+		--                       also turns it with the left stick, which here walks the hero).
+		--   FrameUpdate         UpdateRotations bounded by fp_pitch_limit (the class's
+		--                       VerticalAngularBound for the call); the eye fp_eye_forward ahead of and
+		--                       fp_eye_height above GetDesiredPosFromPlayer, kept above water; a scene's
+		--                       framed point faced until the player looks away (HasTurned); the hero
+		--                       turned to the view by fp_face (0 never, 1 while standing, 2 always); no
+		--                       body fade (the shipped DOF only); CameraBase.FrameUpdate.
+		--   the override set    with fp_scenes, a scene's SIMPLE or GAME override is shown through
+		--                       FirstPersonCamera for that player, never in a full cutscene.
+		-- The values a view ran on are kept on it, so it blends out on them once the mod lets go.
+		-- Every function wrapped in this section is called from the native camera update or its input
+		-- event, on the main thread: none of them yields.
+		function C.CamFirstPersonTune(hero)
+			local state = C.CamState(hero)
+			local tune = state ~= nil and state.tune or nil
+			return tune ~= nil and tune.fp_view ~= nil and tune.fp_view ~= 0 and tune or nil
+		end
+
+		-- What a scene's override asks the camera to look at: a point, or nil.
+		function C.CamOverrideFocus(data)
+			if data.FocusFunction then
+				return data.FocusFunction()
+			end
+			local entity = data.FocusEntity or data.InterestingObject
+			if entity ~= nil and type(entity) == "userdata" and entity.IsAlive and entity:IsAlive() then
+				return CameraFunctions.GetObjectPosition(entity)
+			end
+			return nil
+		end
+
+		if FirstPersonCamera ~= nil and FirstPersonCamera.FrameUpdate ~= nil and C.CamWrapped[FirstPersonCamera] == nil then
+			C.CamWrapped[FirstPersonCamera] = true
+
+			local activate = FirstPersonCamera.Activate
+			C.CamFirstPersonActivate = C.Permanent(function(self, hero, camera, previous_camera, ...)
+				local a, b, c = activate(self, hero, camera, previous_camera, ...)
+				local tune = C.CamFirstPersonTune(hero)
+				self.RefiiView = (tune ~= nil and not CameraFunctions.IsInFirstPerson(hero)) or nil
+				self.RefiiTune = self.RefiiView and tune or nil
+				if self.RefiiView and tune.fp_fov ~= nil then
+					self:SetFOV(tune.fp_fov)
+				end
+				return a, b, c
+			end, "CamFirstPersonActivate")
+			FirstPersonCamera.Activate = C.CamFirstPersonActivate
+
+			local process_action = FirstPersonCamera.ProcessGameAction
+			C.CamFirstPersonProcessGameAction = C.Permanent(function(self, action, control_x, control_y, ...)
+				if not self.RefiiView then
+					return process_action(self, action, control_x, control_y, ...)
+				end
+				if action == EGameAction.GAME_ACTION_ROTATE_CAMERA then
+					self.RotateX = self.RotateX + control_x
+					self.RotateY = self.RotateY + control_y
+				end
+			end, "CamFirstPersonProcessGameAction")
+			FirstPersonCamera.ProcessGameAction = C.CamFirstPersonProcessGameAction
+
+			local frame_update = FirstPersonCamera.FrameUpdate
+			C.CamFirstPersonFrameUpdate = C.Permanent(function(self, ...)
+				if not self.RefiiView then
+					return frame_update(self, ...)
+				end
+				local tune = C.CamFirstPersonTune(self.Player) or self.RefiiTune or C.CamEmpty
+				self.RefiiTune = tune
+
+				local bound = FirstPersonCamera.VerticalAngularBound
+				FirstPersonCamera.VerticalAngularBound = tune.fp_pitch_limit or 75
+				self:UpdateRotations()
+				FirstPersonCamera.VerticalAngularBound = bound
+
+				local forward = Physics.GetFacingVector(self.Camera)
+				forward:SetZ(0)
+				if forward:GetLengthXY() > 0.001 then
+					forward:Normalise()
+				end
+
+				local position = FirstPersonCamera.GetDesiredPosFromPlayer(self.Player)
+					+ forward * (tune.fp_eye_forward or 0.12)
+					+ CVector3(0, 0, tune.fp_eye_height or 0.05)
+				if Camera.IsOverWaterAtPosition(self.Camera, position) then
+					local water_height = Camera.GetWaterPositionAtPosition(self.Camera, position):GetZ() + 0.25
+					position:SetZ(math.max(position:GetZ(), water_height))
+				end
+				self:SetDesiredPosition(position)
+
+				if not self.HasTurned then
+					local data = self:GetOverriddenData()
+					local focus = C.CamOverrideFocus(data)
+					if focus ~= nil then
+						self:SetDesiredTarget(focus + CVector3(0, 0, data.FocusVerticalOffset or 0))
+					end
+				end
+
+				local face = tune.fp_face or 1
+				if face >= 2 or (face == 1 and Physics.GetVelocity(self.Player):GetLengthXY() < 0.5) then
+					Physics.SetFacingVector(self.Player, forward)
+				end
+
+				self:SetDesiredDOF(CameraFunctions.AssembleDOFData(50, 50, 50, 50, 0, 0.6))
+
+				CameraBase.FrameUpdate(self)
+			end, "CamFirstPersonFrameUpdate")
+			FirstPersonCamera.FrameUpdate = C.CamFirstPersonFrameUpdate
+		end
+
+		if CameraManager ~= nil and type(CameraManager.CameraSetList) == "table" then
+			for _, set in ipairs(CameraManager.CameraSetList) do
+				if type(set) == "table" and set.OverridesCameraValidity and type(set.BestCameraFunction) == "function" and
+						C.CamWrapped[set] ~= set.BestCameraFunction then
+					local best_camera = set.BestCameraFunction
+					local wrapped = C.Permanent(function(camera_set, hero, ...)
+						local camera = best_camera(camera_set, hero, ...)
+						if camera == SimpleCamera or camera == SACCamera then
+							local tune = C.CamFirstPersonTune(hero)
+							if tune ~= nil and tune.fp_scenes ~= nil and tune.fp_scenes ~= 0 then
+								local handle = Refii.handle(hero)
+								local p = handle ~= nil and Refii.player_of(handle) or 0
+								if not Refii.in_cutscene(p, Refii.CUTSCENE_FULL) then
+									return FirstPersonCamera
+								end
+							end
+						end
+						return camera
+					end, "CamBestCamera")
+					set.BestCameraFunction = wrapped
+					C.CamWrapped[set] = wrapped
+				end
+			end
+		end
+
+		-- After every statement (Engine_ModLuaCamera.cs), and now for what stands: the class fields
+		-- of the stated player, and IsValid of each denied mode's camera.
+		function C.CamChanged(p)
+			local cam = Refii ~= nil and Refii._cam or nil
+			local state = cam ~= nil and cam[p] or nil
+			C.CamTune(state ~= nil and state.any and state or nil)
+			C.CamDeny()
+		end
+		if Refii ~= nil then
+			Refii._camera_changed = C.CamChanged
+			if Refii._cam ~= nil then
+				C.CamChanged(2)
+				C.CamChanged(1)
+			end
 		end
 		""";
 

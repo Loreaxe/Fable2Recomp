@@ -18,12 +18,22 @@
 // 0x82334A4C), and the member-update handler's local branch the same for XSessionLeaveLocal (TU1
 // 0x822EF4D0, disc 0x822EF6A0). With the failure the slot stayed filled, and the next join request
 // was answered JOINRESPONSE_SESSIONFULL until the host left the game.
+//
+// THE PEER IS GONE. Both run only from the member-update handler's erase branch (TU1
+// `sub_822EF238`: XSessionLeaveLocal 0x822EF4D0 for the local record `+0x200`, else
+// `sub_823575F0` 0x822EF530 → XSessionLeaveRemote 0x82357664; disc `sub_822EF408` 0x822EF6A0 /
+// 0x822EF700 → 0x82334A44), so a leave that succeeds ends the co-op session's other machine.
+// Refii's co-op channel forgets the address it learned: kept, the host restated to a joiner that
+// had quit, and a joiner restarted under that stream was held out of the shard (RexNet counts
+// title traffic as a game in progress) and found no session to join.
 
 #include <cstdint>
 
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
+
+#include "core/payload_bridge.h"
 
 extern "C" REX_FUNC(__imp__rex_XSessionLeaveRemote);
 extern "C" REX_FUNC(__imp__rex_XSessionLeaveLocal);
@@ -32,7 +42,8 @@ namespace {
 
 constexpr uint32_t kErrorFunctionFailed = 0x65Bu;
 
-/// Runs the title's stub; a synchronous request the XGI app refused answers success.
+/// Runs the title's stub; a synchronous request the XGI app refused answers success. A leave that
+/// succeeded ends the co-op channel's peer.
 void LeaveSession(PPCContext& ctx, uint8_t* base, PPCFunc* stub, const char* call) {
   const uint32_t players = ctx.r4.u32;
   const bool synchronous = ctx.r6.u32 == 0u;
@@ -41,6 +52,9 @@ void LeaveSession(PPCContext& ctx, uint8_t* base, PPCFunc* stub, const char* cal
     REXLOG_INFO("{}: {} player(s) left the session (the XGI request was refused; answered as a "
                 "console answers it)", call, players);
     ctx.r3.u64 = 0u;
+  }
+  if (synchronous && ctx.r3.u32 == 0u) {
+    refii_bridge_coop_channel_forget();
   }
 }
 

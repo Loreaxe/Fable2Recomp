@@ -342,6 +342,7 @@ public sealed class Engine_CorpsePolicyTests
 
         var ragdoll = new Engine_CorpsePolicy.CorpseCandidate(
             IsDeadCreature: true,
+            GuestLeftCorpse: true,
             HasSkeleton: true,
             SawVisibleWhileDead: true,
             SawEtherealWhileAlive: false,
@@ -390,6 +391,55 @@ public sealed class Engine_CorpsePolicyTests
         // GDB-authoritative DT=5 (Sentinel/Minion) is kept even if model path contains "darkness".
         AssertThat(Engine_CorpsePolicy.IsEligibleCorpse(crumble with { ModelPath = "creatures/darkness_minion.mdl", ClassifiedFromGdb = true })).IsTrue();
         AssertThat(Engine_CorpsePolicy.IsEligibleCorpse(crumble with { ModelPath = "creatures/darkness_minion.mdl", ClassifiedFromGdb = false })).IsFalse();
+        // The guest did not leave it lying (no FinishDeath stated): no corpse, whatever the record says.
+        AssertThat(Engine_CorpsePolicy.IsEligibleCorpse(ragdoll with { GuestLeftCorpse = false })).IsFalse();
+    }
+
+    /// <summary>
+    /// Each DeathType of the death switch (TU1 `sub_823A6C58`, disc `sub_824351C0`, jump table
+    /// resolved: 1 destroy, 2 FinishDeath, 3/4 the Die action with its destroy flag = type==4,
+    /// 5 crumble, 6 fade, 7 shadow, 8 shard) as the bridge states it: the corpse bit is set only
+    /// where FinishDeath runs, 2 and 3.
+    /// </summary>
+    [TestCase]
+    public void KeepsOnlyTheDeathTypesTheGuestLeavesLying()
+    {
+        for (int deathType = 1; deathType <= 8; ++deathType)
+        {
+            bool finishDeathRuns = deathType is 2 or 3;
+            bool kept = Engine_CorpsePolicy.LeavesCorpse(titleStates: true, statedCorpse: finishDeathRuns,
+                unstatedExcluded: false);
+            AssertThat(kept).IsEqual(finishDeathRuns);
+        }
+
+        // A stated title never consults the exclusions, either way.
+        AssertThat(Engine_CorpsePolicy.LeavesCorpse(true, statedCorpse: true, unstatedExcluded: true)).IsTrue();
+        AssertThat(Engine_CorpsePolicy.LeavesCorpse(true, statedCorpse: false, unstatedExcluded: false)).IsFalse();
+
+        // A crumble (DeathType 5) never reaches FinishDeath: its classification alone decides.
+        AssertThat(Engine_CorpsePolicy.LeavesCorpse(true, statedCorpse: false,
+            Engine_CorpsePolicy.CorpseDeathMode.CrumbleSplode, unstatedExcluded: false)).IsTrue();
+        AssertThat(Engine_CorpsePolicy.LeavesCorpse(true, statedCorpse: false,
+            Engine_CorpsePolicy.CorpseDeathMode.PhysicalRagdoll, unstatedExcluded: false)).IsFalse();
+        AssertThat(Engine_CorpsePolicy.LeavesCorpse(true, statedCorpse: true,
+            Engine_CorpsePolicy.CorpseDeathMode.PhysicalRagdoll, unstatedExcluded: false)).IsTrue();
+
+        // An unstated title (Fable 3) keeps its exclusions.
+        AssertThat(Engine_CorpsePolicy.LeavesCorpse(false, statedCorpse: false, unstatedExcluded: false)).IsTrue();
+        AssertThat(Engine_CorpsePolicy.LeavesCorpse(false, statedCorpse: false, unstatedExcluded: true)).IsFalse();
+    }
+
+    [TestCase]
+    public void CorpseBitIsLivenessNotLook()
+    {
+        var corpse = new HostBridge.EntityAppearance(1f, 1f, 1f, Vector4.One,
+            HostBridge.EntityAppearance.DrawableFlag | HostBridge.EntityAppearance.DeadCreatureFlag |
+            HostBridge.EntityAppearance.GuestCorpseFlag);
+
+        AssertThat(corpse.IsGuestCorpse).IsTrue();
+        AssertThat(corpse.IsConstructed).IsTrue();
+        AssertThat(corpse.VisualOnly.Flags).IsEqual(HostBridge.EntityAppearance.DrawableFlag);
+        AssertThat(corpse.VisualOnly.IsGuestCorpse).IsFalse();
     }
 
     [TestCase]

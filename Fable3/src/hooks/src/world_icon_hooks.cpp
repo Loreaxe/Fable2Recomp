@@ -4,7 +4,9 @@
 // the guest's body unchanged: the icon objects and records stay alive and run — the hold fill
 // (disc sub_825EC530 posts message 116 at disc 0x825ECB20 and runs CECOnActionUse_Use at disc 0x825ECD64), the
 // choice commit (sub_826103E8 finds its icon through sub_82615168 at 0x826105D0) and every read-back
-// are the guest's. The drawing is Godot's.
+// are the guest's. The drawing is Godot's. A choice's press and release are Godot's lever
+// (emotion_choice_answer.cpp); a record is stated as its creator built it, so its action is the pressed
+// code it was added with.
 //
 // Every address is the Fable 3 TU3 IDB ("disc" marks one TU3 lacks); each offset names its base.
 //
@@ -88,7 +90,6 @@ REX_EXTERN(__imp__rex_IconRegistry_Erase);
 REX_EXTERN(__imp__rex_WorldIcon_Destroy);
 REX_EXTERN(__imp__rex_EmotionChoices_Add);
 REX_EXTERN(__imp__rex_EmotionChoice_Delete);
-REX_EXTERN(__imp__rex_EmotionChoices_Input);
 
 namespace {
 
@@ -208,7 +209,7 @@ void StateIcon(const uint8_t* base, uint32_t icon, int32_t visible) {
   }
 }
 
-/// The choice record as its creator built it or the input handler left it.
+/// The choice record as its creator built it.
 void StateChoice(const uint8_t* base, uint32_t record) {
   if (!Plausible(record)) {
     return;
@@ -319,36 +320,4 @@ REX_EXTERN(rex_EmotionChoice_Delete) {
     }
   }
   __imp__rex_EmotionChoice_Delete(ctx, base);
-}
-
-// (E, &event, player): the press and release handler; its writes are rec+0 and rec+62. A commit
-// can delete a record inside it (the deleter above runs first), so only the records still stated
-// after it are read.
-REX_EXTERN(rex_EmotionChoices_Input) {
-  uint32_t records[kMaxChoices];
-  uint32_t before[kMaxChoices * REFII_EMOTION_CHOICE_WORDS];
-  const uint32_t count = refii_bridge_emotion_choices_read(records, before, nullptr, nullptr, 0u, kMaxChoices);
-  __imp__rex_EmotionChoices_Input(ctx, base);
-  const uint32_t handled = ctx.r3.u32;
-  uint32_t live[kMaxChoices];
-  const uint32_t live_count = refii_bridge_emotion_choices_read(live, nullptr, nullptr, nullptr, 0u, kMaxChoices);
-  for (uint32_t i = 0; i < count; ++i) {
-    const uint32_t record = records[i];
-    bool still = false;
-    for (uint32_t j = 0; j < live_count && !still; ++j) {
-      still = live[j] == record;
-    }
-    if (!still) {
-      continue;
-    }
-    StateChoice(base, record);
-    const uint32_t* was = before + (i * REFII_EMOTION_CHOICE_WORDS);
-    const bool held = Byte(base, record + 62u) != 0u;
-    const bool was_held = (was[5] & REFII_EMOTION_CHOICE_HELD) != 0u;
-    if (held != was_held || LoadGuestU32(base, record) != was[0]) {
-      REXLOG_INFO("Refii emotion choices: '{}' {} (action {} -> {}, handler returned {})",
-                  ReadCharString(base, record + 4u), held ? "held" : "released", was[0], LoadGuestU32(base, record),
-                  handled);
-    }
-  }
 }

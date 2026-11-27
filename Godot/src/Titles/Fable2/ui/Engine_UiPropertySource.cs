@@ -81,6 +81,11 @@ public static class Engine_UiPropertySource
 
 	private const string Icon = @"Art\GUI\WheelIcons\icon_logbook.tga";
 
+	/// <summary>The sales page's title and body, which a Properties row's page writes into.</summary>
+	private const string SaleTitle = "SalesPage.Contents.PageTitle";
+
+	private const string SaleBody = "SalesPage.Contents.Description";
+
 	/// <summary>The last list read, by UID, for the confirm box and the notices.</summary>
 	private static readonly Dictionary<ulong, HostBridge.Property> _known = new();
 
@@ -377,8 +382,8 @@ public static class Engine_UiPropertySource
 					"buys from then on."),
 				_ => (string.Empty, string.Empty),
 			};
-			values[Engine_UiQuestPages.SaleTitle] = title;
-			values[Engine_UiQuestPages.SaleBody] = body;
+			values[SaleTitle] = title;
+			values[SaleBody] = body;
 			return title.Length != 0;
 		}
 
@@ -392,8 +397,8 @@ public static class Engine_UiPropertySource
 				listed.Add($"{Name(each)} <s1>{Percent(each.Condition)}</s1> — {Gold}{each.RepairCost.ToString(CultureInfo.InvariantCulture)}");
 			}
 
-			values[Engine_UiQuestPages.SaleTitle] = "Repair All";
-			values[Engine_UiQuestPages.SaleBody] =
+			values[SaleTitle] = "Repair All";
+			values[SaleBody] =
 				$"Total <s1>{Gold}{total.ToString(CultureInfo.InvariantCulture)}</s1> — press A to repair them all, cheapest first while your gold lasts.<br><br>" +
 				string.Join("<br>", listed);
 			return true;
@@ -467,8 +472,8 @@ public static class Engine_UiPropertySource
 			}
 		}
 
-		values[Engine_UiQuestPages.SaleTitle] = Name(property);
-		values[Engine_UiQuestPages.SaleBody] = string.Join("<br><br>", lines);
+		values[SaleTitle] = Name(property);
+		values[SaleBody] = string.Join("<br><br>", lines);
 		return true;
 	}
 

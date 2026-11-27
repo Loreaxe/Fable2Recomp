@@ -1370,6 +1370,7 @@ pub async fn spawn(keypair: Keypair, config: EngineConfig) -> Result<EngineHandl
             shard_member_heard: HashMap::new(),
             shard_hosts: std::collections::BTreeMap::new(),
             readdress_deferred: false,
+            pinned_local_vip: None,
             shard_reachable_attempted: HashSet::new(),
             shard_swept_at: None,
             last_shard_move: None,
@@ -1534,6 +1535,10 @@ struct Engine {
     /// Membership changed while addresses were pinned by a game; the full
     /// table is rebuilt once no game is in progress.
     readdress_deferred: bool,
+    /// Our own address, held through a shard move made while a game is up
+    /// (`shard_enter` / `shard_leave` under `game_in_progress`): the guest's
+    /// session was opened on it. Released by the next `readdress_all`.
+    pinned_local_vip: Option<u32>,
     /// Shard members we have already tried to make reachable, so a 30 s
     /// heartbeat does not re-dial or re-query them every time.
     shard_reachable_attempted: HashSet<PeerId>,
@@ -1996,8 +2001,21 @@ impl Engine {
             self.shard_preferred = None;
         }
         self.emit(Event::ShardJoined { shard_id: desc.shard_id });
-        self.current_shard = Some(desc);
-        self.readdress_all();
+        if self.game_in_progress() {
+            // ENTERED MID-GAME, NOBODY MOVES. Every address we hold -- ours and
+            // each peer's -- is in the guest's live sockets, so the table is
+            // kept and only newcomers are placed (beside the addresses already
+            // on this shard's /24); the full re-derivation waits for the game
+            // to end, as for a member arriving mid-game.
+            self.pin_local_vip();
+            self.shard_hosts = self.pinned_hosts_on(&desc.shard_id);
+            self.current_shard = Some(desc);
+            self.readdress_deferred = true;
+            tracing::info!("shard entered while a game is up; addresses kept until it ends");
+        } else {
+            self.current_shard = Some(desc);
+            self.readdress_all();
+        }
         // Say so at once rather than at the next heartbeat, so the members we are
         // already connected to place us on the /24 before anyone dials.
         self.shard_beat();
@@ -2109,6 +2127,14 @@ impl Engine {
 
     /// Leave the current shard, unsubscribing and withdrawing our record.
     fn shard_leave(&mut self) {
+        if self.current_shard.is_none() {
+            return;
+        }
+        // Our address is read from the shard we are leaving: hold it first.
+        let pinned = self.game_in_progress();
+        if pinned {
+            self.pin_local_vip();
+        }
         let Some(current) = self.current_shard.take() else {
             return;
         };
@@ -2119,10 +2145,41 @@ impl Engine {
         self.shard_member_peers.clear();
         self.shard_member_heard.clear();
         self.shard_reachable_attempted.clear();
-        self.readdress_deferred = false;
         tracing::info!(shard = %hex16(&current.shard_id), "left shard");
         self.emit(Event::ShardLeft { shard_id: current.shard_id });
-        self.readdress_all();
+        if pinned {
+            // Peers keep the addresses the game holds them by; re-derived once it ends.
+            self.shard_hosts.clear();
+            self.readdress_deferred = true;
+        } else {
+            self.readdress_deferred = false;
+            self.readdress_all();
+        }
+    }
+
+    /// Hold our own address through a shard move made mid-game.
+    fn pin_local_vip(&mut self) {
+        if self.pinned_local_vip.is_none() {
+            self.pinned_local_vip = Some(self.local_vip());
+        }
+    }
+
+    /// The host octets already taken on `shard_id`'s /24 by addresses the game
+    /// holds (ours included), so a newcomer placed mid-game cannot be handed one.
+    fn pinned_hosts_on(&self, shard_id: &[u8; 16]) -> std::collections::BTreeMap<PeerId, u8> {
+        let on_subnet = |vip: u32| {
+            (vip & 0xFFFF_FF00) == (subnet::address(VIP_NETWORK_BASE, shard_id, 1) & 0xFFFF_FF00)
+        };
+        let mut hosts = std::collections::BTreeMap::new();
+        for (peer, vip) in &self.vip_by_peer {
+            if on_subnet(*vip) {
+                hosts.insert(*peer, (*vip & 0xFF) as u8);
+            }
+        }
+        if let Some(vip) = self.pinned_local_vip.filter(|vip| on_subnet(*vip)) {
+            hosts.insert(*self.swarm.local_peer_id(), (vip & 0xFF) as u8);
+        }
+        hosts
     }
 
     fn shard_create(&mut self) {
@@ -2197,18 +2254,15 @@ impl Engine {
             })
             .collect();
 
-        // A GAME IN PROGRESS PINS EVERY ADDRESS. Entering a shard re-derives the
-        // virtual IPs of every peer (readdress_all), and the titles on both ends
-        // hold those addresses in live sockets. The migration path below already
-        // refuses to move a player mid-co-op; the FIRST placement did not, and with
-        // the shard newly enabled it fired while two players sat on the co-op
-        // screen: the host moved to 10.77.34.x, the joiner's packets went to an
-        // address nobody held, and the session dropped. Placement waits until no
-        // game path is up; the rescan picks it up then.
-        if self.game_in_progress() {
-            tracing::debug!("shard placement deferred: a game path is up");
-            return;
-        }
+        // A GAME IN PROGRESS PINS EVERY ADDRESS, NOT THE SHARD. The titles on both
+        // ends hold addresses in live sockets: a first placement that re-derived
+        // them while two players sat on the co-op screen moved the host to
+        // 10.77.34.x and dropped the session. Placement and migration used to wait
+        // for the game to end instead, and a host that had made its own shard and
+        // opened a game stayed apart from everyone for as long as it hosted
+        // (2026-11-27). `shard_enter` / `shard_leave` now keep every address while
+        // a game is up, so the shard may change under a game and the addresses
+        // settle when it ends (`readdress_deferred`).
         // A named shard that is still being looked for holds placement off:
         // creating or joining another shard now would just be left again.
         if let Some(preferred) = self.shard_preferred {
@@ -2247,8 +2301,8 @@ impl Engine {
                 }
             }
             Some(current) => {
-                // An Active session pins us in place: never relocate a player
-                // mid-co-op to tidy up topology (§17.3.3).
+                // A session no longer pins the shard (see above): it pins the
+                // addresses, which a move made mid-game keeps.
                 let session_active = self.local_session.is_some();
                 if !self.shard_cooldown_elapsed() {
                     tracing::debug!("shard settle skipped (migration cooldown)");
@@ -2261,7 +2315,7 @@ impl Engine {
                     "shard settle"
                 );
                 if let Migration::MoveTo(id) =
-                    shard::should_migrate(self.title_id, &current, &candidates, session_active)
+                    shard::should_migrate(self.title_id, &current, &candidates)
                 {
                     // Roll per decision, not per node: a node that sits out
                     // this round re-decides next rescan, so the herd spreads
@@ -2506,6 +2560,7 @@ impl Engine {
     /// game is over -- so this never re-addresses anyone mid-co-op.
     fn readdress_all(&mut self) {
         self.readdress_deferred = false;
+        self.pinned_local_vip = None;
         self.rebuild_shard_hosts();
         // A peer in neither membership table cannot be derived -- `assign`
         // would not place it, and every such peer would collapse onto the same
@@ -3052,6 +3107,10 @@ impl Engine {
         if vip == u32::MAX {
             return true;
         }
+        // Moved mid-game: the guest still addresses the /24 its own address is on.
+        if self.pinned_local_vip.is_some_and(|own| own != vip && (own | 0xFF) == vip) {
+            return true;
+        }
         match &self.current_shard {
             Some(current) => {
                 vip == subnet::broadcast_address(VIP_NETWORK_BASE, &current.shard_id)
@@ -3385,6 +3444,9 @@ impl Engine {
     /// from the pinned table so it moves only when the table is rebuilt; else
     /// the reserved-range identity the shim uses before any shard exists.
     fn local_vip(&self) -> u32 {
+        if let Some(vip) = self.pinned_local_vip {
+            return vip;
+        }
         if let Some(current) = &self.current_shard {
             if let Some(host) = self.shard_hosts.get(self.swarm.local_peer_id()) {
                 return subnet::address(VIP_NETWORK_BASE, &current.shard_id, *host);

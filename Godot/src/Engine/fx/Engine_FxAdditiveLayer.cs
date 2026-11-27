@@ -270,8 +270,9 @@ public partial class Engine_FxAdditiveLayer : Node
     }
 
     /// <summary>
-    /// View 0's: hosts this instance on player one's view and builds view 1's while the screen is
-    /// split; back on the window, and view 1's freed, when it rejoins.
+    /// View 0's: builds view 1's while the two views are open (Engine_Views.Open) and frees it when they
+    /// close; hosts this instance on player one's view while they are drawn and on the window while it
+    /// draws, so a split or rejoin re-hosts and builds nothing.
     /// </summary>
     private void FollowViews()
     {
@@ -280,11 +281,11 @@ public partial class Engine_FxAdditiveLayer : Node
             return;
         }
 
-        if (Refii.Core.Engine_Views.Split &&
+        if (Refii.Core.Engine_Views.Open &&
             Refii.Core.Engine_Views.FirstViewport is { } first && GodotObject.IsInstanceValid(first) &&
             Refii.Core.Engine_Views.SecondViewport is { } second && GodotObject.IsInstanceValid(second))
         {
-            _host = first;
+            _host = Refii.Core.Engine_Views.Split ? first : _windowHost;
             if (_second is null || !GodotObject.IsInstanceValid(_second))
             {
                 _second = new Engine_FxAdditiveLayer

@@ -247,7 +247,11 @@ public static class Engine_UiMinimapPage
 	public static bool Standing(Engine_UiExpandableMenu.Item? row) =>
 		Shown && Engine_UiWorldMapPage.RegionOf(row) >= 0;
 
-	/// <summary>The sample is for the highlighted row (the pump answers a tick late).</summary>
+	/// <summary>
+	/// The sample is for the highlighted row (the pump answers a tick late). The row is the guest's own
+	/// region row, `sub_829A3A30`'s `index + 999` (0x829A3B4C), and the sample is asked for by that
+	/// index into the same walk `sub_82518330` (<see cref="Engine_UiWorldMapPage.RegionOf"/>).
+	/// </summary>
 	private static bool SampleIsFor(Engine_UiExpandableMenu.Item? row, in Refii.Host.HostBridge.WorldMapRegion region) =>
 		region.IsFor(Engine_UiWorldMapPage.RegionOf(row));
 

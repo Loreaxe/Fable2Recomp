@@ -16,6 +16,7 @@
 #include <cstring>
 #include <string>
 
+#include <rex/logging.h>
 #include <rex/ppc.h>
 
 #include "core/payload_bridge.h"
@@ -23,6 +24,9 @@
 #include "mod_lua.h"
 #include "mod_seam.h"
 #include "../../vfs/include/fable3_guest_build.h"
+
+// The per-character achievement seam, in rexruntime (achievement/achievement_runtime.h).
+extern "C" uint64_t RefiiAchievementBindUser(uint32_t user_index, const char* save);
 
 REX_EXTERN(__imp__rex_CECCreature_Die);
 REX_EXTERN(__imp__rex_CECHealth_Modify);
@@ -816,8 +820,21 @@ REX_EXTERN(rex_lhSaveManager_WritePackage) {
   RaiseSaveWritten(base, name, (ctx.r3.u32 & 0xFFu) != 0u);
 }
 
+// Inside player two's bracket the hero package goes to the manager's +4 (sub_822F9108: `addi r29,r3,4`
+// 0x822F9128, `mr r4,r29` + `bl sub_822F9608` 0x822F91A8..0x822F91B4); one save set holds both players'
+// heroes, so player two's hero is never written into the save player one plays (the manager's +0,
+// sub_822F8940 `sub_82228298((int *)a1, v26)` 0x822F8BCC): r3 = 0, the writer's "not written".
 REX_EXTERN(rex_lhSaveManager_WriteHeroPackage) {
   const uint32_t name = ctx.r4.u32;
+  if (g_saving_player_two > 0) {
+    const std::string target = CharString(base, name);
+    if (!target.empty() && target == CharString(base, ctx.r3.u32)) {
+      REXLOG_WARN("Refii saves: player two's hero NOT written into '{}', the save player one plays", target);
+      ctx.r3.u64 = 0u;
+      RaiseSaveWritten(base, name, false);
+      return;
+    }
+  }
   __imp__rex_lhSaveManager_WriteHeroPackage(ctx, base);
   RaiseSaveWritten(base, name, (ctx.r3.u32 & 0xFFu) != 0u);
 }
@@ -1543,6 +1560,8 @@ const refii::guest::Addr kInitialSave{0x83597958u};
 const refii::guest::Addr kInitialLevel{0x8359794Cu};
 const refii::guest::Addr kProfiles{0x835979F8u};
 const refii::guest::Addr kInitialClientSave{0x8359795Cu};
+/// The active user (TU3 0x832DF7BC / disc 0x8329ED38), as the load mode's builder takes it.
+const refii::guest::Addr kStartUser{0x832DF7BCu};
 /// The commit a refused boot start is made again by: the player's START on the splash (Fable 3's front
 /// end has no pump action for it; see the report's open question).
 constexpr const char* kStartCommit = "START";
@@ -1679,11 +1698,24 @@ REX_EXTERN(rex_FrontEnd_PickSave) {
 // +0, the current save's name; LoadFailQuestSave the quest's fail save), a new game, a co-op join. Read-only
 // here — the front end is already gone and skipping the builder would leave the game with no load mode;
 // the one start that can be refused, the boot's, was decided at the pick and is not raised again.
+// It is also player one's adoption point (character_binding_hooks.cpp): the builder loads
+// InitialSaveGameName as the active user (`lwz r5,dword_832DF7BC@l(r11)` 0x8234CDAC / 0x823459B8's twin),
+// an empty one a new game, so that user's hero comes from that save before its Player is set up.
 REX_EXTERN(rex_Game_BuildStart) {
   const uint32_t current = Word(base, kGame);
-  if (Plausible(current) && modlua::Wants(kStartGame)) {
+  bool builds = false;
+  if (Plausible(current)) {
     PPCContext work = Frame(ctx);
-    if (CallSlot(work, base, current, 6u) && (work.r3.u32 & 0xFFu) == 0u) {
+    builds = CallSlot(work, base, current, 6u) && (work.r3.u32 & 0xFFu) == 0u;
+  }
+  if (builds) {
+    const uint32_t user = Word(base, kStartUser);
+    if (user < 4u) {
+      RefiiAchievementBindUser(user, CharString(base, kInitialSave).c_str());
+    }
+  }
+  if (builds && modlua::Wants(kStartGame)) {
+    {
       const std::string save = CharString(base, kInitialSave);
       const bool stated = !save.empty() && save == g_stated_save;
       g_stated_save.clear();

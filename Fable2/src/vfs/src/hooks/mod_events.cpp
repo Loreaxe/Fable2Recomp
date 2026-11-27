@@ -25,16 +25,21 @@
 #include <cstring>
 #include <string>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
 
 #include <rex/logging.h>
 
+#include "core/camera_views.h"
 #include "core/cast_pairing.h"
+#include "core/estate_owner_rule.h"
+#include "core/joiner_use_text.h"
 #include "core/guest_build.h"
 #include "core/guest_state.h"
 #include "core/mod_values.h"
+#include "core/payload_bridge.h"
 #include "core/refii_mod.h"
 #include "core/refii_mod_bus.h"
 #include "core/refii_mod_events.h"
@@ -59,6 +64,8 @@ PPC_EXTERN_FUNC(__imp__rex_CECMood_HeroPresence);
 PPC_EXTERN_FUNC(__imp__rex_CECFollow_Start);
 PPC_EXTERN_FUNC(__imp__rex_CECFollow_Stop);
 PPC_EXTERN_FUNC(__imp__rex_CECRewardGiver_GiveReward);
+PPC_EXTERN_FUNC(__imp__rex_CECRewardGiver_TryGiveReward);
+PPC_EXTERN_FUNC(__imp__rex_CECRewardGiver_GiveQuestReward);
 PPC_EXTERN_FUNC(__imp__rex_CECShopkeeper_BuyPrice);
 PPC_EXTERN_FUNC(__imp__rex_CECShopkeeper_SellPrice);
 PPC_EXTERN_FUNC(__imp__rex_CECShopkeeper_FrontPage);
@@ -72,8 +79,6 @@ PPC_EXTERN_FUNC(__imp__rex_CECFollow_AnySexPartner);
 PPC_EXTERN_FUNC(__imp__rex_CECFollow_AnyOtherSexPartner);
 PPC_EXTERN_FUNC(__imp__rex_CECFollow_FirstEngaged);
 PPC_EXTERN_FUNC(__imp__rex_CECFollow_FirstMarried);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_OnMenuEvent);
-PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_Confirm);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_Buy);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_Clear);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiRealEstateScreen_Sell);
@@ -149,6 +154,7 @@ PPC_EXTERN_FUNC(__imp__rex_lhGuiManager_OpenExpressionWheel);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiManager_CloseExpressionWheel);
 PPC_EXTERN_FUNC(__imp__rex_CECLocomotion_LoadData);
 PPC_EXTERN_FUNC(__imp__rex_lhEntity_UseInventoryItem);
+PPC_EXTERN_FUNC(rex_CECOnActionUse_Use);
 PPC_EXTERN_FUNC(__imp__rex_CECHeldItems_AttachItemToSlot);
 PPC_EXTERN_FUNC(__imp__rex_CECHeldItems_ReleaseSlot);
 PPC_EXTERN_FUNC(__imp__rex_CECWeaponSet_RecordDrawnItem);
@@ -208,8 +214,11 @@ PPC_EXTERN_FUNC(__imp__rex_CECHealth_CalculateDamage);
 
 // guest_tick_pump.cpp: a player's dog (players+196's for player one, the co-op record for two).
 extern "C" uint32_t RefiiCoopPlayerDog(uint8_t* base, int player);
+/// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
+extern "C" int RefiiCoopGetOwnHero(void);
 // coop_hero_hooks.cpp: local player two's shop is up (set by the shopkeeper path that opens it).
 extern "C" int RefiiCoopShoppingPlayerTwo(void);
+extern "C" void RefiiCoopLocalPlayerTwoCall(int on);
 
 using namespace refii::mods;
 
@@ -1420,6 +1429,42 @@ void LuaFields(int32_t kind, const void* event, char* out, size_t size) {
       std::snprintf(out, size, "level='%s',player=%d", level, e.player);
       return;
     }
+    case REFII_EVENT_CAMERA_CUT: {
+      const auto& e = *static_cast<const CameraCutEvent*>(event);
+      std::snprintf(out, size, "player=%d", e.player);
+      return;
+    }
+    case REFII_EVENT_CAMERA_BLEND: {
+      const auto& e = *static_cast<const CameraBlendEvent*>(event);
+      std::snprintf(out, size, "player=%d,ticks=%d", e.player, e.ticks);
+      return;
+    }
+    case REFII_EVENT_CAMERA_SCREEN_CHANGED: {
+      const auto& e = *static_cast<const CameraScreenChangedEvent*>(event);
+      std::snprintf(out, size, "mode=%d,split=%s,previous=%d,reason=%d", e.mode, e.split ? "true" : "false", e.previous,
+                    e.reason);
+      return;
+    }
+    case REFII_EVENT_CAMERA_ZOOM_CHANGED: {
+      const auto& e = *static_cast<const CameraZoomChangedEvent*>(event);
+      char set[64];
+      char previous[64];
+      LuaString(e.set, set, sizeof(set));
+      LuaString(e.previous_set, previous, sizeof(previous));
+      std::snprintf(out, size,
+                    "player=%d,set='%s',previous_set='%s',level=%d,combat=%.9g,string_length=%.9g,cage_radius=%.9g,"
+                    "max_cage_radius=%.9g,height=%.9g,focal_offset=%.9g,fov=%.9g,max_coop_distance=%.9g",
+                    e.player, set, previous, e.level, Fin(e.combat), Fin(e.string_length), Fin(e.cage_radius),
+                    Fin(e.max_cage_radius), Fin(e.height), Fin(e.focal_offset), Fin(e.fov), Fin(e.max_coop_distance));
+      return;
+    }
+    case REFII_EVENT_CAMERA_TICK: {
+      const auto& e = *static_cast<const CameraTickEvent*>(event);
+      std::snprintf(out, size, "player=%d,x=%.9g,y=%.9g,z=%.9g,fx=%.9g,fy=%.9g,fz=%.9g,ux=%.9g,uy=%.9g,uz=%.9g,fov=%.9g,cut=%s",
+                    e.player, Fin(e.x), Fin(e.y), Fin(e.z), Fin(e.fx), Fin(e.fy), Fin(e.fz), Fin(e.ux), Fin(e.uy), Fin(e.uz),
+                    Fin(e.fov), e.cut ? "true" : "false");
+      return;
+    }
     case REFII_EVENT_MORPH_CHANGED: {
       const auto& e = *static_cast<const MorphChangedEvent*>(event);
       std::snprintf(out, size, "player=%d,morph='0x%08x',weight=%.9g,hero=%u", e.player, e.morph, static_cast<double>(e.weight),
@@ -1912,7 +1957,8 @@ constexpr std::pair<const char*, int32_t> kBusNames[] = {
     {"job_worked", 146}, {"job_multiplier", 147}, {"job_summary", 148}, {"guild_message", 149}, {"title_changed", 150},
     {"title_unlocked", 151}, {"chapter_progress", 152}, {"scar_added", 153}, {"scar_removed", 154}, {"age_changed", 155},
     {"hero_stage", 156}, {"clothing_worn", 157}, {"clothing_removed", 158}, {"clothing_dyed", 159}, {"pub_game_started", 160},
-    {"pub_game_finished", 161}, {"village_wealth", 162}, {"gargoyle_destroyed", 163},
+    {"pub_game_finished", 161}, {"village_wealth", 162}, {"gargoyle_destroyed", 163}, {"camera_cut", 164},
+    {"camera_blend", 165}, {"camera_screen_changed", 166}, {"camera_zoom_changed", 167}, {"camera_tick", 168},
 };
 
 /// The native text bus, after the typed subscribers and before Lua: a hard mod's handler by event
@@ -2341,6 +2387,75 @@ void RaiseExpressionWheel(const PPCContext& ctx, uint8_t* base, int32_t player, 
 
 /// THE WHEEL'S HIGHLIGHT (ExpressionWheelEvent): while an open stated a wheel, the expression it
 /// highlights (refii_mod_selected_expression) compared with the last one raised; one event per change.
+// THE CAMERA EVENTS from the statements and the shell's views (refii_mod_events.h, 164..168), raised here
+// at the guest tick: outside every camera update and Lua call, so a handler meets the camera at rest.
+int32_t g_camera_screen_raised = -1;
+bool g_camera_split_raised = false;
+
+void DispatchCameraEvents(PPCContext& ctx, uint8_t* base) {
+  namespace cam = refii::camera;
+  std::array<uint32_t, 32u * cam::kEventWords> words{};
+  const uint32_t taken = refii_bridge_camera_events_take(words.data(), 32u);
+  for (uint32_t i = 0; i < taken; ++i) {
+    const uint32_t* w = &words[i * cam::kEventWords];
+    const auto f = [w](uint32_t at) {
+      float value = 0.0f;
+      std::memcpy(&value, &w[3u + at], sizeof(value));
+      return value;
+    };
+    PPCContext e_ctx = ctx;
+    const int32_t player = static_cast<int32_t>(w[1]);
+    if (w[0] == cam::kEventCut) {
+      CameraCutEvent e{};
+      e.ctx = &e_ctx;
+      e.base = base;
+      e.player = player;
+      Dispatch(e);
+    } else if (w[0] == cam::kEventBlend) {
+      CameraBlendEvent e{};
+      e.ctx = &e_ctx;
+      e.base = base;
+      e.player = player;
+      e.ticks = static_cast<int32_t>(w[2]);
+      Dispatch(e);
+    } else if (w[0] == cam::kEventTick) {
+      CameraTickEvent e{};
+      e.ctx = &e_ctx;
+      e.base = base;
+      e.player = player;
+      e.x = f(0);
+      e.y = f(1);
+      e.z = f(2);
+      e.fx = f(3);
+      e.fy = f(4);
+      e.fz = f(5);
+      e.ux = f(6);
+      e.uy = f(7);
+      e.uz = f(8);
+      e.fov = f(9) * (180.0f / 3.14159265f);
+      e.cut = f(10) != 0.0f;
+      Dispatch(e);
+    }
+  }
+
+  int32_t split = 0;
+  const int32_t mode = refii_bridge_camera_screen_read(&split);
+  if (mode >= 0 && (mode != g_camera_screen_raised || (split != 0) != g_camera_split_raised)) {
+    CameraScreenChangedEvent e{};
+    PPCContext e_ctx = ctx;
+    e.ctx = &e_ctx;
+    e.base = base;
+    e.mode = mode;
+    e.split = split != 0;
+    e.previous = g_camera_screen_raised;
+    // Hybrid's own split or rejoin (the mode unchanged, only the split): 1; the players' choice: 0.
+    e.reason = mode == g_camera_screen_raised && mode == cam::kScreenHybrid ? 1 : 0;
+    g_camera_screen_raised = mode;
+    g_camera_split_raised = split != 0;
+    Dispatch(e);
+  }
+}
+
 void DispatchWheelHighlight(PPCContext& ctx, uint8_t* base) {
   if (g_wheel_player == 0) {
     return;
@@ -2423,6 +2538,7 @@ void RunModEventsTick(PPCContext& ctx, uint8_t* base, float seconds) {
   DispatchCutsceneEdges(ctx, base);
   refii::vfs::PumpChargeLend(ctx, base, seconds);
   DispatchWheelHighlight(ctx, base);
+  DispatchCameraEvents(ctx, base);
 
   TickEvent tick{};
   PPCContext tick_ctx = ctx;
@@ -2474,14 +2590,21 @@ void DispatchLuaEvent(PPCContext& ctx, uint8_t* base, bool save_loaded) {
 // The seams
 // ---------------------------------------------------------------------------------------------
 
+extern "C" int RefiiCoopPartnerCameraFor(uint8_t* base, uint32_t entity);
+extern "C" void RefiiCoopPartnerScreen(int on);
+
 // The hero's GameAction receiver: r3 = the receiver, r4 = the 24-byte action message whose
 // first word is the GameAction (`lwz r11,0(r4)`); the receiver's entity is the weak handle at
 // +8 resolved as *(*(r3+0xC)) (sub_82173E38). TU1 0x826E5B30 / disc 0x827428B0.
+// Player two's actions read player two's camera: the stick's turn into the world (sub_8283DF30 /
+// sub_827ECDA0, `bl sub_821F87C8` 0x8283DFC8 / 0x827ECE38) and every other camera read inside run
+// under RefiiCoopPartnerScreen when player two's view is on this machine (coop_camera_readers.cpp).
 REX_EXTERN(rex_CPlayerActionReceiver_ProcessAction) {
   REX_FUNC_PROLOGUE();
+  const uint32_t receiver_control = Load32(base, ctx.r3.u32 + 0xCu);
+  const uint32_t receiver_hero = receiver_control != 0 ? Load32(base, receiver_control) : 0u;
   if (AnySubscriber(REFII_EVENT_GAME_ACTION)) {
-    const uint32_t control = Load32(base, ctx.r3.u32 + 0xCu);
-    const uint32_t hero = control != 0 ? Load32(base, control) : 0u;
+    const uint32_t hero = receiver_hero;
     const int32_t player = PlayerOf(base, hero);
     if (player != 0) {
       GameActionEvent e{};
@@ -2498,7 +2621,14 @@ REX_EXTERN(rex_CPlayerActionReceiver_ProcessAction) {
       }
     }
   }
+  const bool partner_camera = RefiiCoopPartnerCameraFor(base, receiver_hero) != 0;
+  if (partner_camera) {
+    RefiiCoopPartnerScreen(1);
+  }
   __imp__rex_CPlayerActionReceiver_ProcessAction(ctx, base);
+  if (partner_camera) {
+    RefiiCoopPartnerScreen(0);
+  }
 }
 
 // Every ability request any creature makes: r3 = the entity, r4 = the request, whose vtable
@@ -4274,6 +4404,10 @@ REX_EXTERN(rex_CECCreature_FinishDeath) {
   const uint32_t creature = ctx.r3.u32;
   const bool was_alive = creature != 0 && Load8(base, creature + kCreatureAlive) != 0;
   __imp__rex_CECCreature_FinishDeath(ctx, base);
+  // The body stays: the host's corpse may extend it (creature_corpse_state.cpp).
+  if (creature != 0 && Load8(base, creature + kCreatureAlive) == 0) {
+    refii::vfs::NoteCreatureCorpse(creature);
+  }
   if (was_alive && Load8(base, creature + kCreatureAlive) == 0 && AnySubscriber(REFII_EVENT_ENTITY_DIED)) {
     EntityDiedEvent e{};
     PPCContext e_ctx = ctx;
@@ -4544,12 +4678,18 @@ REX_EXTERN(rex_CECLocomotion_LoadData) {
 // Uses an inventory item: r3 = the entity, r4 = the item's shared pointer (item at *r4,
 // definition at item+4, count at item+12), r5 = a script name override. Returns 1 when used.
 // TU1 0x823E0FF8.
+namespace {
+// The host's run of a joiner's carried use (UseCarriedForTwo): the joiner raised ItemUsed for it already,
+// on the machine that plays the hero.
+thread_local bool t_carry_for_joiner = false;
+}  // namespace
+
 REX_EXTERN(rex_lhEntity_UseInventoryItem) {
   REX_FUNC_PROLOGUE();
   refii_bridge_ui_data_changed();
   const uint32_t holder = ctx.r4.u32;
   const uint32_t item = holder != 0 ? Load32(base, holder) : 0u;
-  if (item != 0 && AnySubscriber(REFII_EVENT_ITEM_USED)) {
+  if (item != 0 && !t_carry_for_joiner && AnySubscriber(REFII_EVENT_ITEM_USED)) {
     ItemUsedEvent e{};
     PPCContext e_ctx = ctx;
     e.ctx = &e_ctx;
@@ -5219,7 +5359,8 @@ REX_EXTERN(rex_lhHeroStats_ModifyRenown) {
     const uint32_t owner = Owner(base, ctx.r3.u32);
     const int32_t player = PlayerOf(base, owner);
     const uint32_t partner = player == 1 ? refii_mod_player_hero(base, 2) : (player == 2 ? refii_mod_player_hero(base, 1) : 0u);
-    if (partner != 0u && RenownDecidedHere(base, owner)) {
+    // Fable 3's rule is between two heroes: with the plain henchman the shipped pool and split stand.
+    if (partner != 0u && RefiiCoopGetOwnHero() != 0 && RenownDecidedHere(base, owner)) {
       partner_stats = refii_mod_component(base, partner, 57u);
       const int32_t delta = static_cast<int32_t>(ctx.r4.u32);
       if (delta > 0) {
@@ -5574,15 +5715,20 @@ bool OpinionScopedTwo(uint32_t comp) {
   return false;
 }
 
+/// A VILLAGER FEELS ABOUT A HERO, NOT A HIRED HAND. The opinion and household scopes below make hero two
+/// a hero of their own to the world (their own set of every villager's feelings, their own family and
+/// followers); only a player two who brought a hero (RefiiCoopGetOwnHero) is one. For the plain henchman
+/// both scopes do nothing, so every villager answers them exactly as shipped.
 struct OpinionHeroScope {
   uint8_t* base = nullptr;
   uint32_t component = 0u;
   uint8_t main[REFII_OPINION_BLOCK_BYTES] = {};
   bool lent_here = false;
 
-  /// Enters when `hero` is hero two (and hero one exists); otherwise does nothing.
+  /// Enters when `hero` is hero two, a hero player two brought (and hero one exists); otherwise does
+  /// nothing.
   OpinionHeroScope(PPCContext& ctx, uint8_t* guest, uint32_t comp, uint32_t hero) {
-    if (comp < 0x10000u || hero == 0u || hero != refii_mod_player_hero(guest, 2) ||
+    if (comp < 0x10000u || hero == 0u || RefiiCoopGetOwnHero() == 0 || hero != refii_mod_player_hero(guest, 2) ||
         refii_mod_player_hero(guest, 1) == 0u || t_opinion_depth >= kOpinionScopes) {
       return;
     }
@@ -6076,6 +6222,32 @@ REX_EXTERN(rex_CECRewardGiver_GiveReward) {
   __imp__rex_CECRewardGiver_GiveReward(ctx, base);
 }
 
+// The reward a villager hands over when a hero interacts with them (`sub_825DF728`, disc
+// `sub_82452F38`: r3 the reward component, the villager at +4, r4 the interacting hero; called by
+// the player-interact ability with its own hero, 0x82976CB4 `mr r4, r22`). It asks whether a reward
+// is ready (`sub_825DD3C8` -> the threshold `sub_82840170`, comp47 +0x2C + 4*axis) and gives it only
+// when hero one is the interacting hero (0x825DF7AC `bl sub_8222C1B8`, 0x825DF7E0 `cmplw r4, r30`).
+// For hero two it runs in their opinion scope: their own axes decide, and the lent slot answers the
+// hero-one test with them. TU1 0x825DF728.
+REX_EXTERN(rex_CECRewardGiver_TryGiveReward) {
+  PPCContext entry = ctx;
+  OpinionHeroScope scope(entry, base, OpinionOf(base, ComponentOwner(base, ctx.r3.u32)), ctx.r4.u32);
+  __imp__rex_CECRewardGiver_TryGiveReward(ctx, base);
+  if (scope.active()) {
+    REXLOG_INFO("coop opinion: player two asked villager 0x{:08X} for its reward: {}",
+                ComponentOwner(base, entry.r3.u32), (ctx.r3.u32 & 0xFFu) != 0u ? "given" : "not ready");
+  }
+}
+
+// NPCRewardGiver.GiveQuestReward (`sub_825DD8C0`, disc `sub_824510D0`: r3 the reward component, the
+// villager at +4, r4 the hero rewarded, handed to the reward at 0x825DD988 `mr r4, r27`): the
+// reward's opinion threshold (0x825DD940 `bl sub_82840170`) is the rewarded hero's. TU1 0x825DD8C0.
+REX_EXTERN(rex_CECRewardGiver_GiveQuestReward) {
+  PPCContext entry = ctx;
+  OpinionHeroScope scope(entry, base, OpinionOf(base, ComponentOwner(base, ctx.r3.u32)), ctx.r4.u32);
+  __imp__rex_CECRewardGiver_GiveQuestReward(ctx, base);
+}
+
 // A shopkeeper's prices and greeting follow their love and fear for the customer
 // (`sub_828727B8` buy, `sub_82872910` sell, `sub_82873F18` front page: r3 the shopkeeper component,
 // the shopkeeper at +4; `sub_828731A8` greeting: r4 it). The customer is not passed; in local co-op
@@ -6151,7 +6323,7 @@ struct HouseholdScope {
 
   HouseholdScope(PPCContext& ctx, uint8_t* guest, uint32_t hero) {
     two = refii_mod_player_hero(guest, 2);
-    if (hero == 0u || hero != two || refii_mod_player_hero(guest, 1) == 0u || t_slot_lent || t_opinion_depth != 0) {
+    if (hero == 0u || RefiiCoopGetOwnHero() == 0 || hero != two || refii_mod_player_hero(guest, 1) == 0u || t_slot_lent || t_opinion_depth != 0) {
       return;
     }
     players = OpinionPlayers(guest);
@@ -6222,6 +6394,18 @@ struct HouseholdScope {
   HouseholdScope(const HouseholdScope&) = delete;
   HouseholdScope& operator=(const HouseholdScope&) = delete;
 };
+
+// `body` run as `hero`'s household, for code outside this file (coop_estate_statements.cpp: the
+// host asks the building getters as the screen does for player two).
+extern "C" void refii_household_scoped(PPCContext* ctx, uint8_t* base, uint32_t hero,
+                                       void (*body)(PPCContext* ctx, uint8_t* base, void* arg), void* arg) {
+  if (ctx == nullptr || base == nullptr || body == nullptr) {
+    return;
+  }
+  PPCContext entry = *ctx;
+  HouseholdScope scope(entry, base, hero);
+  body(ctx, base, arg);
+}
 
 // The family's per-frame update (`sub_827AB848`: r3 the family, owner at +4): once a game day it
 // ticks every household (`sub_827A8A48`: upkeep from the purse, the spouse's and children's
@@ -6368,11 +6552,13 @@ struct EstateScreenScope {
   EstateScreenScope& operator=(const EstateScreenScope&) = delete;
 };
 
-/// On an online joiner, inside the estate screen bound to its hero two: the change is the host's.
+/// On an online joiner, inside an estate screen bound to either hero (its own hero two, or the copy
+/// of the host's hero one for a partner, coop_estate_owner.cpp): the change is the host's.
 bool EstateForwards(uint8_t* base, uint32_t screen) {
   const uint32_t two = refii_mod_player_hero(base, 2);
-  return screen >= 0x10000u && two != 0u && refii_mod_player_here(1) == 0 && refii_mod_player_here(2) != 0 &&
-         Load32(base, screen + 0x90u) == two;
+  const uint32_t bound = screen >= 0x10000u ? Load32(base, screen + 0x90u) : 0u;
+  return two != 0u && bound != 0u && refii_mod_player_here(1) == 0 && refii_mod_player_here(2) != 0 &&
+         (bound == two || bound == refii_mod_player_hero(base, 1));
 }
 
 void PostEstate(uint8_t* base, uint32_t screen, const char* action, int32_t value) {
@@ -6389,34 +6575,195 @@ void PostEstate(uint8_t* base, uint32_t screen, const char* action, int32_t valu
 }
 }  // namespace
 
+// The ported OnEnter (gui_screen_stub_real_estate.cpp), under the screen's household. TU1 0x826B18D0 /
+// disc 0x82596B80. The screen's hero h+144 is written only by the binding `sub_826B1A08` INSIDE OnEnter
+// (0x826B1A68, its one caller 0x826B19B0), after the fills and the rows, which read the hero through the
+// players' record (`sub_82998300` 0x82998360); so the household here is the buyer the sale sign's
+// script stated (`Refii._estate_buyer`, taken later by the binding's own hook RefiiCoopEstateBuyer),
+// by that hook's own rule: hero two only when it carries the properties (69), the use target (77) and the
+// purse (81) the screen reads (coop_ui_hooks.cpp). Under the lend the binding's own read of players+108
+// (0x826B1A38..0x826B1A4C / disc 0x82596CE8..0x82596D1C) is hero two, so the rows, the fills and the
+// binding name one hero; refused, all three are hero one's, as the binding hook leaves them. The same
+// buyer owns the GUI in local co-op (coop mode 1): player two's pad drives the screen it opened. On an
+// online joiner the bound hero two is the machine's own player, whose input object is App+0x14, so the
+// owner stays player one there.
+namespace refii::vfs {
+extern int g_coop_estate_buyer;
+}
+namespace {
+/// Hero two, when it carries what the screen reads of its buyer: the properties (69), the use target
+/// (77) and the purse (81) — the binding hook's rule (coop_ui_hooks.cpp RefiiCoopEstateBuyer). Else 0.
+uint32_t EstateHeroTwo(uint8_t* base) {
+  const uint32_t two = RefiiCoopGetOwnHero() != 0 ? refii_mod_player_hero(base, 2) : 0u;
+  return two != 0u && refii_mod_component(base, two, 69u) != 0u && refii_mod_component(base, two, 77u) != 0u &&
+                 refii_mod_component(base, two, 81u) != 0u
+             ? two
+             : 0u;
+}
+}  // namespace
+
+REX_EXTERN(rex_lhGuiRealEstateScreen_OnEnter) {
+  const uint32_t screen = ctx.r3.u32;
+  PPCContext entry = ctx;
+  EstateScreenScope screen_scope(screen);
+  // The session RefiiEstateBuyerOpens decided: the viewer owns the GUI, the bound hero (the owner, for
+  // a partner) is the household, and a partner's owner stands at the viewer's sign.
+  refii::vfs::EstateSessionBegin(screen);
+  const refii::vfs::EstateSession* session = refii::vfs::EstateSessionOf(screen);
+  refii::vfs::EstateTargetScope target_scope(screen);
+  const uint32_t two = refii::vfs::g_coop_estate_buyer == 2 ? EstateHeroTwo(base) : 0u;
+  HouseholdScope scope(entry, base, two);
+  const bool viewer_two = session != nullptr ? session->viewer == 2 : two != 0u;
+  refii::vfs::RealEstateScreenOnEnter(ctx, base, viewer_two && refii_mod_coop_mode(base) == 1);
+}
+
+// WHOSE SCREEN A SALE SIGN OPENS, asked before `GUI.DisplayRealEstateScreen` (TU1 0x82305218 / disc
+// 0x82906E40, no arguments: SetScreen 0x1C / 0x1B, then OnEnter inside SetActiveScreen) by the core Lua
+// wrapper (`Refii._estate_buyer`, CoopHeroLua.cs). `stated` is the player the opener's script runs as.
+// Returns the buyer the binding will be given (1 or 2), or 0: the screen is not opened.
+//
+// An online joiner's buyer is always hero two, its own player: the guest numbers the joiner player two
+// on its own machine as on the host (its local player is the players map's record 2, `sub_821C7CE0`
+// `li r4, 2` 0x821C7D28 when not host; its GUI input answers 2, `sub_822A4E38` 0x822A4E9C..0x822A4EA4).
+// On the joiner the hero-one slot players+0x6C holds the host's hero as that machine has it, and the
+// joiner's own hero is players+0x74 (`refii_mod_player_hero`, `HouseholdIsMirror`); the host hero's
+// household and use target are the host's, and the joiner's estate actions forward only for hero two
+// (`EstateForwards`). So no screen on a joiner is the host hero's, whichever player a script states.
+// The joiner's hero two carries its properties (69) only because the client build keeps them
+// (hooks/src/coop_client_components_hooks.cpp); without them no screen can be bound for it.
+//
+// The screen opens only when its binding `sub_826B1A08` (TU1 / disc 0x82596CB8) will find a building
+// for that buyer — the binding's own tests, through the same getters: the hero's +0x90 & 0x40
+// (0x826B1A7C / 0x82596D2C), its comp77 (`extrwi r10,r11,1,18` of +0x2C, 0x826B1AA4 / 0x82596D54), the
+// use target comp77 vf+68 (`lwz r10,0x44(r11)` / `bctrl` 0x826B1CC8 / 0x826B1CD0; disc 0x82596F78 /
+// 0x82596F80; `sub_821E66F0`, the target record's weak holder), the target's comp142 (`extrwi
+// r8,r9,1,17` of +0x34, 0x826B1CDC / disc 0x82596F8C), the building `sub_8229EE78(comp142)` (0x826B1DE8 /
+// disc `sub_82455F20` 0x82597098) not null (0x826B1DF4). The binding dereferences the target with no
+// null test (0x826B1CD8), and the two pages read the same target (page 2 0x8299B210 / disc 0x828EFB28);
+// shipped, the one opener (`OnActionUseSaleSign:Update`) ran only for the user of a live, available
+// sale sign, whose target it is. Any other open — a script with no sign, a hero with no target — showed
+// the file's placeholders or faulted; it is refused here.
+extern "C" int32_t RefiiEstateBuyerOpens(PPCContext* ctx, uint8_t* base, int32_t stated) {
+  if (ctx == nullptr || base == nullptr) {
+    return 0;
+  }
+  const bool joiner = refii_mod_coop_mode(base) == 3;
+  const uint32_t two = stated == 2 || joiner ? EstateHeroTwo(base) : 0u;
+  if (joiner && two == 0u) {
+    const uint32_t own = refii_mod_player_hero(base, 2);
+    REXLOG_INFO("Refii estate: no real-estate screen for player 2 (stated {}) on this joiner: its hero {:08X} lacks "
+                "{}{}{}",
+                stated, own, refii_mod_component(base, own, 69u) == 0u ? "its properties (69) " : "",
+                refii_mod_component(base, own, 77u) == 0u ? "its use target (77) " : "",
+                refii_mod_component(base, own, 81u) == 0u ? "its purse (81)" : "");
+    return 0;
+  }
+  const int32_t buyer = two != 0u ? 2 : 1;
+  const uint32_t hero = two != 0u ? two : refii_mod_player_hero(base, 1);
+  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
+  const uint32_t aim = plausible(hero) && (base[hero + 0x90u] & 0x40u) != 0u ? refii_mod_component(base, hero, 77u) : 0u;
+  uint32_t target = 0u;
+  if (aim != 0u) {
+    PPCContext work = Frame(*ctx);
+    work.r3.u64 = aim;
+    if (CallGuest(work, base, Load32(base, Load32(base, aim) + 0x44u))) {
+      target = work.r3.u32;
+    }
+  }
+  const uint32_t sign = plausible(target) ? refii_mod_component(base, target, 142u) : 0u;
+  uint32_t building = 0u;
+  if (sign != 0u) {
+    PPCContext work = Frame(*ctx);
+    work.r3.u64 = sign;
+    if (CallGuest(work, base, refii::guest::Address(0x8229EE78u))) {
+      building = work.r3.u32;
+    }
+  }
+  if (!plausible(building)) {
+    REXLOG_INFO("Refii estate: no real-estate screen for player {} (stated {}): hero {:08X}'s use target {:08X} "
+                "is no sale sign with a building",
+                buyer, stated, hero, target);
+    return 0;
+  }
+  // WHO MAY ACT HERE (core/estate_owner_rule.h, coop_estate_owner.cpp): the building's owner, or the
+  // other hero while the two are partners — then the screen is the owner's, bound to their hero, which
+  // must carry what the binding reads of it (69, 77, 81, as above); else the page is the viewer's with
+  // Back alone. A building no hero owns is the guest's as shipped.
+  const int32_t owner = refii::vfs::EstateOwnerPlayer(*ctx, base, building);
+  const int32_t partnership = owner != 0 && owner != buyer ? refii_bridge_partnership() : 0;
+  refii::coop::EstateAccess access = refii::coop::EstateAccessFor(buyer, owner, partnership);
+  int32_t acts_for = buyer;
+  uint32_t owner_use = 0u;
+  if (access == refii::coop::EstateAccess::kPartner) {
+    const uint32_t owner_hero = owner == 2 ? EstateHeroTwo(base) : refii_mod_player_hero(base, 1);
+    owner_use = owner_hero != 0u ? refii_mod_component(base, owner_hero, 77u) : 0u;
+    if (owner_use != 0u && refii_mod_component(base, owner_hero, 69u) != 0u &&
+        refii_mod_component(base, owner_hero, 81u) != 0u) {
+      acts_for = owner;
+    } else {
+      access = refii::coop::EstateAccess::kRefused;
+      owner_use = 0u;
+    }
+  }
+  refii::vfs::EstateSession session;
+  session.viewer = buyer;
+  session.acts_for = acts_for;
+  session.owner = owner;
+  session.access = static_cast<uint8_t>(access);
+  session.target = target;
+  session.owner_use = owner_use;
+  refii::vfs::EstateSessionPending(session);
+  if (owner != 0 && owner != buyer) {
+    REXLOG_INFO("Refii estate: player {} opens building {:08X}, player {}'s: {}", buyer, building, owner,
+                access == refii::coop::EstateAccess::kPartner ? "partners, the screen acts for its owner"
+                                                              : "not partners, the page only");
+  }
+  return acts_for;
+}
+
 // The ported Update (gui_screen_stub_real_estate.cpp), under the screen's household. TU1 0x826B1EF0.
 REX_EXTERN(rex_lhGuiRealEstateScreen_Update) {
   const uint32_t screen = ctx.r3.u32;
   PPCContext entry = ctx;
   EstateScreenScope screen_scope(screen);
+  refii::vfs::EstateTargetScope target_scope(screen);
   HouseholdScope scope(entry, base, screen >= 0x10000u ? Load32(base, screen + 144u) : 0u);
   refii::vfs::RealEstateScreenUpdate(ctx, base);
 }
 
-// TU1 0x826B2210.
+// The ported OnMenuEvent, under the screen's household. TU1 0x826B2210 / disc 0x825974C0. A viewer
+// refused at another hero's property (coop_estate_owner.cpp) has Back alone: any other event (110 sell
+// .. 119 evict, the type `lwz r4, 4(r4)` 0x826B2224 / 0x825974D4 reads) is dropped here.
 REX_EXTERN(rex_lhGuiRealEstateScreen_OnMenuEvent) {
   const uint32_t screen = ctx.r3.u32;
   PPCContext entry = ctx;
+  const refii::vfs::EstateSession* session = refii::vfs::EstateSessionOf(screen);
+  const uint32_t type = ctx.r4.u32 >= 0x10000u ? Load32(base, ctx.r4.u32 + 4u) : 0u;
+  if (session != nullptr && session->access == static_cast<uint8_t>(refii::coop::EstateAccess::kRefused) &&
+      type >= 110u && type < 120u) {
+    REXLOG_INFO("Refii estate: player {}'s real-estate event {} is refused: player {} owns the building and "
+                "they are not partners",
+                session->viewer, type, session->owner);
+    return;
+  }
   EstateScreenScope screen_scope(screen);
+  refii::vfs::EstateTargetScope target_scope(screen);
   HouseholdScope scope(entry, base, screen >= 0x10000u ? Load32(base, screen + 144u) : 0u);
-  __imp__rex_lhGuiRealEstateScreen_OnMenuEvent(ctx, base);
+  refii::vfs::RealEstateScreenOnMenuEvent(ctx, base);
 }
 
-// The confirm (`sub_826B25E0`) also writes the rent/profit level itself (comp67+0x5C, pickers
-// 36/37); on a joiner that value goes to the host as well. TU1 0x826B25E0.
+// The ported OnModalAnswer (the confirm `sub_826B25E0`) also writes the rent/profit level itself
+// (comp67+0x5C, pickers 36/37); on a joiner that value goes to the host as well. TU1 0x826B25E0 / disc
+// 0x82597880.
 REX_EXTERN(rex_lhGuiRealEstateScreen_Confirm) {
   const uint32_t screen = ctx.r3.u32;
   PPCContext entry = ctx;
   EstateScreenScope screen_scope(screen);
+  refii::vfs::EstateTargetScope target_scope(screen);
   HouseholdScope scope(entry, base, screen >= 0x10000u ? Load32(base, screen + 144u) : 0u);
   const uint32_t building = screen >= 0x10000u ? Load32(base, screen + 0xA8u) : 0u;
   const uint32_t level = building >= 0x10000u ? Load32(base, building + 0x5Cu) : 0u;
-  __imp__rex_lhGuiRealEstateScreen_Confirm(ctx, base);
+  refii::vfs::RealEstateScreenOnModalAnswer(ctx, base);
   if (building >= 0x10000u && Load32(base, building + 0x5Cu) != level && EstateForwards(base, screen)) {
     PostEstate(base, screen, "rent", static_cast<int32_t>(Load32(base, building + 0x5Cu)));
   }
@@ -6496,9 +6843,8 @@ REX_EXTERN(rex_lhGuiRealEstateScreen_Sell) {
 // Rented out or not (`sub_828D28D8`: r3 the hero's comp69, r4 the building, r5 on). The confirm
 // calls it for 32/33; inside the clear and marital helpers it runs on the host. TU1 0x828D28D8.
 REX_EXTERN(rex_CECPlayerProperties_SetRentedOut) {
-  const uint32_t two = refii_mod_player_hero(base, 2);
-  if (t_estate_screen != 0u && EstateForwards(base, t_estate_screen) && two != 0u &&
-      ctx.r3.u32 == refii_mod_component(base, two, 69u)) {
+  if (t_estate_screen != 0u && EstateForwards(base, t_estate_screen) &&
+      ctx.r3.u32 == Load32(base, t_estate_screen + 0x94u)) {
     PostEstate(base, t_estate_screen, "rentout", ctx.r5.u8 != 0 ? 1 : 0);
     return;
   }
@@ -6655,7 +7001,8 @@ REX_EXTERN(rex_CECStats_ModifyTrackedStat) {
 REX_EXTERN(rex_lhGiftComponent_GiveGift) {
   const uint32_t gifts = ctx.r3.u32;
   const uint32_t two = refii_mod_player_hero(base, 2);
-  const bool forward = two != 0u && OnlineJoiner() && ComponentOwner(base, gifts) == two;
+  // A gift of a hero player two brought (the henchman's is the shipped one, on this machine).
+  const bool forward = two != 0u && RefiiCoopGetOwnHero() != 0 && OnlineJoiner() && ComponentOwner(base, gifts) == two;
   uint32_t target = 0u;
   if (forward) {
     PPCContext work = Frame(ctx);
@@ -6697,7 +7044,7 @@ REX_EXTERN(rex_lhGiftComponent_GiveGift) {
 // TU1 0x823F3028.
 REX_EXTERN(rex_CECHeroGifts_RemovePermanently) {
   const uint32_t two = refii_mod_player_hero(base, 2);
-  if (two != 0u && ComponentOwner(base, ctx.r3.u32) == two && refii_mod_coop_mode(base) == 2) {
+  if (two != 0u && RefiiCoopGetOwnHero() != 0 && ComponentOwner(base, ctx.r3.u32) == two && refii_mod_coop_mode(base) == 2) {
     PPCContext work = Frame(ctx);
     work.r3.u64 = ctx.r4.u32;
     work.r4.u64 = 1u;
@@ -6816,10 +7163,53 @@ bool TwoRedecorates() {
 
 // An upgrade is hero two's when player two started the redecorating and the menus are player two's.
 bool FurnitureForTwo(uint8_t* base) { return TwoRedecorates() && refii_mod_menu_player(base) == 2; }
+
+// WHOSE FURNITURE (core/estate_owner_rule.h). A piece is upgradeable only while its building is
+// being redecorated (`sub_8282DFC0` makes the comp68 pieces among the building's contents, comp63,
+// usable), and redecorating starts only from the property screen's owner rows (113). So `player`
+// may upgrade while a building being redecorated is theirs or, the two being partners, the other
+// hero's, or is no hero's and they started it; the upgrade then belongs to that building's owner's
+// household (`household`: 1 hero one, 2 hero two). With nothing being redecorated, player one's
+// upgrade runs as shipped and player two's is refused, as before.
+bool FurnitureMayUpgrade(PPCContext& ctx, uint8_t* base, int32_t player, int32_t* household) {
+  int32_t chosen = 0;
+  int32_t refusing = 0;
+  for (const auto& [building, starter] : g_redecorating) {
+    const int32_t owner = refii::vfs::EstateOwnerPlayer(ctx, base, ComponentOwner(base, building));
+    const int32_t partnership = owner != 0 && owner != player ? refii_bridge_partnership() : 0;
+    const refii::coop::EstateAccess access = refii::coop::EstateAccessFor(player, owner, partnership);
+    if (access == refii::coop::EstateAccess::kRefused || (access == refii::coop::EstateAccess::kOpen && starter != player)) {
+      refusing = owner != 0 ? owner : starter;
+      continue;
+    }
+    if (chosen == 0 || starter == player) {
+      chosen = owner != 0 ? owner : starter;
+    }
+  }
+  if (chosen == 0 && g_redecorating.empty() && player != 2) {
+    chosen = 1;
+  }
+  if (chosen == 0) {
+    REXLOG_INFO("Refii estate: player {}'s furniture upgrade is refused: {}", player,
+                refusing != 0 ? "the building being redecorated is the other hero's and they are not partners"
+                              : "nothing of theirs is being redecorated");
+    return false;
+  }
+  if (household != nullptr) {
+    *household = chosen;
+  }
+  return true;
+}
+
+// The household a joiner's upgrade belongs to, stated with its level to the host (SetLevel below).
+thread_local int32_t t_furniture_household = 2;
 }  // namespace
 
 // TU1 0x826B6A18 (r3 the furniture screen).
 REX_EXTERN(rex_lhGuiFurnitureScreen_Upgrade) {
+  if (refii_mod_player_hero(base, 2) != 0u && !FurnitureMayUpgrade(ctx, base, refii_mod_menu_player(base) == 2 ? 2 : 1, nullptr)) {
+    return;
+  }
   const bool for_two = FurnitureForTwo(base);
   PPCContext entry = ctx;
   HouseholdScope scope(entry, base, for_two ? refii_mod_player_hero(base, 2) : 0u);
@@ -6832,14 +7222,17 @@ REX_EXTERN(rex_lhGuiFurnitureScreen_Upgrade) {
 // `Furniture:<p>:upgrade:<level>` (guest_tick_pump.cpp): the transaction of the furniture screen's A,
 // `sub_826B6A18` (disc `sub_8259BB80`), on the STATED level instead of the highlight
 // (`lhGuiMenu_GetHighlightedItemData` 0x826B6AC0 / 0x8259BC28), for the player the lever names: hero
-// two's household when player two started the redecorating, else refused for player two (the screen
-// takes player one's A alone, 0x826B6DAC).
+// two's household when player two started the redecorating, else refused for player two. Player two's
+// upgrade also makes "the local player" theirs (RefiiCoopLocalPlayerTwoCall), so the piece is THEIR
+// use target: `sub_826B61C8` picks the record inline (0x826B622C / disc 0x8259B41C,
+// coop_hero_hooks.cpp RefiiCoopInlineLocalPlayer). The guest's handler takes player one's A alone
+// (0x826B6DAC / disc 0x8259BF14); the screen's owner drives it here (gui_screen_stub_furniture.cpp).
 // The two emphasis statements `sub_826C1A50` makes (0x826B6B70, 0x826B6BCC) are made here from
 // the spawned rows' names; not called: the label lookups `sub_826B6678`, `sub_82764688` and
 // `this+348 = -1` (0x826B6D5C / 0x8259BEC4).
 //
 //   sub_826B61C8(_, &F)                 0x826B6A34 / 0x8259BB9C   r3 unused; F = comp68 of the
-//                                                                 menu player's comp77 target
+//                                                                 local player's comp77 target
 //   !*(u8*)(F+12) -> stop               0x826B6A48 / 0x8259BBB0
 //   L == *(F+16) -> stop                0x826B6AD8 / 0x8259BC40
 //   sub_825CC2F0(F, L, &card)           0x826B6AEC / 0x8259BC54   (disc sub_82561F10); false ->
@@ -6860,12 +7253,24 @@ REX_EXTERN(rex_lhGuiFurnitureScreen_Upgrade) {
 // refused it), 6 player two with no redecorating of their own.
 extern "C" int32_t RefiiFurnitureUpgrade(PPCContext* ctx, uint8_t* base, int32_t level, int32_t player) {
   if (ctx == nullptr || base == nullptr) return 1;
-  const bool for_two = player == 2 && TwoRedecorates();
-  if (player == 2 && !for_two) return 6;
+  // The ACTING hero's card pays for it (a partner spends their own unlock card on the other's piece — the
+  // card is the player's, the house the owner's); the owner's household takes the level and the
+  // revaluation. The piece is the upgrader's use target.
+  int32_t household = 1;
+  if (!FurnitureMayUpgrade(*ctx, base, player == 2 ? 2 : 1, &household)) return 6;
+  const bool for_two = player == 2;
   PPCContext entry = *ctx;
-  HouseholdScope scope(entry, base, for_two ? refii_mod_player_hero(base, 2) : 0u);
+  std::optional<HouseholdScope> scope;
+  scope.emplace(entry, base, for_two ? refii_mod_player_hero(base, 2) : 0u);
   const bool previous = t_furniture_for_two;
+  const int32_t previous_household = t_furniture_household;
   t_furniture_for_two = for_two;
+  t_furniture_household = household;
+  struct LocalPlayerTwo {
+    bool on;
+    explicit LocalPlayerTwo(bool two) : on(two) { if (on) RefiiCoopLocalPlayerTwoCall(1); }
+    ~LocalPlayerTwo() { if (on) RefiiCoopLocalPlayerTwoCall(0); }
+  } local_two(for_two);
 
   const PPCContext saved = *ctx;
   const uint32_t frame = refii::mods::Frame(saved, 0x200u).r1.u32;
@@ -6900,7 +7305,16 @@ extern "C" int32_t RefiiFurnitureUpgrade(PPCContext* ctx, uint8_t* base, int32_t
       }
       const uint32_t cost = call(0x825CBFC8u, piece, static_cast<uint32_t>(stated));
       const uint32_t previous_level = Load32(base, piece + 16u);
+      // The card is found (above) and taken from the acting hero, through the hero slot the scope lends:
+      // `lhEntity_GetModel(**(*(*(G+12)+88)+4))` then its comp 13 (sub_825CC2F0 0x825CC32C, sub_825CC5B0
+      // 0x825CC5E8; disc sub_82561F10 / sub_825621D0).
       call(0x825CC5B0u, piece, card);
+      if ((household == 2) != for_two) {
+        scope.reset();
+        scope.emplace(entry, base, household == 2 ? refii_mod_player_hero(base, 2) : 0u);
+        REXLOG_INFO("Refii estate: player {}'s furniture upgrade on player {}'s house: their own card paid, the "
+                    "level is the owner's household's", player == 2 ? 2 : 1, household);
+      }
       call(0x825CB860u, piece, static_cast<uint32_t>(stated), cost);
       // SetLevel's `sub_825CBEB0` stores the level back in row terms at F+16 (0x825CBF44).
       result = static_cast<int32_t>(Load32(base, piece + 16u)) == level ? 0 : 5;
@@ -6949,13 +7363,16 @@ extern "C" int32_t RefiiFurnitureUpgrade(PPCContext* ctx, uint8_t* base, int32_t
   }
 
   t_furniture_for_two = previous;
+  t_furniture_household = previous_household;
   return result;
 }
 
 // TU1 0x825CB860 (r3 the piece's comp68, r4 the level).
 REX_EXTERN(rex_CECUpgradeableFurniture_SetLevel) {
   if (t_furniture_for_two && OnlineJoiner()) {
-    PostHousehold("furniture", EntityUid(base, ComponentOwner(base, ctx.r3.u32)), static_cast<int32_t>(ctx.r4.u32));
+    // The level, and above it whose household the upgrade is (1 the host's hero, a partner's).
+    PostHousehold("furniture", EntityUid(base, ComponentOwner(base, ctx.r3.u32)),
+                  static_cast<int32_t>((ctx.r4.u32 & 0xFFu) | (t_furniture_household == 1 ? 0x100u : 0u)));
   } else if (AnySubscriber(REFII_EVENT_FURNITURE_UPGRADED)) {
     // Raised where the level is the world's: on the host (a joiner's upgrade is raised there).
     FurnitureUpgradedEvent e{};
@@ -7018,6 +7435,195 @@ bool JoinerFollowScan(PPCContext& ctx, uint8_t* base, uint32_t want, uint32_t re
   return true;
 }
 
+// AN ONLINE JOINER'S USE RUNS ON THE HOST. A client builds none of what the use scripts drive — Health
+// 36, Bed 182, Readable 187, Switch 220, Mana 93, BonusContainer 184 go to the default arm of the
+// client's component switch (TU1 0x8238DF3C, disc 0x8239370C; coop_client_components_hooks.cpp, which
+// now builds every use 78 and a hero's 157 and 189 there) — and its script system runs no Lua (TU1
+// 0x8228208C). The 360's client asks the host instead: its interact sends net message 0x9E for its
+// player (CAbilityActionPlayerInteract vf2, TU1 0x82976588: the user is players+0x74 and the net
+// context's +0x34/+0x36 bytes are set → `sub_82545D20(net, {off_820A62B8}, net id)`), and the host's
+// receive (`sub_82392250` case 0x9E) performs the same interact request (off_820CF144, what
+// CInputProcessInteract makes) for its copy of hero two. A carried item is the core Lua's `carry`
+// (RefiiCoop.AddScript): the 360's own item request (0xE1, sent only for the shared quick slot,
+// 0x828059C8..0x82805A38) finds the item in hero ONE's inventory (the receive's
+// `CECInventory_FindItemByRecordHash` at 0x82396284 takes players+0x6C's comp13), so here the host uses
+// it from its copy of hero two's own inventory. No inventory change is sent by the guest (no net
+// message is built by any CECInventory function), so what the host's run gives or takes from hero two
+// is restated to the joiner's own hero (`invadd` / `invdel`, from the core Lua); the rest of what the
+// run shows its user goes on THE ROUTE (core Lua).
+
+// THE JOINER'S TARGETS. The client's interact request (0x9E) names nobody: the host's run of it reads
+// its own copy of hero two's use target (comp77 vf+68, `sub_821E66F0`, called by the interact action at
+// TU1 0x82976588's `(*(*comp77 + 68))(comp77)`; coop_estate_owner.cpp hooks it). So the joiner states its
+// own use target whenever it changes (`usetarget:<uid>:0`, uid 1 for none; RefiiCoop.JoinerTargetTick)
+// and here hero two's use target answers it. A thing's use itself goes by name (`useat:<uid>:<icon>`,
+// from the joiner's own CECOnActionUse_Use, press or full hold): the host runs exactly the thing the
+// joiner used, and no other use of hero two's.
+//
+// THE ICON IS THE USER'S. The use routine's first gate refuses a thing that shows a world icon
+// (+0x19, the template's DisplayWorldIcon) while its icon is not up: `lbz r11,0x18(r24)` / `bne` /
+// `bl sub_828230C0` / `bne` → return (TU1 0x82821A2C..0x82821A48, disc 0x827534AC..0x827534C8). The
+// icon bytes (+0x18..) are the viewer's the update ran for: on the host the hero (an online host
+// tests hero one, coop_hero_hooks.cpp NearerPlayerTwo), on the joiner its own hero. So the joiner's
+// use states its own +0x18 (`<icon>`), and for the host's run of it the gate reads that byte
+// (RefiiCoopUseIconOfUser, TU1 0x82821A30 / disc 0x827534B0) — without it every such use the host's
+// hero was not standing at was refused before the script.
+uint64_t g_joiner_use_target = 0u;   // the uid the joiner states; 0 none stated yet
+// What the joiner's hero targeted when it used a carried item (the `carry` statement's), for the
+// script that use makes here (core Lua: Targeting.GetTarget of hero two in that run). 0 none.
+uint64_t g_carry_target = 0u;
+thread_local bool t_useat_replay = false;
+// The host's run of the joiner's use: the thing's use component and the joiner's own icon byte.
+thread_local uint32_t t_useat_use = 0u;
+thread_local uint8_t t_useat_icon = 0u;
+
+/// The item of hero two's inventory with record `hash` into the handle at `handle` (16 bytes), the
+/// guest's own lookup (`sub_824F1C90(out, comp13, hash)`). The item, or 0.
+uint32_t FindHeroTwoItem(PPCContext& frame, uint8_t* base, uint32_t inventory, uint32_t handle, uint32_t hash) {
+  for (uint32_t word = 0; word < 4u; ++word) {
+    refii::mods::StoreU32(base, handle + word * 4u, 0u);
+  }
+  PPCContext work = frame;
+  work.r3.u64 = handle;
+  work.r4.u64 = inventory;
+  work.r5.u64 = hash;
+  CallGuest(work, base, refii::guest::Address(0x824F1C90u));
+  return Load32(base, handle);
+}
+
+/// The handle's reference released on the item it names now, if any: a use that spent the last unit
+/// destroys the item and zeroes the handle (guest_tick_pump.cpp PerformQuickslot, the beta 6a fault).
+void ReleaseHandle(PPCContext& frame, uint8_t* base, uint32_t handle) {
+  const uint32_t item = Load32(base, handle);
+  if (item >= 0x10000u && item < 0xC0000000u) {
+    PPCContext work = frame;
+    work.r3.u64 = item;
+    work.r4.u64 = handle;
+    CallGuest(work, base, refii::guest::Address(0x82764DC0u));
+  }
+}
+
+/// The host's run of a joiner's carried use: the item with record `hash` in its copy of hero two's
+/// inventory — one added first when the copy has none, the joiner's inventory being the joiner's own —
+/// used for hero two through the guest's own `lhEntity_UseInventoryItem(hero, handle, script)`
+/// (TU1 0x823E0FF8), the script `name` the joiner's use made. Its Create and AddScript run here, so
+/// the host's script system runs it (core Lua RefiiCoop.AddScript states the run as the joiner's).
+bool UseCarriedForTwo(PPCContext& ctx, uint8_t* base, uint32_t hash, const std::string& name) {
+  const uint32_t two = refii_mod_player_hero(base, 2);
+  const uint32_t inventory = two != 0u ? refii_mod_component(base, two, 13u) : 0u;
+  if (refii_mod_player_here(1) == 0 || inventory == 0u || (Load8(base, two + 144u) & 0x40u) == 0u) {
+    return false;
+  }
+  PPCContext frame = Frame(ctx, 0x400u);
+  const uint32_t area = (frame.r1.u32 + 0x100u) & ~0xFu;
+  const uint32_t handle = area;
+  const uint32_t text = area + 0x20u;
+  const uint32_t chars = area + 0x40u;
+  if (FindHeroTwoItem(frame, base, inventory, handle, hash) == 0u) {
+    refii_mod_add_item(&frame, base, two, hash);
+    if (FindHeroTwoItem(frame, base, inventory, handle, hash) == 0u) {
+      REXLOG_WARN("Refii co-op use: the joiner's item 0x{:08X} cannot be held by hero two here", hash);
+      return false;
+    }
+  }
+  std::memcpy(base + chars, name.c_str(), name.size() + 1u);
+  PPCContext make = frame;
+  make.r3.u64 = text;
+  make.r4.u64 = chars;
+  make.r5.s64 = -1;
+  rex_lhCharString_CtorFromCStr(make, base);
+  PPCContext use = frame;
+  use.r3.u64 = two;
+  use.r4.u64 = handle;
+  use.r5.u64 = text;
+  t_carry_for_joiner = true;
+  rex_lhEntity_UseInventoryItem(use, base);
+  t_carry_for_joiner = false;
+  const bool used = (use.r3.u32 & 0xFFu) != 0u;
+  PPCContext drop = frame;
+  drop.r3.u64 = text;
+  rex_lhCharString_Dtor(drop, base);
+  ReleaseHandle(frame, base, handle);
+  REXLOG_INFO("Refii co-op use: the joiner's {} (item 0x{:08X}) {} here for hero two", name, hash,
+              used ? "runs" : "is refused");
+  return used;
+}
+
+}  // namespace
+
+// The received card for this joiner's own item of record `hash` (core Lua's `item` statement, a host
+// run's GUI.DisplayReceivedItem): opened as `GUI.DisplayReceivedItem` opens it — its core
+// `sub_82304EF8` tests the GUI enabled byte (0x83319409, TU1 0x82304F00 / disc 0x8331930E) and the
+// handle's item, then `sub_823C4340(*(*(0x83496B08)+0x1C)+0x30, handle)` (0x82304F18..0x82304F28; disc
+// `sub_824F9570`, 0x82906B40..0x82906B50). 1 when opened.
+extern "C" int32_t refii_household_received_item(PPCContext* ctx, uint8_t* base, uint32_t hash) {
+  const uint32_t two = refii_mod_player_hero(base, 2);
+  const uint32_t inventory = two != 0u ? refii_mod_component(base, two, 13u) : 0u;
+  if (ctx == nullptr || inventory == 0u || hash == 0u || !OnlineJoiner()) {
+    return 0;
+  }
+  PPCContext frame = Frame(*ctx, 0x400u);
+  const uint32_t handle = (frame.r1.u32 + 0x100u) & ~0xFu;
+  const uint32_t root = Load32(base, refii::guest::Address(0x83496B08u));
+  const uint32_t gui = root >= 0x10000u ? Load32(base, root + 0x1Cu) : 0u;
+  int32_t opened = 0;
+  if (FindHeroTwoItem(frame, base, inventory, handle, hash) != 0u && gui >= 0x10000u &&
+      Load8(base, refii::guest::Address(0x83319409u)) != 0u) {
+    PPCContext work = frame;
+    work.r3.u64 = Load32(base, gui + 0x30u);
+    work.r4.u64 = handle;
+    opened = CallGuest(work, base, refii::guest::Address(0x823C4340u)) ? 1 : 0;
+  }
+  ReleaseHandle(frame, base, handle);
+  return opened;
+}
+
+// What the joiner's hero targeted when it used the carried item whose run is being made here, as
+// "0x…" (Refii.uid's text) into `out`; 0 when none (core Lua keeps it for Targeting.GetTarget).
+extern "C" int32_t refii_household_carry_target(char* out, uint32_t capacity) {
+  if (g_carry_target == 0u || out == nullptr || capacity < 20u) {
+    return 0;
+  }
+  std::snprintf(out, capacity, "0x%016llX", static_cast<unsigned long long>(g_carry_target));
+  return 1;
+}
+
+// THE JOINER STATES ITS USE TARGET (once a world frame, core Lua RefiiCoop.JoinerTargetTick): its own
+// hero two's comp77 vf+68 — the guest's own `sub_821E66F0`, through the component's vtable — sent to
+// the host when it changes (`usetarget`, uid 1 for none).
+extern "C" void refii_household_state_use_target(PPCContext* ctx, uint8_t* base) {
+  static uint64_t s_last = 0u;
+  const uint32_t two = refii_mod_player_hero(base, 2);
+  const uint32_t comp77 = two != 0u ? refii_mod_component(base, two, 77u) : 0u;
+  if (ctx == nullptr || comp77 == 0u || !OnlineJoiner() || RefiiCoopGetOwnHero() == 0) {
+    return;
+  }
+  PPCContext work = Frame(*ctx, 0x200u);
+  work.r3.u64 = comp77;
+  const uint32_t target = CallGuest(work, base, Load32(base, Load32(base, comp77) + 68u)) ? work.r3.u32 : 0u;
+  const uint64_t uid = refii_mod_entity_alive(base, target) != 0 ? EntityUid(base, target) : 1u;
+  if (uid != s_last && uid != 0u) {
+    s_last = uid;
+    PostHousehold("usetarget", uid, 0);
+  }
+}
+
+// The host's answer for hero two's use target (coop_estate_owner.cpp, rex_CECUseTarget_Target): the
+// entity the joiner states, 0 for none; false when nothing applies (not the online host, not hero
+// two's comp77, nothing stated yet).
+extern "C" int32_t refii_household_joiner_use_target(PPCContext* ctx, uint8_t* base, uint32_t comp77, uint32_t* out) {
+  if (ctx == nullptr || g_joiner_use_target == 0u || refii_mod_coop_mode(base) != 2 || RefiiCoopGetOwnHero() == 0) {
+    return 0;
+  }
+  const uint32_t two = refii_mod_player_hero(base, 2);
+  if (two == 0u || comp77 == 0u || refii_mod_component(base, two, 77u) != comp77) {
+    return 0;
+  }
+  *out = g_joiner_use_target == 1u ? 0u : ResolveUid(*ctx, base, g_joiner_use_target);
+  return 1;
+}
+
+namespace {
 // The household intents that are not the estate screen's: a joiner's gift and furniture level run
 // on the host, the host's acceptance of a gift on the joiner. True when `action` was one of them.
 bool ReplayHouseholdOnline(PPCContext& ctx, uint8_t* base, std::string_view action, uint64_t uid, int32_t value) {
@@ -7037,18 +7643,79 @@ bool ReplayHouseholdOnline(PPCContext& ctx, uint8_t* base, std::string_view acti
     return CallGuest(work, base, refii::guest::Address(address)) ? work.r3.u32 : 0u;
   };
   const uint32_t gifts = two != 0u ? refii_mod_component(base, two, 33u) : 0u;
+  if (action == "usetarget") {
+    if (refii_mod_player_here(1) != 0) {
+      g_joiner_use_target = uid;
+    }
+    return true;
+  }
+  if (action == "useat") {
+    // The joiner's use of a thing, run here for hero two through the guest's own use routine
+    // (`sub_828219F8(thing's comp78, hero two)`, what the interact action calls at 0x82977900).
+    const uint32_t thing = refii_mod_player_here(1) != 0 && two != 0u ? ResolveUid(ctx, base, uid) : 0u;
+    const uint32_t use = thing != 0u ? refii_mod_component(base, thing, 78u) : 0u;
+    if (use == 0u) {
+      REXLOG_WARN("Refii co-op use: the joiner's use of {:016X} names nothing usable here", uid);
+      return true;
+    }
+    PPCContext work = frame;
+    work.r3.u64 = use;
+    work.r4.u64 = two;
+    t_useat_replay = true;
+    t_useat_use = use;
+    t_useat_icon = value != 0 ? 1u : 0u;
+    rex_CECOnActionUse_Use(work, base);
+    t_useat_replay = false;
+    t_useat_use = 0u;
+    t_useat_icon = 0u;
+    REXLOG_INFO("Refii co-op use: the joiner used {:08X} here for hero two (its icon {})", thing,
+                value != 0 ? "up" : "down");
+    return true;
+  }
+  if (action == "invadd" || action == "invdel") {
+    // What the host's run of this joiner's use gave or took from hero two, on its own hero here: one
+    // added through the guest's own add (refii_mod_add_items, `CECInventory_AddOneOfRecord`), one taken
+    // through `Inventory.RemoveItemOfType`'s core `sub_824F14B8(comp13, record)`.
+    const uint32_t hash = static_cast<uint32_t>(uid);
+    const uint32_t inventory = two != 0u ? refii_mod_component(base, two, 13u) : 0u;
+    if (!OnlineJoiner() || inventory == 0u || hash == 0u) {
+      return true;
+    }
+    const int32_t count = std::clamp(value, 1, 99);
+    if (action == "invadd") {
+      refii_mod_add_items(&frame, base, two, hash, count, nullptr);
+    } else {
+      for (int32_t i = 0; i < count; ++i) {
+        call(0x824F14B8u, inventory, hash);
+      }
+    }
+    refii_bridge_ui_data_changed();
+    return true;
+  }
   if (action == "giftkept") {
     if (!OnlineJoiner() || gifts == 0u) {
       return true;
     }
     const uint32_t sentinel = Load32(base, gifts + 0x108u);
     uint32_t node = sentinel >= 0x10000u ? Load32(base, sentinel) : 0u;
+    bool kept = false;
     for (uint32_t n = 0; node >= 0x10000u && node != sentinel && n < 64u; ++n, node = Load32(base, node)) {
       if (Load32(base, node + 8u) == static_cast<uint32_t>(value)) {
         call(0x821D9EE8u, area, gifts + 0x104u, (static_cast<uint64_t>(gifts + 0x104u) << 32) | node);
         REXLOG_INFO("Refii household: the host kept the joiner's gift");
+        kept = true;
         break;
       }
+    }
+    // No refund pending here: the gift was given by the host's run of this joiner's use (a ring), or
+    // its refund came back here first. It is kept, so it leaves this hero's own inventory now, through
+    // `Inventory.RemoveItemOfType`'s core `sub_824F14B8(comp13, record)`. A refused gift is refunded on
+    // the host's copy and never left this inventory.
+    const uint32_t inventory = two != 0u ? refii_mod_component(base, two, 13u) : 0u;
+    if (!kept && inventory != 0u) {
+      call(0x824F14B8u, inventory, static_cast<uint32_t>(value));
+      refii_bridge_ui_data_changed();
+      REXLOG_INFO("Refii household: the host kept a gift given in its run of this player's use; it leaves here");
     }
     return true;
   }
@@ -7066,40 +7733,12 @@ bool ReplayHouseholdOnline(PPCContext& ctx, uint8_t* base, std::string_view acti
     return true;
   }
   if (action == "say") {
-    // A partner's line in the host's run of this joiner's bed scene: the same key, spoken here by
-    // this machine's copy of the speaker to its hero two.
+    // A line in the host's run of this joiner's use (a partner in its bed, the one who answers its
+    // knock): the same key, spoken here by this machine's copy of the speaker to its hero two.
     const uint32_t speaker = OnlineJoiner() ? ResolveUid(ctx, base, uid) : 0u;
     const uint32_t talk = speaker != 0u ? refii_mod_component(base, speaker, 100u) : 0u;
     if (talk != 0u) {
       call(0x825D7F78u, talk, static_cast<uint32_t>(value), 0u, two);
-    }
-    return true;
-  }
-  if (action == "sexdone") {
-    // The host's verdict on the joiner's bed (core Lua RefiiCoop.SexVerdict): the partner, 1 a
-    // child was born, 2 it is player two's first.
-    if (OnlineJoiner()) {
-      char chunk[256];
-      std::snprintf(chunk, sizeof(chunk),
-                    "if RefiiCoop and Refii and Refii._by_uid then RefiiCoop.SexVerdict = { partner = "
-                    "Refii.entity(Refii._by_uid(\"0x%016llX\")), born = %s, first = %s } end",
-                    static_cast<unsigned long long>(uid), (value & 1) != 0 ? "true" : "false",
-                    (value & 2) != 0 ? "true" : "false");
-      refii::vfs::RunGameLua(ctx, base, chunk);
-    }
-    return true;
-  }
-  if (action == "sex") {
-    // The joiner's bed for its hero two, run on the host (core Lua RefiiCoop.HostBedSex): the
-    // payment and SexFunction.Begin in a silent thread; value 1 when a condom was chosen.
-    if (refii_mod_player_here(1) != 0 && two != 0u) {
-      char chunk[256];
-      std::snprintf(chunk, sizeof(chunk),
-                    "if RefiiCoop and RefiiCoop.HostBedSex and Refii and Refii._by_uid then "
-                    "RefiiCoop.HostBedSex(Refii.entity(Refii._by_uid(\"0x%016llX\")), %d) end",
-                    static_cast<unsigned long long>(uid), value);
-      refii::vfs::RunGameLua(ctx, base, chunk);
-      REXLOG_INFO("Refii household: the joiner's bed runs here for player two");
     }
     return true;
   }
@@ -7153,16 +7792,43 @@ bool ReplayHouseholdOnline(PPCContext& ctx, uint8_t* base, std::string_view acti
     REXLOG_INFO("Refii household: the joiner's gift reached its villager here");
     return true;
   }
-  // furniture: the level set as the upgrade screen sets it, for hero two.
+  // furniture: the level set as the upgrade screen sets it, for the household of the building the piece
+  // is in, decided HERE (core/estate_owner_rule.h) — the joiner's 0x100 ("player one's house") is only its
+  // own statement. The piece names its building: its OwnedEntity component (comp 64,
+  // Lua_OwnedEntity_GetECType `li r3,64`) holds its owner as a weak ref at +0xC — the field
+  // Lua_OwnedEntity_SetOwner (TU1 0x828C7210 / disc 0x828AB818: `addi r27,r26,0xC` 0x828C7224 /
+  // 0x828AB82C) replaces, taking the piece off the old owner's OwnerEntity (comp 63) list and onto the
+  // new one's — the list sub_8282DFC0 walks to make a redecorated building's pieces usable
+  // (Lua_OwnerEntity_GetOwnedEntityByIndex on the building's comp 63, 0x8282E114).
+  const uint32_t owned = refii_mod_component(base, target, 64u);
+  const uint32_t building = owned != 0u ? Deref(frame, base, owned + 0xCu) : 0u;
+  const int32_t owner = building != 0u && refii_mod_component(base, building, 67u) != 0u
+                            ? refii::vfs::EstateOwnerPlayer(frame, base, building)
+                            : 0;
+  const int32_t partnership = owner == 1 ? refii_bridge_partnership() : 0;
+  const refii::coop::EstateAccess access = refii::coop::EstateAccessFor(2, owner, partnership);
+  if (access != refii::coop::EstateAccess::kOwner && access != refii::coop::EstateAccess::kPartner) {
+    REXLOG_INFO("Refii estate: the joiner's furniture upgrade is refused here: the piece's building {} ({})",
+                building != 0u ? "is player one's and they are not partners" : "is no building here",
+                owner == 0 ? "no hero owns it" : "player one's");
+    return true;
+  }
+  const bool ones = owner == 1;
+  if (ones != ((static_cast<uint32_t>(value) & 0x100u) != 0u)) {
+    REXLOG_INFO("Refii estate: the joiner's furniture upgrade named the other household; the piece's building is "
+                "player {}'s", owner);
+  }
+  const uint32_t acting = ones ? refii_mod_player_hero(base, 1) : two;
+  const uint32_t level = static_cast<uint32_t>(value) & 0xFFu;
   const uint32_t piece = refii_mod_component(base, target, 68u);
-  const uint32_t props = refii_mod_component(base, two, 69u);
+  const uint32_t props = refii_mod_component(base, acting, 69u);
   if (piece == 0u) {
     return true;
   }
   PPCContext scoped = frame;
-  HouseholdScope scope(scoped, base, two);
-  const uint32_t worth = call(0x825CBFC8u, piece, static_cast<uint32_t>(value));
-  call(0x825CB860u, piece, static_cast<uint32_t>(value), worth);
+  HouseholdScope scope(scoped, base, acting == two ? two : 0u);
+  const uint32_t worth = call(0x825CBFC8u, piece, level);
+  call(0x825CB860u, piece, level, worth);
   if (props != 0u) {
     call(0x828D4218u, props);
   }
@@ -7178,11 +7844,38 @@ namespace refii::vfs {
 // under hero two's household scope (the wedding reads hero one inline: its event, its movie gate),
 // the presentation suppressed, and the household stashed at once so the joiner's mirror follows.
 bool ReplayEstateIntent(PPCContext& ctx, uint8_t* base, const std::string& text) {
+  // A joiner's carried use, run here for hero two. Player two's as a hero; the plain henchman's uses
+  // stay the 360's.
+  if (text.rfind("carry|", 0) == 0) {
+    uint32_t hash = 0u;
+    uint64_t target = 0u;
+    std::string name;
+    if (RefiiCoopGetOwnHero() != 0 && refii_mod_player_here(1) != 0 &&
+        refii::coop::UseCarryParse(std::string_view(text).substr(6), &hash, &name, &target)) {
+      g_carry_target = target;
+      UseCarriedForTwo(ctx, base, hash, name);
+      g_carry_target = 0u;
+    }
+    return true;
+  }
   char action[16] = {};
   unsigned long long uid = 0;
   int value = 0;
   if (std::sscanf(text.c_str(), "%15[a-z]:%llx:%d", action, &uid, &value) != 3 || uid == 0u) {
     return false;
+  }
+  // Every intent is hero two's household: the plain henchman has none.
+  if (RefiiCoopGetOwnHero() == 0) {
+    REXLOG_INFO("Refii estate: '{}' dropped — player two is the henchman, with no household of their own", action);
+    return false;
+  }
+  // The joiner is about to open a sale sign: its building's book is stated to them
+  // (coop_estate_statements.cpp).
+  if (std::string_view(action) == "look") {
+    if (refii_mod_player_here(1) != 0) {
+      refii::vfs::EstateLook(ctx, base, uid);
+    }
+    return true;
   }
   if (ReplayHouseholdOnline(ctx, base, action, uid, value)) {
     return true;
@@ -7213,21 +7906,44 @@ bool ReplayEstateIntent(PPCContext& ctx, uint8_t* base, const std::string& text)
   const uint32_t sign_link = refii_mod_entity_alive(base, sign) != 0 ? refii_mod_component(base, sign, 142u) : 0u;
   const uint32_t building = sign_link != 0u ? call(0x8229EE78u, sign_link) : 0u;
   const uint32_t record = building >= 0x10000u ? refii_mod_component(base, building, 67u) : 0u;
-  const uint32_t props = refii_mod_component(base, two, 69u);
-  if (record == 0u || props == 0u) {
+  if (record == 0u) {
     REXLOG_WARN("Refii estate: the joiner's {} names no building here", text);
     return false;
   }
-  const uint32_t fields[7] = {two, props, refii_mod_component(base, two, 77u), sign, sign_link, building, record};
+  // WHO MAY ACT (core/estate_owner_rule.h), decided here where the books are kept: player two buys
+  // only what no hero owns, and does anything else only on their own property or, while the two are
+  // partners, on player one's — then as player one, on player one's household and purse, as the
+  // joiner's screen was (coop_estate_owner.cpp). The joiner's own screen already offered nothing
+  // else (its copy of the host's properties, household_persist.cpp); this is the host's word on it.
+  const std::string_view what(action);
+  const int32_t owner = refii::vfs::EstateOwnerPlayer(frame, base, building);
+  const int32_t partnership = owner == 1 ? refii_bridge_partnership() : 0;
+  if (!refii::coop::EstateActionAllowed(what == "buy", 2, owner, partnership)) {
+    REXLOG_INFO("Refii estate: the joiner's {} is refused here: {}", text,
+                owner == 0   ? "no hero owns the building"
+                : owner == 2 ? "player two already owns it"
+                             : "player one owns it and they are not partners");
+    return true;
+  }
+  const uint32_t acting = refii::coop::EstateActsFor(2, owner, partnership) == 1 ? refii_mod_player_hero(base, 1) : two;
+  const uint32_t props = refii_mod_component(base, acting, 69u);
+  if (props == 0u) {
+    REXLOG_WARN("Refii estate: the joiner's {} finds no properties on hero {:08X}", text, acting);
+    return false;
+  }
+  const uint32_t fields[7] = {acting, props, refii_mod_component(base, acting, 77u), sign, sign_link, building, record};
   for (uint32_t i = 0; i < 7u; ++i) {
     refii::mods::StoreU32(base, fake + 0x90u + 4u * i, fields[i]);
   }
   {
     PPCContext scoped = frame;
-    HouseholdScope scope(scoped, base, two);
+    HouseholdScope scope(scoped, base, acting == two ? two : 0u);
     t_estate_replay = true;
-    const std::string_view what(action);
     if (what == "buy") {
+      // The price CECPlayerProperties_Buy charges is CECBuilding_BuyPrice of the building's comp67
+      // (TU1 0x828D03B0 / disc 0x828AFA00, then CECMoney_Modify), asked here under the same scope —
+      // the number the joiner's page was stated (coop_estate_statements.cpp).
+      REXLOG_INFO("Refii estate: the joiner's {} is charged {} here", text, static_cast<int32_t>(call(0x8282BA48u, record)));
       call(0x826B32B0u, fake);
     } else if (what == "clear") {
       call(0x826B3258u, fake);
@@ -7248,7 +7964,8 @@ bool ReplayEstateIntent(PPCContext& ctx, uint8_t* base, const std::string& text)
     t_estate_replay = false;
   }
   HouseholdChanged();
-  REXLOG_INFO("Refii estate: the joiner's {} ran for player two", text);
+  EstateStatementsChanged();
+  REXLOG_INFO("Refii estate: the joiner's {} ran for player {}", text, acting == two ? 2 : 1);
   return true;
 }
 
@@ -7482,11 +8199,53 @@ int32_t g_sleeper = 0;
 REX_EXTERN(rex_CECOnActionUse_Use) {
   REX_FUNC_PROLOGUE();
   const uint32_t thing = Owner(base, ctx.r3.u32);
+  // ONLINE, THE JOINER'S USES ARE THE HOST'S (the joiner's use, mod_events.cpp above): on the joiner its
+  // hero two's use of anything but a sale sign is stated by name (`useat`) and runs on the host; on the
+  // host hero two uses only what the joiner stated (t_useat_replay) — the interact request the client
+  // also sends (0x9E) reaches this routine through the host's copy and would use it a second time.
+  const uint32_t two = RefiiCoopGetOwnHero() != 0 ? refii_mod_player_hero(base, 2) : 0u;
+  if (two != 0u && thing != 0u && ctx.r4.u32 == two && refii_mod_component(base, thing, 142u) == 0u) {
+    if (OnlineJoiner()) {
+      // The thing's icon byte here is this hero's own (the joiner's update tests its own hero); the
+      // host's use gate reads it for this use (RefiiCoopUseIconOfUser).
+      const bool icon = Load8(base, ctx.r3.u32 + 0x18u) != 0u;
+      PostHousehold("useat", EntityUid(base, thing), icon ? 1 : 0);
+      REXLOG_INFO("Refii co-op use: this player's use of {:08X} goes to the host (its icon {})", thing,
+                  icon ? "up" : "down");
+      return;
+    }
+    if (refii_mod_coop_mode(base) == 2 && !t_useat_replay) {
+      return;
+    }
+  }
   if (thing != 0u && ctx.r4.u32 != 0u) {
     g_uses[g_use_next] = UseRecord{thing, ctx.r4.u32};
     g_use_next = (g_use_next + 1u) % kUseRecords;
   }
+  // A sale sign's use (the thing carries comp142), every one: the real-estate screen opens once per
+  // script its use creates, so two uses in one frame are a second OnExit/OnEnter of screen 28.
+  if (thing != 0u && refii_mod_component(base, thing, 142u) != 0u) {
+    REXLOG_INFO("Refii estate: sale sign {:08X} used by player {} (user {:08X}) from 0x{:08X}, frame {}", thing,
+                PlayerOf(base, ctx.r4.u32), ctx.r4.u32, static_cast<uint32_t>(ctx.lr),
+                Load32(base, refii::guest::Address(0x83319650u)));
+  }
   __imp__rex_CECOnActionUse_Use(ctx, base);
+}
+
+// The use routine's icon gate, before `cmplwi cr6,r11,0` on `lbz r11,0x18(r24)` (TU1 0x82821A30,
+// disc 0x827534B0; r24 the use component, r27 the user): for the host's run of the joiner's use of
+// that component by hero two, the byte is the joiner's own (`useat`'s `<icon>`); then the guest's own
+// gate decides (an icon wanted, `sub_828230C0`, and not up → no use). Every other use reads the
+// thing's byte as shipped, and so does the routine's second pass for hero one (0x82821CF0).
+void RefiiCoopUseIconOfUser(PPCRegister& r11, PPCRegister& r24, PPCRegister& r27) {
+  if (!t_useat_replay || t_useat_use == 0u || r24.u32 != t_useat_use) {
+    return;
+  }
+  uint8_t* base = RefiiGuestBase();
+  if (base == nullptr || r27.u32 == 0u || r27.u32 != refii_mod_player_hero(base, 2)) {
+    return;
+  }
+  r11.u64 = t_useat_icon;
 }
 
 // SleepMenu.ShowSleepMenu(bed): builds the SLEEP_LENGTH choices and marks the menu visible; r3 =
@@ -7857,6 +8616,8 @@ REX_EXTERN(rex_lhGameFlowGuiMode_Remove) {
 // `commit` is the pump action this start is running under (GuestTickPumpDispatching): the
 // root's Continue row is dispatched by its bare name, the fan's pick as `LoadSave:N`.
 // ---------------------------------------------------------------------------------------------
+extern "C" uint64_t RefiiAchievementBindUser(uint32_t user_index, const char* save);
+
 REX_EXTERN(rex_lhFrontEnd_SetStartGameTarget) {
   REX_FUNC_PROLOGUE();
   const bool front_end_lua = !refii::vfs::GameLuaUp(base);
@@ -7889,6 +8650,15 @@ REX_EXTERN(rex_lhFrontEnd_SetStartGameTarget) {
     // same commit again (Engine_ModSaveGate).
     if (e.cancel) {
       return;
+    }
+  }
+  // A new game (no save): player one's hero is one no save holds yet, so its achievements start
+  // empty (achievement/achievement_runtime.h); a save's start is bound by its load,
+  // SaveGame_LoadFromDevice (player_state_hooks.cpp).
+  if (ctx.r4.u32 == 0 || refii::vfs::ReadGuestLhString(base, ctx.r4.u32).empty()) {
+    const uint32_t user = Load32(base, refii::guest::Address(0x83496AF8u));
+    if (user < 4u) {
+      RefiiAchievementBindUser(user, "");
     }
   }
   __imp__rex_lhFrontEnd_SetStartGameTarget(ctx, base);

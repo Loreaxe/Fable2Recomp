@@ -36,7 +36,6 @@
 //                 0x82980260 r3, r1+0x58; sub_82980460 0x829804C8 r31, r4; sub_82980578
 //                 0x829805CC r31, r3
 //   food          CFoodItemQueryBox_Show sub_82B8C618 0x82B8C860 r29, r1+0x50, 0x82B8CA3C r31, r3
-//   bed           CBedInteractionMessageBox_vf5 sub_82B8DEF0 0x82B8DF5C r11, r1+0x50
 //   interaction   the text box sub_82C203B8 0x82C206E4 r30, r26 (the child it resolved: `+44` + "1",
 //   text          else `+44` — CrimeInfo's `Contents.Crimes`)
 //   received item sub_82452530 (CECReceivedItemQueue_vf18 0x82456F40): `ReceivedItems.ReceivedItemAlert.

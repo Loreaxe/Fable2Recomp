@@ -97,13 +97,20 @@ public static class Engine_UiInputCapture
 		}
 	}
 
+	/// <summary>Each capture's end, once: what it took, or why it was cancelled.</summary>
+	public static Action<string> Log { get; set; } = message => GD.Print(message);
+
 	/// <summary>Disarms the capture, telling its row; nothing when none is armed.</summary>
-	public static void Cancel()
+	public static void Cancel() => Cancel("by its page");
+
+	private static void Cancel(string why)
 	{
 		if (_armed is null)
 		{
 			return;
 		}
+
+		Log($"[input-capture] the {_armed} capture cancelled {why}");
 
 		Action? cancelled = _cancelled;
 		Disarm();
@@ -124,7 +131,7 @@ public static class Engine_UiInputCapture
 		ulong now = Time.GetTicksMsec();
 		if (_armed is not null && now - _armedAt > Timeout * 1000.0)
 		{
-			Cancel();
+			Cancel($"after {Timeout:0} s with no press");
 		}
 
 		bool expired = now - _waitingSince > ReleaseTimeout * 1000.0;
@@ -153,7 +160,7 @@ public static class Engine_UiInputCapture
 		switch (@event)
 		{
 			case InputEventKey { Pressed: true, Echo: false } key when KeyOf(key) == Key.Escape:
-				Cancel();
+				Cancel("by Escape");
 				Hold(@event);
 				return true;
 			case InputEventKey { Pressed: true, Echo: false } key when kind == Kind.Keyboard:
@@ -258,6 +265,7 @@ public static class Engine_UiInputCapture
 	private static bool Take(string name, InputEvent @event)
 	{
 		Action<string>? done = _done;
+		Log($"[input-capture] the {_armed} capture took '{name}'");
 		Disarm();
 		Hold(@event);
 		done?.Invoke(name);

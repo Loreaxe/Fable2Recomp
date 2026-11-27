@@ -34,6 +34,10 @@
 // (`*(list+0x14)` is the IM - `829729BC lwz r11,0x14(r3)`, disc 0x82963D2C - and IM+24 the object).
 // Both edges are stated: `@Interaction.ListUp(up)` - a list the guest is writing rows for, until
 // its hide or its mode's end.
+//
+// The Sanctuary's class (CInteractionModeGUIWorld, vtable 0x820C3C10 / disc 0x820C2088) is not one of
+// these lists: the input answers it through interaction_guiworld.cpp (its cursor is Godot's, set by
+// `guiworld:<p>:cursor:<row>`), and the row writer remembers no list for it (ui_stated_hooks.cpp).
 
 #include <atomic>
 #include <cstdint>
@@ -44,8 +48,10 @@
 
 #include "box_answers.h"
 #include "gui_statements.h"
+#include "interaction_guiworld.h"
 
 REX_EXTERN(rex_InteractionList_Input);
+REX_EXTERN(__imp__rex_InteractionList_Input);
 REX_EXTERN(__imp__rex_InteractionList_Hide);
 
 namespace {
@@ -126,4 +132,14 @@ bool AnswerInteractionListStep(PPCContext& ctx, uint8_t* base, const char* actio
 REX_EXTERN(rex_InteractionList_Hide) {
   refii::fable3::ForgetInteractionList();
   __imp__rex_InteractionList_Hide(ctx, base);
+}
+
+/// The shared list input sub_82972ED8(list, action*, player) (disc sub_82964248), the vf5 of eleven
+/// vtables: the Sanctuary's class answers through interaction_guiworld.cpp, every other runs as the
+/// guest has it.
+REX_EXTERN(rex_InteractionList_Input) {
+  if (refii::fable3::GuiWorldListInput(ctx, base)) {
+    return;
+  }
+  __imp__rex_InteractionList_Input(ctx, base);
 }

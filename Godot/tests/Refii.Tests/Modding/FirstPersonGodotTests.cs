@@ -15,12 +15,11 @@ using Refii.Mods;
 /// first-person camera held through <c>camera_override</c> (field of view, pitch limit and the aim rule
 /// as the hold's options), toggled by whoever pressed the action, stated again on
 /// <c>setting_changed</c>, <c>cutscene</c>, <c>hero_ready</c>, <c>hero_gone</c> and <c>lua_ready</c>, never
-/// on a shared screen. The game's camera is game Lua, so camera.lua stays and wraps only what the
-/// camera takes no data for, per player, reading the hold from the player value
-/// <c>first_person.held</c> the script states where each player is played. The head is the core's
+/// on a shared screen. How the held view behaves is stated beside the hold through <c>camera_tune</c>
+/// (the <c>fp_*</c> keys), for each player this machine plays; the mod ships no Lua, and the engine's
+/// core camera chunk applies the values inside the game's first-person camera. The head is the core's
 /// (<see cref="Engine_FirstPersonView"/>). Every RefiiHost member the script uses exists with that
-/// argument count, every <c>Refii.*</c> name camera.lua calls is in the catalog, the events and data
-/// files are stated and camera.lua compiles with the game's own compiler.
+/// argument count, and the events and data files are stated.
 /// </summary>
 [TestSuite]
 public class FirstPersonGodotTests
@@ -28,13 +27,9 @@ public class FirstPersonGodotTests
     private const string Mod = "first_person";
     private const string File = "first_person.gd";
 
-    private static readonly Regex RefiiCall = new(@"\bRefii\.([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);
-    private static readonly Regex LuaComment = new(@"--[^\n]*", RegexOptions.Compiled);
 
     private static string Read(string root, params string[] parts) =>
         System.IO.File.ReadAllText(Path.Combine(new[] { GodotModScripts.ModFolder(root, Mod) }.Concat(parts).ToArray()));
-
-    private static string Camera(string root) => LuaComment.Replace(Read(root, "mod", "camera.lua"), string.Empty);
 
     /// <summary>R3 toggles on a controller and is taken from the game, except while L3 is held for Photo mode.</summary>
     [TestCase]
@@ -55,7 +50,7 @@ public class FirstPersonGodotTests
     }
 
     [TestCase]
-    public void ShipsTheGodotSwitchAndOnlyTheCameraLua()
+    public void ShipsTheGodotSwitchAndNoLua()
     {
         string? root = GodotModScripts.RepoRoot();
         if (root == null)
@@ -63,7 +58,7 @@ public class FirstPersonGodotTests
             return;
         }
 
-        GodotModScripts.AssertShips(GodotModScripts.ModFolder(root, Mod), new[] { "mod/camera.lua" }, new[] { "godot/" + File });
+        GodotModScripts.AssertShips(GodotModScripts.ModFolder(root, Mod), Array.Empty<string>(), new[] { "godot/" + File });
     }
 
     [TestCase]
@@ -78,7 +73,7 @@ public class FirstPersonGodotTests
         string text = GodotModScripts.Script(root, Mod, File);
         string code = GodotModScripts.Code(text);
         var called = GodotModScripts.AssertHostContract(root, File, text);
-        foreach (string name in new[] { "camera_override", "in_cutscene", "coop_mode", "split_screen", "player_here", "player_set", "setting", "constants" })
+        foreach (string name in new[] { "camera_override", "camera_tune", "in_cutscene", "coop_mode", "split_screen", "player_here", "setting", "constants" })
         {
             AssertThat(called.Contains(name)).OverrideFailureMessage(File + " never calls host." + name).IsTrue();
         }
@@ -91,9 +86,14 @@ public class FirstPersonGodotTests
         AssertThat(code.Contains("on[p] = not on[p]", StringComparison.Ordinal)).IsTrue();
         AssertThat(code.Contains("return host.coop_mode() != 1 or host.split_screen()", StringComparison.Ordinal)).IsTrue();
 
-        // camera.lua's state comes through the player store, written only where the player is played.
-        AssertThat(code.Contains("const HELD := \"first_person.held\"", StringComparison.Ordinal)).IsTrue();
-        AssertThat(Regex.IsMatch(code, @"if host\.player_here\(p\):\s*\n\s*host\.player_set\(p, HELD, 1\.0 if held else 0\.0\)")).IsTrue();
+        // The view is stated before the hold and let go after it, only where the player is played.
+        int tune = code.IndexOf("host.camera_tune(p, view if here else VIEW_OFF, MOD)", StringComparison.Ordinal);
+        int hold = code.IndexOf("host.camera_override(p, first_person,", StringComparison.Ordinal);
+        AssertThat(tune >= 0 && hold > tune).IsTrue();
+        int release = code.IndexOf("host.camera_override(p, 0)", StringComparison.Ordinal);
+        AssertThat(code.IndexOf("host.camera_tune(p, VIEW_OFF, MOD)", StringComparison.Ordinal) > release).IsTrue();
+        AssertThat(code.Contains("var here: bool = host.player_here(p)", StringComparison.Ordinal)).IsTrue();
+        AssertThat(code.Contains("player_set", StringComparison.Ordinal)).IsFalse();
 
         // The 0.1 workarounds stay gone, and no Lua is run from the script.
         foreach (string gone in new[] { "hide_part", "head_radius", "local_hero", "run_lua", "call_lua", "signal_lua", "node_for" })
@@ -103,7 +103,7 @@ public class FirstPersonGodotTests
     }
 
     [TestCase]
-    public void TheCameraLuaReadsTheHoldTheScriptStates()
+    public void TheViewIsStatedAsTuneKeysTheCoreApplies()
     {
         string? root = GodotModScripts.RepoRoot();
         if (root == null)
@@ -111,56 +111,31 @@ public class FirstPersonGodotTests
             return;
         }
 
-        var known = new HashSet<string>(StringComparer.Ordinal);
-        foreach (ModApiHelper helper in ModApi.LuaHelpers)
+        string code = GodotModScripts.Code(GodotModScripts.Script(root, Mod, File));
+        string[] keys = { "fp_view", "fp_fov", "fp_pitch_limit", "fp_eye_forward", "fp_eye_height", "fp_face", "fp_scenes" };
+        foreach (string key in keys)
         {
-            foreach (Match m in RefiiCall.Matches(helper.Signature))
-            {
-                known.Add(m.Groups[1].Value);
-            }
+            // Stated with the view and let go with it.
+            AssertThat(Regex.Matches(code, "\"" + key + "\":").Count).OverrideFailureMessage(key).IsEqual(2);
+            AssertThat(code.Contains("\"" + key + "\": false", StringComparison.Ordinal)).OverrideFailureMessage(key + " is never let go").IsTrue();
+            AssertThat(ModApi.CameraTuneMeaning.Contains(key, StringComparison.Ordinal)).OverrideFailureMessage(key + " is not in the catalog").IsTrue();
         }
 
-        known.UnionWith(ModApi.Constants.Select(c => c.Name));
-        string preamble = ModLua.RuntimePreamble(Array.Empty<(string, float)>());
-        foreach (string bit in new[] { "CUTSCENE_FULL" })
-        {
-            AssertThat(preamble.Contains("Refii." + bit + " = ", StringComparison.Ordinal)).OverrideFailureMessage("the preamble lacks " + bit).IsTrue();
-            known.Add(bit);
-        }
-
-        string camera = Camera(root);
-        var used = new HashSet<string>(StringComparer.Ordinal);
-        foreach (Match m in RefiiCall.Matches(camera))
-        {
-            used.Add(m.Groups[1].Value);
-            AssertThat(known.Contains(m.Groups[1].Value)).OverrideFailureMessage($"camera.lua calls Refii.{m.Groups[1].Value}, which the catalog does not offer").IsTrue();
-        }
-
-        foreach (string name in new[] { "player_value", "player_of", "handle", "in_cutscene", "CUTSCENE_FULL", "setting" })
-        {
-            AssertThat(used.Contains(name)).OverrideFailureMessage("camera.lua never uses Refii." + name).IsTrue();
-        }
-
-        AssertThat(camera.Contains("Refii.player_value(p, \"first_person.held\", 0)", StringComparison.Ordinal)).IsTrue();
-
-        // Nothing of init.lua's: no FirstPerson table, no Held mirror, no hold stated from Lua.
-        foreach (string gone in new[] { "FirstPerson.", "F.Held", "camera_override", "FirstPersonCamera.IsValid", "IsMultiplayer", "head_radius", "hide_part", "kFull", "local_hero" })
-        {
-            AssertThat(camera.Contains(gone, StringComparison.Ordinal)).OverrideFailureMessage("camera.lua still uses " + gone).IsFalse();
-        }
-
-        // camera.lua keeps only the wraps the game's camera takes no data for.
-        foreach (string kept in new[]
+        // The core camera chunk reads each key where the game's first-person camera reads its own.
+        string core = (string)typeof(Refii.Titles.Fable2.CoopHeroLua)
+            .GetField("CameraSource", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetRawConstantValue()!;
+        foreach (string applied in new[]
                  {
-                     "FirstPersonCamera.Activate =", "FirstPersonCamera.ProcessGameAction =", "FirstPersonCamera.FrameUpdate =",
-                     "set.BestCameraFunction =", "GetDesiredPosFromPlayer", "face_camera", "OverrideFocus",
+                     "tune.fp_view", "tune.fp_fov", "tune.fp_pitch_limit", "tune.fp_eye_forward", "tune.fp_eye_height", "tune.fp_face", "tune.fp_scenes",
+                     "FirstPersonCamera.Activate = C.CamFirstPersonActivate", "FirstPersonCamera.ProcessGameAction = C.CamFirstPersonProcessGameAction",
+                     "FirstPersonCamera.FrameUpdate = C.CamFirstPersonFrameUpdate", "set.BestCameraFunction = wrapped",
+                     "FirstPersonCamera.GetDesiredPosFromPlayer(self.Player)", "C.CamOverrideFocus(data)", "Refii.in_cutscene(p, Refii.CUTSCENE_FULL)",
                  })
         {
-            AssertThat(camera.Contains(kept, StringComparison.Ordinal)).OverrideFailureMessage("camera.lua lacks " + kept).IsTrue();
+            AssertThat(core.Contains(applied, StringComparison.Ordinal)).OverrideFailureMessage("the core camera chunk lacks " + applied).IsTrue();
         }
 
-        AssertThat(camera.Contains("FadeEntityBasedOnPositionIfNeeded", StringComparison.Ordinal)).IsFalse();
-        AssertThat(camera.Contains("SetDesiredFOV", StringComparison.Ordinal)).IsFalse();
+        AssertThat(core.Contains("FadeEntityBasedOnPositionIfNeeded", StringComparison.Ordinal)).IsFalse();
     }
 
     [TestCase]
@@ -203,23 +178,22 @@ public class FirstPersonGodotTests
 
         string settings = Read(root, "settings.json");
         string page = Read(root, "settings.ui.json");
-        string camera = Camera(root);
         var keys = Regex.Matches(settings, @"""([a-z_]+)"":").Select(m => m.Groups[1].Value).Where(k => k != Mod).ToList();
         AssertThat(keys).ContainsExactlyInAnyOrder("start_on", "fov", "eye_height", "eye_forward", "pitch_limit", "face_camera", "third_person_aim", "scenes");
         foreach (string key in keys)
         {
-            AssertThat(code.Contains("_setting(\"" + key + "\"", StringComparison.Ordinal) || camera.Contains("Setting(\"" + key + "\"", StringComparison.Ordinal))
+            AssertThat(code.Contains("_setting(\"" + key + "\"", StringComparison.Ordinal))
                 .OverrideFailureMessage("never read: " + key).IsTrue();
             AssertThat(page.Contains("\"" + key + "\"", StringComparison.Ordinal)).OverrideFailureMessage("settings.ui.json lacks " + key).IsTrue();
         }
 
         // The hold's options are stated again when their setting changes.
-        foreach (string key in new[] { "fov", "pitch_limit", "third_person_aim", "scenes" })
+        foreach (string key in new[] { "fov", "pitch_limit", "third_person_aim", "scenes", "eye_forward", "eye_height", "face_camera" })
         {
             AssertThat(code.Contains("\"first_person." + key + "\"", StringComparison.Ordinal)).OverrideFailureMessage("not restated on " + key).IsTrue();
         }
 
-        AssertThat(Read(root, "README.md").Contains("written as a Godot script", StringComparison.Ordinal)).IsTrue();
+        AssertThat(Read(root, "README.md").Contains("one Godot script", StringComparison.Ordinal)).IsTrue();
     }
 
     [TestCase]
@@ -267,26 +241,5 @@ public class FirstPersonGodotTests
 
         string entities = System.IO.File.ReadAllText(Path.Combine(root, "Godot", "src", "game", "GameEntities.cs"));
         AssertThat(entities.Contains("Engine_FirstPersonView.PlayerOf(entity.Address, _principals.One, _principals.Two)", StringComparison.Ordinal)).IsTrue();
-    }
-
-    [TestCase]
-    public void TheCameraLuaCompilesWithTheGamesCompiler()
-    {
-        string? root = GodotModScripts.RepoRoot();
-        if (root == null)
-        {
-            return;
-        }
-
-        string text = Read(root, "mod", "camera.lua");
-        bool ok = Refii.Lua.Engine_LuaDecompiler.TryCheckSource(ModLua.Wrap(Mod, text), "@first_person/mod/camera.lua", out string error);
-        if (!ok && error.Contains("not available", StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        AssertThat(ok).OverrideFailureMessage("camera.lua does not compile: " + error).IsTrue();
-        AssertThat(Refii.Lua.Engine_LuaDecompiler.TryCheckSource(ModLua.Wrap(Mod, text + "\nlocal function ("),
-            "@first_person/mod/camera.lua", out _)).IsFalse();
     }
 }

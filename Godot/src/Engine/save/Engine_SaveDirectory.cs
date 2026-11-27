@@ -21,6 +21,22 @@ public static class Engine_SaveDirectory
 	public static string? Find(string profileDirectory, string saveName) =>
 		Find(profileDirectory, saveName, Refii.Core.Engine_Title.Active.TitleId);
 
+	/// <summary>
+	/// The directory of the package named <paramref name="saveName"/> in the profile, main save or not (a
+	/// hero package alone: player two's new save in Fable 3), for the active title; null when there is none.
+	/// </summary>
+	public static string? FindPackage(string profileDirectory, string saveName)
+	{
+		if (string.IsNullOrEmpty(profileDirectory) || string.IsNullOrEmpty(saveName) ||
+			saveName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || saveName is "." or "..")
+		{
+			return null;
+		}
+
+		string candidate = Path.Combine(Engine_SaveLayout.SaveGames(profileDirectory, Refii.Core.Engine_Title.Active.TitleId), saveName);
+		return Directory.Exists(candidate) ? candidate : null;
+	}
+
 	public static string? Find(string profileDirectory, string saveName, uint titleId)
 	{
 		if (string.IsNullOrEmpty(profileDirectory) || string.IsNullOrEmpty(saveName) ||

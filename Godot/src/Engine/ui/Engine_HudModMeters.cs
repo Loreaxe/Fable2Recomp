@@ -88,6 +88,23 @@ public static class Engine_HudModMeters
 	public static string CopyId(Style style, string meterId) => "group." + style.CloneOf.Split('.')[^1] + ".meter." + meterId;
 
 	/// <summary>
+	/// Whether a view is a shared couch screen for the meters: the whole window, drawn for this
+	/// machine's player one, in local co-op. Such a view shows both local players' meters
+	/// (<see cref="Engine_HudModMarkers.ShownTo"/>); a half, an online window and single player show
+	/// their own player's.
+	/// </summary>
+	public static bool SharedScreenView(bool wholeWindow, bool localPlayerTwo, bool localCoop) =>
+		wholeWindow && !localPlayerTwo && localCoop;
+
+	/// <summary>
+	/// Whether a view rebuilds its meters: the set changed (<paramref name="generation"/> against the
+	/// one built from), or the view became or stopped being a shared screen — a co-op join on a shared
+	/// screen, or a live switch between split and shared.
+	/// </summary>
+	public static bool Rebuilds(int generation, int builtGeneration, bool shared, bool builtShared) =>
+		generation != builtGeneration || shared != builtShared;
+
+	/// <summary>
 	/// The copies of the game's own art a view drawn for <paramref name="viewPlayer"/> builds beside
 	/// its primitives, in stack order at their stack places — every meter of a copy style shown to
 	/// that player. The clone's <see cref="Engine_HudModPieces.Clone.Slides"/> names the fader

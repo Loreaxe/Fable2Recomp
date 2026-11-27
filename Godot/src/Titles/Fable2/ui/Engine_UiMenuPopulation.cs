@@ -207,10 +207,6 @@ public static class Engine_UiMenuPopulation
 			},
 		});
 
-		// The held augment list has no authored rows: its source lists the targets (Engine_UiAugmentFlow).
-		Add(new Table { Script = Engine_UiAugmentFlow.MenuScript });
-		Add(new Table { Script = Engine_UiAugmentFlow.RemoveMenuScript });
-
 		Add(new Table
 		{
 			Script = "DyeMenu",

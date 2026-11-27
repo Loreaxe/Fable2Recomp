@@ -31,15 +31,20 @@ public static class Fable2CoopScreenPresses
 	/// the remaster has no row the guest draws (the share sliders are hidden: each hero keeps their
 	/// own progression), and their left / right steps the screen row Godot draws, so their
 	/// directions stay Godot's; player one's Y has no arm (`sub_82438A08`'s table ends at 38).
-	/// Player two's X is Godot's own-hero toggle (GameUi.DriveCoopHeroX). <paramref name="withheld"/>
-	/// are player two's picker presses Godot answers itself past the guest's six saves.
+	/// Player two's X is Godot's own-hero toggle (GameUi.DriveCoopHeroX); in local co-op while player
+	/// two is not signed in (<paramref name="askSignIn"/>) it is also the guest's: the right page's X asks
+	/// for player two's sign-in (TU1 `sub_82438CF8` case 38: `sub_8243A318` — local co-op, player two
+	/// not signed in — then `sub_82882AD8(+300)` 0x8243933C, `XamShowSigninUI(2, 0)` 0x82882B10), which
+	/// signs player two in to the shared profile with no box (rexglue shadow xam_user.cpp).
+	/// <paramref name="withheld"/> are player two's picker presses Godot answers itself past the guest's
+	/// six saves.
 	/// </summary>
-	public static bool Forwarded(int code, int player, Engine_CoopSavePicker.Press withheld) => player switch
+	public static bool Forwarded(int code, int player, Engine_CoopSavePicker.Press withheld, bool askSignIn = false) => player switch
 	{
 		1 => code is Accept or Back or ButtonX,
 		2 => code switch
 		{
-			ButtonX => false,
+			ButtonX => askSignIn,
 			Left => (withheld & Engine_CoopSavePicker.Press.Left) == 0,
 			Right => (withheld & Engine_CoopSavePicker.Press.Right) == 0,
 			Accept => (withheld & Engine_CoopSavePicker.Press.Accept) == 0,

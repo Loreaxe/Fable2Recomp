@@ -125,8 +125,8 @@ uint32_t StatedFxTransforms(uint32_t* out_words, uint32_t word_capacity);
 uint32_t StatedHighlightFor(uint32_t component);
 // Fable2/src/vfs/src/core/entity_appearance_state.cpp — `out` takes kAppearanceWords words.
 bool StatedAppearanceFor(uint32_t component, uint32_t* out);
-// Fable2/src/vfs/src/core/dye_state.cpp.
-uint32_t SampledDyeStates(uint32_t* out, uint32_t word_capacity);
+// Fable2/src/vfs/src/core/creature_corpse_state.cpp.
+bool CreatureLeftCorpse(uint32_t creature);
 // Fable2/src/vfs/src/core/part_morph_state.cpp.
 uint32_t StatedPartMorphs(uint32_t entity, uint32_t* out, uint32_t capacity,
                           uint32_t* out_generation, uint64_t* out_statements);
@@ -162,12 +162,15 @@ uint32_t MenuScreenId();
 uint32_t MenuRows(uint32_t index, char* out_name, size_t name_capacity, char* out_parent,
                   size_t parent_capacity, uint32_t* out_id, int32_t* out_event_type,
                   uint64_t* out_generation, int32_t* out_rating);
+uint32_t MenuRowItem(uint32_t index, char* out_icon, size_t icon_capacity, int32_t* out_emphasis,
+                     uint32_t* out_words, size_t word_capacity);
 }  // namespace refii::vfs
 #include "refii_host.h"
 
 #include "core/gui_native_calls.h"
 #include "gui/gui_display_box.h"
 #include "gui/gui_menu_chunks.h"
+#include "core/queue_put_back.h"
 #include "gui/gui_told_statements.h"
 
 using namespace refii::hostcore;
@@ -282,46 +285,6 @@ uint32_t RefiiFnv1(const std::string& text) {
     return hash;
 }
 
-/// Whether a fast-travel region has any stop that is ACTIVE and states a destination — the test
-/// `sub_82518380` makes (`lbz r11, 0(r31)` at 0x8251841C, `lwz r11, 8(r31)` at 0x82518404) and the
-/// one that decides whether the region gets a row at all.
-bool RefiiRegionHasActiveStop(const uint8_t* base, uint32_t region) {
-    const auto plausible = [](uint32_t a) { return a >= 0x10000u && a < 0xC0000000u; };
-
-    // Both vectors are pairs, stride 8 (`sub_82518380`): the outer walk is `v8 += 2` on an
-    // `int**` (0x82518478) ending at `*(region+20)`, the inner `v11 += 2` on an `int*`
-    // (0x82518468) ending at `level+12`. Only the first word of each pair is an entry.
-    const uint32_t levels = GuestWordAt(base, region + 16u);
-    const uint32_t levelsEnd = GuestWordAt(base, region + 20u);
-    if (!plausible(levels) || !plausible(levelsEnd) || levelsEnd < levels ||
-        ((levelsEnd - levels) % 8u) != 0u || ((levelsEnd - levels) / 8u) > 256u) {
-        return false;
-    }
-
-    for (uint32_t levelSlot = levels; levelSlot < levelsEnd; levelSlot += 8u) {
-        const uint32_t level = GuestWordAt(base, levelSlot);
-        if (!plausible(level)) {
-            continue;
-        }
-
-        const uint32_t stops = GuestWordAt(base, level + 8u);
-        const uint32_t stopsEnd = GuestWordAt(base, level + 12u);
-        if (!plausible(stops) || !plausible(stopsEnd) || stopsEnd < stops ||
-            ((stopsEnd - stops) % 8u) != 0u || ((stopsEnd - stops) / 8u) > 256u) {
-            continue;
-        }
-
-        for (uint32_t stopSlot = stops; stopSlot < stopsEnd; stopSlot += 8u) {
-            const uint32_t stop = GuestWordAt(base, stopSlot);
-            if (plausible(stop) && GuestByteAt(base, stop) != 0u &&
-                !ReadGuestString(base, stop + 8u).empty()) {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
 
 
 
@@ -841,9 +804,17 @@ REFII_HOST_ABI_EXPORT int RefiiHostTakeExitRefused(void) { return refii_bridge_t
 REFII_HOST_ABI_EXPORT int RefiiHostGetExitWaiting(void) { return refii_bridge_exit_waiting(); }
 
 /// The things whose use prompt only player two sees this frame (player one's half hides them):
-/// each prompt's in-range test is run for both players (coop_hero_hooks.cpp). Returns the count.
+/// each prompt's in-range test is run for both players (coop_hero_hooks.cpp), and a targeted
+/// thing's "Interact" icon is its targeting players' (target_highlight.cpp). Returns the count.
 REFII_HOST_ABI_EXPORT int RefiiHostGetPlayerOneHiddenPrompts(uint32_t* out, int capacity) {
     return refii_bridge_prompts_one_hidden(out, capacity);
+}
+
+/// Who targets each thing, as lhECTargeted_SetTargetedByPlayer leaves it (target_highlight.cpp):
+/// (thing, mask) pairs, bit 0 player one, bit 1 player two, for each split view to keep its own
+/// player's targeting highlight. Returns the pairs written.
+REFII_HOST_ABI_EXPORT int RefiiHostGetTargetedBy(uint32_t* out_pairs, int capacity_pairs) {
+    return refii_bridge_targeted_by(out_pairs, capacity_pairs, 0);
 }
 
 /// Player two's own hold-to-use meter on split screen: the fraction 0..1, and whether they hold A.
@@ -908,16 +879,6 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetEntityPartMorphs(uint32_t entity, uin
                                         out_statements);
 }
 
-/// WHICH GARMENTS ARE DYED, by the guest's own test `sub_826CAFA8`, sampled on the GUI tick for
-/// what the hero wears and carries in categories 9..11 and 17..24 — one entry per ITEM INSTANCE,
-/// since the dye is the instance's type-2 record. Three words per item: the item (its guest
-/// address, the instance RefiiHostGetHeroInventoryItems names), its record hash, then flags —
-/// bit 0 slot 1 dyed, bit 1 slot 2 dyed, bit 2 worn. Worn items are listed first, then the
-/// inventory in list order. Returns the item count.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetDyeStates(uint32_t* out_words, uint32_t word_capacity) {
-    return refii::vfs::SampledDyeStates(out_words, word_capacity);
-}
-
 /// THE SKIN AND THE CLOTH. Per original texture the guest composites: [original texture id,
 /// layer count | kind << 16, then count x 7 words {texture id, blend mode, weight bits,
 /// has-tint, tint bytes B G R A, brightness bits, bump texture id}]. Kind 0 is a composite,
@@ -934,12 +895,16 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetEntityTextureLayers(uint32_t entity, 
 
 /// One inventory item INSTANCE's dye composites, as the guest's own dye builder states them for
 /// the item's dye component — [original, count | kind << 16, count x 7 layer words] per texture,
-/// the words RefiiHostGetEntityTextureLayers uses. `item` is the instance's guest address, as
-/// RefiiHostGetHeroInventoryItems and RefiiHostGetDyeStates name it. Empty for an item that is
-/// not dyed. Returns the words written; `out_generation` moves when the layers changed.
+/// the words RefiiHostGetEntityTextureLayers uses. `item` is the instance's guest address as the
+/// captured row names it (RefiiHostGetMenuRowItem); asking names it for the guest's next GUI tick,
+/// which reads that one item while a captured row still holds it (guest_tick_pump.cpp
+/// StateRowItemDyeLayers — the list's one stated exception: the guest states no garment colour in a
+/// list). Empty for an item that is not dyed, or not read yet. Returns the words written;
+/// `out_generation` moves when the layers changed.
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetItemDyeLayers(uint32_t item, uint32_t* out_words,
                                                         uint32_t word_capacity,
                                                         uint32_t* out_generation) {
+    refii_bridge_want_item_dye_layers(item);
     return refii::vfs::StatedItemDyeLayers(item, out_words, word_capacity, out_generation);
 }
 
@@ -1241,22 +1206,16 @@ uint32_t EntityComponentOf(const uint8_t* base, const EntityFields& fields, uint
 }  // namespace
 }  // extern "C++"
 
-/// The world map's region info page, for the region the host last asked for.
+/// The world map's MINIMAP KEYS for the region the host last asked for (SampleWorldMapRegion): the
+/// region's name, its first level, that level's world key and its scenario.
 ///
-/// Two calls, one round trip: `RefiiHostSetWorldMapRegion` names the region and this reads
-/// back what the pump sampled, one tick later — sampling calls eleven guest providers and must
-/// happen on the guest thread. Every field is a finished string, because every provider
-/// produces one (distance and travel time worded, counts paired, merchants comma-joined).
+/// Two calls, one round trip: `RefiiHostSetWorldMapRegion` names the region and this reads back what
+/// the pump sampled, one tick later — the key and scenario come from guest calls on the guest thread.
+/// The region INFO page is not here: its own fill states it (page_fills_stated.cpp).
 ///
 /// Returns the REGION COUNT, so a caller can bound its cursor; 0 means nothing sampled yet.
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldMapRegion(uint32_t* out_index,
                                                           char* name, uint32_t name_capacity,
-                                                          char* distance, uint32_t distance_capacity,
-                                                          char* travel, uint32_t travel_capacity,
-                                                          char* counts, uint32_t counts_capacity,
-                                                          char* merchants,
-                                                          uint32_t merchants_capacity,
-                                                          int32_t* out_stars,
                                                           char* level_name,
                                                           uint32_t level_capacity,
                                                           uint32_t* out_level_key,
@@ -1264,121 +1223,14 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldMapRegion(uint32_t* out_index,
                                                           uint32_t scenario_capacity) {
     const refii::vfs::WorldMapRegion region = refii::vfs::WorldMapRegionSnapshot();
 
-    // The minimap page's keys — see the sampler. Null-safe so an older caller shape still works.
-    if (level_name != nullptr && level_capacity != 0u) {
-        WriteOut(region.level_name, level_name, level_capacity);
-    }
-    if (out_level_key != nullptr) {
-        *out_level_key = region.level_key;
-    }
-    if (scenario != nullptr && scenario_capacity != 0u) {
-        WriteOut(region.scenario, scenario, scenario_capacity);
-    }
-
     // Which region this is; a caller that asked for another one is holding a stale answer.
     if (out_index != nullptr) *out_index = region.index;
-
-    // The economy is a star count, not a string, so it rides beside the worded fields.
-    if (out_stars != nullptr) *out_stars = region.stars;
+    if (out_level_key != nullptr) *out_level_key = region.level_key;
 
     WriteOut(region.name, name, name_capacity);
-    WriteOut(region.distance, distance, distance_capacity);
-    WriteOut(region.travel, travel, travel_capacity);
-    WriteOut(region.merchants, merchants, merchants_capacity);
-
-    // The seven collectable counts as one tab-separated line, in the page's own order.
-    std::string packed;
-    packed.append(region.fine).append("\t");
-    packed.append(region.owned).append("\t");
-    packed.append(region.chests).append("\t");
-    packed.append(region.digspots).append("\t");
-    packed.append(region.divespots).append("\t");
-    packed.append(region.gargoyles).append("\t");
-    packed.append(region.silver_keys);
-    WriteOut(packed, counts, counts_capacity);
-
+    WriteOut(region.level_name, level_name, level_capacity);
+    WriteOut(region.scenario, scenario, scenario_capacity);
     return region.count;
-}
-
-/// SCREEN 28'S ONE BUILDING — the real estate page, as data.
-///
-/// One record rather than a list: the screen's left column is a list of COMMANDS and there is a
-/// single building, bound when it opens. The screen's own Update states it from that binding
-/// (`PublishBoundRealEstate`); this only reads the shared store.
-///
-/// The numbers arrive already answered by the guest — value, economy, income, sale price and the
-/// three not-owned price deltas each average or walk something the host has no business
-/// reproducing. What the host does with them is entirely its own: the star bin, the
-/// `&lt;gold_img&gt;` prefix, the negative recolour, which of the four Variable rows stands, and the
-/// HOUSE-versus-SHOP legend are all decided from these fields.
-///
-/// `out_words` takes fifteen: record hash, type mask, owned, hasTenant, value, economy,
-/// decoration, income, salePrice, sellingFees, notVacant, ownerKilled, heroOpinion, the
-/// BONUSES record — a different record, off component 184 — and the hero's TITLE record, which
-/// names the owner of a hero-owned building. Returns 1 when a building resolved.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetRealEstate(uint32_t* out_words, uint32_t word_capacity,
-                                                     char* occupant, uint32_t occupant_capacity) {
-    const refii::vfs::RealEstate estate = refii::vfs::RealEstateSnapshot();
-
-    WriteOut(estate.occupant, occupant, occupant_capacity);
-
-    const uint32_t words[] = {
-        estate.record,
-        estate.type_mask,
-        estate.owned ? 1u : 0u,
-        estate.has_tenant ? 1u : 0u,
-        static_cast<uint32_t>(estate.value),
-        static_cast<uint32_t>(estate.economy),
-        static_cast<uint32_t>(estate.decoration),
-        static_cast<uint32_t>(estate.income),
-        static_cast<uint32_t>(estate.sale_price),
-        static_cast<uint32_t>(estate.selling_fees),
-        static_cast<uint32_t>(estate.not_vacant),
-        static_cast<uint32_t>(estate.owner_killed),
-        static_cast<uint32_t>(estate.hero_opinion),
-        estate.bonuses_record,
-        estate.title_record,
-    };
-
-    if (out_words != nullptr) {
-        const uint32_t count =
-            word_capacity < (sizeof(words) / sizeof(words[0])) ? word_capacity
-                                                               : sizeof(words) / sizeof(words[0]);
-        for (uint32_t i = 0; i < count; ++i) {
-            out_words[i] = words[i];
-        }
-    }
-
-    return estate.known ? 1u : 0u;
-}
-
-/// THE UPGRADE-FURNITURE PIECE (screen 26) — fifteen words: known, gate, installed level, kind,
-/// type, value count, the building multiplier's bits, then up to eight per-level values. The host
-/// derives every number on the page from these by the guest's own rules (`sub_825CBFC8`).
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetFurniture(uint32_t* out_words, uint32_t word_capacity) {
-    const refii::vfs::Furniture furniture = refii::vfs::FurnitureSnapshot();
-    uint32_t multiplier = 0;
-    std::memcpy(&multiplier, &furniture.multiplier, sizeof(float));
-    uint32_t words[15] = {
-        furniture.known ? 1u : 0u,
-        furniture.gate ? 1u : 0u,
-        static_cast<uint32_t>(furniture.installed),
-        static_cast<uint32_t>(furniture.kind),
-        static_cast<uint32_t>(furniture.type),
-        static_cast<uint32_t>(furniture.count),
-        multiplier,
-    };
-    for (int i = 0; i < 8; ++i) {
-        words[7 + i] = static_cast<uint32_t>(furniture.values[i]);
-    }
-
-    if (out_words != nullptr) {
-        for (uint32_t i = 0; i < word_capacity && i < 15u; ++i) {
-            out_words[i] = words[i];
-        }
-    }
-
-    return furniture.known ? 1u : 0u;
 }
 
 /// THE HIGHLIGHTED ROW GODOT STATES for an in-game screen's list (screen 0 clears it): the guest's
@@ -1394,45 +1246,6 @@ REFII_HOST_ABI_EXPORT void RefiiHostSetHighlightedRow(uint32_t screen, int32_t e
 /// `sub_826DED60` answer from it (gui_menu_hooks.cpp).
 REFII_HOST_ABI_EXPORT void RefiiHostSetListFoldDepth(uint32_t screen, uint32_t depth) {
     refii_bridge_set_list_fold_depth(screen, depth);
-}
-
-/// THE SHOP'S FRONT PAGE (screen 22) — see `ShopFront`. Fifteen words: known, flags (1 trader,
-/// 2 crier, 4 keeper name, 8 owner, 16 sale known), then the float bits of stars, wealth, owner
-/// discount, love, hate, fear, special, sale factor, then sale days. The four strings — name
-/// key, anecdote key, keeper name, title key — go NUL-separated into `text`.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetShopFront(uint32_t* out_words, uint32_t word_capacity,
-                                                     char* text, uint32_t text_capacity) {
-    const refii::vfs::ShopFront front = refii::vfs::ShopFrontSnapshot();
-    const auto bits = [](float value) {
-        uint32_t word = 0;
-        std::memcpy(&word, &value, sizeof(word));
-        return word;
-    };
-    const uint32_t words[] = {
-        front.known ? 1u : 0u,
-        (front.trader ? 1u : 0u) | (front.crier ? 2u : 0u) | (front.has_keeper_name ? 4u : 0u) |
-            (front.owner ? 8u : 0u) | (front.sale_known ? 16u : 0u),
-        bits(front.stars), bits(front.wealth), bits(front.owner_discount),
-        bits(front.love), bits(front.hate), bits(front.fear), bits(front.special),
-        bits(front.sale_factor), static_cast<uint32_t>(front.sale_days),
-    };
-    if (out_words != nullptr) {
-        for (uint32_t i = 0; i < word_capacity && i < sizeof(words) / sizeof(words[0]); ++i) {
-            out_words[i] = words[i];
-        }
-    }
-    if (text != nullptr && text_capacity > 0u) {
-        uint32_t at = 0;
-        for (const char* piece : {front.name_key, front.anecdote_key, front.keeper_name, front.title_key}) {
-            for (const char* c = piece; *c != '\0' && at + 1u < text_capacity; ++c) {
-                text[at++] = *c;
-            }
-            if (at < text_capacity) {
-                text[at++] = '\0';
-            }
-        }
-    }
-    return front.known ? 1u : 0u;
 }
 
 /// THE CO-OP SCREEN'S STATE (screen 24) — see `CoopScreen` in hero_derived.h. Twenty words:
@@ -1783,7 +1596,7 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetHeroVitals(uint32_t* words, uint32_t 
 /// Five words per record — {recordId, count, category, flags, item} — where `recordId` is the
 /// FNV-1 GDB key, `category` is −1 when the item states none, `flags` bit 0 is `Viewed` (the
 /// new-item marker) and `item` is the ITEM INSTANCE the inventory list node holds (`node+8`), the
-/// key the dye exports use (RefiiHostGetDyeStates, RefiiHostGetItemDyeLayers). Two records of one id are two
+/// key the dye layer export uses (RefiiHostGetItemDyeLayers). Two records of one id are two
 /// instances, dyed apart. `item` is 0 when the pump published without instances. Returns the
 /// number of records in the snapshot, which may exceed what fitted.
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetHeroInventoryItems(uint32_t* words, uint32_t word_capacity) {
@@ -1801,338 +1614,11 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetPlayerInventory(int32_t player, uint3
     return refii_bridge_player_inventory_snapshot(player, words, word_capacity);
 }
 
-/// The AUGMENTS socketed into one inventory record — the weapon page's augment lines.
-///
-/// They are instance state, not GDB: `sub_82469AE8` (the category-1 handler of the details
-/// fill `sub_824698D8`) takes the slot COUNT from the definition's
-/// `AugmentableComponent.NumberOfSlots` and the CONTENTS from the item's type-1 extra record,
-/// found by `sub_82764B30(item, 1)`:
-///
-///     item+28 / item+32   extras vector, stride 8, elem+0 = object; vtable slot 1 = its type
-///     type 1              ctor `sub_82607BF8`: 20 bytes, vtable 0x820C7E40
-///     rec+8 / rec+12      pairs, stride 16 (0x8246A030: `srawi r8, r9, 4`)
-///     pair+0 / pair+8     PrimaryType / SecondaryType GDB record id (`sub_82608610` reads
-///                         `NameTag` off each; secondary 0 when there is none)
-///
-/// The record is matched by its vtable, never by calling the guest's slot. Two words a pair.
-/// Returns the pair count, or 0xFFFFFFFF when no inventory record of that id carries the
-/// extra — which is "never seeded", where the guest falls back to the definition's
-/// `InitialAugmentations`, NOT "no augments". A RecordID is not unique across records (a stack
-/// splits when one instance takes instance data), so the first record HOLDING the extra wins.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetItemAugments(uint32_t record_id, uint32_t* words,
-                                                        uint32_t word_capacity) {
-    constexpr uint32_t kNone = 0xFFFFFFFFu;
-    const uint32_t kAugmentRecordVtable = refii::guest::Address(0x820C7E40u);
-    constexpr uint32_t kMaxRecords = 4096u;
-    constexpr uint32_t kMaxExtras = 16u;
-    constexpr uint32_t kMaxPairs = 16u;
-
-    auto* memory = SafeKernelMemory();
-    if (memory == nullptr) {
-        return kNone;
-    }
-
-    uint8_t* base = memory->virtual_membase();
-    if (base == nullptr) {
-        return kNone;
-    }
-
-    const uint32_t hero = ResolvePlayerHero(base);
-    const uint32_t inventory = hero != 0u ? EntityComponent(base, hero, 13u) : 0u;
-    if (inventory == 0u) {
-        return kNone;
-    }
-
-    const auto plausible = [](uint32_t a) { return a >= 0x10000u && a < 0xC0000000u; };
-
-    const uint32_t sentinel = GuestWordAt(base, inventory + 0x10u);
-    if (!plausible(sentinel)) {
-        return kNone;
-    }
-
-    uint32_t hops = 0;
-    for (uint32_t node = GuestWordAt(base, sentinel);
-         plausible(node) && node != sentinel && hops < kMaxRecords;
-         node = GuestWordAt(base, node), ++hops) {
-        const uint32_t item = GuestWordAt(base, node + 8u);
-        if (!plausible(item) || GuestWordAt(base, item + 0x04u) != record_id) {
-            continue;
-        }
-
-        const uint32_t begin = GuestWordAt(base, item + 28u);
-        const uint32_t end = GuestWordAt(base, item + 32u);
-        if (!plausible(begin) || end < begin) {
-            continue;
-        }
-
-        const uint32_t extras = std::min((end - begin) >> 3, kMaxExtras);
-        for (uint32_t i = 0; i < extras; ++i) {
-            const uint32_t record = GuestWordAt(base, begin + 8u * i);
-            if (!plausible(record) || GuestWordAt(base, record) != kAugmentRecordVtable) {
-                continue;
-            }
-
-            const uint32_t first = GuestWordAt(base, record + 8u);
-            const uint32_t last = GuestWordAt(base, record + 12u);
-            if (first == 0u) {
-                return 0u;
-            }
-            if (!plausible(first) || last < first) {
-                return kNone;
-            }
-
-            const uint32_t pairs = std::min((last - first) >> 4, kMaxPairs);
-            for (uint32_t pair = 0; pair < pairs; ++pair) {
-                if (words != nullptr && pair * 2u + 1u < word_capacity) {
-                    words[pair * 2u] = GuestWordAt(base, first + 16u * pair);
-                    words[pair * 2u + 1u] = GuestWordAt(base, first + 16u * pair + 8u);
-                }
-            }
-            return pairs;
-        }
-    }
-
-    return kNone;
-}
-
-/// The active SALES AND SHORTAGES — the world map's `Sales` rows. Two words each:
-/// {nameTagHash, isShortage}.
-///
-/// `record+20` is `NameTagHash`, a RAW FNV-1 text key rather than a string — `sub_829A40C0`
-/// copies it to a stack dword and hands its address straight to `TextManager_GetString`. So this
-/// export hands across a hash, exactly like the regions one, and no string crosses the boundary.
-///
-/// THE CHAIN, verified in disassembly (`sub_8246EC10`, 0x8246EC54..0x8246EC78):
-///
-///     lwz r11, dword_83496AB8 ; lwz r11, 0xC(r11) ; lwz r10, 0x58(r11)
-///     lwz r9,  4(r10)         ; lwz r11, 0x64(r9)     the SalesAndShortages manager
-///     addi r30, r11, 0x14     ; lwz r8, 0x18(r11)     the list object and its sentinel
-///     lwz r31, 0(r8)                                  the first node; node+0 is `next`
-///
-/// The record is at `node+8`, 56 bytes, and its serializer `sub_82602CB8` names every field:
-/// `+20` NameTagHash, `+36` Active, `+40` PriceMultiplier, `+48` RecordId. Selection is
-/// `Active != 0` and the multiplier off 1.0 — BELOW is a sale, ABOVE a shortage, and the world
-/// map lists both.
-///
-/// Both passes are inside `sub_8246EC10`: it fills one temporary intrusive list twice, first
-/// with `Active && multiplier < 1.0`, then `Active && multiplier > 1.0`, and emits rows in that
-/// order. Exactly 1.0 is admitted by neither. The row fields it reads off each node — `k[7]`,
-/// `k[8]`, `k[9]`, `k[3] - today + k[2]` and the float at `k+48` — are the five this export
-/// hands across, measured from the same node base.
-///
-/// The manager is destroyed and reallocated wholesale on level reset (`sub_8234EF58`), so the
-/// chain is re-walked every call and never cached; the walk is also bounded, because a torn
-/// `next` on an intrusive list would otherwise loop forever.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetSales(uint32_t* words, uint32_t word_capacity) {
-    auto* memory = SafeKernelMemory();
-    if (memory == nullptr) {
-        return 0;
-    }
-
-    uint8_t* base = memory->virtual_membase();
-    if (base == nullptr) {
-        return 0;
-    }
-
-    const auto plausible = [](uint32_t a) { return a >= 0x10000u && a < 0xC0000000u; };
-
-    static constexpr uint32_t kSalesHops[] = {0xCu, 0x58u, 0x4u, 0x64u};
-
-    uint32_t at = GuestWordAt(base, refii::guest::Address(0x83496AB8u));
-    for (const uint32_t hop : kSalesHops) {
-        if (!plausible(at)) {
-            return 0;
-        }
-
-        at = GuestWordAt(base, at + hop);
-    }
-
-    const uint32_t manager = at;
-    if (!plausible(manager)) {
-        return 0;
-    }
-
-    const uint32_t sentinel = GuestWordAt(base, manager + 0x18u);
-    if (!plausible(sentinel)) {
-        return 0;
-    }
-
-    constexpr uint32_t kMaxSales = 64u;
-
-    // FIVE WORDS, not two. The sales PAGE shows a description, a region and a countdown beside
-    // the title, and `sub_829AAB50` reads all of them off the same record: `+24` and `+28` are
-    // Babel key hashes like `+20`, and the days left is
-    // `Duration - currentDayCount + activationDay` — the day the sale started is at `+0` and
-    // its length at `+4`. Two words made the row but left the page blank.
-    constexpr uint32_t kWordsPerSale = 5u;
-
-    // The world's game-time manager, for the day the countdown is measured against.
-    uint32_t clock = GuestWordAt(base, refii::guest::Address(0x83496AB8u));
-    for (const uint32_t hop : {0xCu, 0x58u, 0x4u, 0x14u}) {
-        clock = plausible(clock) ? GuestWordAt(base, clock + hop) : 0u;
-    }
-
-    const uint32_t today = plausible(clock) ? GuestWordAt(base, clock + 8u) : 0u;
-
-    // Sales first, then shortages: the guest's row order.
-    uint32_t found = 0;
-
-    const auto pass = [&](bool shortage) {
-        uint32_t node = GuestWordAt(base, sentinel);
-
-        for (uint32_t step = 0; step < kMaxSales && plausible(node) && node != sentinel; ++step) {
-            const uint32_t record = node + 8u;
-
-            if (GuestByteAt(base, record + 36u) != 0u) {
-                const uint32_t raw = GuestWordAt(base, record + 40u);
-                float multiplier = 1.0f;
-                std::memcpy(&multiplier, &raw, sizeof(multiplier));
-
-                // Strict on both sides: exactly 1.0 is neither, and the guest lists neither.
-                if (shortage ? multiplier > 1.0f : multiplier < 1.0f) {
-                    if (words != nullptr && (found * kWordsPerSale + 4u) < word_capacity) {
-                        uint32_t* row = words + found * kWordsPerSale;
-                        row[0] = GuestWordAt(base, record + 20u);   // NameTag key hash
-                        row[1] = GuestWordAt(base, record + 24u);   // DescriptionTag key hash
-                        row[2] = GuestWordAt(base, record + 28u);   // RegionTag key hash
-                        row[3] = GuestWordAt(base, record + 4u) - today +
-                                 GuestWordAt(base, record);         // days left
-                        row[4] = raw;                               // PriceMultiplier, raw bits
-                    }
-
-                    ++found;
-                }
-            }
-
-            node = GuestWordAt(base, node);
-        }
-    };
-
-    pass(/*shortage=*/false);
-    pass(/*shortage=*/true);
-
-    return found;
-}
-
-/// The FAST-TRAVEL REGIONS that have at least one active stop — the world map's `Regions` rows.
-/// One word each: FNV-1 of the region's name, which IS its Babel key, so the caller resolves the
-/// display text against the shipped book and this never hands a string across the boundary. A
-/// name we read wrongly therefore resolves to nothing and draws nothing, rather than drawing
-/// rubbish.
-///
-/// THE CHAIN, verified in disassembly (`sub_829A3A30`, 0x829A3A4C..0x829A3A70):
-///
-///     lwz r11, dword_83496AB8   the app global
-///     lwz r10, 0xC(r11)         +12
-///     lwz r9,  0x58(r10)        +0x58
-///     lwz r8,  4(r9)            +4    the world manager
-///     lwz r25, 8(r8)            +8
-///     lwz r7,  4(r25)           +4    the current world
-///     lwz r3,  0xC(r7)          +0xC  the FastTravelManager
-///
-/// Below it: regions are `vector<Region*>` at FTM+8/+12 (stride 4 — a vector of POINTERS), a
-/// region's name handle is `Region+0` and its levels `vector<Level*>` at Region+16/+20; a level's
-/// stops are at Level+8/+12. A region is listed only when some stop is ACTIVE (`Stop+0` non-zero)
-/// and states a destination (`Stop+8` non-empty) — that is what "Regions (7)" counts, not the
-/// number of regions authored.
-///
-/// The topology is built once from `FastTravelList.txt` during boot and never grows again; only
-/// `Stop+0`, one byte, changes at runtime. So there is no reallocation hazard here — but the
-/// manager itself is released and replaced on level change (`sub_8231C358`, `sub_8234EF58`), so
-/// the chain is re-walked every call and never cached.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetFastTravelRegions(uint32_t* words,
-                                                             uint32_t word_capacity) {
-    auto* memory = SafeKernelMemory();
-    if (memory == nullptr) {
-        return 0;
-    }
-
-    uint8_t* base = memory->virtual_membase();
-    if (base == nullptr) {
-        return 0;
-    }
-
-    const auto plausible = [](uint32_t a) { return a >= 0x10000u && a < 0xC0000000u; };
-
-    // The six hops above, in order. Each is checked before it is followed, so a chain that is
-    // not up yet — between a level change releasing the manager and the next one building it —
-    // returns nothing instead of dereferencing whatever is there.
-    static constexpr uint32_t kFastTravelHops[] = {0xCu, 0x58u, 0x4u, 0x8u, 0x4u, 0xCu};
-
-    uint32_t at = GuestWordAt(base, refii::guest::Address(0x83496AB8u));
-    for (const uint32_t hop : kFastTravelHops) {
-        if (!plausible(at)) {
-            return 0;
-        }
-
-        at = GuestWordAt(base, at + hop);
-    }
-
-    const uint32_t manager = at;
-    if (!plausible(manager)) {
-        return 0;
-    }
-
-    // PAIRS, STRIDE 8 — this said "pointers, so stride 4" and it was wrong.
-    //
-    // `sub_82518330` is the guest's own walk of this container and it steps `v4 += 2` on a
-    // `_DWORD*` (0x8251836C), taking `*v4` when non-zero. A stride of 4 reads the second word of
-    // every pair as a region as well; those failed the plausibility test and were skipped, so the
-    // list came out right by accident rather than by construction.
-    const uint32_t begin = GuestWordAt(base, manager + 8u);
-    const uint32_t end = GuestWordAt(base, manager + 12u);
-    if (begin == 0u && end == 0u) {
-        return 0;
-    }
-
-    constexpr uint32_t kMaxRegions = 128u;
-    if (!plausible(begin) || !plausible(end) || end < begin ||
-        ((end - begin) % 8u) != 0u || ((end - begin) / 8u) > kMaxRegions) {
-        return 0;
-    }
-
-    // AND THE INDEX IS THE IDENTITY, not the name. `sub_826C7E90` — the handler for event 41 —
-    // takes the row's Float1, subtracts the 999 the spawner added, and indexes THIS container's
-    // walk output with it (`4 * v6 + v31`). It never looks at the name. So the ordinal a row
-    // carries has to be its position in the guest's own output, which counts every non-null
-    // entry — including regions with no active stop, which are walked but never spawned.
-    uint32_t found = 0;
-    uint32_t ordinal = 0;
-    for (uint32_t slot = begin; slot < end; slot += 8u) {
-        const uint32_t region = GuestWordAt(base, slot);
-        if (region == 0u) {
-            continue;
-        }
-
-        // Past the null test the entry is in the guest's output and has consumed an ordinal,
-        // whatever we go on to decide about it.
-        const uint32_t here = ordinal++;
-        if (!plausible(region) || !RefiiRegionHasActiveStop(base, region)) {
-            continue;
-        }
-
-        const std::string name = ReadGuestString(base, region);
-        if (name.empty()) {
-            continue;
-        }
-
-        if (words != nullptr && (found * 2u + 1u) < word_capacity) {
-            words[found * 2u] = RefiiFnv1(name);
-            words[found * 2u + 1u] = here;
-        }
-
-        ++found;
-    }
-
-    return found;
-}
-
 /// The hero's QUEST LOG — three words each: {recordId, flags, 0}.
 ///
-/// `flags` bit 0 Unlocked, 1 Completed, 2 Failed, 3 AppearOnWorldMap, 4 Viewed. The world map's
-/// Quests and Jobs rows are the same container filtered differently, and the split between them is
-/// the quest definition's GDB `Type` (5 == Job), which the caller reads from `recordId` rather
-/// than here — the host has no GDB.
+/// `flags` bit 0 Unlocked, 1 Completed, 2 Failed, 3 AppearOnWorldMap, 4 Viewed. Read for quest
+/// markers: the world map's minimap page and the minimap mod; the world map's Quests and Jobs rows
+/// are the guest's own population, not this.
 ///
 /// THE CONTAINER, verified in disassembly (`sub_8251CA50`):
 ///
@@ -2152,107 +1638,6 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetFastTravelRegions(uint32_t* words,
 ///
 /// A PLAIN VECTOR WITH NO LOCK: accepting or dropping a quest reallocates it. Same treatment as
 /// the worn vector — the bounds are re-read afterwards and a walk that saw them move is discarded.
-/// The world map's family members, newest sample first-to-last. `out_names` is a flat block of
-/// `stride`-byte NUL-terminated UTF-8 names; the return is the TOTAL the store holds, which may
-/// exceed `capacity` so a caller can size its buffer from the first call.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetFamily(char* out_names, uint32_t stride,
-                                                  uint32_t capacity) {
-    if (out_names == nullptr || stride == 0u || capacity == 0u) {
-        return 0;
-    }
-
-    refii::vfs::FamilyMember members[refii::vfs::kMaxFamilyMembers];
-    const uint32_t total = refii::vfs::FamilySnapshot(members, refii::vfs::kMaxFamilyMembers);
-    const uint32_t copied = total < capacity ? total : capacity;
-    for (uint32_t i = 0; i < copied; ++i) {
-        std::snprintf(out_names + (static_cast<std::size_t>(i) * stride), stride, "%s",
-                      members[i].name);
-    }
-
-    return total;
-}
-
-/// ONE SHOP ROW'S ASKING PRICE, by ticket.
-///
-/// What a shop charges is NOT the item's worth, so the item book's `ValueValue` cannot answer
-/// for `PriceValue`. `sub_82992F90` — the guest's own price display — takes the shopkeeper's
-/// `CECShopkeeper` (27) and calls `sub_828727B8` for a buy row or `sub_82872910` for a sell row;
-/// both weight a base price by the shopkeeper's opinion axes and the shop's wealth, and
-/// buy multiplies where sell divides, so there is no ratio to reproduce.
-///
-/// Named by the row's per-population TICKET. The pump answers a tick later while screen 22
-/// stands, so the reply carries the ticket it is for and the page must check it.
-REFII_HOST_ABI_EXPORT void RefiiHostSetShopPrice(uint32_t ticket, uint32_t sell) {
-    refii::vfs::RequestShopPrice(ticket, sell != 0u);
-}
-
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetShopPrice(uint32_t* out_ticket, int32_t* out_price,
-                                                     uint32_t* out_record) {
-    const refii::vfs::ShopPrice answer = refii::vfs::ShopPriceSnapshot();
-
-    if (out_ticket != nullptr) {
-        *out_ticket = answer.ticket;
-    }
-
-    if (out_price != nullptr) {
-        *out_price = answer.price;
-    }
-
-    if (out_record != nullptr) {
-        *out_record = answer.record;
-    }
-
-    return answer.known ? 1u : 0u;
-}
-
-/// ONE FAMILY MEMBER'S PAGE, as eleven fixed-width strings.
-///
-/// `sub_829B04E0` is the family page and it is almost entirely a read: ten of its eleven text
-/// elements are already-formatted `LHString`s at fixed offsets in the 52-byte record
-/// `sub_8246F020` builds, set with `sub_82425DD0` (the setter that takes formatted text, not a
-/// tag). The eleventh, the region, is `sub_82518490(regionMgr, record+16)` and IS a tag.
-///
-/// The page picks its member BY ORDINAL into that vector — the same ordinal the row carries —
-/// so `index` is the row's id and nothing needs a key.
-///
-/// `out` is a flat block of `count` strings of `stride` bytes each, in this fixed order:
-///
-///     0 name              1 children          2 region (a TAG)    3 distance
-///     4 travel            5 note              6 daily upkeep      7 total upkeep
-///     8 happiness         9 home happiness   10 upkeep happiness  11 A-button (a TAG)
-///
-/// Field 11 is empty when the guest HIDES the button, which two of `sub_82470A78`'s branches do.
-///
-/// Returns how many fields were written.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetFamilyDetails(uint32_t index, char* out,
-                                                         uint32_t stride, uint32_t count) {
-    if (out == nullptr || stride == 0u || count == 0u) {
-        return 0;
-    }
-
-    refii::vfs::FamilyMember members[refii::vfs::kMaxFamilyMembers];
-    const uint32_t total = refii::vfs::FamilySnapshot(members, refii::vfs::kMaxFamilyMembers);
-    if (index >= total) {
-        return 0;
-    }
-
-    const refii::vfs::FamilyMember& member = members[index];
-    const char* const fields[] = {
-        member.name,      member.children,     member.region,
-        member.distance,  member.travel,       member.note,
-        member.daily_upkeep, member.total_upkeep, member.happiness,
-        member.home_happiness, member.upkeep_happiness, member.prompt,
-    };
-
-    const uint32_t fields_count = static_cast<uint32_t>(sizeof(fields) / sizeof(fields[0]));
-    const uint32_t written = count < fields_count ? count : fields_count;
-    for (uint32_t i = 0; i < written; ++i) {
-        std::snprintf(out + (static_cast<std::size_t>(i) * stride), stride, "%s", fields[i]);
-    }
-
-    return written;
-}
-
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetQuestLog(uint32_t* words, uint32_t word_capacity) {
     auto* memory = SafeKernelMemory();
     if (memory == nullptr) {
@@ -2340,8 +1725,7 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetQuestLog(uint32_t* words, uint32_t wo
 
             // How many task lines it has. The vector at +104/+108 is stride 8,
             // `{ LHString babelTag; u8 Succeeded; }`; the LAST entry is the current task and
-            // everything before it is a completed one. The tags themselves cross through
-            // RefiiHostGetQuestTasks, which only the highlighted quest ever needs.
+            // everything before it is a completed one.
             const uint32_t tasks_begin = GuestWordAt(base, quest + 104u);
             const uint32_t tasks_end = GuestWordAt(base, quest + 108u);
             row[7] = plausible(tasks_begin) && tasks_end > tasks_begin &&
@@ -2359,36 +1743,6 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetQuestLog(uint32_t* words, uint32_t wo
     }
 
     return found;
-}
-
-/// Whether the golden trail is following a SALE or a FAMILY MEMBER rather than the primary
-/// quest: the TrailOverrideInfo pointer at quest log +40 (component 102; `sub_8251CC00` frees
-/// it when a quest is made primary, `sub_82520428` serialises it). The world map's re-emphasis
-/// `sub_829A3260` (0x829a3770..0x829a37a8) shows the primary quest as merely ACTIVE while it is
-/// set — emphasis 1 means "what the trail follows". Returns 1 when set, 0 when clear or unknown.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetQuestTrailOverride(void) {
-    auto* memory = SafeKernelMemory();
-    if (memory == nullptr) {
-        return 0u;
-    }
-
-    uint8_t* base = memory->virtual_membase();
-    if (base == nullptr) {
-        return 0u;
-    }
-
-    const uint32_t hero = ResolvePlayerHero(base);
-    if (hero == 0u) {
-        return 0u;
-    }
-
-    const uint32_t log = EntityComponent(base, hero, 102u);
-    if (log == 0u) {
-        return 0u;
-    }
-
-    const uint32_t override_info = GuestWordAt(base, log + 40u);
-    return override_info >= 0x10000u && override_info < 0xC0000000u ? 1u : 0u;
 }
 
 /// WHAT THE WORLD MAP'S MINIMAP PAGE PLOTS FROM LIVE STATE — `sub_829ABFC0`'s inputs that are
@@ -2576,111 +1930,7 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMinimapLive(uint32_t* out, uint32_t c
     return 1u;
 }
 
-/// ONE JOB'S JOURNEY — its distance and travel time, both already worded by the guest's own
-/// providers. `RefiiHostSetQuestTravel` names the quest; the pump answers a tick later while
-/// screen 23 stands, so the reply carries the record it is for and a page must check it.
-REFII_HOST_ABI_EXPORT void RefiiHostSetQuestTravel(uint32_t record) {
-    refii::vfs::RequestQuestTravel(record);
-}
-
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetQuestTravel(uint32_t* out_record, char* distance,
-                                                       uint32_t distance_capacity, char* travel,
-                                                       uint32_t travel_capacity, char* region,
-                                                       uint32_t region_capacity, char* prompt,
-                                                       uint32_t prompt_capacity, char* days,
-                                                       uint32_t days_capacity) {
-    const refii::vfs::QuestTravel journey = refii::vfs::QuestTravelSnapshot();
-
-    if (out_record != nullptr) {
-        *out_record = journey.record;
-    }
-
-    WriteOut(journey.distance, distance, distance_capacity);
-    WriteOut(journey.travel, travel, travel_capacity);
-    WriteOut(journey.region, region, region_capacity);
-    WriteOut(journey.prompt, prompt, prompt_capacity);
-    WriteOut(journey.days, days, days_capacity);
-    return journey.known ? 1u : 0u;
-}
-
-/// ONE QUEST'S TASK LINES, as tab-separated Babel TAGS.
-///
-/// The world map's quest page is one concatenated string and the task lines are most of it:
-/// `sub_829AFBC0` emits the LAST entry under "Current Task" and `sub_829AFCC0` bullets every
-/// entry before it under "Completed Tasks". The vector is at `quest+104`/`+108`, stride 8, each
-/// entry `{ LHString babelTag; u8 Succeeded; }` — and `Succeeded` is stored but never read by
-/// the page: POSITION is what makes a task current rather than completed.
-///
-/// Tags cross, not sentences: `sub_8230E268` Babel-resolves each one and substitutes `%1` with
-/// the quest's `CurrentObjectiveParameter`, and the host does both itself.
-///
-/// Keyed by RECORD ID rather than by index, because the list is rebuilt on every ask and an
-/// index taken from a previous walk names a different quest.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetQuestTasks(uint32_t record_id, char* out,
-                                                      uint32_t capacity) {
-    if (out != nullptr && capacity > 0u) {
-        out[0] = '\0';
-    }
-
-    auto* memory = SafeKernelMemory();
-    if (memory == nullptr) {
-        return 0;
-    }
-
-    uint8_t* base = memory->virtual_membase();
-    if (base == nullptr) {
-        return 0;
-    }
-
-    const uint32_t hero = ResolvePlayerHero(base);
-    const uint32_t log = hero != 0u ? EntityComponent(base, hero, 102u) : 0u;
-    if (log == 0u) {
-        return 0;
-    }
-
-    const auto plausible = [](uint32_t a) { return a >= 0x10000u && a < 0xC0000000u; };
-
-    const uint32_t begin = GuestWordAt(base, log + 0x10u);
-    const uint32_t end = GuestWordAt(base, log + 0x14u);
-    if (!plausible(begin) || !plausible(end) || end < begin || ((end - begin) % 12u) != 0u) {
-        return 0;
-    }
-
-    for (uint32_t at = begin; at < end; at += 12u) {
-        const uint32_t quest = GuestWordAt(base, at + 4u);
-        if (!plausible(quest) || GuestWordAt(base, quest + 4u) != record_id) {
-            continue;
-        }
-
-        const uint32_t tasks = GuestWordAt(base, quest + 104u);
-        const uint32_t tasks_end = GuestWordAt(base, quest + 108u);
-        if (!plausible(tasks) || tasks_end <= tasks || ((tasks_end - tasks) % 8u) != 0u ||
-            (tasks_end - tasks) > 0x400u) {
-            return 0;
-        }
-
-        std::string packed;
-        uint32_t count = 0;
-        for (uint32_t entry = tasks; entry < tasks_end; entry += 8u) {
-            if (count != 0u) {
-                packed.push_back('\t');
-            }
-
-            // The tag is a NARROW string — a Babel key, not display text. Read with this
-            // file's own local reader: the VFS library's is not exported, and calling it links
-            // as a dangling lazy PLT entry that ends the process with a symbol lookup error.
-            packed.append(ReadGuestString(base, entry));
-            ++count;
-        }
-
-        WriteOut(packed, out, capacity);
-        return count;
-    }
-
-    return 0;
-}
-
-/// One quest's task lines' COMPLETED bytes, index-parallel with RefiiHostGetQuestTasks: the
+/// One quest's task lines' COMPLETED bytes, in the order of the task vector: the
 /// 8-byte entry at `quest+104..+108` is {+0 tag, +4 completed}, set by the Lua native
 /// "SetObjectiveAsCompleted" (`sub_8251E400`). The pause root's objective line (`sub_82522E48`)
 /// is the LAST entry whose byte is clear. Returns the entries written.
@@ -2733,101 +1983,6 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetQuestTaskStates(uint32_t record_id, u
     return 0;
 }
 
-/// The items the hero is currently WEARING, two words each — {recordId, category}.
-///
-/// Needed because a clothing list must not offer what is already on: the guest drops the worn
-/// garment from its own list when the stack holds only one (`sub_8242FB28`). Godot builds that
-/// list from the data areas now, so it needs the same fact.
-///
-/// THE CONTAINER, verified in disassembly rather than from the decompiler, which renders the
-/// walk misleadingly (`IsWearingItemOfType`, 0x824C4380):
-///
-///     lwz r11, 0x10(r3)   begin        -> component + 16
-///     lwz r7,  0x14(r3)   end          -> component + 20
-///     lwz r10, 0(r11)     the item     -> element + 0 is an Entity*
-///     lwz r10, 4(r10)     record hash  -> item + 4, the same field sub_824F1C90 matches
-///     addi r11, r11, 0x18 stride       -> 24 bytes per element
-///
-/// `component + 12` is the container OBJECT — the MSVC checked-iterator base word, whose address
-/// is the owner token in every `twui r0, 0x16` guard. It is never read for data and neither do
-/// we. Category is `item + 16` (`sub_824C4418`). There is a SECOND identical vector at
-/// `component + 28`, the pending list, which this must not walk.
-///
-/// NOTHING SYNCHRONISES THIS. No mutator or reader in the component takes a lock, so the guest
-/// assumes single-threaded access, and a push REALLOCATES: `sub_824C6878` allocates, destroys the
-/// old range and frees it before publishing the new pointers. A host walk interleaved with that
-/// dereferences freed memory. So the begin pointer is re-read after the copy and a walk that saw
-/// it move is discarded entirely rather than reported half-torn.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWornItems(uint32_t* words, uint32_t word_capacity) {
-    auto* memory = SafeKernelMemory();
-    if (memory == nullptr) {
-        return 0;
-    }
-
-    uint8_t* base = memory->virtual_membase();
-    if (base == nullptr) {
-        return 0;
-    }
-
-    const uint32_t hero = ResolvePlayerHero(base);
-    if (hero == 0u) {
-        return 0;
-    }
-
-    // 15 — AppearanceModifierManager.
-    const uint32_t appearance = EntityComponent(base, hero, 15u);
-    if (appearance == 0u) {
-        return 0;
-    }
-
-    const auto plausible = [](uint32_t a) { return a >= 0x10000u && a < 0xC0000000u; };
-
-    const uint32_t begin = GuestWordAt(base, appearance + 16u);
-    const uint32_t end = GuestWordAt(base, appearance + 20u);
-    if (begin == 0u && end == 0u) {
-        return 0;  // an empty vector, not a failure
-    }
-
-    if (!plausible(begin) || !plausible(end) || end < begin) {
-        return 0;
-    }
-
-    constexpr uint32_t kStride = 24u;
-    constexpr uint32_t kMaxItems = 256u;
-    constexpr uint32_t kWordsPerItem = 2u;
-
-    const uint32_t span = end - begin;
-    if ((span % kStride) != 0u || (span / kStride) > kMaxItems) {
-        return 0;
-    }
-
-    uint32_t found = 0;
-    for (uint32_t at = begin; at < end; at += kStride) {
-        const uint32_t item = GuestWordAt(base, at);
-        if (!plausible(item)) {
-            continue;
-        }
-
-        if (words != nullptr && (found * kWordsPerItem + 1u) < word_capacity) {
-            words[found * kWordsPerItem] = GuestWordAt(base, item + 4u);
-            words[found * kWordsPerItem + 1u] = GuestWordAt(base, item + 16u);
-        }
-
-        ++found;
-    }
-
-    // The buffer moved under us — a push reallocated mid-walk, so everything above may have come
-    // out of freed memory. Report nothing rather than something wrong; the next poll is one frame
-    // away and a clothing list briefly offering a worn item is a far smaller fault than acting on
-    // garbage.
-    if (GuestWordAt(base, appearance + 16u) != begin ||
-        GuestWordAt(base, appearance + 20u) != end) {
-        return 0;
-    }
-
-    return found;
-}
-
 
 /// True while a menu population is in flight and the captured rows are not yet whole.
 ///
@@ -2878,6 +2033,8 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostTakeMenuChunks(char* out_utf8, uint32_t 
         return true;
     };
 
+    // The first chunk NOT handed over; it and everything after go back to the front of the queue.
+    std::size_t handed = 0;
     for (const refii::vfs::MenuChunkCall& call : calls) {
         if (written >= max_records || kind_at + 1u + call.staged.size() > kinds_capacity) {
             break;
@@ -2904,7 +2061,18 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostTakeMenuChunks(char* out_utf8, uint32_t 
         }
 
         ++written;
+        ++handed;
     }
+
+    // Nothing is dropped: the caller drains again while chunks wait and grows its buffers for a
+    // first record that fits none; only one past the ceiling is dropped, by name.
+    if (handed < calls.size() && written == 0u &&
+        (utf8_capacity >= refii::vfs::kDrainTextCeiling || kinds_capacity >= refii::vfs::kDrainKindCeiling)) {
+        REXLOG_WARN("Refii menu chunks: chunk '{}' ({} attribute(s)) fits no drain buffer ({} text bytes, {} kind bytes) — dropped",
+                    calls[handed].chunk, calls[handed].staged.size(), utf8_capacity, kinds_capacity);
+        ++handed;
+    }
+    refii::vfs::PutBackMenuChunkCalls(calls, handed);
 
     return written;
 }
@@ -6311,6 +5479,9 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetEntities(uint32_t* out, uint32_t max_
             const uint32_t creature = EntityComponentOf(base, fields, 20u);
             if (refii::hostcore::IsDeadCreature(refii::hostcore::GuestReader{base}, creature)) {
                 appearance[kAppearanceFlags] |= refii::hostcore::kAppearanceDeadCreature;
+                if (refii::vfs::CreatureLeftCorpse(creature)) {
+                    appearance[kAppearanceFlags] |= refii::hostcore::kAppearanceGuestCorpse;
+                }
             }
         }
 
@@ -8676,6 +7847,18 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostInstallWeaponAugmentHook(void) {
 /// real-estate screen above its own rows. This is the key that was missing: the screen the
 /// guest's setter stated, taken by the payload at the boundary that clears the list. Compare it
 /// with the screen a template is bound to and reject a population that belongs to another.
+/// One captured row's ITEM HALF (ABI 270): its String3 icon (SpawnButton's r6), the mark the guest stated
+/// for it (`SetItemEmphasisByIndex` inside the row builder `sub_826CE230`, `SetItemEmphasis` by name;
+/// 0..3), and five words {flags, record, item, count, category} — flags kMenuRowItem (the row stands for an
+/// inventory item: the one `sub_826CE230` was handed, hooks/item_rows_stated.cpp, or the one its ticket was
+/// filed against), kMenuRowViewed (that item's `+0x14` byte), kMenuRowCounted (count, category and viewed
+/// are the builder's). Same total count as RefiiHostGetMenuRow.
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMenuRowItem(uint32_t index, char* out_icon, uint32_t icon_capacity,
+                                                       int32_t* out_emphasis, uint32_t* out_words,
+                                                       uint32_t word_capacity) {
+    return refii::vfs::MenuRowItem(index, out_icon, icon_capacity, out_emphasis, out_words, word_capacity);
+}
+
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMenuScreenId(void) {
     return refii::vfs::MenuScreenId();
 }
@@ -12340,7 +11523,9 @@ REFII_HOST_ABI_EXPORT void RefiiHostRequestPropertyEstate(uint64_t uid) {
     refii::vfs::RequestPropertyEstate(uid);
 }
 
-/// The answer for `uid`, in RefiiHostGetRealEstate's fifteen words. Returns 1 when the building
+/// The answer for `uid`, in fifteen words: record hash, type mask, owned, hasTenant, value, economy,
+/// decoration, income, salePrice, sellingFees, notVacant, ownerKilled, heroOpinion, the bonuses record
+/// and the hero's title record. Returns 1 when the building
 /// was sampled (its region is loaded), 0 when it was not or the answer is another row's.
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetPropertyEstate(uint64_t uid, uint32_t* out_words, uint32_t word_capacity,
                                                          char* occupant, uint32_t occupant_capacity) {
@@ -13184,8 +12369,11 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetCoopPlayerEntities(uint32_t* out_one,
 /// quest markers, dog points, NPC status — drawn by Godot, the guest's `sub_82261B70` is off) and
 /// the pooled HUD-element icons (types 31-35/52-54, the prompts and player markers on the 16
 /// `WorldIconN` elements, whose element writes the element hooks state; only their world point and
-/// slot are taken here). A row is exported once its first Update ran (a pooled one once it was first
-/// placed), until the icon is destroyed.
+/// slot are taken here). A row is exported while an Update drew it in the guest's latest step or the
+/// one before (a pooled one once it was first placed; the table's VISIBLE, stamped by the step
+/// guest_tick_pump.cpp states): the guest draws an icon only inside its Update (TU1 0x82242040,
+/// disc 0x82242048), and lhPromptManager_Update runs none while a GUI is active
+/// (lhGameFlow_IsGuiActive, TU1 0x821C5BE8, disc 0x821C5C58).
 ///
 /// Words per icon: type, texture, rgba, entity, persistent, flags, pool slot, OBJECT (the icon's
 /// identity for its lifetime). Values: anchor x y z, scale, seconds left, age. Text: title NUL

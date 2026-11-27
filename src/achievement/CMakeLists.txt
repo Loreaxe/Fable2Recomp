@@ -18,6 +18,8 @@ set(REFII_ACHIEVEMENT_ROOT ${CMAKE_CURRENT_LIST_DIR})
 # the header only and resolves the calls through rex::runtime.
 add_library(refii_achievement OBJECT
     ${REFII_ACHIEVEMENT_ROOT}/src/achievement_runtime.cpp
+    # The save a joining player's hero comes from, asked of the host (hero_save_choice.h).
+    ${REFII_ACHIEVEMENT_ROOT}/src/hero_save_choice.cpp
 )
 set_target_properties(refii_achievement PROPERTIES
     POSITION_INDEPENDENT_CODE ON

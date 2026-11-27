@@ -64,4 +64,15 @@ public class CoopScreenPressesTests
 		AssertThat(Fable2CoopScreenPresses.Forwarded(35, 2, Engine_CoopSavePicker.Press.Right)).IsTrue();
 		AssertThat(Fable2CoopScreenPresses.Lever(36, 2)).IsEqual("CoopAction:36:2");
 	}
+
+	[TestCase]
+	public void PlayerTwosXAsksForTheSignInOnlyWhileNotSignedIn()
+	{
+		var none = Engine_CoopSavePicker.Press.None;
+		AssertThat(Fable2CoopScreenPresses.Forwarded(38, 2, none, askSignIn: true)).IsTrue();
+		AssertThat(Fable2CoopScreenPresses.Forwarded(38, 2, none, askSignIn: false)).IsFalse();
+		AssertThat(Fable2CoopScreenPresses.Forwarded(39, 2, none, askSignIn: true)).IsTrue();
+		AssertThat(Fable2CoopScreenPresses.Forwarded(38, 1, none, askSignIn: true)).IsTrue();
+		AssertThat(Fable2CoopScreenPresses.Forwarded(39, 1, none, askSignIn: true)).IsFalse();
+	}
 }

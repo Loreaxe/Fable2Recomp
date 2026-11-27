@@ -67,6 +67,7 @@
 0x82253440 = { name = "rex_CameraManager_Push" }
 0x8253C410 = { name = "rex_CameraManager_Snap" }
 0x8253AE80 = { name = "rex_CameraManager_ActivateCamera" }
+0x8253E9B8 = { name = "rex_CameraManager_Destroy" }
 # The Bink object's open (B, source, audio, poolAlloc), rect setter (B, int rect[4], ...) and
 # close, every movie player's; and the startup logo player's constructor (P, owner, blob).
 # Fable3/src/hooks/src/movie_player.cpp states them for the host's native playback.
@@ -145,6 +146,12 @@
 0x8291EE38 = { name = "rex_DisplayBox_Update" }
 0x8291F288 = { name = "rex_DisplayBox_Shown" }
 0x8291F3F0 = { name = "rex_DisplayBox_Hidden" }
+# The targeted setter (targeted, byte, targeter): runs unchanged, then states who targets the thing
+# (target_statements.cpp). TU3 sub_826F6298.
+0x826C8FA8 = { name = "rex_Targeted_SetTargetedByPlayer" }
+# The screen preload pass's row for screen 3, IntermissionBox.bgf (rows): replaced, the row is
+# always "not needed" so the pass never loads the presentation Godot draws (display_box_stubs.cpp).
+0x821A30E8 = { name = "rex_ScreenPreload_IntermissionRow" }
 0x825CE380 = { name = "rex_GuiManager_ScreenInput" }
 0x825CF0C8 = { name = "rex_GuiManager_ModalReset" }
 0x825FA220 = { name = "rex_MenuBox_Open" }
@@ -186,6 +193,11 @@
 0x8276B9F8 = { name = "rex_Epilogue_Hide" }
 0x825CF128 = { name = "rex_ScreenManager_StartCredits" }
 0x825CF280 = { name = "rex_ScreenManager_EndCredits" }
+# The two end screens' pad handlers (screen, action, player), slot 5 of their vtables: Godot owns
+# their pad and runs them with its own press (end_screen_hooks.cpp). The epilogue's is no function in
+# IDA: 0x50 bytes, ending in the tail branch to the hide and a dead blr.
+0x8276B410 = { name = "rex_Epilogue_HandleInput", size = 0x50 }
+0x82B3FF60 = { name = "rex_CreditsScreen_HandleInput" }
 # The game state the shell reads (Fable3/src/hooks/src/game_state_hooks.cpp): the game mode
 # stack's push (S, shared_ptr<mode>*), pop (S, id) and per-update run (S); the GUI screen id's
 # writers — the screen set (G, id, quiet), ExitScreen (G), the download box (G, text, download) —
@@ -209,6 +221,32 @@
 # the registry-ref push (holder, L) that puts the mode's camera table on the stack, and the Lua
 # getfield/setfield (L, idx, name) the hook reads and writes the camera's fields with.
 0x82255FB8 = { name = "rex_CameraManager_Update" }
+# Player two's own camera in couch co-op (Fable3/src/hooks/src/coop_camera_hooks.cpp): the holder update
+# (holder: the camera critical section, then CameraManager_Update of holder+4), "the" camera's selector
+# (player manager -> holder), and character movement (its entity the smart pointer at this+8).
+0x8226A8C0 = { name = "rex_CameraHolder_Update" }
+0x82209680 = { name = "rex_PlayerManager_CameraHolder" }
+0x828DA310 = { name = "rex_CInputProcessCharacterMovement_ProcessInput" }
+# Each couch player's camera for the sim's readers while split (Fable3/src/hooks/src/coop_camera_readers.cpp):
+# the stick jab (its entity the smart pointer at this+8), "the" camera's and the other screen's cached
+# blocks, and Kaim's two 50 m filters (r3 the filter, r5 the entity info).
+0x828DB6B8 = { name = "rex_CInputProcessStickJabDetection_ProcessInput" }
+0x82222728 = { name = "rex_Camera_CachedBlock" }
+0x8252FC70 = { name = "rex_Camera_OtherScreenBlock" }
+0x82726978 = { name = "rex_Kaim_CEntityInfoFilterF2Visibility_Filter" }
+0x82726C28 = { name = "rex_Kaim_CEntityInfoFilterF2Sight_Filter" }
+# The particle system's level of detail answers either couch player's camera while split
+# (Fable3/src/hooks/src/coop_particle_view.cpp): the particle thread's frame (message, flag, view ids) and
+# one system's level of detail (holder, view).
+0x8318B238 = { name = "rex_ParticleThread_Frame" }
+0x8318DBE8 = { name = "rex_ParticleSystem_LevelOfDetail" }
+# Each split couch half's offscreen hero / partner marker (Fable3/src/hooks/src/coop_player_icons.cpp): the
+# view node's camera setter (node, block), one player-icon record's update (record, switch), and, called for
+# player two's node, the view node's constructor (node) and the screen block (block, holder).
+0x82261CB8 = { name = "rex_View_SetRenderCamera" }
+0x82196410 = { name = "rex_Hud_PlayerIconRecord" }
+0x824D1BB0 = { name = "rex_SceneView_Construct" }
+0x821CB288 = { name = "rex_Camera_ScreenBlock" }
 0x82769E88 = { name = "rex_CameraMode_ProcessGameAction" }
 0x82242B40 = { name = "rex_LuaRef_Push" }
 0x822A7B58 = { name = "rex_lua_getfield" }
@@ -342,6 +380,14 @@
 0x822F59B8 = { name = "rex_lhSaveManager_WritePackage" }
 0x822F5CA8 = { name = "rex_lhSaveManager_WriteHeroPackage" }
 0x822F57B0 = { name = "rex_lhSaveManager_WritePlayerTwo" }
+
+# Player two on the shared profile (Fable3/src/hooks/src/character_binding_hooks.cpp): the drop-in join's
+# hero setup (pad's user, ...), its qualify step for each listed save (manager, result, CCharString* save,
+# user) and the save adoption (manager, CCharString* save, user) — which save each user's hero comes from,
+# and never the save player one plays.
+0x8243A190 = { name = "rex_CoopJoin_SetupHero" }
+0x822F80D0 = { name = "rex_lhSaveManager_QualifyHeroSave" }
+0x822F91D0 = { name = "rex_lhSaveManager_AdoptHeroSave" }
 0x823FE020 = { name = "rex_CECInventory_AddOneOfRecord" }
 0x826223F0 = { name = "rex_CECExpressionPerformer_Start" }
 0x823B7A70 = { name = "rex_CECStats_ModifyMorality" }
@@ -598,8 +644,9 @@
 # Init (icon, request) every class reaches, CWorldIcon3D's Update (icon, visible, ctx; the emotion
 # icon's too), the HUD-element icon's Update (icon, visible, ctx), the emotion icon's ring tick
 # (icon), the registry's one icon erase (out, R, vector, iterator), CWorldIconBase's destructor
-# (icon); the choice list's add (E, shared_ptr*), the record deleter (record) and the press/release
-# handler (E, &event, player).
+# (icon); the choice list's add (E, shared_ptr*) and the record deleter (record). The choices'
+# press / release handler (E, action*, player) answers 0 for the guest's pad and runs for Godot's
+# `emotion:` lever (Fable3/src/hooks/src/emotion_choice_answer.cpp).
 0x82B52DB0 = { name = "rex_WorldIcon_Init" }
 0x82226DA8 = { name = "rex_WorldIcon3D_Update" }
 0x82B51B58 = { name = "rex_HudElementIcon_Update" }
@@ -609,6 +656,9 @@
 0x825E8D30 = { name = "rex_EmotionChoices_Add" }
 0x825EBD70 = { name = "rex_EmotionChoice_Delete" }
 0x825E91E0 = { name = "rex_EmotionChoices_Input" }
+# The icon registry's pad input (R, action*, player): answers 0 for the guest's pad and runs for
+# Godot's `worldicon:` lever (Fable3/src/hooks/src/world_icon_hold.cpp).
+0x825ED600 = { name = "rex_WorldIcons_Input" }
 # The HUD registries and the screen fade (Fable3/src/hooks/src/hud_hooks.cpp): the registry map's
 # insert (registry, hash, element), the filer's unfile (registry, element, pres), the registries'
 # destructor body (registry); the text writer (registry, hash, LHString*), the meter's value writer
@@ -635,18 +685,24 @@
 0x825C1D98 = { name = "rex_Hud_Reset" }
 0x825D8B30 = { name = "rex_HudDpad_Slide" }
 0x825D8988 = { name = "rex_HudDpad_Slot" }
+# The HUD d-pad's pad input (D, action*, player): answers 0 for the guest's pad and runs for Godot's
+# `dpad:` lever (Fable3/src/hooks/src/hud_dpad_use.cpp).
+0x825D75F8 = { name = "rex_HudDpad_Input" }
 # The interaction mode (Fable3/src/hooks/src/interaction_hooks.cpp): its set (IM, mode, a3, a4,
 # table, a6), its close (IM, keepTarget) and the info panel's stager (mode object, id; the id
 # stated at entry).
 0x825C4348 = { name = "rex_InteractionMode_Set" }
 0x825C5D08 = { name = "rex_InteractionMode_Close" }
+# The interaction manager's pad input (IM, action*, player): answers 0 for the guest's pad while the
+# mode up is the NPC's or the dog's, and runs for Godot's `interaction:` lever
+# (Fable3/src/hooks/src/interaction_mode_input.cpp).
+0x825C58A0 = { name = "rex_InteractionMode_Input" }
 0x82963040 = { name = "rex_InteractionMode_SetPanel" }
-# The same file: the mode's tick (IM), whose flag edges write the root's slide, and its clear (IM),
-# which rests the root on slide 1 (it ends on a branch back into its body); the trigger and
-# bumper bars' show (bar, shown) and text commit (bar, LHString*; it ends on `b GuiTextBox_Commit`).
-0x825C3A78 = { name = "rex_InteractionMode_Tick" }
+# The same file: the mode's clear (IM), every opener's first act (it ends on a branch back into its
+# body), and the trigger and bumper bars' text commit (bar, LHString*; it ends on `b
+# GuiTextBox_Commit`). The root's slide (the tick's and the clear's) and a bar's shown slide are
+# stated on their own SetState calls (RefiiF3InteractionRootState / …Cleared, RefiiF3OverlayBarState).
 0x825C3F00 = { name = "rex_InteractionMode_Clear", size = 0x3C0 }
-0x82B3EA18 = { name = "rex_OverlayBar_Show" }
 # The interaction button's hold icon (mode, button, hold): Icon and LeftSection on 2 / 1.
 0x82961278 = { name = "rex_InteractionButton_Hold" }
 0x82B3EB28 = { name = "rex_OverlayBar_CommitText", size = 0x34 }
@@ -664,6 +720,20 @@
 # The interaction list's input (list, ev*, player), run by the pointer's step lever with event 26, and
 # its hide (list), after which the lever holds no list (Fable3/src/hooks/src/interaction_list_step.cpp).
 0x82964248 = { name = "rex_InteractionList_Input" }
+# THE SANCTUARY'S MODE, CInteractionModeGUIWorld (Fable3/src/hooks/src/interaction_guiworld.cpp): the list
+# input above answers its class there; its table parser (mode, table), stated after it ran; vf0 (mode,
+# flags), stated; vf7 HandleInput (mode, action*, player), which answers the guest's pad without posting
+# and runs for Godot's `guiworld:` levers; the gesture poster (mode, code), withheld when the pad's vf7
+# calls it; the bumper and trigger bars' vf4 (bar, action*, player), which answer the pad while mode 3 is
+# up and run for the levers.
+0x8295AEE8 = { name = "rex_InteractionGuiWorld_Parse" }
+0x82955568 = { name = "rex_InteractionGuiWorld_Destroy" }
+0x8295A178 = { name = "rex_InteractionGuiWorld_Input" }
+0x82957540 = { name = "rex_InteractionGuiWorld_Gesture" }
+0x82B18D30 = { name = "rex_OverlayBumper_Input" }
+0x82B18F90 = { name = "rex_OverlayTrigger_Input" }
+# The partner's copy of the Sanctuary's table (mode, packet), stated like the parser.
+0x8295C038 = { name = "rex_InteractionGuiWorld_Receive" }
 0x82963C90 = { name = "rex_InteractionList_Hide" }
 0x8295CE40 = { name = "rex_InteractionMode_TitleDescription" }
 0x8295C940 = { name = "rex_InteractionMode_DyeBar" }
@@ -754,6 +824,12 @@
 # alone (Fable3/src/hooks/src/topbox_answer.cpp).
 0x824B5C28 = { name = "rex_TopBox_HandleInput" }
 0x824B7038 = { name = "rex_TopBox_PressAnswer" }
+# The TopBox's hold step (M, f1 dt, held, &progress, meter name, answer), replaced: the progress is
+# Godot's fill and the answer the guest's poster (Fable3/src/hooks/src/topbox_answer.cpp).
+0x824B6E50 = { name = "rex_TopBox_HoldStep" }
+# A HUD meter's target over a time (meters, name, f1 target 0..100, f2 time): the hold step's own
+# statement of the prompt's fill, called by its replacement.
+0x8291F988 = { name = "rex_HudMeter_SetTarget" }
 # Screens and HUD widgets by their values (Fable3/src/hooks/src/screen_stated_hooks.cpp): the HUD
 # root's hide (H) and show (force) and the cutscene rules (rules, a2, a3); the save menu's open
 # (menu, allowed, entity), row writer (menu) and close (menu); the Options query (box, tag); the
@@ -777,6 +853,27 @@
 # the poll is replaced: the yes of a box the accept pushed runs that box's row, and no event record is read.
 0x8296CDB0 = { name = "rex_SaveMenu_Accept" }
 0x82293478 = { name = "rex_SaveMenu_Poll" }
+# The real-estate mode's row handler (mode, row, player) and its two per-tick answer polls (mode)
+# (Fable3/src/hooks/src/real_estate_confirm.cpp): the polls run only on the answer of a box the row
+# handler pushed, never on another box's event 68 / 69.
+0x82B1CFC0 = { name = "rex_RealEstate_OnMenuEvent" }
+0x82B1FCA8 = { name = "rex_RealEstate_Poll" }
+0x82B20240 = { name = "rex_RealEstate_AdjusterPoll" }
+# The real-estate mode's slots (Fable3/src/hooks/src/real_estate_mode.cpp): vf7 input (mode, ev*,
+# player; the row lever's A by its id), vf8 the document's button show (replaced: nothing), vf11 the
+# populate and the row push it calls (vector, row*; shared with the crime populate), the relist that
+# empties the rows (mode) and vf2 the close (mode, a2).
+0x82B1F9C0 = { name = "rex_RealEstate_Input" }
+0x82B1AD58 = { name = "rex_RealEstate_ShowButtons" }
+0x82B19D28 = { name = "rex_RealEstate_Populate" }
+0x82B2B4C0 = { name = "rex_RealEstate_PushRow" }
+0x82B1C7E0 = { name = "rex_RealEstate_Relist" }
+0x82B19BB8 = { name = "rex_RealEstate_Close" }
+# The crime mode's vf11 populate (mode), whose pushes go through rex_RealEstate_PushRow too
+# (real_estate_mode.cpp): its rows are stated as crime's.
+0x82B2ADC0 = { name = "rex_CrimeMode_Populate" }
+# The shop mode's vf2 close (mode, a2): `@Shop.Close` (Fable3/src/hooks/src/commerce_stated_stores.cpp).
+0x82B30030 = { name = "rex_ShopMode_Close" }
 # What the save menu's rows run once their confirmation says yes (the poll's own calls, made by
 # save_menu_confirm.cpp in its place): SaveGame (mgr, force, a3, a4, playerSave[, fromNet]), the quit
 # to the front end (GAME), the GUI cue (&handle, GUI, &id) and the cue handle's release (&handle).
@@ -795,11 +892,12 @@
 0x82950B60 = { name = "rex_JobMultiplier_Set" }
 0x82973FB0 = { name = "rex_QuestSummary_Row" }
 0x8296EC88 = { name = "rex_StatsBox_Page" }
-0x82972D58 = { name = "rex_KingsSchedule_Ctor" }
 0x827A3290 = { name = "rex_PromiseBox_Ctor" }
-# The box screens' pad handlers (box, ev*, player), their moved cursor and choice fields stated
-# at return (screen_stated_hooks.cpp): join/visibility, orb chat, friends channel, treasury
-# statement, bed, wedding picker, co-op partners, divorce.
+# The box screens' pad handlers (box, ev*, player), all gated: Godot owns their pad and answers
+# through them — hero status, promise, king's schedule, quest summary, wedding picker, orb chat and
+# stats (display_box_hooks.cpp); join/visibility, friends channel, co-op partners
+# (session_boxes.cpp); treasury statement, bed, divorce, marriage proposal, food query
+# (family_boxes.cpp).
 0x82976BC8 = { name = "rex_JoinOptionsBox_HandleInput" }
 0x829727C8 = { name = "rex_OrbChatBox_HandleInput" }
 0x82977B78 = { name = "rex_FriendsChannelBox_HandleInput" }
@@ -810,10 +908,64 @@
 0x82928958 = { name = "rex_DivorceBox_HandleInput" }
 0x827A3600 = { name = "rex_PromiseBox_HandleInput" }
 0x8296DA10 = { name = "rex_StatsBox_HandleInput" }
-# The co-op partners' row writer (box, row path, record) and the king's schedule row (box, row,
-# tick, tag) (screen_stated_hooks.cpp).
+0x82975A58 = { name = "rex_HeroStatusBox_HandleInput" }
+0x82973428 = { name = "rex_KingsSchedule_HandleInput" }
+0x829745B0 = { name = "rex_QuestSummary_HandleInput" }
+# The row writers Godot's cursor levers run (box): the quest summary's seven-row window and the
+# stats pages' three (display_box_hooks.cpp); named, called from C++.
+0x82973E20 = { name = "rex_QuestSummary_Rows" }
+0x8296ED30 = { name = "rex_StatsBox_WriteCategories" }
+0x8296EF78 = { name = "rex_StatsBox_WriteStatistics" }
+0x829708B0 = { name = "rex_StatsBox_WriteFriends" }
+# The co-op partners' row writer (box, row path, record) (screen_stated_hooks.cpp).
 0x82B5D9E0 = { name = "rex_PartnersBox_Row" }
-0x82973328 = { name = "rex_KingsSchedule_Row" }
+# The king's schedule's Show (box), replaced: its title, day and rows are stated and no presentation
+# is made for it (display_box_stubs.cpp); and the hero getter (player manager) it calls, named.
+0x82972FD8 = { name = "rex_KingsSchedule_Show" }
+0x82399658 = { name = "rex_PlayerManager_Hero" }
+# The chat channel's Show and Update (box), replaced: the saved mute is stated, the picture and the
+# element writes are gone, and no presentation is made for it (display_box_stubs.cpp).
+0x82972408 = { name = "rex_OrbChatBox_Show" }
+0x82972798 = { name = "rex_OrbChatBox_Update" }
+# The session boxes (session_boxes.cpp): the join / visibility options' and the friends channel's
+# Show and Update (box), replaced — their setting stated, no presentation made; the in-live-game
+# test the friends channel's Show calls (TU3) and the bed's cancel calls; the partners' window
+# writer (box) the cursor levers run.
+0x82976A08 = { name = "rex_OnlineOptionsBox_Show" }
+0x82976B98 = { name = "rex_OnlineOptionsBox_Update" }
+0x82977A48 = { name = "rex_FriendsChannelBox_Show" }
+0x82977F58 = { name = "rex_FriendsChannelBox_Update" }
+0x82209E88 = { name = "rex_Network_IsInLiveGame" }
+0x82B5D6A8 = { name = "rex_PartnersBox_Rows" }
+# The family boxes (family_boxes.cpp): the bed menu's Show and Update (box), replaced — its titles
+# and options stated, no presentation made; the marriage proposal's and the food query's pad
+# handlers (box, ev*, player), gated; the divorce box's ctor (box, name, pad, recA, recB, mode,
+# reason, fee), stated at entry. The divorce confirmation (divorce_confirm.cpp): the box's accept
+# (box), wrapped so the box it pushes is known; the box manager's divorce poll (X = *(GUI+0x48)),
+# run only on its confirmation's own answer.
+0x82B58F98 = { name = "rex_BedBox_Show" }
+0x82B59298 = { name = "rex_BedBox_Update" }
+0x8281D238 = { name = "rex_MarriageBox_HandleInput" }
+0x82B58048 = { name = "rex_FoodBox_HandleInput" }
+0x829281C8 = { name = "rex_DivorceBox_Ctor" }
+0x82929628 = { name = "rex_DivorceBox_Accept" }
+0x82299878 = { name = "rex_DivorceConfirm_Poll" }
+# The world map's game mode (Fable3/src/hooks/src/map_input.cpp): its enter and leave (mode), stated
+# as @WorldMap.Entered / @WorldMap.Left; WorldMap.Exit (map[, arg]) and the close (map), logged.
+0x824CC8D0 = { name = "rex_WorldMap_Enter" }
+0x824CCB58 = { name = "rex_WorldMap_Leave" }
+0x824CDB60 = { name = "rex_WorldMap_Exit" }
+0x824CDBB8 = { name = "rex_WorldMap_Close" }
+# The world map's two input forwarders, reached only from its receiver's two thunks: game actions
+# (map, action*) and raw records (map, raw*). With an owner stated the pad's button actions and raw
+# records are dropped there and Godot's levers run them (map_input.cpp).
+0x824CDD38 = { name = "rex_WorldMap_ForwardAction" }
+0x824CDE10 = { name = "rex_WorldMap_ForwardRaw" }
+# The pad's road into the GUI's input receivers, counted, observe only
+# (Fable3/src/hooks/src/gui_input_mask.cpp): the screen route (recv, action*) and the channel
+# dispatcher (D, action*, player).
+0x825D6A08 = { name = "rex_GuiInput_Route" }
+0x825D1710 = { name = "rex_GuiInput_Dispatch" }
 # The map tables (Fable3/src/hooks/src/map_table_hooks.cpp): the scene holder's add (holder, msg;
 # returns the id), add-or-update (holder, int* id, msg), present (holder, on), destroy (holder),
 # and the render object command post (id, cmd, ring) the map entities move their objects with.
@@ -1409,7 +1561,7 @@ labels = [
 # THE TEXTS COMMITTED STRAIGHT TO A TEXT BOX (Fable3/src/hooks/src/headless_commit_hooks.cpp): each
 # hook sits on the commit's guard `lwz r11,4(rE)` before `bl sub_82B45268`, with the element and
 # the text (a register, or a stack LHString at r1 + the offset its name carries). Money alert, crime
-# timer, job multiplier, look-at, quest summary, stats, promise, divorce, food, bed and credits.
+# timer, job multiplier, look-at, quest summary, stats, promise, divorce, food and credits.
 
 [[midasm_hook]]
 name = "RefiiF3StateCommit"
@@ -1633,11 +1785,6 @@ registers = ["r31", "r3"]
 
 [[midasm_hook]]
 name = "RefiiF3StateCommitAt50"
-address = 0x82B59304
-registers = ["r11", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt50"
 address = 0x82B3FBF0
 registers = ["r31", "r1"]
 
@@ -1688,6 +1835,52 @@ registers = ["r26"]
 name = "RefiiF3InteractionPanelStored"
 address = 0x82B36704
 registers = ["r30"]
+
+# The interaction manager's own stores of the info panel IM+64, both the value 1: the clear's (`stw
+# r27,0x40(r29)` in sub_825C3F00) and the close's (`stw r24,0x40(r29)` in sub_825C5D08, on its one path to the end).
+[[midasm_hook]]
+name = "RefiiF3InteractionPanelStored"
+address = 0x825C400C
+registers = ["r27"]
+
+[[midasm_hook]]
+name = "RefiiF3InteractionPanelStored"
+address = 0x825C62F0
+registers = ["r24"]
+
+# The interaction root's slide on the guest's own SetState calls (r4 the presentation, r5 the slide):
+# the tick's four (sub_825C3A78) and the clear's one (Fable3/src/hooks/src/interaction_hooks.cpp).
+[[midasm_hook]]
+name = "RefiiF3InteractionRootState"
+address = 0x825C3D10
+registers = ["r4", "r5"]
+
+[[midasm_hook]]
+name = "RefiiF3InteractionRootState"
+address = 0x825C3D5C
+registers = ["r4", "r5"]
+
+[[midasm_hook]]
+name = "RefiiF3InteractionRootState"
+address = 0x825C3D8C
+registers = ["r4", "r5"]
+
+[[midasm_hook]]
+name = "RefiiF3InteractionRootState"
+address = 0x825C3EC8
+registers = ["r4", "r5"]
+
+[[midasm_hook]]
+name = "RefiiF3InteractionRootCleared"
+address = 0x825C3FFC
+registers = ["r4", "r5"]
+
+# A trigger / bumper bar's root slide on vf0's own SetState call (r3 the root element, r4 the
+# presentation, r5 the slide: 1 hidden, 2 TopBoxOn, 3 TopBoxOff).
+[[midasm_hook]]
+name = "RefiiF3OverlayBarState"
+address = 0x82B3EAF0
+registers = ["r3", "r4", "r5"]
 
 # The interaction text box's commit (sub_82BEF428): its guard `lwz r11,4(r30)` with the resolved
 # text child r30 (`+44` + "1", else `+44`, 0x82BEF5B4 / 0x82BEF5D4) and the text r26 (0x82BEF44C)
@@ -1835,6 +2028,20 @@ name = "RefiiF3EpilogueScreenshot"
 address = 0x8276B78C
 registers = ["r1"]
 
+# The world map mode's enter: the receiver it is about to register, r4 at the instruction after the
+# choice of player one's or player two's (Fable3/src/hooks/src/map_input.cpp).
+[[midasm_hook]]
+name = "RefiiF3WorldMapReceiver"
+address = 0x824CC9C4
+registers = ["r4"]
+
+# The world map's action forwarder: what its own "a box is up" test answered, r3 after the call
+# (Fable3/src/hooks/src/map_input.cpp; named in the lever's log line).
+[[midasm_hook]]
+name = "RefiiF3WorldMapBoxGate"
+address = 0x824CDDA4
+registers = ["r3"]
+
 # The credits' positions at the roll's SetPosition calls (Fable3/src/hooks/src/headless_commit_hooks.cpp):
 # rows at init and tick, the logo sheet at init and as it scrolls.
 [[midasm_hook]]
@@ -1941,6 +2148,46 @@ name = "RefiiF3GuiWorldOpacity"
 address = 0x82957470
 registers = ["r3", "r4", "f1"]
 
+# THE SANCTUARY'S TABLE AS THE MODE KEEPS IT (Fable3/src/hooks/src/interaction_guiworld.cpp): each kept row
+# at its push (rows vector, row*), the cursor as stored (value, mode), each slot's P_Fill as stored (byte,
+# slot); stated only while the parser or the partner's copy fills a GUI world.
+
+# the parser's row reader sub_8295B5E8: `mr r3,r21; bl sub_8295DF88`.
+[[midasm_hook]]
+name = "RefiiF3GuiWorldRow"
+address = 0x8295B844
+registers = ["r3", "r4"]
+
+# the partner's copy sub_8295C038: `mr r3,r24; bl sub_8295DF88`.
+[[midasm_hook]]
+name = "RefiiF3GuiWorldRow"
+address = 0x8295C124
+registers = ["r3", "r4"]
+
+# the parser, past its clamped `stw r11,0x74(r31)` 0x8295B200 (a branch target).
+[[midasm_hook]]
+name = "RefiiF3GuiWorldCursor"
+address = 0x8295B204
+registers = ["r11", "r31"]
+
+# the partner's copy: `stw r11,0x74(r28)`.
+[[midasm_hook]]
+name = "RefiiF3GuiWorldCursor"
+address = 0x8295C220
+registers = ["r11", "r28"]
+
+# the slot reader sub_8295B338: `stb r3,0x14(r29)` (P_Fill).
+[[midasm_hook]]
+name = "RefiiF3GuiWorldFill"
+address = 0x8295B560
+registers = ["r3", "r29"]
+
+# the slot copy sub_8295BFA8: `stb r11,0x14(r31)`.
+[[midasm_hook]]
+name = "RefiiF3GuiWorldFill"
+address = 0x8295C000
+registers = ["r11", "r31"]
+
 [[midasm_hook]]
 name = "RefiiF3StateCommit"
 address = 0x826ECBCC
@@ -2014,9 +2261,307 @@ name = "RefiiF3SpellEnding"
 address = 0x8225E7E0
 registers = ["r29"]
 
+# THE SHOP'S AND THE PAWN SHOP'S FIELD STORES no call states (Fable3/src/hooks/src/commerce_stated_stores.cpp):
+# each store of the shop mode's state (+0xF8 / disc +0x140) and stealing-allowed byte (+0x105 / +0x14D), the
+# pawn-shop mode's state (+0x110 / +0x158) and stealing-allowed byte (+0x11A / +0x162), and the pawn shop's
+# display page (D+0x10) and category (D+0x14), with [value, object] before the store. The two builds' sites
+# are the same instructions in the same functions, one to one.
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B2E168
+registers = ["r30", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B2E578
+registers = ["r25", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B2E598
+registers = ["r27", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B3086C
+registers = ["r11", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B30E28
+registers = ["r28", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B30EC0
+registers = ["r11", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B312B4
+registers = ["r11", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B312E8
+registers = ["r11", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B31F24
+registers = ["r10", "r30"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B32138
+registers = ["r28", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopState"
+address = 0x82B335A0
+registers = ["r11", "r30"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopStealAllowed"
+address = 0x82B3561C
+registers = ["r11", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopStealAllowed"
+address = 0x82B35734
+registers = ["r5", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopStealAllowed"
+address = 0x82B35864
+registers = ["r8", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3ShopStealAllowed"
+address = 0x82B35954
+registers = ["r9", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnState"
+address = 0x82B36200
+registers = ["r30", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnState"
+address = 0x82B3794C
+registers = ["r11", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnState"
+address = 0x82B379B4
+registers = ["r11", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnState"
+address = 0x82B38850
+registers = ["r31", "r30"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnState"
+address = 0x82B3A4D8
+registers = ["r11", "r30"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnStealAllowed"
+address = 0x82B3623C
+registers = ["r30", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnStealAllowed"
+address = 0x82B3AE94
+registers = ["r11", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnStealAllowed"
+address = 0x82B3AFAC
+registers = ["r5", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnStealAllowed"
+address = 0x82B3B09C
+registers = ["r9", "r28"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnPage"
+address = 0x82A06DEC
+registers = ["r11", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnPage"
+address = 0x82A06DFC
+registers = ["r11", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnPage"
+address = 0x82B38210
+registers = ["r10", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnPage"
+address = 0x82B3821C
+registers = ["r11", "r31"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnCategory"
+address = 0x828CA914
+registers = ["r11", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnCategory"
+address = 0x828CA964
+registers = ["r11", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnCategory"
+address = 0x828CA98C
+registers = ["r28", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnCategory"
+address = 0x828CA7E0
+registers = ["r11", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnCategory"
+address = 0x828CA830
+registers = ["r11", "r29"]
+
+[[midasm_hook]]
+name = "RefiiF3PawnCategory"
+address = 0x828CA858
+registers = ["r28", "r29"]
+
 # Kore's load-time _R1 pass mis-binds after a CLOSURE that is a jump target; runtime compiles take the
 # plain forms (Fable3/src/hooks/src/mod_lua_hooks.cpp RefiiF3KoreSkipR1Pass).
 [[midasm_hook]]
 name = "RefiiF3KoreSkipR1Pass"
 address = 0x821FA978
 jump_address = 0x821FAAA8
+
+# THE AI'S DEFERRED BOT DELETES AND ITS PATHFINDER WORKER (Fable3/src/hooks/src/bot_flush_hooks.cpp):
+# title update 3's two changes, carried to this executable. The flush sub_821AD4A0 takes its blocking
+# enter (0x821AD53C) from the `bge` that picks it when the call came from the level unload, the save,
+# the save-game load or the level load (r12 the return address, `mflr r12` at 0x821AD4A0); both enters
+# arrive at 0x821AD540. The worker's pass sub_8238F9E8 goes past an entry's call (0x8238FBA4) when the
+# entry is no longer in the live queue, before `lwz r11,0(r3)` at 0x8238FB94.
+[[midasm_hook]]
+name = "RefiiF3BotFlushBlocks"
+address = 0x821AD4EC
+registers = ["r12"]
+jump_address_on_true = 0x821AD53C
+
+[[midasm_hook]]
+name = "RefiiF3BotFlushLocked"
+address = 0x821AD540
+
+[[midasm_hook]]
+name = "RefiiF3PathfinderUnqueued"
+address = 0x8238FB94
+registers = ["r3"]
+jump_address_on_true = 0x8238FBA4
+
+# The TopBox load's stores of GUIValues.HeldButtonUpdateSpeed and .ReleasedButtonUpdateSpeed (`stfs
+# f1,flt_835565AC` / `stfs f1,flt_835565B0` in sub_824B5A48): the two hold rates, stated to Godot with
+# `@TopBox.Held` (Fable3/src/hooks/src/topbox_answer.cpp).
+[[midasm_hook]]
+name = "RefiiF3TopBoxHeldRate"
+address = 0x824B5AB4
+registers = ["f1"]
+
+[[midasm_hook]]
+name = "RefiiF3TopBoxReleasedRate"
+address = 0x824B5ADC
+registers = ["f1"]
+
+# PLAYER TWO'S CAMERA MANAGER IN COUCH CO-OP (Fable3/src/hooks/src/coop_camera_hooks.cpp): the Player
+# ctor's shared-screen skip `beq` (r31 the Player) and SetupCamera's (r28 the Player) answered "build" for
+# key 2, and the manager ctor's Debug.ReloadCameras call (r31 the manager) skipped for player two's.
+[[midasm_hook]]
+name = "RefiiF3PartnerCamera"
+address = 0x8243B4E4
+registers = ["r31"]
+jump_address_on_true = 0x8243B4E8
+
+[[midasm_hook]]
+name = "RefiiF3PartnerCameraEntities"
+address = 0x8243BAF8
+registers = ["r28"]
+jump_address_on_true = 0x8243BAFC
+
+[[midasm_hook]]
+name = "RefiiF3PartnerCameraScripts"
+address = 0x8253AC00
+registers = ["r31"]
+jump_address_on_true = 0x8253AC04
+
+# THE OTHER SCREEN IS PLAYER TWO'S WHILE SPLIT (Fable3/src/hooks/src/coop_camera_readers.cpp): the other
+# screen's +0x46 `beq` (r4 the selector's holder) takes the live read for player two's holder, and each
+# two-screen test of its consumers answers "two screens" while each couch player has their own camera.
+# The hero marker's record update asks player two's view node's camera while split, after the scene
+# camera's `beq` (the record, the camera register; coop_player_icons.cpp).
+[[midasm_hook]]
+name = "RefiiF3PlayerIconCamera"
+address = 0x82196844
+registers = ["r25", "r29"]
+
+# Lua_GUI_SetShouldDrawPlayerIcons's send to the session's partner: skipped for a camera's statement
+# (coop_player_icons.cpp).
+[[midasm_hook]]
+name = "RefiiF3PlayerIconsStayHere"
+address = 0x8251C18C
+jump_address_on_true = 0x8251C1B0
+
+[[midasm_hook]]
+name = "RefiiF3OtherScreenIsHere"
+address = 0x8252FD0C
+registers = ["r4"]
+jump_address_on_true = 0x8252FD10
+
+# the LOD tier sub_821F2358's shared-screen `bne`
+[[midasm_hook]]
+name = "RefiiF3TwoScreens"
+address = 0x821F23B0
+jump_address_on_true = 0x821F23BC
+
+# the visibility test sub_821FE8D8's shared-screen `bne`
+[[midasm_hook]]
+name = "RefiiF3TwoScreens"
+address = 0x821FE9D4
+jump_address_on_true = 0x821FE9E4
+
+# the LOD centre's second point sub_82193D48's shared-screen `beq`
+[[midasm_hook]]
+name = "RefiiF3TwoScreens"
+address = 0x82193D70
+jump_address_on_true = 0x82193D74
+
+# the per-entity second slot sub_82209DB8's IsInLiveGame `beq`
+[[midasm_hook]]
+name = "RefiiF3TwoScreens"
+address = 0x82209DE0
+jump_address_on_true = 0x82209DE4
+
+# the biped mode sub_822347B8's IsInLiveGame `beq`
+[[midasm_hook]]
+name = "RefiiF3TwoScreens"
+address = 0x82234BA4
+jump_address_on_true = 0x82234BA8
+
+# the world update sub_821D6EB8's shared-screen `beq` (disc only)
+[[midasm_hook]]
+name = "RefiiF3TwoScreens"
+address = 0x821D6FA4
+jump_address_on_true = 0x821D6FA8
+
+# THE JOIN CANCELLED at the joining player's save choice (Fable3/src/hooks/src/character_binding_hooks.cpp):
+# past the walk, after its name vector is freed, the join returns 0 as its sign-in Cancel does.
+[[midasm_hook]]
+name = "RefiiF3JoinCancelled"
+address = 0x8243A588
+jump_address_on_true = 0x8243A2B0

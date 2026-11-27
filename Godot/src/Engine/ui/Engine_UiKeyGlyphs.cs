@@ -32,7 +32,8 @@ namespace Refii.Ui;
 /// a keycap, so the atlas cells and the animated strips keep their UVs. The atlas quads show their
 /// keycap texture while <c>ui_keyboard_mode</c> is set — set whenever a face button is not the
 /// shipped art. Proxies are shared textures: they follow ONE player's device, the one with the
-/// input (<see cref="GlyphPlayer"/>, <see cref="PadFamily"/>).
+/// input (<see cref="GlyphPlayer"/>, <see cref="PadFamily"/>); a surface that is player two's alone
+/// takes player two's own set (Engine_UiKeyGlyphs.PlayerTwo.cs).
 ///
 /// Art that is not a texture — the pub games' SWF prompt shapes — makes the same choice per
 /// button (<see cref="PromptShowsShipped"/>) and, drawn, carries a keycap texture in its place.
@@ -97,6 +98,9 @@ public static partial class Engine_UiKeyGlyphs
 
 		/// <summary>A stick or D-pad prompt's direction (`LeftUp`), else none.</summary>
 		public Direction Arrow;
+
+		/// <summary>Player two's twin (Engine_UiKeyGlyphs.PlayerTwo.cs), drawn on first ask.</summary>
+		public ImageTexture? Two;
 	}
 
 	private static readonly Dictionary<string, Proxy> _proxies = new(StringComparer.Ordinal);
@@ -141,13 +145,22 @@ public static partial class Engine_UiKeyGlyphs
 	/// <summary>Bumped whenever <see cref="Update"/> redraws, for a view that chooses between the shipped art and a glyph.</summary>
 	public static int Generation { get; private set; }
 
-	/// <summary>The keycap a quad carries for <paramref name="button"/> — one object per button.</summary>
+	/// <summary>
+	/// The keycap a quad carries for <paramref name="button"/> — one object per button and set: player
+	/// two's inside a player-two surface (<see cref="Surface"/>).
+	/// </summary>
 	public static ImageTexture KeycapFor(string button)
 	{
+		if (SurfacePlayer == 2)
+		{
+			return KeycapTwo(button);
+		}
+
 		if (!_keycaps.TryGetValue(button, out ImageTexture? keycap))
 		{
 			keycap = Engine_TextureUpload.CreateTexture(Keycap(button));
 			_keycaps[button] = keycap;
+			_keycapButtons[keycap.GetInstanceId()] = button;
 		}
 
 		return keycap;
@@ -295,7 +308,7 @@ public static partial class Engine_UiKeyGlyphs
 	{
 		var canvas = new Canvas(KeycapSize, KeycapSize);
 		var cell = new Rect2I(0, 0, KeycapSize, KeycapSize);
-		if (Engine_UiInputMode.Keycaps)
+		if (DrawnKeys(Engine_UiInputMode.Keycaps))
 		{
 			string label = LabelFor?.Invoke(button) ?? button;
 			if (!BlitPack(canvas, cell, KeyPackName(label)))
@@ -459,7 +472,8 @@ public static partial class Engine_UiKeyGlyphs
 
 	/// <summary>
 	/// The texture to hand out for a path: a proxy for a button glyph, the texture itself for
-	/// anything else.
+	/// anything else. Always the shared set's; a loader hands a surface its own through
+	/// <see cref="ForSurface"/>.
 	/// </summary>
 	public static Texture2D Wrap(string virtualPath, Texture2D original)
 	{
@@ -506,6 +520,7 @@ public static partial class Engine_UiKeyGlyphs
 		};
 		RegisterSourceImage(proxy.Texture, initial);
 		_proxies[key] = proxy;
+		_byTexture[proxy.Texture.GetInstanceId()] = proxy;
 
 		// The enhancer swaps a sharper image into the original later; the pad art follows it.
 		// (A drawn glyph keeps itself — it is redrawn on the next switch.)
@@ -514,6 +529,11 @@ public static partial class Engine_UiKeyGlyphs
 			if (!Engine_UiInputMode.Keycaps && ShowsShipped(proxy.Button))
 			{
 				Draw(proxy, Engine_UiInputMode.Keycaps);
+			}
+
+			if (proxy.Two is not null && DrawTwo(() => ShowsShipped(proxy.Button)))
+			{
+				RedrawTwin(proxy);
 			}
 		};
 
@@ -526,6 +546,11 @@ public static partial class Engine_UiKeyGlyphs
 	/// </summary>
 	public static void Update()
 	{
+		if (UpdateTwo())
+		{
+			++Generation;
+		}
+
 		bool keys = Engine_UiInputMode.Keycaps;
 		var hash = new HashCode();
 		hash.Add(keys);
@@ -875,7 +900,7 @@ public static partial class Engine_UiKeyGlyphs
 			return Engine_PadRemap.FromGlyphButton(button);
 		}
 
-		PadInput? shown = Engine_PadRemap.For(GlyphPlayer).Shown(game);
+		PadInput? shown = Engine_PadRemap.For(DrawnPlayer).Shown(game);
 		unbound = shown is null;
 		return shown;
 	}
@@ -883,14 +908,14 @@ public static partial class Engine_UiKeyGlyphs
 	/// <summary>Whether the pad prompt for <paramref name="button"/> is the shipped Xbox art.</summary>
 	private static bool ShowsShipped(string button)
 	{
-		if (Style != GlyphStyle.Xbox)
+		if (DrawnStyle != GlyphStyle.Xbox)
 		{
 			return false;
 		}
 
 		PadInput? physical = PhysicalFor(button, out bool unbound);
 		bool alone = !unbound && physical == Engine_PadRemap.FromGlyphButton(button);
-		return alone && KeepsShippedArt(false, Style, alone,
+		return alone && KeepsShippedArt(false, DrawnStyle, alone,
 			Engine_UiGlyphPack.Find(PackName, PadPackName(physical, Direction.None)) is not null);
 	}
 
@@ -919,8 +944,8 @@ public static partial class Engine_UiKeyGlyphs
 			return;
 		}
 
-		bool ps5 = PadFamily == ControllerFamily.PlayStation5;
-		DrawPadGlyph(canvas, cell, new PadGlyph(physical, arrow, button is "LS" or "RS"), Style, ps5);
+		bool ps5 = DrawnFamily == ControllerFamily.PlayStation5;
+		DrawPadGlyph(canvas, cell, new PadGlyph(physical, arrow, button is "LS" or "RS"), DrawnStyle, ps5);
 	}
 
 	/// <summary>A pad input's file name in a pack (see <see cref="Engine_UiGlyphPack"/>).</summary>

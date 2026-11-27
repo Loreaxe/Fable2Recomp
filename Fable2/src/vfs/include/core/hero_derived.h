@@ -11,26 +11,20 @@
 namespace refii::vfs {
 
 
-/// The world map's region info page for one region. Fields are strings: the guest's providers
-/// (`sub_823C6C18` and siblings, `(LHString* out, LHString* regionName)`) format them.
+/// The world map's minimap keys for one region (SampleWorldMapRegion): what the minimap fill
+/// `sub_829ABFC0` keys its `MinimapInfo` record and art on. The region info page is its own fill's
+/// statement (page_fills_stated.cpp).
 struct WorldMapRegion {
     bool known = false;
 
-    /// Which region this sample is of; the pump answers a tick late.
+    /// Which region this sample is of — the guest's region walk `sub_82518330`'s index, the row's id
+    /// less 999; the pump answers a tick late.
     uint32_t index = 0xFFFFFFFFu;
-    char name[64] = {};
-    char distance[64] = {};
-    char travel[64] = {};
-    char fine[32] = {};
-    char owned[32] = {};
-    char chests[32] = {};
-    char digspots[32] = {};
-    char divespots[32] = {};
-    char gargoyles[32] = {};
-    char silver_keys[32] = {};
-    char merchants[512] = {};
 
-    /// How many regions the list holds, so a host can bound its cursor.
+    /// The region record's name, the narrow key `sub_82519DF8` matches regions by.
+    char name[64] = {};
+
+    /// How many regions the walk holds, so a host can bound its cursor.
     uint32_t count = 0;
 
     /// The region's FIRST LEVEL (`**(region+16)`), what the world map's minimap page keys the
@@ -44,10 +38,6 @@ struct WorldMapRegion {
     /// `World_LookupLevelNameByKey(World, level_key)`, empty when the world names no scenario
     /// for it (the page then uses "DefaultScenario").
     char scenario[64] = {};
-
-    /// Economy as filled stars: `sub_8246FE20`'s return, before the guest's `+1` slide index.
-    /// -1 when not sampled.
-    int32_t stars = -1;
 };
 
 /// One completed quest for the logbook page. Row key is `index + 1000` into the list
@@ -148,60 +138,9 @@ inline void PublishQuests(const QuestEntry* entries, uint32_t count) {
 
 uint32_t QuestSnapshot(QuestEntry* out, uint32_t capacity);
 
-/// ONE FAMILY MEMBER, as the world map's `Family` category lists them.
-///
-/// The guest's collector `sub_8246F020` builds a vector of 52-byte records carrying a great deal
-/// more — a 64-bit entity UID at `record+0`, two fast-travel graph answers at `+20`/`+24`, three
-/// mood bands and an event line. The world-map ROW uses exactly one of them: `sub_829A42C8`
-/// walks the vector from `begin + 8` in steps of 52 and passes only that field, so the name is
-/// all this carries.
-/// ONE FAMILY MEMBER, as the family PAGE reads them.
-///
-/// `sub_8246F020` builds 52-byte records and `sub_829B04E0` — the page filler — takes ten
-/// already-formatted `LHString`s straight off fixed offsets and one lookup. Every one of these
-/// is the guest's own sentence: the mood bands, the upkeep figures and the two fast-travel
-/// answers are computed into the record when it is built, so nothing here is re-derived.
-///
-///     +8  PageTitle        +12 Group.ChildrenNames    +16 the level (-> region)
-///     +20 DistanceAmount   +24 TravelAmount           +28 Note
-///     +32 DailyUpkeep      +36 TotalUpkeep            +40 OverallHappiness
-///     +44 HomeHappiness    +48 UpkeepHappiness
-struct FamilyMember {
-    char name[64] = {};
-    char children[64] = {};
-
-    /// `sub_82518490(regionMgr, record+16)` — a TAG, like the job page's region line.
-    char region[64] = {};
-    char distance[64] = {};
-    char travel[64] = {};
-
-    /// The member's event line, which is a sentence rather than a figure.
-    char note[192] = {};
-    char daily_upkeep[64] = {};
-    char total_upkeep[64] = {};
-    char happiness[64] = {};
-    char home_happiness[64] = {};
-    char upkeep_happiness[64] = {};
-
-    /// The A-button prompt's Babel TAG, or empty when the guest hides the button.
-    /// `sub_82470A78`'s tree — the FAMILY one, which uses `sub_82470FE8` where the jobs page's
-    /// `sub_824708D8` uses `sub_82470F80`.
-    char prompt[64] = {};
-};
-
-constexpr uint32_t kMaxFamilyMembers = 32;
-inline void PublishFamily(const FamilyMember* members, uint32_t count) {
-  refii_bridge_publish_family(members, count);
-}
-
-uint32_t FamilySnapshot(FamilyMember* out, uint32_t capacity);
-
-/// THE REAL ESTATE SCREEN'S ONE BUILDING — screen 28.
-///
-/// Its left column is a list of COMMANDS (Buy, Sell, Rent Out, Evict...), not of properties:
-/// there is exactly one building, resolved when the screen opens, and no selection-change event
-/// to hook. So this is a single record rather than a list, and it is sampled while the screen
-/// stands.
+/// ONE BUILDING'S REAL-ESTATE NUMBERS, for the world map's property row (SamplePropertyEstate):
+/// the remaster's map properties have no guest page, so the guest's providers answer for the
+/// building the host names. Screen 28 itself is stated by its page fills (page_fills_stated.cpp).
 ///
 /// WHAT CROSSES IS DATA, NOT PRESENTATION. Every number here is the guest's own answer —
 /// `sub_8282AEB0` (value), `sub_8282C1C0` (economy), `sub_8282C110` (income), `sub_8282BCA0`
@@ -263,35 +202,6 @@ struct RealEstate {
     uint32_t bonuses_record = 0;
 };
 
-inline void PublishRealEstate(const RealEstate& estate) {
-  refii_bridge_publish_real_estate(&estate);
-}
-
-RealEstate RealEstateSnapshot();
-
-/// THE UPGRADE-FURNITURE SCREEN'S PIECE (screen 26) — the targeted entity's component 68
-/// (`CECUpgradeableFurniture`), reached as the real-estate screen reaches its building (hero
-/// component 77, `vtbl[0x44]`). The page fillers `sub_8299B6D8` / `sub_8299C710` derive every
-/// number from these: the per-level value delta `sub_825CBFC8` (+12 gate, +16 installed,
-/// +20 kind, +28..+32 the values), the building's multiplier `sub_825CC900` (the owner's
-/// component 64 → its entity → component 67 `+116`), and the unlock item / card by `+44` type.
-struct Furniture {
-    bool known = false;
-    bool gate = false;          // +12
-    int32_t installed = 0;      // +16
-    int32_t kind = 0;           // +20
-    int32_t type = 0;           // +44, index into the `<Type>Level` name table
-    int32_t count = 0;          // values in +28..+32, at most 8 carried
-    int32_t values[8] = {};
-    float multiplier = 0.0f;    // building comp67 +116
-};
-
-inline void PublishFurniture(const Furniture& furniture) {
-  refii_bridge_publish_furniture(&furniture);
-}
-
-Furniture FurnitureSnapshot();
-
 /// THE CO-OP SCREEN'S STATE (screen 24, ctor `sub_82434DD8`) — what its writers decide from,
 /// read off the screen object and the session as plain data. The host composes every caption,
 /// slide and opacity from these by the writers' own rules (`sub_82439988` buttons,
@@ -315,35 +225,6 @@ struct CoopScreen {
     int32_t profile_right = 0;      // scr+260 widget +56
 };
 
-/// THE SHOP'S FRONT PAGE (screen 22), as its one-time writer `sub_82991800` computes it — the
-/// guest's own helpers called on the guest thread, their answers published as data. Keys are
-/// Babel TEXT KEYS (narrow); the keeper's name is display text already.
-struct ShopFront {
-    bool known = false;
-    bool trader = false;            // sub_828738D8(shop)
-    bool crier = false;             // keeper component 26 +156 == 31
-    char name_key[96] = {};         // sub_82873980
-    char anecdote_key[96] = {};     // sub_82873B48
-    float stars = 0.0f;             // sub_8296FAA0(econ)
-    float wealth = 1.0f;            // sub_8296C170(econ) * *(econ+36)
-    bool has_keeper_name = false;
-    char keeper_name[128] = {};     // sub_823A8148(keeper comp20), UTF-8
-    bool owner = false;             // sub_82873D20(shop, hero, &discount)
-    float owner_discount = 1.0f;
-    char title_key[96] = {};        // sub_824D8A10(hero comp57)
-    float love = 1.0f, hate = 1.0f, fear = 1.0f;  // sub_82873F18
-    float special = 1.0f;           // *(shop+12)
-    bool sale_known = false;        // sub_8296FEF8(econ, &factor, &days)
-    float sale_factor = 1.0f;
-    int32_t sale_days = -1;
-};
-
-inline void PublishShopFront(const ShopFront& front) {
-  refii_bridge_publish_shop_front(&front);
-}
-
-ShopFront ShopFrontSnapshot();
-
 inline void PublishCoopScreen(const CoopScreen& coop) {
   refii_bridge_publish_coop_screen(&coop);
 }
@@ -362,88 +243,6 @@ inline void PublishPropertyEstate(uint64_t uid, const RealEstate& estate) {
 
 /// The last answer and the UID it is for.
 RealEstate PropertyEstateSnapshot(uint64_t* uid);
-
-/// ONE JOB'S JOURNEY — the world map's job page.
-///
-/// `sub_829AFE58` fills `Lines.DistanceAmount` and `Lines.TravelAmount` by handing the quest's
-/// `ObjectiveLevel` to the SAME two providers the region page uses — `sub_823C9000` and
-/// `sub_823C8BE0` — and that LHString is inline on the quest at `+132`, so `quest+132` is
-/// already the handle address they take.
-///
-/// It passes `0` as the travel provider's third argument where the region page passes `1`, and
-/// `sub_823C8CE0` appends nothing for a whole-hour count of zero — so a job under an hour away
-/// legitimately shows an empty travel time. That is the guest's own behaviour, kept.
-struct QuestTravel {
-    bool known = false;
-
-    /// The quest this answers for; the pump replies a tick late, so a page must check.
-    uint32_t record = 0;
-    char distance[64] = {};
-    char travel[64] = {};
-
-    /// The objective level's REGION, as the narrow tag the page sets with `sub_82425F40`.
-    /// `sub_82518490` finds it by walking the region container for the one that owns the
-    /// level; the tag is the region object's own word 0.
-    char region[64] = {};
-
-    /// The A-button prompt's Babel TAG, or empty when the guest hides the button outright.
-    /// `sub_824708D8` picks between three tags and a hidden button off four guest predicates,
-    /// so the pump runs them rather than the host guessing at travel state.
-    char prompt[64] = {};
-
-    /// "Time Remaining", already worded. `GUI_SHARED_X_DAYS` is a PRINTF format string, not a
-    /// `%1` template — `sub_823C9228` formats the number with `sub_823B0900` and hands both to
-    /// `sub_82B3F250`. Substituting `%1` into it host-side left the format string on screen.
-    char days[64] = {};
-};
-
-/// Which quest the host wants a journey for; the pump answers for that one only.
-void RequestQuestTravel(uint32_t record);
-inline uint32_t RequestedQuestTravel() {
-  return refii_bridge_requested_quest_travel();
-}
-
-inline void PublishQuestTravel(const QuestTravel& travel) {
-  refii_bridge_publish_quest_travel(&travel);
-}
-
-QuestTravel QuestTravelSnapshot();
-
-/// ONE SHOP ROW'S ASKING PRICE.
-///
-/// What a shop CHARGES is not the item's worth: `sub_82992F90` — the guest's own price display
-/// — takes the shopkeeper's `CECShopkeeper` (component 27) and calls `sub_828727B8` for a buy
-/// row (event 30) or `sub_82872910` for a sell row (0x82993144..0x82993150). Both weight a base
-/// price by the shopkeeper's opinion axes and the shop's wealth, so there is no markup ratio to
-/// reproduce. Answered by the pump (`SampleShopPrice`) for the keeper the shop opener was handed.
-struct ShopPrice {
-    bool known = false;
-
-    /// The row this answers for — a per-population TICKET, never a record hash.
-    uint32_t ticket = 0;
-    int32_t price = 0;
-
-    /// The item's GDB record: `*(*holder + 4)`, the lazy ref `sub_8296B310` resolves with
-    /// `sub_821B24F8` to read `BasePrice`. Zero when the ticket did not resolve.
-    uint32_t record = 0;
-};
-
-void RequestShopPrice(uint32_t ticket, bool sell);
-
-inline uint32_t RequestedShopPrice(bool* sell) {
-  int32_t selling = 0;
-  const uint32_t ticket = refii_bridge_requested_shop_price(&selling);
-  if (sell != nullptr) {
-    *sell = selling != 0;
-  }
-  return ticket;
-}
-
-inline void PublishShopPrice(const ShopPrice& price) {
-  refii_bridge_publish_shop_price(&price);
-}
-
-ShopPrice ShopPriceSnapshot();
 
 /// Which region the host wants sampled; the pump answers for that one only.
 void RequestWorldMapRegion(uint32_t index);

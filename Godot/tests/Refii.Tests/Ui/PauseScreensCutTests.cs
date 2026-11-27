@@ -115,7 +115,7 @@ public class PauseScreensCutTests
 	}
 
 	/// <summary>
-	/// The gift list's Gold row stands only while the giver has gold (`ble` at 0x82430A80), and
+	/// The gift list's Gold row is the guest's own (no authored row), and
 	/// decoration's Y is the take-down of the guest's own code 39 arm (`sub_826B7770` case 13), posted
 	/// as the ported screen's lever.
 	/// </summary>
@@ -123,14 +123,8 @@ public class PauseScreensCutTests
 	public void GiftGoldAndDecorationRemoveFollowTheGuest()
 	{
 		Engine_UiTemplateSet authored = Fable2UiTemplates.AuthoredDefaults();
-		Engine_UiMenuEntry gold = authored.Menus["GiftGivingMenu"].Entries.Single(e => e.Name == "Gold");
-		AssertThat(gold.When).IsEqual(Engine_UiRowConditions.HasGold);
-		AssertThat(Engine_UiRowConditions.Game.Contains(Engine_UiRowConditions.HasGold)).IsTrue();
-
-		AssertThat(Engine_UiRowConditions.Holds(gold.When,
-			new Dictionary<string, bool> { [Engine_UiRowConditions.HasGold] = false })).IsFalse();
-		AssertThat(Engine_UiRowConditions.Holds(gold.When,
-			new Dictionary<string, bool> { [Engine_UiRowConditions.HasGold] = true })).IsTrue();
+		// The Gold row is the guest's own (lhGuiGiftGoldScreen_PopulateMenu, 0x82430AD0): no authored row.
+		AssertThat(authored.Menus["GiftGivingMenu"].Entries.Any(e => e.Name == "Gold")).IsFalse();
 
 		AssertThat(authored.Screens[27].FlipAction).IsEqual(Fable2UiVerbs.DecorationTakeDownAction);
 		AssertThat(authored.Screens[25].FlipAction).IsEqual(string.Empty);

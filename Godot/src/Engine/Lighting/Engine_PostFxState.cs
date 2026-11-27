@@ -47,6 +47,9 @@ public static class Engine_PostFxState
     public const int TrapHitPrev = TrapPrevMean + 3;
     public const int Floats = TrapPrevMean + 4;
     public const int Bytes = Floats * sizeof(float);
+    /// <summary>The tone history a co-op view hands on (Engine_PostFxEffect.Continue): everything before the
+    /// flicker trap's scalars, which belong to the chain that measured them.</summary>
+    public const int ToneBytes = TrapPrevMean * sizeof(float);
 
     public static readonly string[] FieldNames =
     {

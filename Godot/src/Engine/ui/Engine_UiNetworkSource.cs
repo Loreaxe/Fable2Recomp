@@ -152,7 +152,7 @@ public static class Engine_UiNetworkSource
 		var rows = new List<Engine_UiMenuSources.Row>();
 		if (ModsRoot.Length == 0)
 		{
-			Placeholder(rows, "mods", "No mods folder found");
+			Placeholder(rows, "mods", Words("REFII_MP_MODS_NO_FOLDER"));
 			return rows;
 		}
 
@@ -164,7 +164,7 @@ public static class Engine_UiNetworkSource
 		catch (System.Exception)
 		{
 			// The panel writes this file; a half-written one is not worth a dead screen.
-			Placeholder(rows, "mods", "The mod load order could not be read");
+			Placeholder(rows, "mods", Words("REFII_MP_MODS_UNREADABLE"));
 			return rows;
 		}
 
@@ -177,7 +177,7 @@ public static class Engine_UiNetworkSource
 			rows.Add(Row($"{ModRowPrefix}{mod}", title, $"{CommandPrefix}mod:{mod}", ghosted: !present));
 		}
 
-		Placeholder(rows, "mods", ModsRoot.Length == 0 ? "No mods folder found" : "No Mods");
+		Placeholder(rows, "mods", Words(ModsRoot.Length == 0 ? "REFII_MP_MODS_NO_FOLDER" : "REFII_MP_NO_MODS"));
 		return rows;
 	}
 
@@ -234,14 +234,8 @@ public static class Engine_UiNetworkSource
 		foreach (NetBridge.Friend friend in FriendList())
 		{
 			string name = friend.DisplayName.Length == 0 ? Named(friend.PeerId) : friend.DisplayName;
-			string state = friend.Joinable
-				? (friend.TitleName.Length == 0 ? "in a game" : $"in {friend.TitleName}")
-				: friend.Online ? "online" : "offline";
-
-			if (friend.Online && friend.Status.Length != 0)
-			{
-				state += $" — {friend.Status}";
-			}
+			string state = Engine_UiNetworkWords.FriendState(
+				friend.Joinable, friend.Online, friend.TitleName, friend.Status);
 
 			rows.Add(Row(
 				$"friend:{friend.PeerId}",
@@ -251,7 +245,7 @@ public static class Engine_UiNetworkSource
 		}
 
 
-		Placeholder(rows, "friends", Refii.Text.Engine_OwnWords.Say("REFII_MP_NO_FRIENDS"));
+		Placeholder(rows, "friends", Words("REFII_MP_NO_FRIENDS"));
 		return rows;
 	}
 
@@ -269,7 +263,7 @@ public static class Engine_UiNetworkSource
 				? name
 				: Named(peer);
 			// "Sent" was the node taking it; this is the other side's acknowledgement.
-			_declinedSays = $"Your friend request reached {who}.\n\nThey appear under Friends once they accept.";
+			_declinedSays = Words("REFII_MP_REQUEST_REACHED", who);
 		}
 
 		foreach (NetBridge.Notice notice in NetBridge.Notices())
@@ -279,9 +273,10 @@ public static class Engine_UiNetworkSource
 				: Named(notice.PeerId);
 			_declinedSays = notice.Kind switch
 			{
-				NetBridge.Notice.InviteFailed => $"Your invitation to {who} could not be delivered.\n\nThey may be offline; invite them again.",
-				NetBridge.Notice.JoinTimedOut => $"{who} did not answer the join.\n\nTry again once they are in a game.",
-				_ => notice.Message.Length == 0 ? "RexNet reported an error." : notice.Message,
+				NetBridge.Notice.InviteFailed => Words("REFII_MP_INVITE_UNDELIVERED", who),
+				NetBridge.Notice.JoinTimedOut => Words("REFII_MP_JOIN_UNANSWERED", who),
+				// The node's own message is drawn as it gave it.
+				_ => notice.Message.Length == 0 ? Words("REFII_MP_NET_ERROR") : notice.Message,
 			};
 		}
 
@@ -290,7 +285,7 @@ public static class Engine_UiNetworkSource
 			string who = _sentNames.TryGetValue(peer, out string? name) && name.Length != 0
 				? name
 				: Named(peer);
-			_declinedSays = $"{who} declined your friend request.\n\nYou can ask again.";
+			_declinedSays = Words("REFII_MP_REQUEST_DECLINED", who);
 		}
 
 		var rows = new List<Engine_UiMenuSources.Row>();
@@ -304,30 +299,29 @@ public static class Engine_UiNetworkSource
 		{
 			string who = Engine_UiJoinRequests.Who(ask);
 			rows.Add(Row(
-				$"joinask:{ask.UserId}", $"{who} asks to join your game",
+				$"joinask:{ask.UserId}", Words("REFII_MP_ASKS_TO_JOIN", who),
 				$"{CommandPrefix}join-allow:{ask.UserId}"));
 			rows.Add(Row(
-				$"joindeny:{ask.UserId}", "    Decline", $"{CommandPrefix}join-deny:{ask.UserId}"));
+				$"joindeny:{ask.UserId}", Words("REFII_MP_DECLINE"), $"{CommandPrefix}join-deny:{ask.UserId}"));
 		}
 
 		foreach (NetBridge.Request request in NetBridge.Requests())
 		{
 			// A REQUEST IS THE ONE PLACE A STRANGER'S OWN NAME IS SHOWN (RexNet §17.3.8: without it
 			// a request is undecidable), and it is shown as theirs, self-named, not as a verified name.
-			string name = request.DisplayName.Length == 0
-				? Named(request.PeerId)
-				: $"\"{request.DisplayName}\" (self-named)";
-			string label = request.Note.Length == 0 ? name : $"{name} — \"{request.Note}\"";
+			bool selfNamed = request.DisplayName.Length != 0;
+			string label = Engine_UiNetworkWords.RequestLabel(
+				selfNamed ? request.DisplayName : Named(request.PeerId), selfNamed, request.Note);
 			rows.Add(Row(
 				$"request:{request.PeerId}", label, $"{CommandPrefix}accept:{request.PeerId}"));
 			// THE OTHER ANSWER, as its own row. A request the player does not want is kept by
 			// the node across runs now, so it needs a way out that is not "accept".
 			rows.Add(Row(
-				$"dismiss:{request.PeerId}", "    Dismiss", $"{CommandPrefix}dismiss:{request.PeerId}"));
+				$"dismiss:{request.PeerId}", Words("REFII_MP_DISMISS"), $"{CommandPrefix}dismiss:{request.PeerId}"));
 		}
 
 
-		Placeholder(rows, "requests", Refii.Text.Engine_OwnWords.Say("REFII_MP_NO_REQUESTS"));
+		Placeholder(rows, "requests", Words("REFII_MP_NO_REQUESTS"));
 		return rows;
 	}
 
@@ -341,12 +335,12 @@ public static class Engine_UiNetworkSource
 		{
 			rows.Add(Row(
 				$"invite:{invite.PeerId}",
-				$"{Named(invite.PeerId)} invited you",
+				Words("REFII_MP_INVITED_YOU", Named(invite.PeerId)),
 				$"{CommandPrefix}accept-invite:{invite.PeerId}"));
 		}
 
 
-		Placeholder(rows, "invites", Refii.Text.Engine_OwnWords.Say("REFII_MP_NO_INVITATIONS"));
+		Placeholder(rows, "invites", Words("REFII_MP_NO_INVITATIONS"));
 		return rows;
 	}
 
@@ -378,7 +372,7 @@ public static class Engine_UiNetworkSource
 			string name = friend.DisplayName.Length == 0 ? Named(friend.PeerId) : friend.DisplayName;
 			rows.Add(Row(
 				$"game:{friend.PeerId}",
-				$"{name}'s game",
+				Words("REFII_MP_GAME_OF", name),
 				$"{CommandPrefix}join:{friend.PeerId}"));
 		}
 
@@ -391,13 +385,13 @@ public static class Engine_UiNetworkSource
 
 			rows.Add(Row(
 				$"game:{session.HostPeerId}",
-				$"{Named(session.HostPeerId)} — {session.SlotsOpen}/{session.SlotsTotal} open",
+				Engine_UiNetworkWords.PublicGameRow(Named(session.HostPeerId), session.SlotsOpen, session.SlotsTotal),
 				$"{CommandPrefix}join:{session.HostPeerId}",
 				ghosted: session.SlotsOpen == 0));
 		}
 
 
-		Placeholder(rows, "games", Refii.Text.Engine_OwnWords.Say("REFII_MP_NO_GAMES"));
+		Placeholder(rows, "games", Words("REFII_MP_NO_GAMES"));
 		return rows;
 	}
 
@@ -462,7 +456,7 @@ public static class Engine_UiNetworkSource
 		var rows = new List<Engine_UiMenuSources.Row>();
 		if (NetBridge.HostState() is not { } state)
 		{
-			Placeholder(rows, "hosting", "Hosting is unavailable — RexNet is off");
+			Placeholder(rows, "hosting", Words("REFII_MP_HOSTING_OFF"));
 			return rows;
 		}
 
@@ -470,15 +464,9 @@ public static class Engine_UiNetworkSource
 		// admit test checks hosting FIRST and refuses before it ever looks at joinable.
 		// FABLE 3'S JOIN OPTIONS: Anyone, Invites only, No one — A steps to the next.
 		Engine_UiJoinRequests.JoinMode mode = Engine_UiJoinRequests.Mode;
-		string label = mode switch
-		{
-			Engine_UiJoinRequests.JoinMode.Anyone => "Who can join: Anyone",
-			Engine_UiJoinRequests.JoinMode.InvitesOnly => "Who can join: Invites only",
-			_ => "Who can join: No one",
-		};
 		rows.Add(Row(
 			"host:joinable",
-			state.Hosting ? label : label + " — no game is hosted yet",
+			Engine_UiNetworkWords.WhoCanJoin((int)mode, state.Hosting),
 			$"{CommandPrefix}joinmode:{(((int)mode + 1) % 3).ToString(System.Globalization.CultureInfo.InvariantCulture)}",
 			ghosted: !state.Hosting));
 
@@ -487,13 +475,13 @@ public static class Engine_UiNetworkSource
 		int status = Engine_UiJoinRequests.StatusIndex;
 		rows.Add(Row(
 			"host:status",
-			"My status: " + Engine_UiJoinRequests.Statuses[status],
+			Engine_UiNetworkWords.MyStatus(status),
 			$"{CommandPrefix}status:{((status + 1) % Engine_UiJoinRequests.Statuses.Length).ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
-		for (int i = 0; i < Engine_UiJoinRequests.Greetings.Length; ++i)
+		for (int i = 0; i < Engine_UiNetworkWords.GreetingCount; ++i)
 		{
 			rows.Add(Row(
 				$"host:greet{i + 1}",
-				"Send: " + Engine_UiJoinRequests.Greetings[i].Label,
+				Engine_UiNetworkWords.SendGreeting(i),
 				$"{CommandPrefix}greet:{(i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
 		}
 
@@ -541,10 +529,10 @@ public static class Engine_UiNetworkSource
 		{
 			return rowName switch
 			{
-				FriendsGroup => "Everyone who has added you, and what they are doing.",
-				RequestsGroup => "People asking to be your friend or to join your game. A accepts.",
-				InvitesGroup => "Games you have been invited to. A joins.",
-				_ => "Friends who are hosting, and any public games a search found.",
+				FriendsGroup => Words("REFII_MP_ABOUT_FRIENDS"),
+				RequestsGroup => Words("REFII_MP_ABOUT_REQUESTS"),
+				InvitesGroup => Words("REFII_MP_ABOUT_INVITES"),
+				_ => Words("REFII_MP_ABOUT_GAMES"),
 			};
 		}
 
@@ -563,13 +551,8 @@ public static class Engine_UiNetworkSource
 						continue;
 					}
 
-					string where = friend.TitleName.Length == 0 ? "a game" : friend.TitleName;
-					string stated = friend.Status.Length == 0 ? string.Empty : $"\"{friend.Status}\"\n\n";
-					return stated + (friend.Joinable
-						? $"In {where}, and hosting.\n\nA asks them for an invitation."
-						: friend.Online
-							? "Online, not in a game.\n\nA asks them for an invitation."
-							: "Offline.\n\nThey appear here again when they next play.");
+					return Engine_UiNetworkWords.FriendPage(
+						friend.Joinable, friend.Online, friend.TitleName, friend.Status);
 				}
 
 				// A game row can name a stranger's session off the last search.
@@ -577,81 +560,58 @@ public static class Engine_UiNetworkSource
 				{
 					if (session.HostPeerId == peer)
 					{
-						return session.SlotsOpen == 0
-							? $"A public game, full ({session.SlotsTotal} of {session.SlotsTotal} taken)."
-							: $"A public game, {session.SlotsOpen} of {session.SlotsTotal} open." +
-								(session.RequiresInvite ? "\n\nIt needs an invitation." : "\n\nA joins it.");
+						return Engine_UiNetworkWords.PublicGamePage(
+							session.SlotsOpen, session.SlotsTotal, session.RequiresInvite);
 					}
 				}
 
-				return "This player is no longer listed.";
+				return Words("REFII_MP_NOT_LISTED");
 
 			case "request":
 				foreach (NetBridge.Request request in NetBridge.Requests())
 				{
 					if (request.PeerId == peer)
 					{
-						return request.Note.Length == 0
-							? "Wants to be your friend.\n\nA accepts; the row below dismisses."
-							: $"\"{request.Note}\"\n\nA accepts; the row below dismisses.";
+						return Engine_UiNetworkWords.RequestPage(request.Note);
 					}
 				}
 
-				return "This request has been withdrawn.";
+				return Words("REFII_MP_REQUEST_WITHDRAWN");
 
 			case "dismiss":
-				return "Drops this request without answering it.\n\nThey are not told, and " +
-					"they can ask again.";
+				return Words("REFII_MP_ABOUT_DISMISS");
 
 			case "joinask":
-				return "Asked through Discord to join your game.\n\nA sends them the invite; the " +
-					"row below declines. Unanswered, the ask lapses on its own.";
+				return Words("REFII_MP_ABOUT_JOINASK");
 
 			case "joindeny":
-				return "Tells Discord no.\n\nThey can ask again.";
+				return Words("REFII_MP_ABOUT_JOINDENY");
 
 			case "invite":
-				return "You have been invited to this game.\n\nA joins it.";
+				return Words("REFII_MP_ABOUT_INVITE");
 
 			case "mod":
 				// THE AUTHOR'S OWN WORDS, from the package's mod.toml — each `{KEY}` in them resolved
-				// from the mod's text, as the row's title is (BuildMods).
+				// from the mod's text, as the row's title is (BuildMods); only the credit line is ours.
 				if (ModInfo(peer) is not { } meta)
 				{
-					return "This mod is enabled but its package is missing from the mods folder.";
+					return Words("REFII_MP_MOD_MISSING");
 				}
 
-				string author = Refii.Mods.ModText.Game(meta.Author);
-				string described = Refii.Mods.ModText.Game(meta.Description);
-				string by = author.Length == 0 ? string.Empty : $" by {author}";
-				string version = meta.Version.Length == 0 ? string.Empty : $"Version {meta.Version}{by}.";
-				string credit = version.Length != 0 ? version : by.Length != 0 ? $"By {author}." : string.Empty;
-				return described.Length == 0
-					? credit
-					: credit.Length == 0 ? described : $"{described}\n\n{credit}";
+				return Engine_UiNetworkWords.ModPage(
+					Refii.Mods.ModText.Game(meta.Description), meta.Version, Refii.Mods.ModText.Game(meta.Author));
 
 			case "none":
 				// THE PAGE AN EMPTY SECTION HAS: what fills it, written where the player is
 				// looking. Never a box — a box draws under the book and blocks it.
 				return peer switch
 				{
-					"mods" => "Mods are installed and ordered in the launcher's Mods panel.\n\n" +
-						"Anything enabled there is listed here, in load order — the first wins a conflict.",
-					"friends" => NetBridge.Available
-						? "No friends yet.\n\nGive someone your friend code from the row below, " +
-							"and once they add you they appear here with what they are playing."
-						: "RexNet is off, so there are no friends to list.\n\nTurn it on in the " +
-							"launcher's RexNet settings.",
-					"requests" => "Nobody has asked to be your friend.\n\nWhen someone adds you " +
-						"by your friend code, their request appears here to accept or dismiss.",
-					"invites" => "No invitations.\n\nWhen a friend invites you to their game it " +
-						"appears here, and accepting is how you join.",
-					"games" => NetBridge.Available
-						? "No games found.\n\nFriends who are hosting appear here on their own; " +
-							"choose Search again to look for public games."
-						: "RexNet is off, so there are no games to find.\n\nTurn it on in the " +
-							"launcher's RexNet settings.",
-					_ => "Nothing here yet.",
+					"mods" => Words("REFII_MP_NONE_MODS"),
+					"friends" => Words(NetBridge.Available ? "REFII_MP_NONE_FRIENDS" : "REFII_MP_NONE_FRIENDS_OFF"),
+					"requests" => Words("REFII_MP_NONE_REQUESTS"),
+					"invites" => Words("REFII_MP_NONE_INVITES"),
+					"games" => Words(NetBridge.Available ? "REFII_MP_NONE_GAMES" : "REFII_MP_NONE_GAMES_OFF"),
+					_ => Words("REFII_MP_NONE_OTHER"),
 				};
 
 			default:
@@ -708,28 +668,23 @@ public static class Engine_UiNetworkSource
 	/// <summary>What the page says about a row that is an action rather than a subject.</summary>
 	public static string ActionDetail(string rowName) => rowName switch
 	{
-		"host:status" =>
-			"What you are here for, shown to your friends beside your name.\n\nA steps to the next.",
-		_ when rowName.StartsWith("host:greet", System.StringComparison.Ordinal) =>
-			"A greeting your friends see wherever they are playing.\n\nA sends it.",
-		"Hosting" or "host:joinable" =>
-			"Who can join the game you are playing: anyone you are friends with, only someone you " +
-			"invite, or no one (asks to join are declined).\n\nA steps to the next.",
+		"host:status" => Words("REFII_MP_ABOUT_STATUS"),
+		_ when rowName.StartsWith("host:greet", System.StringComparison.Ordinal) => Words("REFII_MP_ABOUT_GREET"),
+		"Hosting" or "host:joinable" => Words("REFII_MP_ABOUT_JOINABLE"),
 		// A PENDING CONFIRM HOLDS THE PAGE until it is answered; a plain outcome fades back to
 		// the offer so the row does not keep shouting about a paste from minutes ago.
 		"AddFriend" => _addPending.Length != 0 || Godot.Time.GetTicksMsec() - _addAt < CopiedShownMs
 			? _addSays
 			: _declinedSays.Length != 0
 				? _declinedSays
-				: "Copy someone's friend code, then choose this.\n\nA reads your clipboard.",
+				: Words("REFII_MP_ADD_OFFER"),
 		// THE CODE ITSELF, on the page. It exists to be handed to someone, so a page that
 		// describes it without showing it is a page that does nothing; A copies it.
 		"MyCode" => NetBridge.Self() is { FriendCode.Length: > 0 } self
-			? $"{self.FriendCode}\n\n" + (Godot.Time.GetTicksMsec() - _copiedAt < CopiedShownMs
-				? "Copied to your clipboard."
-				: "A copies it to your clipboard.")
-			: "RexNet is not up, so there is no friend code yet.\n\n" +
-				"Turn it on in the launcher's RexNet settings.",
+			? $"{self.FriendCode}\n\n" + Words(Godot.Time.GetTicksMsec() - _copiedAt < CopiedShownMs
+				? "REFII_MP_CODE_COPIED"
+				: "REFII_MP_CODE_COPY")
+			: Words("REFII_MP_CODE_NONE"),
 		_ => string.Empty,
 	};
 
@@ -754,6 +709,9 @@ public static class Engine_UiNetworkSource
 
 	private static bool _saysHeld;
 
+	/// <summary>Whether the held outcome has been on its page: only a line the player saw is let go.</summary>
+	private static bool _saysShown;
+
 	/// <summary>The row whose page is up now — the page states it every frame.</summary>
 	public static string CurrentRow
 	{
@@ -765,6 +723,14 @@ public static class Engine_UiNetworkSource
 			if (value != "AddFriend" && _addPending.Length != 0)
 			{
 				_addPending = string.Empty;
+			}
+
+			// A HELD OUTCOME STAYS UNTIL THE CURSOR MOVES (the remark above). It was kept for good:
+			// a join's "Joining." still stood on the friend's page after that game had been played
+			// and quit, since nothing but the row name ever matched it again.
+			if (value != _saysRow)
+			{
+				ReleaseHeld();
 			}
 
 			_currentRow = value;
@@ -780,14 +746,38 @@ public static class Engine_UiNetworkSource
 		_says = text;
 		_saysAt = Godot.Time.GetTicksMsec();
 		_saysHeld = hold;
+		_saysShown = false;
+	}
+
+	/// <summary>
+	/// Lets a held outcome go once it has been on its page: the cursor left its row, or the book
+	/// was closed — by B, or by the game coming up when the join landed. A line held while no book
+	/// stood (a co-op refusal during the load) waits for the player to reach its row first.
+	/// </summary>
+	public static void ReleaseHeld()
+	{
+		if (!_saysHeld || !_saysShown)
+		{
+			return;
+		}
+
+		_saysHeld = false;
+		_saysShown = false;
+		_says = string.Empty;
 	}
 
 	/// <summary>The outcome standing on this row's page, or empty.</summary>
-	public static string Said(string rowName) =>
-		_says.Length != 0 && rowName == _saysRow &&
-		(_saysHeld || Godot.Time.GetTicksMsec() - _saysAt < SaidShownMs)
-			? _says
-			: string.Empty;
+	public static string Said(string rowName)
+	{
+		if (_says.Length == 0 || rowName != _saysRow ||
+			(!_saysHeld && Godot.Time.GetTicksMsec() - _saysAt >= SaidShownMs))
+		{
+			return string.Empty;
+		}
+
+		_saysShown = true;
+		return _says;
+	}
 
 	/// <summary>The tail of a peer id — enough to tell two strangers apart in a row.</summary>
 	/// <summary>
@@ -795,6 +785,14 @@ public static class Engine_UiNetworkSource
 	/// pseudonym, the same on every observer. The id's tail only when the node cannot say.
 	/// </summary>
 	private static string Named(string peerId) => NetBridge.PeerName(peerId) ?? Short(peerId);
+
+	/// <summary>
+	/// One of our own lines (<see cref="Refii.Text.Engine_OwnWords"/>; the keys are listed in
+	/// <see cref="Engine_UiNetworkWords.Keys"/>). Named apart from <see cref="Say"/>, which writes an outcome.
+	/// </summary>
+	private static string Words(string key) => Refii.Text.Engine_OwnWords.Say(key);
+
+	private static string Words(string key, params object[] args) => Refii.Text.Engine_OwnWords.Say(key, args);
 
 	private static string Short(string peerId) =>
 		peerId.Length <= 8 ? peerId : "…" + peerId[^8..];

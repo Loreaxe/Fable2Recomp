@@ -26,7 +26,6 @@ using refii::mods::StoreU32;
 // ---- UPGRADE FURNITURE (26; disc 25) — vtable 0x820CECEC / 0x820C18E8 ------------------------
 PPC_EXTERN_FUNC(rex_lhGuiCrimeScreen_OnMenuEvent);
 
-extern "C" uint8_t* RefiiGuestBase(void);
 extern "C" uint32_t refii_mod_player_hero(uint8_t* base, int32_t player);
 
 // ---- THE CRIME SCREEN (21; disc 20) — vtable 0x820CE068 / 0x820C0F28 -------------------------
@@ -38,17 +37,8 @@ extern "C" uint32_t refii_mod_player_hero(uint8_t* base, int32_t player);
 // (crime_screen_stated.cpp) and OnEnter. Same offsets on both builds. No slot body is shared with
 // another vtable.
 //
-// Three slots stay the guest's. OnEnter (TU1 0x826A8C78 / disc 0x825914F0) is the two row ghosts
-// (`sub_823DF660(21, "PayFine" | "CommunityService", !allowed, 0)`), the book and its pages' text
-// readers and the first-tick latch around one open sound, two formatter chunks and one slide. OnExit
-// (0x826A97C0 / 0x82592038) is the book's release. OnMenuEvent (0x826A92D8 / 0x82591B50, one stream on
-// both builds) is the screen's whole consequence and is the guest's to the instruction: type 50 behind
-// h+44, 51, and 52 behind h+45 (then safety on, `sub_823E0788(comp33 of the local hero, 1)`
-// 0x826A9658) post world message 42 / 43 / 44 — `sub_82279B80(bus, type, &position, sender, 0, 0x65, 0)`
-// 0x826A94FC — and leave, `ExitScreen(QM, 1)` 0x826A950C; a refused gate returns with the screen up;
-// 140 / 141 are two nav sounds; EVERY OTHER TYPE lands on that same exit with no message posted
-// (the jump table's default, 0x826A9500 / 0x82591D78), which leaves `behaviourguard.lua` polling the
-// three message types for good. That arm is the guest's and stays as it is.
+// Every slot but two is ported here; OnExit (TU1 0x826A97C0 / disc 0x82592038) is the book's release
+// (`b sub_829912B0` on h+68: each page's vf+8, a buffer free) and the dtor frees.
 //
 // THE SENDER. The guest posts the local player's hero (`sub_821C7CE0` → `sub_8229EE78`, 0x826A94D8 /
 // 0x826A94DC; the player map's key 1 on a hosting machine, else key 2), and the guard's script acts on
@@ -57,7 +47,7 @@ extern "C" uint32_t refii_mod_player_hero(uint8_t* base, int32_t player);
 // Ours files player two's on player two (RefiiCoopCrimeIsTheirs, coop_hero_hooks.cpp), and the arrest
 // states whose it is — `VillageCrimeManager.DisplayCrimeScreen` sets the pause root's owner with r4 =
 // (criminal == hero two) at 0x827D0078 / disc 0x82855960, just before it opens the screen. The sender
-// is that player's hero.
+// is that player's hero, handed to the post by the ported OnMenuEvent below.
 
 namespace {
 
@@ -76,22 +66,6 @@ uint32_t g_crime_arrested = 0u;
 // criminal is hero two.
 void RefiiCrimeArrested(PPCRegister& r4) { g_crime_arrest_stated = (r4.u32 & 0xFFu) != 0u ? 2u : 1u; }
 
-// The post's sender (r6, the local player's hero) at 0x826A94E4 / disc 0x82591D5C: player two's hero
-// when the arrest stated player two.
-void RefiiCrimeSender(PPCRegister& r6) {
-  uint8_t* base = RefiiGuestBase();
-  if (base == nullptr || g_crime_arrested != 2u) {
-    return;
-  }
-  const uint32_t two = refii_mod_player_hero(base, 2);
-  if (two != 0u && two != r6.u32) {
-    REXLOG_INFO("Refii crime screen: the arrest was player two's — the message is sent by hero two 0x{:08X} "
-                "(the local player's hero is 0x{:08X})",
-                two, r6.u32);
-    r6.u64 = two;
-  }
-}
-
 namespace refii::vfs {
 
 void CrimeScreenOpening() {
@@ -100,6 +74,55 @@ void CrimeScreenOpening() {
 }
 
 }  // namespace refii::vfs
+
+// OnEnter TU1 0x826A8C78 / disc 0x825914F0. Kept, in the guest's order:
+// `g_MenuFormatter:FadeOutBottomItemEarly()` and `g_MenuFormatter:FadeOutTopItemEarly()` on the book's
+// presentation (0x826A8CC0 / 0x826A8CF0; pres `*(*(G+56)+156)`, disc +152); the two row ghosts
+// `sub_823DF660(screen, "PayFine", h[44] == 0, 0)` and `(screen, "CommunityService", h[45] == 0, 0)`
+// (0x826A8D28 / 0x826A8D60; disc `sub_8283F948`), `screen` the crime screen's id — `li r3,0x15` on TU1,
+// `li r3,0x14` on disc (0x826A8D20 / 0x82591598); the three pages h+112, h+140, h+168 pushed
+// (`sub_82B49750` 0x826A8D8C / 0x826A8DA0 / 0x826A8DB4) and the book `sub_82990610(h+68, &pages,
+// 0x8349AD00, pres, 1)` (0x826A8DDC / 0x828CE060 with 0x83498C24), which runs each page's +4; h+109 = 0,
+// h+46 = 1 (the first-tick latch Update reads), h+196 = 9999999 (0x826A8E04..0x826A8E14). Dropped: the
+// open sound, `h` vf+4 (0x826A8C94), and the book's slide `sub_82990A98(h+68, pres, 1)` (0x826A8DF4 /
+// 0x828CE4E8: `lhGuiElement_GoToSlideAndRestart`, "SE_GUI_BLADE_SLIDE_IN" and the store book+40 = h+108
+// = 1, which only the book's own tick, scroll and slide read — none is called here any more).
+REX_EXTERN(rex_lhGuiCrimeScreen_OnEnter) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  const Scratch s = Claim(ctx);
+  const uint32_t pages = s.data;         // {?, begin, end, capacity}
+  const uint32_t item = s.data + 0x10u;  // the page pointer handed to the push
+  const uint32_t name = s.data + 0x14u;  // a row's name
+  const uint32_t pres = BookPresentation(base);
+
+  RunMenuLua(ctx, base, s.frame, s.data + 0x100u, "g_MenuFormatter:FadeOutBottomItemEarly()", pres);
+  RunMenuLua(ctx, base, s.frame, s.data + 0x100u, "g_MenuFormatter:FadeOutTopItemEarly()", pres);
+  const uint32_t screen = refii::guest::ScreenId(21u);
+  MakeString(ctx, base, s.frame, name, s.data + 0x40u, "PayFine");
+  Call(ctx, base, s.frame, 0x823DF660u, {screen, name, base[h + 44u] == 0u ? 1u : 0u, 0u});
+  DropString(ctx, base, s.frame, name);
+  MakeString(ctx, base, s.frame, name, s.data + 0x40u, "CommunityService");
+  Call(ctx, base, s.frame, 0x823DF660u, {screen, name, base[h + 45u] == 0u ? 1u : 0u, 0u});
+  DropString(ctx, base, s.frame, name);
+
+  for (uint32_t i = 0; i < 16u; i += 4u) {
+    StoreU32(base, pages + i, 0u);
+  }
+  for (uint32_t page : {0x70u, 0x8Cu, 0xA8u}) {
+    StoreU32(base, item, h + page);
+    Call(ctx, base, s.frame, 0x82B49750u, {pages, item});
+  }
+  Call(ctx, base, s.frame, 0x82990610u, {h + 0x44u, pages, Address(0x8349AD00u), pres, 1u});
+  base[h + 0x6Du] = 0u;
+  base[h + 0x2Eu] = 1u;
+  StoreU32(base, h + 0xC4u, 9999999u);
+  const uint32_t storage = LoadU32(base, pages + 4u);
+  if (storage != 0u) {
+    Call(ctx, base, s.frame, 0x8221BD38u, {storage});  // Render_FreeD3DObject
+  }
+  Said("crime (21)", "OnEnter", h, base[h + 44u], base[h + 45u]);
+}
 
 // Update TU1 0x826A8E28 / disc 0x825916A0. Kept: the guard's arrest line on the first tick — h+46 set
 // → cleared (0x826A8EDC); the guard `**(h+28)` alive (0x826A8F10) with its component 100
@@ -140,6 +163,66 @@ REX_EXTERN(rex_lhGuiCrimeScreen_Update) {
 REX_EXTERN(rex_lhGuiCrimeScreen_OnScreenAction) {
   REX_FUNC_PROLOGUE();
   Said("crime (21)", "OnScreenAction", ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+}
+
+// OnMenuEvent TU1 0x826A92D8 / disc 0x82591B50 (r4 the event, its type at +4; jump table 0x826A9310 /
+// 0x82591B88 on type − 50, 92 entries, read from both images: 50 → 0x826A9480, 51 → 0x826A9518, 52 →
+// 0x826A9520, 53..139 → 0x826A9500, 140 → 0x826A968C, 141 → 0x826A9660; out of range → 0x826A9500).
+// Kept to the instruction: 50 behind h+44 (`lbz r11,0x2C(r3); beq` → return, 0x826A9480) message 42; 51
+// message 43; 52 behind h+45 (0x826A9520) message 44 after the safety goes on — the local hero's
+// component 33 (0x826A9538..0x826A9648) and `sub_823E0788(comp33, 1)` (0x826A9658 / disc 0x823BF150);
+// then the post (0x826A9490..0x826A94FC): the local hero `sub_8229EE78(sub_821C7CE0(G))`, its position
+// `(*(*(hero+124))+64)(&pos, *(hero+124))` (0x826A94B8), the bus `*(*(*(GAME+88)+4)+16)`
+// (0x826A94C4..0x826A94D4), and `sub_82279B80(bus, message, &pos, sender, 0, 0x65, 0)` (0x826A94FC /
+// 0x82279A40) — sender the local hero (0x826A94E0 `mr r6,r3`), or player two's hero when the arrest
+// stated player two (THE SENDER, above); then `lhGuiManager_ExitScreen(QM, 1)` (0x826A950C). Every
+// other type but 140 / 141 is that exit alone (0x826A9500). Dropped: 140 / 141, `sub_82371E80(&ev, G,
+// "SE_GUI_SLIDE_MENU_UP" 0x83497DD8 / "_DOWN" 0x83497DDC, 0)` and its release (0x826A96A4 / 0x826A9678;
+// disc 0x82591F1C / 0x82591EF0).
+REX_EXTERN(rex_lhGuiCrimeScreen_OnMenuEvent) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  const uint32_t type = LoadU32(base, ctx.r4.u32 + 4u);
+  const Scratch s = Claim(ctx);
+  const uint32_t g = Gui(base);
+  Said("crime (21)", "OnMenuEvent", h, type, g_crime_arrested);
+  if (type == 140u || type == 141u) {
+    return;
+  }
+  if (type == 50u || type == 51u || type == 52u) {
+    if ((type == 50u && base[h + 0x2Cu] == 0u) || (type == 52u && base[h + 0x2Du] == 0u)) {
+      return;
+    }
+    if (type == 52u) {
+      const uint32_t hero = Call(ctx, base, s.frame, 0x8229EE78u, {Call(ctx, base, s.frame, 0x821C7CE0u, {g})});
+      const uint32_t comp33 = refii_mod_component(base, hero, 33u);
+      if (comp33 != 0u) {
+        Call(ctx, base, s.frame, 0x823E0788u, {comp33, 1u});
+      }
+    }
+    const uint32_t pos = s.data;  // the hero's position, 16 bytes
+    const uint32_t hero = Call(ctx, base, s.frame, 0x8229EE78u, {Call(ctx, base, s.frame, 0x821C7CE0u, {g})});
+    {
+      PPCContext work = ctx;
+      work.r1.u32 = s.frame;
+      work.r3.u32 = pos;
+      work.r4.u32 = LoadU32(base, hero + 124u);
+      refii::mods::CallGuest(work, base, LoadU32(base, LoadU32(base, work.r4.u32) + 64u));
+    }
+    const uint32_t bus = LoadU32(base, LoadU32(base, LoadU32(base, Game(base) + 88u) + 4u) + 16u);
+    uint32_t sender = Call(ctx, base, s.frame, 0x8229EE78u, {Call(ctx, base, s.frame, 0x821C7CE0u, {g})});
+    if (g_crime_arrested == 2u) {
+      const uint32_t two = refii_mod_player_hero(base, 2);
+      if (two != 0u && two != sender) {
+        REXLOG_INFO("Refii crime screen: the arrest was player two's — the message is sent by hero two 0x{:08X} "
+                    "(the local player's hero is 0x{:08X})",
+                    two, sender);
+        sender = two;
+      }
+    }
+    Call(ctx, base, s.frame, 0x82279B80u, {bus, type - 8u, pos, sender, 0u, 0x65u, 0u});
+  }
+  Call(ctx, base, s.frame, 0x8236ED98u, {LoadU32(base, Gui(base) + 28u), 1u});
 }
 
 // ---- THE LEVERS -----------------------------------------------------------------------------

@@ -170,6 +170,23 @@ Refii.player_save_hash(p, "my_mod.slot1", "0xce6b8e0f")
 local record = Refii.player_value_hash(p, "my_mod.slot1")   -- "0xce6b8e0f", or nil
 ```
 
+## A player's achievements
+
+Achievements are per character: each hero earns its own, and every unlock also counts on the profile's
+total. The machine that plays a hero states its unlocks on the co-op channel (the player store, key
+`refii.achievements`, a session text the core writes — read it through these calls, never write it), so
+both machines answer the same for either player, the online partner's hero included.
+
+| Lua | Godot |
+|---|---|
+| `Refii.achievement_unlocked(p, id)` → bool · `Refii.achievements(p)` → `"id,id,…"` (ascending, `""` for none) · `Refii.character_id(p)` → `"…"` (`""` before the game bound one) | `achievement_unlocked(p, id)` → bool · `achievements(p)` → `int[]` · `character_id(p)` → `String` |
+
+```lua
+if Refii.achievement_unlocked(2, 23) then   -- player two's hero is a Hero of Many Faces
+  ...
+end
+```
+
 ## Replicas and relayed events
 
 **Events the game runs on both machines.** Online, the game runs some seams twice for one

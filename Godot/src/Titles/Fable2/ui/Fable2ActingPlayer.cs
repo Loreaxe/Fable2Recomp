@@ -37,6 +37,18 @@ public static class Fable2ActingPlayer
 	public static int Answerer(int statedOwner, uint modalMode) =>
 		statedOwner == 2 || modalMode == 1 ? statedOwner : 0;
 
+	/// <summary>
+	/// The player the menu-owner tag names, 0 for none: while a menu is up, the player whose pad drives
+	/// it (<paramref name="inputOwner"/>, <see cref="Fable2Input.MenuOwner"/>) whenever one is stated;
+	/// through a box that states none (player one's menu under a box, <see cref="Answerer"/> 0) the
+	/// player it named last; with nothing named yet, the GUI's stated owner. The owner a world screen's
+	/// opener states reaches the host one guest tick after the screen does (the payload samples it at
+	/// the tick's start), so the first frame cannot be latched: the crime screen opened by player two's
+	/// arrest read "Player 1" for its whole life.
+	/// </summary>
+	public static int TagOwner(int shown, bool menuUp, int inputOwner, int statedOwner) =>
+		!menuUp ? 0 : inputOwner != 0 ? inputOwner : shown != 0 ? shown : statedOwner;
+
 	/// <summary>The player a pad's own press acts for: <paramref name="padPlayer"/> (1 or 2, the pad's
 	/// local player), or 2 for any pad of an online client.</summary>
 	public static int OfPad(bool client, int padPlayer) => client ? 2 : padPlayer;

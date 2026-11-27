@@ -18,13 +18,15 @@
 // writes it as `LowerElements.InfoBox`'s state (dword_83599590, sub_8227BC50 at 0x825EE9A4) —
 // 1 closed, 5 NPC, 6 weapon, 9 save, 7 world map, 13/15 the Lua text panels, … Its InfoBoxOpen
 // toggle (id > 1, 0x82971D38) is a registry write hud_hooks.cpp states. The id is stated here
-// at each of its three writers: the set and close as IM+64 stands when they return, the stager
-// as its r4 asks (its own store is behind IM+0), the clear as IM+64 stands when it returns
-// (`stw r27,0x40(r29)` 0x825EEE9C, 1), and the modes that store IM+64 themselves on their stores
-// (`RefiiF3InteractionPanelStored`, the value register, IM = `lwz r11,0x14(r31)`): decoration vf1
-// 0x82B6248C / 0x82B624AC (r10 = 2), 0x82B624C0 / 0x82B624D4 (r30), vf2 0x82B62898 (r10 = 1),
-// sub_82B67DE8 0x82B67F58 (r9 = 13), the shop's vf1 0x8295B6E0 (r26), the pawn shop's 0x82B6BB8C
-// (r30): `@Interaction.Panel(id)`.
+// at each of its writers, as the writer passes it: the stager as its r4 asks (its own store is
+// behind IM+0), and every direct store of IM+64 on the store itself (`RefiiF3InteractionPanelStored`,
+// the value register) — the clear's `stw r27,0x40(r29)` 0x825EEE9C (r27 = 1, `li r27,1` 0x825EEE68;
+// disc 0x825C400C), the close's `stw r23,0x40(r30)` 0x825F1358 (r23 = 1, `li r23,1` 0x825F0CEC; disc
+// `stw r24,0x40(r29)` 0x825C62F0, `li r24,1` 0x825C5D2C), both on the one path to the function's end,
+// and the modes that store it themselves (IM = `lwz r11,0x14(r31)`): decoration vf1 0x82B6248C /
+// 0x82B624AC (r10 = 2), 0x82B624C0 / 0x82B624D4 (r30), vf2 0x82B62898 (r10 = 1), sub_82B67DE8
+// 0x82B67F58 (r9 = 13), the shop's vf1 0x8295B6E0 (r26), the pawn shop's 0x82B6BB8C (r30):
+// `@Interaction.Panel(id)`. Nothing reads IM+64 back.
 //
 // THE ROOT. The tick sub_825EE908(IM) writes InteractionMode.bgf's root (`GuiPresentation_Root(IM+0)`)
 // on the edges of two IM flags it owns: IM+7 (a screen over the mode — sub_821F7F98, the GUI's
@@ -33,14 +35,17 @@
 // (sub_828774A8 at 0x825EEB78, `stb r28,7(r31)` 0x825EEB88) states 1 (0x825EEBA0); then IM+8
 // (sub_82275830 of the GUI's +28 -> +48 at 0x825EEBB0) set states 2 (`stb r27,8(r31)` 0x825EEBD0,
 // 0x825EEBEC) and cleared states 1 (`stb r28,8(r31)` 0x825EEC00, 0x825EEC1C). Each write is behind
-// IM+0 (0x825EED44, 0x825EEBD8, 0x825EEC08). The flags are the IM's, read on either side of the
-// tick, and the edges are replayed in the tick's order: `@Ui.State(pres, root, "Scene", slide)`.
-// Slide 1 is the file's `Main` (LowerElements at 100), 2 its `Slide1` (both layers fade out).
+// IM+0 (0x825EED44, 0x825EEBD8, 0x825EEC08). Each write is stated on the tick's own call
+// (`RefiiF3InteractionRootState`: r4 the presentation, r5 the slide, at the `bl GuiElement_SetState`
+// 0x825EEBA0, 0x825EEBEC, 0x825EEC1C, 0x825EED58; disc 0x825C3D10, 0x825C3D5C, 0x825C3D8C,
+// 0x825C3EC8), in the tick's order: `@Ui.State(pres, root, "Scene", slide)`. Slide 1 is the file's
+// `Main` (LowerElements at 100), 2 its `Slide1` (both layers fade out). No IM flag is read.
 //
 // THE CLEAR sub_825EED90(IM) — the mode set's (disc 0x825C44B4) and four other openers' — loads the
 // presentation when IM+0 is empty (sub_825EF150 at 0x825EEDAC), activates the root unless it is
 // (sub_828773E8(root, pres, 1, 0) at 0x825EEDF0, stated by the active setter's own hook) and puts it
-// on slide 1 (SetState 0x825EEE8C) without touching IM+7 / IM+8: `@Ui.State(…, "Scene", 1)` after it.
+// on slide 1 (`li r5,1; bl GuiElement_SetState` 0x825EEE88..0x825EEE8C, disc 0x825C3FFC) without
+// touching IM+7 / IM+8: the same statement on that call (`RefiiF3InteractionRootCleared`).
 // The tick's countdown IM+16 deactivates the root again at 1 (0x825EE9E8), the same setter.
 //
 // THE HOLD ICON sub_8296FED0(mode, button, hold) — the hold tick sub_829709B0 (0x82970A64) and
@@ -59,8 +64,10 @@
 // a message and neither of the TopBox manager's +0 / +1 bytes is set, 3 `TopBoxOff` otherwise — the
 // manager `*(*(GUI+32)+76)` (0x82B73C80 / 0x82B73C84), its channels +76..+80 each empty when
 // `(end - begin) & ~3` is 0 (0x82B73C98..0x82B73CB0), the bytes at 0x82B73CD0 / 0x82B73CDC —
-// SetState(+8, +4, slide) at 0x82B73D18, +26 stored at 0x82B73D1C. The slide is stated as that
-// body decides it: `@Ui.State`. vf1 sub_82B73D50(bar, LHString*) commits the text straight into
+// SetState(+8, +4, slide) at 0x82B73D18 (disc 0x82B3EAF0), +26 stored at 0x82B73D1C. The slide is
+// stated on that call with the registers it is made with (`RefiiF3OverlayBarState`: r3 the root
+// element, r4 the presentation, r5 the slide — `li r5,2` 0x82B73C78, `li r5,3` 0x82B73CFC, `li r5,1`
+// 0x82B73D0C; disc 0x82B3EA50, 0x82B3EAD4, 0x82B3EAE4): `@Ui.State`. vf1 sub_82B73D50(bar, LHString*) commits the text straight into
 // `.Text`'s box (`b GuiTextBox_Commit` 0x82B73D80, behind +12 / +4 / the box) — the localised label
 // GUI.Set*Text built from its tag name (sub_82545848 -> sub_823CBB30 at 0x825458E4): `@Ui.Text`. The
 // sides (vf3 -> sub_828777E8 at 0x82B73DC4) and the tag form (vf2 -> SetTextTag at 0x82B73D44) are
@@ -82,10 +89,8 @@
 REX_EXTERN(__imp__rex_InteractionMode_Set);
 REX_EXTERN(__imp__rex_InteractionMode_Close);
 REX_EXTERN(__imp__rex_InteractionMode_SetPanel);
-REX_EXTERN(__imp__rex_InteractionMode_Tick);
 REX_EXTERN(__imp__rex_InteractionMode_Clear);
 REX_EXTERN(__imp__rex_InteractionButton_Hold);
-REX_EXTERN(__imp__rex_OverlayBar_Show);
 REX_EXTERN(__imp__rex_OverlayBar_CommitText);
 REX_EXTERN(__imp__rex_InteractionMode_OpenRealEstate);
 REX_EXTERN(__imp__rex_InteractionMode_OpenShop);
@@ -98,25 +103,20 @@ using namespace refii::fable3;
 
 constexpr uint32_t kImMode = 20u;
 constexpr uint32_t kImObject = 24u;
-constexpr uint32_t kImPanel = 64u;
 /// The mode object's IM (sub_82971CC8 at 0x82971CD4).
 constexpr uint32_t kObjectIm = 20u;
 /// The panel id the IM is built and closed with (disc 0x825C3698, disc 0x825C62F0).
 constexpr int32_t kPanelClosed = 1;
 
 constexpr uint32_t kImPresentation = 0u;
-constexpr uint32_t kImScreenOver = 7u;
-constexpr uint32_t kImHiddenByGui = 8u;
-const refii::guest::Addr kGuiManager{0x83596F84u};
-constexpr uint32_t kGuiTopBoxOwner = 32u;  // GUI+32
-constexpr uint32_t kTopBoxManager = 76u;   // *(GUI+32)+76
-constexpr uint32_t kTopBoxChannels = 76u;  // M+76 .. M+80
 constexpr uint32_t kBarPresentation = 4u;
-constexpr uint32_t kBarRoot = 8u;
 constexpr uint32_t kBarText = 12u;
-constexpr uint32_t kBarShown = 26u;
 
 std::atomic<int32_t> g_panel{kPanelClosed};
+/// Each call-site statement's first run, for the log.
+std::atomic<bool> g_root_stated{false};
+std::atomic<bool> g_root_cleared{false};
+std::atomic<bool> g_bar_stated{false};
 
 /// interaction_mode (catalog kind 135).
 constexpr int32_t kInteractionModeEvent = 135;
@@ -156,23 +156,15 @@ void OpenAndRaise(PPCContext& ctx, uint8_t* base, PPCFunc* original) {
   const int32_t previous = readable ? static_cast<int32_t>(LoadGuestU32(base, im + kImMode)) : -1;
   const uint32_t clears = g_im_clears;
   original(ctx, base);
+  if (g_im_clears != clears) {
+    NoteInteractionModeOpenedByOpener(im);
+  }
   if (readable && g_im_clears != clears) {
     RaiseModeOpened(base, im, was_open, previous);
   }
 }
 
 void StatePanelId(int32_t panel) {
-  if (g_panel.exchange(panel) == panel) {
-    return;
-  }
-  Statement("@Interaction.Panel").Add(Number(static_cast<float>(panel))).Post();
-}
-
-void StatePanel(const uint8_t* base, uint32_t im) {
-  if (base == nullptr || !Plausible(im)) {
-    return;
-  }
-  const int32_t panel = static_cast<int32_t>(LoadGuestU32(base, im + kImPanel));
   if (g_panel.exchange(panel) == panel) {
     return;
   }
@@ -192,6 +184,10 @@ REX_EXTERN(rex_InteractionMode_Set) {
   // The old mode's object goes with the set: its list takes no more steps (interaction_list_step.cpp).
   ForgetInteractionList();
   __imp__rex_InteractionMode_Set(ctx, base);
+  if (g_im_clears != clears) {
+    // The clear ran: the set is past its refusals and stores its second argument as the mode.
+    NoteInteractionModeSet(im, static_cast<int32_t>(mode));
+  }
   if (base == nullptr || !Plausible(im)) {
     return;
   }
@@ -199,7 +195,6 @@ REX_EXTERN(rex_InteractionMode_Set) {
     REXLOG_INFO("Refii interaction mode: mode {} ({})", mode,
                 LoadGuestU32(base, im + kImObject) != 0u ? "open" : "no mode object");
   }
-  StatePanel(base, im);
   if (g_im_clears != clears) {
     RaiseModeOpened(base, im, was_open, previous);
   }
@@ -215,11 +210,11 @@ REX_EXTERN(rex_InteractionMode_Close) {
   const uint32_t target = raise ? seam::Deref(base, im + kImTargetRef) : 0u;
   const int32_t mode = raise ? static_cast<int32_t>(LoadGuestU32(base, im + kImMode)) : -1;
   ForgetInteractionList();
+  NoteInteractionModeClosed(im);
   __imp__rex_InteractionMode_Close(ctx, base);
   if (open) {
     REXLOG_INFO("Refii interaction mode: mode {} closed", LoadGuestU32(base, im + kImMode));
   }
-  StatePanel(base, im);
   if (raise) {
     modlua::QueueEvent(kInteractionModeEvent,
                        seam::Fields("hero=%u,player=%d,target=%u,mode=%d,previous=-1,open=false",
@@ -250,81 +245,34 @@ std::string PathOf(uint32_t element) {
   return Plausible(element) && ElementName(element, presentation, path) ? path : std::string();
 }
 
-/// The bar's shown slide as vf0 decides it (0x82B73C74..0x82B73CFC).
-int32_t BarShownSlide(const uint8_t* base) {
-  const uint32_t gui = LoadGuestU32(base, kGuiManager);
-  const uint32_t owner = Plausible(gui) ? LoadGuestU32(base, gui + kGuiTopBoxOwner) : 0u;
-  const uint32_t manager = Plausible(owner) ? LoadGuestU32(base, owner + kTopBoxManager) : 0u;
-  if (!Plausible(manager)) {
-    return 3;
-  }
-  const uint32_t begin = LoadGuestU32(base, manager + kTopBoxChannels);
-  const uint32_t end = LoadGuestU32(base, manager + kTopBoxChannels + 4u);
-  bool queued = false;
-  for (uint32_t at = begin; Plausible(at) && at < end && (end - at) <= 0x400u; at += 4u) {
-    const uint32_t channel = LoadGuestU32(base, at);
-    if (Plausible(channel) &&
-        ((LoadGuestU32(base, channel + 8u) - LoadGuestU32(base, channel + 4u)) & ~3u) != 0u) {
-      queued = true;
-      break;
-    }
-  }
-  if (!queued) {
-    return 3;
-  }
-  return base[manager] != 0u || base[manager + 1u] != 0u ? 3 : 2;
-}
-
 }  // namespace
 
-// (IM): the root's slide on each flag edge the tick made, in its order.
-REX_EXTERN(rex_InteractionMode_Tick) {
-  const uint32_t im = ctx.r3.u32;
-  const bool readable = base != nullptr && Plausible(im);
-  const uint8_t over = readable ? base[im + kImScreenOver] : 0u;
-  const uint8_t hidden = readable ? base[im + kImHiddenByGui] : 0u;
-  __imp__rex_InteractionMode_Tick(ctx, base);
-  if (!readable) {
-    return;
-  }
-  const uint32_t presentation = LoadGuestU32(base, im + kImPresentation);
-  if (presentation == 0u) {
-    return;
-  }
-  const uint8_t over_now = base[im + kImScreenOver];
-  const uint8_t hidden_now = base[im + kImHiddenByGui];
-  int32_t slide = 0;
-  if (over == 0u && over_now != 0u) {
-    slide = 2;
-  } else {
-    if (over != 0u && over_now == 0u) {
-      slide = 1;
+/// The interaction root's slide on the tick's own SetState calls: the presentation and the slide each
+/// is called with.
+void RefiiF3InteractionRootState(PPCRegister& presentation, PPCRegister& slide) {
+  if (presentation.u32 != 0u) {
+    if (!g_root_stated.exchange(true)) {
+      REXLOG_INFO("Refii interaction mode: the root's slide {} stated on the tick's own SetState call", slide.u32);
     }
-    if (hidden == 0u && hidden_now != 0u) {
-      slide = 2;
-    } else if (hidden != 0u && hidden_now == 0u) {
-      slide = 1;
-    }
-  }
-  if (slide != 0) {
-    StateState(presentation, 0u, "Scene", slide, "825C3A78");
+    StateState(presentation.u32, 0u, "Scene", static_cast<int32_t>(slide.u32), "825C3A78");
   }
 }
 
-// (IM): the root on slide 1.
+/// The same on the clear's SetState call (slide 1).
+void RefiiF3InteractionRootCleared(PPCRegister& presentation, PPCRegister& slide) {
+  if (presentation.u32 != 0u) {
+    if (!g_root_cleared.exchange(true)) {
+      REXLOG_INFO("Refii interaction mode: the root's slide {} stated on the clear's own SetState call", slide.u32);
+    }
+    StateState(presentation.u32, 0u, "Scene", static_cast<int32_t>(slide.u32), "825C3F00");
+  }
+}
+
+// (IM): every opener's first act.
 REX_EXTERN(rex_InteractionMode_Clear) {
   ++g_im_clears;
-  const uint32_t im = ctx.r3.u32;
   ForgetInteractionList();
   __imp__rex_InteractionMode_Clear(ctx, base);
-  if (base == nullptr || !Plausible(im)) {
-    return;
-  }
-  const uint32_t presentation = LoadGuestU32(base, im + kImPresentation);
-  if (presentation != 0u) {
-    StateState(presentation, 0u, "Scene", 1, "825C3F00");
-  }
-  StatePanel(base, im);
 }
 
 // interaction_mode (135): the four dedicated openers. Each runs the clear first, past its own refusals, then
@@ -334,7 +282,7 @@ REX_EXTERN(rex_InteractionMode_OpenShop) { OpenAndRaise(ctx, base, __imp__rex_In
 REX_EXTERN(rex_InteractionMode_OpenPawnShop) { OpenAndRaise(ctx, base, __imp__rex_InteractionMode_OpenPawnShop); }
 REX_EXTERN(rex_InteractionMode_OpenOrb) { OpenAndRaise(ctx, base, __imp__rex_InteractionMode_OpenOrb); }
 
-/// A mode's own IM+64 store (the value register at the `stw rX,0x40(r11)`).
+/// A store of IM+64 (the value register at the `stw rX,0x40(rY)`): the clear's, the close's, a mode's own.
 void RefiiF3InteractionPanelStored(PPCRegister& value) { StatePanelId(static_cast<int32_t>(value.u32)); }
 
 // (mode, button, hold).
@@ -354,19 +302,16 @@ REX_EXTERN(rex_InteractionButton_Hold) {
   __imp__rex_InteractionButton_Hold(ctx, base);
 }
 
-// (bar, shown).
-REX_EXTERN(rex_OverlayBar_Show) {
-  const uint32_t bar = ctx.r3.u32;
-  const uint8_t shown = static_cast<uint8_t>(ctx.r4.u32 & 0xFFu);
-  if (base != nullptr && Plausible(bar) && base[bar + kBarShown] != shown) {
-    const uint32_t presentation = LoadGuestU32(base, bar + kBarPresentation);
-    const uint32_t root = LoadGuestU32(base, bar + kBarRoot);
-    const std::string path = PathOf(root);
-    if (Plausible(presentation) && !path.empty()) {
-      StateState(presentation, root, path, shown != 0u ? BarShownSlide(base) : 1, "82B3EA18");
+/// A bar's root slide on vf0's own SetState call (0x82B73D18 / disc 0x82B3EAF0): the element, the
+/// presentation and the slide it is called with.
+void RefiiF3OverlayBarState(PPCRegister& element, PPCRegister& presentation, PPCRegister& slide) {
+  const std::string path = PathOf(element.u32);
+  if (Plausible(presentation.u32) && !path.empty()) {
+    if (!g_bar_stated.exchange(true)) {
+      REXLOG_INFO("Refii interaction mode: bar '{}' slide {} stated on its own SetState call", path, slide.u32);
     }
+    StateState(presentation.u32, element.u32, path, static_cast<int32_t>(slide.u32), "82B3EA18");
   }
-  __imp__rex_OverlayBar_Show(ctx, base);
 }
 
 // (bar, LHString*).

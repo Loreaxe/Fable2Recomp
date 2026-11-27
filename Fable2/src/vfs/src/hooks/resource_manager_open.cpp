@@ -4,6 +4,8 @@
 
 #include "vfs_hooks_private.h"
 #include "gui/gui_menu_chunks.h"
+#include "core/payload_bridge_fable2.h"
+#include "hooks/item_rows_stated.h"
 
 // Open → OpenInternal → FindAndCreateStream → Submit each have silent fail paths ending in a
 // NULL manifest; these hooks log each stage's verdict.
@@ -191,6 +193,25 @@ REX_EXTERN(rex_lhGui_RunLuaString) {
       refii::vfs::StageMenuAttribute(refii::vfs::kHighlightedIdAttribute,
                                      std::to_string(static_cast<uint32_t>(highlighted_id)), 0.0f,
                                      /*is_number=*/false);
+    }
+
+    // The row marks, onto the captured rows (guest_tick_pump_state.cpp), from what the stagers staged
+    // for these two statements. `SetItemEmphasisByIndex` inside the row builder `sub_826CE230` is the
+    // mark `sub_826D0890` states for the row that call just spawned (`Float1`, 0x826D0B84 / disc
+    // 0x8240A6BC; item_rows_stated.cpp); `SetItemEmphasis` (`sub_823DFA98`, 0x823DFAFC / 0x823DFB30:
+    // `Float1`, `String1`) marks the row so named — the clothing book's None rows (0x829B349C ..).
+    if (chunk.find("g_Menu:SetItemEmphasisByIndex") != std::string::npos) {
+      float level = 0.0f;
+      if (refii::vfs::StagedMenuAttributeNow("Float1", nullptr, &level)) {
+        refii::vfs::NoteItemRowEmphasis(static_cast<int32_t>(level));
+      }
+    } else if (chunk.find("g_Menu:SetItemEmphasis") != std::string::npos) {
+      std::string named;
+      float level = 0.0f;
+      if (refii::vfs::StagedMenuAttributeNow("String1", &named, nullptr) &&
+          refii::vfs::StagedMenuAttributeNow("Float1", nullptr, &level)) {
+        refii_bridge_menu_row_emphasis_named(named.c_str(), static_cast<int32_t>(level));
+      }
     }
 
     refii::vfs::RunMenuChunk(chunk, presentation);

@@ -208,6 +208,11 @@ public partial class RefiiHost : Node
 	[Signal] public delegate void pub_game_finishedEventHandler(Godot.Collections.Dictionary e);
 	[Signal] public delegate void village_wealthEventHandler(Godot.Collections.Dictionary e);
 	[Signal] public delegate void gargoyle_destroyedEventHandler(Godot.Collections.Dictionary e);
+	[Signal] public delegate void camera_cutEventHandler(Godot.Collections.Dictionary e);
+	[Signal] public delegate void camera_blendEventHandler(Godot.Collections.Dictionary e);
+	[Signal] public delegate void camera_screen_changedEventHandler(Godot.Collections.Dictionary e);
+	[Signal] public delegate void camera_zoom_changedEventHandler(Godot.Collections.Dictionary e);
+	[Signal] public delegate void camera_tickEventHandler(Godot.Collections.Dictionary e);
 
 	/// <summary>A <see cref="message_box"/>'s answer: the id it returned, and the button's index (0 is A, 1 is B; -1 when another box replaced it).</summary>
 	[Signal] public delegate void message_box_answeredEventHandler(long id, long button);
@@ -292,7 +297,8 @@ public partial class RefiiHost : Node
 		"job_level", "job_earnings", "job_worked", "job_multiplier", "job_summary", "guild_message",
 		"title_changed", "title_unlocked", "chapter_progress", "scar_added", "scar_removed", "age_changed",
 		"hero_stage", "clothing_worn", "clothing_removed", "clothing_dyed", "pub_game_started", "pub_game_finished",
-		"village_wealth", "gargoyle_destroyed",
+		"village_wealth", "gargoyle_destroyed", "camera_cut", "camera_blend", "camera_screen_changed",
+		"camera_zoom_changed", "camera_tick",
 	};
 
 	public const string SingletonName = "RefiiHost";
@@ -306,6 +312,9 @@ public partial class RefiiHost : Node
 
 	/// <summary>The camera_changed event's kind: the host hears it while any script is loaded, for <see cref="camera_mode"/>.</summary>
 	private const int CameraChangedKind = 112;
+
+	/// <summary>The camera_zoom_changed event's kind: the host hears it while any script is loaded, for <see cref="camera_zoom"/>.</summary>
+	private const int CameraZoomChangedKind = 167;
 
 	/// <summary>The kinds <see cref="in_play"/> is composed from: paused, level_unloading, level_loaded.</summary>
 	private const int PausedKind = 98;
@@ -323,7 +332,7 @@ public partial class RefiiHost : Node
 	/// <see cref="in_play"/> and <see cref="now"/>, the tick feeds <see cref="now"/>.
 	/// </summary>
 	private static readonly ModEventMask HeroKinds = new ModEventMask().With(TickKind).With(1).With(2).With(CutsceneKind)
-		.With(PausedKind).With(LevelUnloadingKind).With(LevelLoadedKind).With(CameraChangedKind);
+		.With(PausedKind).With(LevelUnloadingKind).With(LevelLoadedKind).With(CameraChangedKind).With(CameraZoomChangedKind);
 
 	/// <summary>The game clock and the <see cref="after"/> timers, on the tick and paused statements Lua's runtime counts.</summary>
 	private readonly ModClock<Callable> _clock = new();
@@ -349,6 +358,9 @@ public partial class RefiiHost : Node
 
 	/// <summary>The guest's last coop_state answer for <see cref="split_screen"/>.</summary>
 	private bool _splitScreen;
+
+	/// <summary>The zoom level per player as the bus last stated it (camera_zoom_changed's fields).</summary>
+	private readonly Dictionary<long, Godot.Collections.Dictionary> _cameraZoom = new();
 
 	/// <summary>The camera mode per player as the bus last stated it (camera_changed, seeded by the <c>camera_mode</c> queries a new host sends); absent is -1.</summary>
 	private readonly Dictionary<long, int> _cameraMode = new();
@@ -1057,6 +1069,28 @@ public partial class RefiiHost : Node
 		{
 			_cameraMode[p.AsInt64()] = m.AsInt32();
 		}
+		else if (kind == CameraZoomChangedKind && TryField(e, "player", out Variant zp))
+		{
+			var zoom = new Godot.Collections.Dictionary();
+			foreach (KeyValuePair<string, object> field in e)
+			{
+				if (field.Key is not ("player" or "previous_set"))
+				{
+					zoom[field.Key] = field.Value switch
+					{
+						string text => text,
+						bool flag => flag,
+						long whole => whole,
+						int whole => whole,
+						double real => real,
+						float real => real,
+						_ => field.Value.ToString() ?? string.Empty,
+					};
+				}
+			}
+
+			_cameraZoom[zp.AsInt64()] = zoom;
+		}
 	}
 
 	private void TrackCutscene(int kind, List<KeyValuePair<string, object>> e)
@@ -1211,16 +1245,212 @@ public partial class RefiiHost : Node
 	public void camera_override(int player, int mode) => camera_override(player, mode, new Godot.Collections.Dictionary());
 
 	/// <summary>
+	/// One shape call of the camera mod API (<see cref="ModApi.CameraShapeMeaning"/>), made in the game
+	/// VM on the guest's next tick as the mods' Lua makes it (<c>Refii._camera_call</c>, the preamble),
+	/// with the owner <c>godot:</c> + <paramref name="owner"/>. False for any player but 1 or 2 and for
+	/// a line that does not fit.
+	/// </summary>
+	private static bool CameraCall(string call, int player, string? owner, params object?[] arguments)
+	{
+		if (player != 1 && player != 2)
+		{
+			return false;
+		}
+
+		var text = new StringBuilder("if Refii and Refii._camera_call then Refii._camera_call(");
+		text.Append(ModLuaLane.Literal("godot:" + (owner ?? string.Empty))).Append(',').Append(ModLuaLane.Literal(call)).Append(',').Append(player);
+		foreach (object? argument in arguments)
+		{
+			text.Append(',').Append(ModLuaLane.Literal(argument));
+		}
+
+		text.Append(") end");
+		return PostLua(text.ToString());
+	}
+
+	/// <summary>
+	/// <see cref="ModApi.CameraTuneMeaning"/> <paramref name="values"/> a Dictionary of key → number
+	/// (false lets that key go); null lets every key this owner stated go.
+	/// </summary>
+	public bool camera_tune(int player, Variant values) => CameraCall("camera_tune", player, null, Plain(values));
+
+	/// <summary>The form that names its owner (a mod's id), so two Godot mods' statements stand side by side.</summary>
+	public bool camera_tune(int player, Variant values, string owner) => CameraCall("camera_tune", player, owner, Plain(values));
+
+	/// <summary><see cref="ModApi.CameraFrameMeaning"/> null gives the shipped levels back.</summary>
+	public bool camera_frame(int player, Variant values) => CameraCall("camera_frame", player, null, Plain(values));
+
+	public bool camera_frame(int player, Variant values, string owner) => CameraCall("camera_frame", player, owner, Plain(values));
+
+	/// <summary><see cref="ModApi.CameraFocusMeaning"/> null lets it go (the slide eases back).</summary>
+	public bool camera_focus(int player, Variant values) => CameraCall("camera_focus", player, null, Plain(values));
+
+	public bool camera_focus(int player, Variant values, string owner) => CameraCall("camera_focus", player, owner, Plain(values));
+
+	/// <summary><see cref="ModApi.CameraCombatBlendMeaning"/> null gives the game's own weight back.</summary>
+	public bool camera_combat_blend(int player, Variant weight) => CameraCall("camera_combat_blend", player, null, Plain(weight));
+
+	public bool camera_combat_blend(int player, Variant weight, string owner) => CameraCall("camera_combat_blend", player, owner, Plain(weight));
+
+	/// <summary><see cref="ModApi.CameraInterestMeaning"/> null gives the game's own back.</summary>
+	public bool camera_interest(int player, Variant values) => CameraCall("camera_interest", player, null, Plain(values));
+
+	public bool camera_interest(int player, Variant values, string owner) => CameraCall("camera_interest", player, owner, Plain(values));
+
+	/// <summary><see cref="ModApi.CameraPitchHoldMeaning"/></summary>
+	public bool camera_pitch_hold(int player, bool on) => CameraCall("camera_pitch_hold", player, null, on);
+
+	public bool camera_pitch_hold(int player, bool on, Variant options) => CameraCall("camera_pitch_hold", player, null, on, Plain(options));
+
+	public bool camera_pitch_hold(int player, bool on, Variant options, string owner) => CameraCall("camera_pitch_hold", player, owner, on, Plain(options));
+
+	/// <summary><see cref="ModApi.CameraLockFrameMeaning"/></summary>
+	public bool camera_lock_frame(int player, bool on) => CameraCall("camera_lock_frame", player, null, on);
+
+	public bool camera_lock_frame(int player, bool on, Variant options) => CameraCall("camera_lock_frame", player, null, on, Plain(options));
+
+	public bool camera_lock_frame(int player, bool on, Variant options, string owner) => CameraCall("camera_lock_frame", player, owner, on, Plain(options));
+
+	/// <summary><see cref="ModApi.CameraModeAllowMeaning"/></summary>
+	public bool camera_mode_allow(int player, int mode, bool allow) => CameraCall("camera_mode_allow", player, null, mode, allow);
+
+	public bool camera_mode_allow(int player, int mode, bool allow, string owner) => CameraCall("camera_mode_allow", player, owner, mode, allow);
+
+	/// <summary>
 	/// The field of view of <paramref name="player"/>'s live camera in degrees, read at the call — the
 	/// horizontal 4:3 angle the game's cameras state (70 the default), from the camera this machine
 	/// rebuilt for that player's view (Refii.Camera.Engine_CameraFeed); 0 for a player with no camera
 	/// here (<see cref="ModApi.CameraFovMeaning"/>).
 	/// </summary>
 	public float fov(int player) =>
-		Refii.Camera.Engine_CameraFeed.AsGuestCamera(Refii.Camera.Engine_CameraFeed.ForPlayer(player)?.Live) is { } camera &&
+		Refii.Camera.Engine_CameraFeed.AsGuestCamera(SeenCamera(player)?.Live) is { } camera &&
 		float.IsFinite(camera.HorizontalFov) && camera.HorizontalFov > 0f
 			? Mathf.RadToDeg(camera.HorizontalFov)
 			: 0f;
+
+	/// <summary><see cref="ModApi.CameraOffsetMeaning"/> null lets it go.</summary>
+	public bool camera_offset(int player, Variant values) => CameraCall("camera_offset", player, null, Plain(values));
+
+	public bool camera_offset(int player, Variant values, string owner) => CameraCall("camera_offset", player, owner, Plain(values));
+
+	/// <summary>
+	/// <see cref="ModApi.CameraShakeMeaning"/> <paramref name="values"/> a Dictionary: <c>kind</c>,
+	/// <c>level</c>, <c>attack</c>, <c>decay</c>, <c>seconds</c>, <c>add</c>, <c>open</c>; or <c>fade</c>
+	/// (seconds) to fade that kind out.
+	/// </summary>
+	public bool camera_shake(int player, Variant values) => CameraCall("camera_shake", player, null, Plain(values));
+
+	/// <summary>
+	/// <see cref="ModApi.CameraPoseMeaning"/> A Dictionary: <c>position</c>, <c>forward</c>, <c>up</c>
+	/// (Vector3, guest axes), <c>fov</c> and <c>vfov</c> (degrees), <c>cut</c>; empty where no picture of
+	/// the player is drawn here.
+	/// </summary>
+	public Godot.Collections.Dictionary camera_pose(int player)
+	{
+		var pose = new Godot.Collections.Dictionary();
+		if (Refii.Camera.Engine_CameraViews.For(player) is { } view)
+		{
+			pose["position"] = view.Position;
+			pose["forward"] = view.Forward;
+			pose["up"] = view.Up;
+			pose["fov"] = Mathf.RadToDeg(view.HorizontalFov);
+			pose["vfov"] = Mathf.RadToDeg(view.VerticalFov);
+			pose["cut"] = view.Cut;
+		}
+
+		return pose;
+	}
+
+	/// <summary>
+	/// The camera manager whose camera is <paramref name="player"/>'s view: their own when this machine
+	/// draws it or two views are drawn; on a shared screen the drawn one, both players' (local co-op's
+	/// second manager is nobody's view there). Null for any player but 1 or 2, and before any push.
+	/// </summary>
+	private static Refii.Camera.Engine_CameraRig.Manager? SeenCamera(int player)
+	{
+		if (player is not (1 or 2))
+		{
+			return null;
+		}
+
+		Refii.Camera.Engine_CameraRig.Manager? own = Refii.Camera.Engine_CameraFeed.ForPlayer(player);
+		return own is { Drawn: true } || (own is not null && Refii.Camera.Engine_CameraViews.Split)
+			? own
+			: player == 2 && Refii.Core.Engine_TitleGame.Active.LocalCoop ? Refii.Camera.Engine_CameraFeed.Drawn : own;
+	}
+
+	/// <summary>
+	/// <see cref="ModApi.CameraStatedMeaning"/> A Dictionary: <c>position</c>, <c>forward</c>, <c>up</c>
+	/// (Vector3, guest axes), <c>fov</c> (degrees), <c>cut</c>; empty before the guest stated one.
+	/// </summary>
+	public Godot.Collections.Dictionary camera_stated(int player)
+	{
+		var block = new Godot.Collections.Dictionary();
+		Refii.Camera.Engine_CameraRig.Block? live = SeenCamera(player)?.Live;
+		if (live is { Known: true } b)
+		{
+			block["position"] = b.Position;
+			block["forward"] = b.Forward;
+			block["up"] = b.Up;
+			block["fov"] = Mathf.RadToDeg(b.HorizontalFov);
+			block["cut"] = b.Cut;
+		}
+
+		return block;
+	}
+
+	/// <summary>
+	/// <see cref="ModApi.CameraZoomMeaning"/> As the bus last stated it (camera_zoom_changed); on a
+	/// shared screen player two's is player one's; empty before any is stated.
+	/// </summary>
+	public Godot.Collections.Dictionary camera_zoom(int player)
+	{
+		if (_cameraZoom.TryGetValue(player, out Godot.Collections.Dictionary? zoom) ||
+			(player == 2 && !Refii.Camera.Engine_CameraViews.Split && _cameraZoom.TryGetValue(1, out zoom)))
+		{
+			return zoom.Duplicate();
+		}
+
+		return new Godot.Collections.Dictionary();
+	}
+
+	/// <summary><see cref="ModApi.CameraScreenModeMeaning"/></summary>
+	public string camera_screen_mode() => Refii.Camera.Engine_CameraViews.ScreenMode switch
+	{
+		Refii.Camera.Engine_CameraViews.ScreenSplitVertical => "split_vertical",
+		Refii.Camera.Engine_CameraViews.ScreenSplitHorizontal => "split_horizontal",
+		Refii.Camera.Engine_CameraViews.ScreenHybrid => "hybrid",
+		_ => "shared",
+	};
+
+	/// <summary><see cref="ModApi.CameraSplitMeaning"/></summary>
+	public bool camera_split() => Refii.Camera.Engine_CameraViews.Split;
+
+	/// <summary>
+	/// <see cref="ModApi.CameraViewMeaning"/> A Rect2 in 0..1 of the window (from its top left); an
+	/// empty Rect2 where no picture of the player is drawn here.
+	/// </summary>
+	public Rect2 camera_view(int player) => Refii.Camera.Engine_CameraViews.For(player)?.Rect ?? new Rect2();
+
+	/// <summary>
+	/// <see cref="ModApi.CameraRayMeaning"/> A Dictionary: <c>origin</c>, <c>direction</c> (Vector3,
+	/// guest axes, the direction unit length); empty where no picture of the player is drawn here.
+	/// </summary>
+	public Godot.Collections.Dictionary camera_ray(int player, float x, float y)
+	{
+		var ray = new Godot.Collections.Dictionary();
+		if (Refii.Camera.Engine_CameraViews.For(player) is { } view)
+		{
+			(Vector3 origin, Vector3 direction) = Refii.Camera.Engine_CameraViews.Ray(view, x, y);
+			ray["origin"] = origin;
+			ray["direction"] = direction;
+		}
+
+		return ray;
+	}
+
+	/// <summary>The ray through the centre of the player's view.</summary>
+	public Godot.Collections.Dictionary camera_ray(int player) => camera_ray(player, 0.5f, 0.5f);
 
 	/// <summary>
 	/// Hides a part of an entity in the drawing (<paramref name="on"/>) or shows it again, by the
@@ -2776,6 +3006,27 @@ public partial class RefiiHost : Node
 		3 => player == 2,
 		_ => true,
 	};
+
+	/// <summary>
+	/// Refii.achievement_unlocked: whether the hero player <paramref name="player"/> plays has unlocked
+	/// achievement <paramref name="id"/> — achievements are per character; the answer is the statement the
+	/// machine playing that hero makes on the co-op channel (Engine_AchievementStatement), the one Lua reads,
+	/// so both machines and both surfaces answer alike.
+	/// </summary>
+	public bool achievement_unlocked(int player, int id) =>
+		id > 0 && Refii.Achievements.Engine_Achievements.Stated(player) is { } stated && stated.View.Hero.Contains((uint)id);
+
+	/// <summary>Refii.achievements: the ids the hero player <paramref name="player"/> plays has unlocked, ascending.</summary>
+	public int[] achievements(int player) =>
+		Refii.Achievements.Engine_Achievements.Stated(player) is { } stated
+			? stated.View.Hero.OrderBy(id => id).Select(id => (int)id).ToArray()
+			: System.Array.Empty<int>();
+
+	/// <summary>
+	/// Refii.character_id: the character id of the hero player <paramref name="player"/> plays (the id its
+	/// saves carry in refii_save.json), "" before the game bound one or when that player plays no hero.
+	/// </summary>
+	public string character_id(int player) => Refii.Achievements.Engine_Achievements.Stated(player)?.Character ?? string.Empty;
 
 	/// <summary>
 	/// The node Godot draws an entity with, by the HANDLE an event gave the script, or null when

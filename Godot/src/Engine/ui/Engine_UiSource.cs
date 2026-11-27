@@ -116,10 +116,13 @@ public abstract class Engine_UiSource
 	/// <summary>The title's XDBF resource, or null before the module has launched.</summary>
 	public virtual byte[]? GetTitleXdbf() => null;
 
-	/// <summary>States the unlocked set (ids with unlock FILETIMEs) for the guest's own enumerator.</summary>
-	public virtual void SetAchievementUnlocks(uint[] ids, ulong[] unlockFiletimes)
+	/// <summary>States every save's unlocked set (<c>save\tid:filetime,...</c> lines) for the guest's per-user enumerator.</summary>
+	public virtual void SetSaveAchievementUnlocks(string table)
 	{
 	}
+
+	/// <summary>The guest's adoption points' bindings newer than <paramref name="afterSerial"/>.</summary>
+	public virtual System.Collections.Generic.List<Engine_UiModel.AchievementBinding> GetAchievementBindings(ulong afterSerial) => new();
 
 	/// <summary>How many times the guest has called `XamShowAchievementsUI` this session.</summary>
 	public virtual uint GetAchievementsUiRequests() => 0;

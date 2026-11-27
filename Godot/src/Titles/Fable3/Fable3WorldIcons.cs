@@ -28,6 +28,16 @@ using Refii.Ui;
 /// THE EMOTION RING is the guest's too: the icon's progress (0..300 steps) fills while the
 /// choice is held and completes at 300, both written by its ring tick (sub_8297A400); the ring
 /// here is that number as an arc at the icon.
+///
+/// SPLIT, EACH HALF IS A SCREEN OF ITS OWN (Engine_HudSpriteView, as Fable 2's layers): player one's
+/// sprite layer is seated in player one's half and placed through player one's view camera, player
+/// two's layer in player two's through theirs, and a sprite is drawn in each half whose view shows its
+/// anchor — the guest states no player for an icon (its +103 is the game's vt+0x18, `li r3,0`: TU3
+/// 0x82616230 / disc 0x825EEEC0 against 0x8222FABC / 0x82230C54), so the one shared screen showed every
+/// icon to both players. An emotion choice whose record states its owner (rec+8, a hero's uid) draws
+/// only in its owner's half (Engine_HudSpriteView.DrawnIn). Player two's layer resolves its art in
+/// player two's glyph set (Engine_UiKeyGlyphs.Surface(2)). One screen (solo, shared couch, online):
+/// the window through its camera, exactly as before.
 /// </remarks>
 public partial class Fable3WorldIcons : SubViewportContainer
 {
@@ -51,26 +61,52 @@ public partial class Fable3WorldIcons : SubViewportContainer
 	/// <summary>The emotion icon's registry type (sub_825E8938 registers it as 77, 0x825E89C0).</summary>
 	private const uint EmotionIconType = 77u;
 
+	/// <summary>A target's "Interact" icon: pooled type 34 (`li r7,0x22` 0x8217907C / disc 0x82179184).</summary>
+	private const uint InteractIconType = 34u;
+
 	private SubViewport _viewport = null!;
 	private Camera3D _canvasCamera = null!;
 	private Engine_HudWorldSprites _sprites = null!;
-	private readonly Refii.Core.Engine_CameraProjector _projector = new();
+
+	/// <summary>Player two's half's sprites on split screen, through player two's camera.</summary>
+	private Engine_HudWorldSprites _spritesTwo = null!;
+
+	/// <summary>[0] the whole window's (or player one's half while split), [1] player two's half while split.</summary>
+	private readonly Engine_HudSpriteView[] _views = { new(), new() };
+
+	/// <summary>The window through its camera, on every layout: the aim reticules' placement.</summary>
+	private readonly Engine_HudSpriteView _windowView = new();
+
+	/// <summary>Whether the sprite layers carry seat transforms a whole window must undo.</summary>
+	private bool _seated;
+
+	/// <summary>Whether player two's layer holds this split's sprites.</summary>
+	private bool _twoFed;
 	private readonly Engine_HudReticule[] _reticules = new Engine_HudReticule[2];
 	private Vector2 _fittedTo;
 	private bool _placed;
 	private bool _probed;
 	private string _culture = string.Empty;
 	private readonly List<Engine_HudWorldSprites.Sprite> _list = new();
+	private readonly List<Engine_HudWorldSprites.Sprite> _listTwo = new();
 	/// <summary>The mount path for each texture id the guest can hand an icon: the type table's at
 	/// start, the emotion records' as their choices appear.</summary>
 	private readonly Dictionary<uint, string> _pathsByHash = new();
 
 
-	/// <summary>The ring of every held choice this frame, in window pixels: centre, radius, progress, complete.</summary>
-	private readonly List<(Vector2 Centre, float Radius, float Progress, bool Complete)> _rings = new();
+	/// <summary>The ring of every held choice this frame in each half that draws it, in window pixels: centre,
+	/// radius, progress, complete, stroke.</summary>
+	private readonly List<(Vector2 Centre, float Radius, float Progress, bool Complete, float Stroke)> _rings = new();
 
 	/// <summary>This frame's emotion icons by the guest's object: whether the drawer stacked a title under the square, and its scale.</summary>
 	private readonly Dictionary<uint, (bool Titled, float Scale)> _emotionSquares = new();
+
+	/// <summary>
+	/// When the icons' viewport renders: this container is never hidden with it — its own <c>_Draw</c>
+	/// holds the partner markers and the hold rings — so the frame after the last icon went must
+	/// still render (<see cref="Engine_UiViewportIdle"/>).
+	/// </summary>
+	private readonly Engine_UiViewportIdle _idle = new();
 
 	public override void _Ready()
 	{
@@ -93,9 +129,20 @@ public partial class Fable3WorldIcons : SubViewportContainer
 		{
 			Name = "WorldSprites",
 			ResolveTexture = ResolveTexture,
-			Place = PlaceSprite,
+			Place = (guest, _) => PlaceIn(_views[0], guest),
 		};
 		root.AddChild(_sprites);
+
+		_spritesTwo = new Engine_HudWorldSprites
+		{
+			Name = "WorldSpritesPlayerTwo",
+			ResolveTexture = ResolveTextureTwo,
+			Place = (guest, _) => PlaceIn(_views[1], guest),
+			SightView = 1,
+			Visible = false,
+			ProcessMode = ProcessModeEnum.Disabled,
+		};
+		root.AddChild(_spritesTwo);
 
 		// The aim reticules (Fable3Reticles), in front of the icons: pushed by the guest as sprites, never elements.
 		for (int slot = 0; slot < 2; ++slot)
@@ -106,7 +153,7 @@ public partial class Fable3WorldIcons : SubViewportContainer
 				Look = Fable3Reticles.Look,
 				Position = new Vector3(0f, 0f, 1f),
 				ResolveTexture = ResolveTexture,
-				Place = guest => PlaceSprite(guest, 0u)?.Canvas,
+				Place = guest => PlaceIn(_windowView, guest)?.Canvas,
 			};
 			root.AddChild(_reticules[slot]);
 		}
@@ -156,6 +203,15 @@ public partial class Fable3WorldIcons : SubViewportContainer
 		return texture;
 	}
 
+	/// <summary><see cref="ResolveTexture"/> in player two's glyph set: a button's art is player two's twin.</summary>
+	private Texture2D? ResolveTextureTwo(uint hash)
+	{
+		using (Engine_UiKeyGlyphs.Surface(2))
+		{
+			return ResolveTexture(hash);
+		}
+	}
+
 	public override void _Process(double delta)
 	{
 		// The container covers the window: its parent is a CanvasLayer, not a Control, so nothing
@@ -183,15 +239,37 @@ public partial class Fable3WorldIcons : SubViewportContainer
 				Strings = Fable3Strings.Current,
 				Textures = Fable3Art.Load,
 			};
+			_spritesTwo.Theme = new Engine_UiTheme
+			{
+				Fonts = _sprites.Theme.Fonts,
+				Strings = _sprites.Theme.Strings,
+				Textures = LoadArtTwo,
+			};
 		}
+
+		// THE SCREENS THIS FRAME: the window through its camera, or each half through its own player's
+		// camera (Engine_HudSpriteView). Each view's camera is taken here, once: the rings below and both
+		// layers' placements later this frame read the same snapshot, as the one projector did.
+		Camera3D? camera = GetWindow().GetCamera3D();
+		Vector2 window = GetViewportRect().Size;
+		bool split = Engine_HudSpriteView.Aim(_views[0], _views[1], camera, window, testSight: false);
+		SeatLayers(split);
+		AimWindow(_windowView);
+		bool hasProjector = _views[0].Update();
+		bool twoProjects = split && _views[1].Update();
+		_windowView.Update();
 
 		// THE HUD ROOT'S STATE IS THE GUEST'S GATE: the icons are HUD elements, and hud.bgf's root is
 		// set to state 2 by sub_825C1CB0 from every box's Show — the Options screen among them — and
 		// back to 1 by sub_825C1D28 (`@Hud.Root`, Fable3Elements.HudHidden), so nothing of the HUD is
 		// drawn then.
 		_list.Clear();
+		_listTwo.Clear();
 		_markerSprites.Clear();
 		_emotionSquares.Clear();
+		IReadOnlyList<EmotionChoice> choices = GetEmotionChoices();
+		(ulong One, ulong Two) heroes = (0ul, 0ul);
+		bool heroesRead = false;
 		foreach (HostBridge.WorldSprite sprite in HostBridge.GetWorldSprites())
 		{
 			if (Fable3Elements.HudHidden)
@@ -212,28 +290,100 @@ public partial class Fable3WorldIcons : SubViewportContainer
 			// keyboard — as every other prompt is (Engine_UiKeyGlyphs), not as a lettered badge.
 			string button = sprite.Pooled ? Fable3IconArt.ButtonFor(sprite.Type) : string.Empty;
 			Texture2D? glyph = button.Length > 0 ? Engine_UiKeyGlyphs.KeycapFor(button) : null;
+			bool inOne = true;
+			bool inTwo = split;
 			if (sprite.Type == EmotionIconType)
 			{
 				_emotionSquares[sprite.Object] = (sprite.Title.Length > 0, sprite.Scale * SizeFor(sprite.Type));
+				if (!heroesRead)
+				{
+					heroesRead = true;
+					heroes = LocalHeroes();
+				}
+
+				EmotionChoice? choice = ChoiceOf(sprite.Object, choices);
+				if (split)
+				{
+					ulong owner = choice?.Player ?? 0ul;
+					inOne = Engine_HudSpriteView.DrawnIn(0, owner, heroes.One, heroes.Two);
+					inTwo = Engine_HudSpriteView.DrawnIn(1, owner, heroes.One, heroes.Two);
+					ReportRoute(choice, inOne, inTwo);
+				}
+				else
+				{
+					glyph = ChoiceArt(sprite, choice, heroes.Two) ?? glyph;
+				}
+			}
+			else if (split && sprite.Pooled && sprite.Type == InteractIconType &&
+				Fable3Targeting.InteractBy(sprite.Entity) is int targeting and not 0)
+			{
+				// A target's "Interact" icon is one per target, raised for whichever player targets it
+				// (Fable3Targeting): each half draws it only for its own player's target.
+				inOne = Refii.Entities.Engine_EntityHighlight.DrawnInView(0, split, targeting);
+				inTwo = Refii.Entities.Engine_EntityHighlight.DrawnInView(1, split, targeting);
 			}
 
-			_list.Add(new Engine_HudWorldSprites.Sprite(
-				sprite.Type, sprite.Pooled ? 0u : sprite.TextureHash, sprite.Colour, sprite.Entity, sprite.Anchor,
-				sprite.Scale * SizeFor(sprite.Type), sprite.Title, sprite.Opinion, sprite.Object, Texture: glyph));
+			if (inOne)
+			{
+				_list.Add(new Engine_HudWorldSprites.Sprite(
+					sprite.Type, sprite.Pooled ? 0u : sprite.TextureHash, sprite.Colour, sprite.Entity, sprite.Anchor,
+					sprite.Scale * SizeFor(sprite.Type), sprite.Title, sprite.Opinion, sprite.Object, Texture: glyph));
+			}
+
+			// Player two's half: their own keycap for a prompt; any other art by hash through ResolveTextureTwo.
+			if (inTwo)
+			{
+				Texture2D? glyphTwo = null;
+				if (button.Length > 0)
+				{
+					using (Engine_UiKeyGlyphs.Surface(2))
+					{
+						glyphTwo = Engine_UiKeyGlyphs.KeycapFor(button);
+					}
+				}
+
+				_listTwo.Add(new Engine_HudWorldSprites.Sprite(
+					sprite.Type, sprite.Pooled ? 0u : sprite.TextureHash, sprite.Colour, sprite.Entity, sprite.Anchor,
+					sprite.Scale * SizeFor(sprite.Type), sprite.Title, sprite.Opinion, sprite.Object, Texture: glyphTwo));
+			}
 		}
 
 		// THE MODS' MARKERS (mark / unmark on every surface) through the one composition after the game's
-		// icons, on the same layer and projector. Fable 3 has one screen: a couch pair shares it (both
-		// players' markers), an online machine shows its own player's.
+		// icons, on the same layer and projector. One screen: a couch pair shares it (both players'
+		// markers), an online machine shows its own player's. Split: each half its own player's, sized by
+		// that half's camera, as Fable 2's halves.
 		if (!Fable3Elements.HudHidden && Engine_HudModMarkers.Count != 0)
 		{
 			Engine_HudModMarkers.LoadIcon ??= name => Engine_HudModMarkers.LoadIconWith(name, Fable3Art.Load);
-			uint owned = HostBridge.PlayerOwned();
-			Engine_HudModMarkers.ComposeMarkers(_list, owned == 2u ? 2 : 1, owned == 3u,
-				_markerDistance ??= MarkerDistanceSquared, Godot.Time.GetTicksMsec() / 1000.0);
+			double clock = Godot.Time.GetTicksMsec() / 1000.0;
+			if (split)
+			{
+				Engine_HudModMarkers.ComposeMarkers(_list, 1, false,
+					_markerDistanceOne ??= guest => ViewDistanceSquared(_views[0], guest), clock);
+				Engine_HudModMarkers.ComposeMarkers(_listTwo, 2, false,
+					_markerDistanceTwo ??= guest => ViewDistanceSquared(_views[1], guest), clock);
+			}
+			else
+			{
+				uint owned = HostBridge.PlayerOwned();
+				Engine_HudModMarkers.ComposeMarkers(_list, owned == 2u ? 2 : 1, owned == 3u,
+					_markerDistance ??= MarkerDistanceSquared, clock);
+			}
 		}
 
 		_sprites.Feed(_list);
+
+		// Player two's layer is fed only while it is drawn, and emptied once when the split ends.
+		if (split)
+		{
+			_spritesTwo.Feed(_listTwo);
+			_twoFed = true;
+		}
+		else if (_twoFed)
+		{
+			_spritesTwo.Feed(System.Array.Empty<Engine_HudWorldSprites.Sprite>());
+			_twoFed = false;
+		}
 
 		bool reticuleActive = false;
 		float canvasHeight = CanvasHeight / PixelsPerUnit;
@@ -254,11 +404,10 @@ public partial class Fable3WorldIcons : SubViewportContainer
 			}
 		}
 
-		// Idle the full-window 3D world-icons SubViewport while under loading cover, when the HUD is
-		// hidden, or when neither world sprites nor aim reticules are on screen.
+		// The list and the aims are already empty under a hidden HUD root (above), so the root is no
+		// term here: the viewport must still render that emptiness once.
 		Engine_UiSceneBuilder.SetViewportActive(
-			_viewport,
-			!Refii.Game.GameWorld.CoverHeld && !Fable3Elements.HudHidden && (_list.Count != 0 || reticuleActive));
+			_viewport, _idle.Renders(Refii.Game.GameWorld.CoverHeld, _list.Count != 0 || _listTwo.Count != 0 || reticuleActive));
 
 		// Ground truth once a sprite was placed on screen (last frame's placement): the log's
 		// `1 on screen` is the drawer's count, not pixels (r8 shows none of them).
@@ -275,14 +424,11 @@ public partial class Fable3WorldIcons : SubViewportContainer
 		// 0x8297A480..0x8297A4B4, projected by sub_82287A08 at 0x8297A4C4) and adds each point in
 		// screen pixels before unprojecting it (sub_82269260 at 0x8297A7B8). The shared drawer stacks
 		// the square above the anchor (title on the anchor), so the centre is lifted by the title
-		// and half the square, exactly as it places them.
+		// and half the square, exactly as it places them. Split: in each half that draws the icon,
+		// through that half's camera, in that half's units (its seat scale).
 		_rings.Clear();
-		IReadOnlyList<EmotionChoice> choices = GetEmotionChoices();
 		ChoicesUp = choices.Count > 0;
-		Camera3D? camera = GetWindow().GetCamera3D();
-		Vector2 window = GetViewportRect().Size;
-		bool hasProjector = _projector.Update(camera, window, Engine.GetProcessFrames());
-		PlaceMarkers(camera, window);
+		PlaceMarkers(window, split);
 		if (hasProjector && !Fable3Elements.HudHidden && window.Y > 0f)
 		{
 			float pixelsPerUnit = window.Y * PixelsPerUnit / CanvasHeight;
@@ -295,27 +441,63 @@ public partial class Fable3WorldIcons : SubViewportContainer
 				}
 
 				Vector3 world = GameWorld.GuestToGodot(choice.Anchor);
-				if (!_projector.TryProject(world, out Vector2 pixel, out _))
-				{
-					continue;
-				}
-
 				float lift = ((square.Titled ? Engine_HudWorldSprites.TextSize : 0f) +
 					(Engine_HudWorldSprites.IconSize * square.Scale * 0.5f)) * piece;
-				Vector2 centre = pixel - new Vector2(0f, lift * pixelsPerUnit);
-				_rings.Add((centre, RingRadius * piece * pixelsPerUnit, choice.Progress, choice.Complete));
+				for (int half = 0; half < (split ? 2 : 1); ++half)
+				{
+					Engine_HudSpriteView view = _views[half];
+					if (split && ((half == 1 && !twoProjects) ||
+						!Engine_HudSpriteView.DrawnIn(half, choice.Player, heroes.One, heroes.Two)))
+					{
+						continue;
+					}
+
+					if (!view.Projector.TryProject(world, out Vector2 pixel, out _) || (split && !view.Shows(pixel)))
+					{
+						continue;
+					}
+
+					float unit = pixelsPerUnit * view.Frame.Scale;
+					Vector2 centre = view.WindowPixel(pixel) - new Vector2(0f, lift * unit);
+					_rings.Add((centre, RingRadius * piece * unit, choice.Progress, choice.Complete,
+						3f * (window.Y / CanvasHeight) * view.Frame.Scale));
+				}
 			}
 		}
 
 		QueueRedraw();
 	}
 
-	/// <summary>
-	/// A guest world anchor on the sprites' canvas: through the window's world camera to a pixel,
-	/// then into 720-high canvas units centred on the screen. No line-of-sight depth is captured
-	/// for this title, so the marker is left untested (sight.x &lt; 0).
-	/// </summary>
+	/// <summary>Seats each layer in its view's half while split; back on the whole window once the split ends.</summary>
+	private void SeatLayers(bool split)
+	{
+		if (split || _seated)
+		{
+			_seated = split;
+			_sprites.Transform = _views[0].Frame.Transform(0f);
+			_spritesTwo.Transform = _views[1].Frame.Transform(0f);
+		}
+
+		if (_spritesTwo.Visible != split)
+		{
+			_spritesTwo.Visible = split;
+			_spritesTwo.ProcessMode = split ? ProcessModeEnum.Inherit : ProcessModeEnum.Disabled;
+		}
+	}
+
+	/// <summary>A view on the whole window through the window's camera as they stand when asked.</summary>
+	private void AimWindow(Engine_HudSpriteView view)
+	{
+		Vector2 window = GetViewportRect().Size;
+		view.Camera = GetWindow().GetCamera3D();
+		view.Viewport = window;
+		view.Frame = Engine_UiSeats.Of(window, Engine_UiSeats.Seat.Whole);
+		view.TestSight = false;
+	}
+
 	private System.Func<Vector3, float?>? _markerDistance;
+	private System.Func<Vector3, float?>? _markerDistanceOne;
+	private System.Func<Vector3, float?>? _markerDistanceTwo;
 
 	/// <summary>The window camera's squared distance to a guest point, for the markers' size curve.</summary>
 	private float? MarkerDistanceSquared(Vector3 guest) =>
@@ -323,25 +505,126 @@ public partial class Fable3WorldIcons : SubViewportContainer
 			? camera.GlobalPosition.DistanceSquaredTo(GameWorld.GuestToGodot(guest))
 			: null;
 
-	private Engine_HudWorldSprites.Placed? PlaceSprite(Vector3 guest, uint entity)
+	/// <summary>A half's camera's squared distance to a guest point; null with no camera.</summary>
+	private static float? ViewDistanceSquared(Engine_HudSpriteView view, Vector3 guest) =>
+		view.Camera is { } camera && GodotObject.IsInstanceValid(camera)
+			? camera.GlobalPosition.DistanceSquaredTo(GameWorld.GuestToGodot(guest))
+			: null;
+
+	/// <summary><see cref="Fable3Art.Load"/> in player two's glyph set, for player two's layer's text icons.</summary>
+	private static Texture2D? LoadArtTwo(string path)
 	{
-		Camera3D? camera = GetWindow().GetCamera3D();
-		Vector2 size = GetViewportRect().Size;
-		if (!_projector.Update(camera, size, Engine.GetProcessFrames()))
+		using (Engine_UiKeyGlyphs.Surface(2))
+		{
+			return Fable3Art.Load(path);
+		}
+	}
+
+	/// <summary>This machine's two local heroes' uids (entity manager +0x80 / +0x88, entity+0x18), 0 without local co-op.</summary>
+	private static (ulong One, ulong Two) LocalHeroes()
+	{
+		if (!Refii.Core.Engine_TitleGame.Active.LocalCoop)
+		{
+			return (0ul, 0ul);
+		}
+
+		(uint one, uint two) = HostBridge.CoopPlayerEntities();
+		return (HostBridge.GetEntityUid(one), HostBridge.GetEntityUid(two));
+	}
+
+	/// <summary>The stated choice record an emotion icon is drawn for, by the icon object (choice.Icon); null for none.</summary>
+	private static EmotionChoice? ChoiceOf(uint icon, IReadOnlyList<EmotionChoice> choices)
+	{
+		if (icon == 0u)
 		{
 			return null;
 		}
 
-		Vector3 world = GameWorld.GuestToGodot(guest);
-		if (!_projector.TryProject(world, out Vector2 pixel, out _))
+		foreach (EmotionChoice choice in choices)
+		{
+			if (choice.Icon == icon)
+			{
+				return choice;
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>The choice records already reported, by icon: whose half they are drawn in on split.</summary>
+	private readonly HashSet<uint> _reportedRoute = new();
+
+	/// <summary>Logs once per icon the halves a stated owner keeps a choice to on split.</summary>
+	private void ReportRoute(EmotionChoice? choice, bool inOne, bool inTwo)
+	{
+		if (choice is not { } stated || stated.Player == 0ul || _reportedRoute.Count >= 64 || !_reportedRoute.Add(stated.Icon))
+		{
+			return;
+		}
+
+		GD.Print($"[world-sprites] choice '{stated.Name}' (owner {stated.Player:X16}) on split: " +
+			(inOne && inTwo ? "no local hero's, drawn in both halves" : inTwo ? "player two's half only" : "player one's half only"));
+	}
+
+	/// <summary>Player two's copy of each choice art by the guest's texture id (<see cref="ChoiceArt"/>).</summary>
+	private readonly Dictionary<uint, Texture2D?> _artTwo = new();
+
+	/// <summary>The choice records already reported as player two's, by record.</summary>
+	private readonly HashSet<uint> _reportedTwo = new();
+
+	/// <summary>
+	/// An emotion choice's button art in the glyph set of the player the choice is for, on one screen. THE
+	/// RECORD STATES ITS OWNER: the hero uid at rec+8 (64 bits, high word at +8; 0 = any player), which the
+	/// choices' input matches word for word against the pressing player's hero, `ld r11,0x18(hero)` (TU3
+	/// 0x8261043C / disc 0x825E9228) against `ld r11,8(rec)` (TU3 0x82610508..0x82610520 / disc
+	/// 0x825E92F4..0x825E930C; a null owner passes, TU3 0x826104D4..0x826104F4 / disc 0x825E92C0..0x825E92E0).
+	/// A choice whose owner is this machine's local player two (Engine_ControllerFamily.OwnerSet) draws player
+	/// two's twin of its art; null keeps the shared texture the drawer resolves by hash. Split, each half's
+	/// layer resolves its own set (ResolveTextureTwo).
+	/// </summary>
+	private Texture2D? ChoiceArt(HostBridge.WorldSprite sprite, EmotionChoice? choice, ulong localTwo)
+	{
+		if (localTwo == 0ul || sprite.TextureHash == 0u || choice is not { } stated ||
+			Refii.Core.Engine_ControllerFamily.OwnerSet(stated.Player, localTwo) != 2)
 		{
 			return null;
 		}
 
-		_placed = true;
-		float unitsPerPixel = CanvasHeight / PixelsPerUnit / size.Y;
-		var canvas = new Vector2((pixel.X - (size.X * 0.5f)) * unitsPerPixel, ((size.Y * 0.5f) - pixel.Y) * unitsPerPixel);
-		return new Engine_HudWorldSprites.Placed(canvas, new Vector3(-1f, 0f, 0f));
+		if (!_artTwo.TryGetValue(sprite.TextureHash, out Texture2D? art))
+		{
+			art = ResolveTextureTwo(sprite.TextureHash);
+			_artTwo[sprite.TextureHash] = art;
+		}
+
+		if (_reportedTwo.Add(sprite.Object))
+		{
+			GD.Print($"[world-sprites] choice '{stated.Name}' is player two's (owner {stated.Player:X16}): " +
+				$"player two's glyphs{(art is null ? ", art NOT resolved" : string.Empty)}");
+		}
+
+		return art;
+	}
+
+	/// <summary>
+	/// A guest world anchor on one layer's canvas: through the view's camera to a pixel, then into that
+	/// view's seat canvas units (Engine_HudSpriteView.Place; a half drops an anchor outside its view). The
+	/// whole window is taken as it stands when asked. No line-of-sight depth is captured for this title,
+	/// so the marker is left untested (sight.x &lt; 0).
+	/// </summary>
+	private Engine_HudWorldSprites.Placed? PlaceIn(Engine_HudSpriteView view, Vector3 guest)
+	{
+		if (view.Frame.IsWhole)
+		{
+			AimWindow(view);
+		}
+
+		Engine_HudWorldSprites.Placed? placed = view.Place(GameWorld.GuestToGodot(guest), clip: true);
+		if (placed is not null)
+		{
+			_placed = true;
+		}
+
+		return placed;
 	}
 
 	// ---- The co-op partners' markers, types 52/53 ---------------------------------------------
@@ -412,30 +695,66 @@ public partial class Fable3WorldIcons : SubViewportContainer
 	/// <summary>Each marker icon's stated age (+68) when it was first drawn: `Fade In` runs from there.</summary>
 	private readonly Dictionary<uint, float> _markerShownAt = new();
 
-	/// <summary>Each marker icon's root as last placed, window pixels: the guest's previous SetPosition (0x82B51FC8).</summary>
-	private readonly Dictionary<uint, Vector2> _markerPlaced = new();
+	/// <summary>Each marker icon's root as last placed on each screen (<see cref="MarkerKey"/>), in that screen
+	/// camera's pixels: the guest's previous SetPosition (0x82B51FC8).</summary>
+	private readonly Dictionary<ulong, Vector2> _markerPlaced = new();
 
-	/// <summary>Each marker icon's measured world lift (+160's z, Godot's up), once measured.</summary>
-	private readonly Dictionary<uint, float> _markerLift = new();
+	/// <summary>Each marker icon's measured world lift on each screen (+160's z, Godot's up), once measured.</summary>
+	private readonly Dictionary<ulong, float> _markerLift = new();
 
 	private readonly Dictionary<uint, Texture2D?> _markerArt = new();
-	private readonly HashSet<uint> _markersReported = new();
+	private readonly HashSet<ulong> _markersReported = new();
+
+	/// <summary>A marker on one screen: the icon object, and 0 for the whole window or player one's half, 1 for
+	/// player two's.</summary>
+	private static ulong MarkerKey(uint icon, int screen) => ((ulong)(uint)screen << 32) | icon;
+
+	/// <summary>A screen the markers are placed on: its camera, that camera's viewport in pixels, and where it
+	/// stands on the window (top-left and size, window pixels).</summary>
+	private readonly List<(int Index, Camera3D Camera, Vector2 View, Vector2 Origin, Vector2 Size)> _markerScreens = new();
+
+	/// <summary>
+	/// The screens the markers stand on: the sprites' views (Engine_HudSpriteView.Aim). One screen: the window,
+	/// through its camera. SPLIT: each half is a screen of its own (Engine_UiSeats), seen through its own player's
+	/// camera, and shows the other player's hero's marker (Engine_HudSpriteView.PartnerMarkerHalf: the hero
+	/// marker, `icon_player1`, in player two's half; the partner marker, `icon_player2`, in player one's), placed
+	/// through that half's camera inside that half. The guest states each of the two records against the camera
+	/// of the half it is drawn in and switches it by that half's camera (coop_player_icons.cpp), so a stated
+	/// marker is drawn. Through the window camera across the whole window, player one's hero (that camera's
+	/// centre) put the `icon_player1` badge on the divider (int7g).
+	/// </summary>
+	private void MarkerScreens(bool split)
+	{
+		_markerScreens.Clear();
+		for (int index = 0; index < (split ? 2 : 1); ++index)
+		{
+			Engine_HudSpriteView view = _views[index];
+			if (view.Camera is { } eye && GodotObject.IsInstanceValid(eye) && eye.IsInsideTree())
+			{
+				_markerScreens.Add((index, eye, view.Viewport, view.Frame.Origin, view.Frame.Window));
+			}
+		}
+	}
 
 	/// <summary>
 	/// The markers the guest states this frame, placed by Godot's own camera as sub_82B51B58
 	/// places them (see above) and faded as their slides do: each fade's own hud.bgf opacity track
 	/// (<see cref="Fable3MarkerPlacement.Alpha"/>).
 	/// </summary>
-	private void PlaceMarkers(Camera3D? camera, Vector2 window)
+	private void PlaceMarkers(Vector2 window, bool split)
 	{
 		_markers.Clear();
-		if (camera is null || !GodotObject.IsInstanceValid(camera) || !camera.IsInsideTree() ||
-			window.X <= 0f || window.Y <= 0f || _markerSprites.Count == 0)
+		if (window.X <= 0f || window.Y <= 0f || _markerSprites.Count == 0)
 		{
 			return;
 		}
 
-		float unit = window.Y * PixelsPerUnit / CanvasHeight;
+		MarkerScreens(split);
+		if (_markerScreens.Count == 0)
+		{
+			return;
+		}
+
 		foreach (HostBridge.WorldSprite sprite in _markerSprites)
 		{
 			if (!_markerArt.TryGetValue(sprite.Type, out Texture2D? art))
@@ -472,12 +791,25 @@ public partial class Fable3WorldIcons : SubViewportContainer
 			float alpha = sprite.Fading
 				? Fable3MarkerPlacement.Alpha(fades, true, (MarkerFadeSeconds - sprite.SecondsLeft) / MarkerFadeSeconds)
 				: Fable3MarkerPlacement.Alpha(fades, false, (sprite.Age - shownAt) / MarkerFadeSeconds);
-			(Vector2 root, string where) = PlaceMarker(camera, window, sprite.Object, sprite.Anchor, unit);
-			_markers.Add((art, root - new Vector2(0f, Fable3MarkerPlacement.IconLift * unit), Fable3MarkerPlacement.Side * unit, alpha));
-			if (_markersReported.Count < 32 && _markersReported.Add(sprite.Object))
+			foreach ((int index, Camera3D eye, Vector2 view, Vector2 origin, Vector2 size) in _markerScreens)
 			{
-				GD.Print($"[fable3-markers] type {sprite.Type} icon {sprite.Object:X8} entity {sprite.Entity:X8}: " +
-					$"drawn {where} at ({root.X:F0},{root.Y:F0}) of {window.X:F0}x{window.Y:F0}");
+				if (view.X <= 0f || view.Y <= 0f || size.Y <= 0f || (split && Engine_HudSpriteView.PartnerMarkerHalf(sprite.Type) != index))
+				{
+					continue;
+				}
+
+				// Placed in the screen camera's own pixels, then onto the window; sized by the screen's height.
+				ulong key = MarkerKey(sprite.Object, index);
+				(Vector2 placed, string where) = PlaceMarker(eye, view, key, sprite.Anchor, view.Y * PixelsPerUnit / CanvasHeight);
+				Vector2 root = Fable3MarkerPlacement.OnWindow(placed, view, origin, size);
+				float unit = size.Y * PixelsPerUnit / CanvasHeight;
+				_markers.Add((art, root - new Vector2(0f, Fable3MarkerPlacement.IconLift * unit), Fable3MarkerPlacement.Side * unit, alpha));
+				if (_markersReported.Count < 32 && _markersReported.Add(key))
+				{
+					GD.Print($"[fable3-markers] type {sprite.Type} icon {sprite.Object:X8} entity {sprite.Entity:X8}: " +
+						$"drawn {where} at ({root.X:F0},{root.Y:F0}) of {window.X:F0}x{window.Y:F0}" +
+						(split ? $" in player {index + 1}'s half" : string.Empty));
+				}
 			}
 		}
 
@@ -491,9 +823,9 @@ public partial class Fable3WorldIcons : SubViewportContainer
 				held.Add(sprite.Object);
 			}
 
-			foreach (uint key in new List<uint>(_markerPlaced.Keys))
+			foreach (ulong key in new List<ulong>(_markerPlaced.Keys))
 			{
-				if (!held.Contains(key))
+				if (!held.Contains((uint)key))
 				{
 					_markerPlaced.Remove(key);
 					_markerLift.Remove(key);
@@ -520,14 +852,15 @@ public partial class Fable3WorldIcons : SubViewportContainer
 	}
 
 	/// <summary>
-	/// A marker's root in window pixels (y down): the stated world point through Godot's camera,
+	/// A marker's root in the screen camera's pixels (y down; <paramref name="window"/> is that camera's viewport,
+	/// <paramref name="icon"/> the marker's key on that screen): the stated world point through the camera,
 	/// pushed in front when behind it and dropped to the bottom edge, raised by its measured world
 	/// lift when on screen (<see cref="MarkerLift"/>), then held inside sub_82B519C8's margins with
 	/// its 10 / 40 pixels scaled from 720 lines to the window. Behind and the push are the guest
 	/// camera's (<see cref="Fable3MarkerPlacement.Behind"/>, <see cref="Fable3MarkerPlacement.Push"/>:
-	/// its 0.1 near plane, not Godot's camera's). <paramref name="unit"/> is window pixels per hud.bgf unit.
+	/// its 0.1 near plane, not Godot's camera's). <paramref name="unit"/> is that viewport's pixels per hud.bgf unit.
 	/// </summary>
-	private (Vector2 Root, string Where) PlaceMarker(Camera3D camera, Vector2 window, uint icon, Vector3 guest, float unit)
+	private (Vector2 Root, string Where) PlaceMarker(Camera3D camera, Vector2 window, ulong icon, Vector3 guest, float unit)
 	{
 		Vector3 world = GameWorld.GuestToGodot(guest);
 		Vector2 pixel;
@@ -598,14 +931,13 @@ public partial class Fable3WorldIcons : SubViewportContainer
 
 		// Only the filled part: the guest's path is points 0..progress from twelve o'clock clockwise
 		// (the loop to `v28` at 0x8297A7D4), with no track behind it.
-		float scale = GetViewportRect().Size.Y / CanvasHeight;
-		foreach ((Vector2 centre, float radius, float progress, bool complete) in _rings)
+		foreach ((Vector2 centre, float radius, float progress, bool complete, float stroke) in _rings)
 		{
 			if (progress > 0f)
 			{
 				float sweep = Mathf.Tau * Mathf.Clamp(progress, 0f, 1f);
 				Color ink = complete ? new Color(1f, 0.86f, 0.55f) : Colors.White;
-				DrawArc(centre, radius, -Mathf.Pi * 0.5f, (-Mathf.Pi * 0.5f) + sweep, 48, ink, 3f * scale, true);
+				DrawArc(centre, radius, -Mathf.Pi * 0.5f, (-Mathf.Pi * 0.5f) + sweep, 48, ink, stroke, true);
 			}
 		}
 	}
@@ -675,8 +1007,11 @@ public partial class Fable3WorldIcons : SubViewportContainer
 			string name = Next();
 			string text = Next();
 			string record = Next();
+			// The owner uid is 64 bits at rec+8, high word first (big-endian): words +1 = rec+8, +2 = rec+12,
+			// as the record's writer stores the hero's +0x18 / +0x1C (TU3 0x8260F858..0x8260F864 / disc
+			// 0x825E86A0..0x825E86AC) and RefiiHostGetEntityUid packs them.
 			_choices.Add(new EmotionChoice(
-				(int)_choiceWords[w], ((ulong)_choiceWords[w + 2] << 32) | _choiceWords[w + 1], _choiceWords[w + 3],
+				(int)_choiceWords[w], ((ulong)_choiceWords[w + 1] << 32) | _choiceWords[w + 2], _choiceWords[w + 3],
 				_choiceWords[w + 4], (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0,
 				(flags & 16) != 0, (flags & 32) != 0, _choiceWords[w + 6],
 				new Vector3(_choiceValues[v], _choiceValues[v + 1], _choiceValues[v + 2]),

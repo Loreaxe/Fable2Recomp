@@ -7,7 +7,8 @@ using Refii.Ui;
 /// Fable 3's epilogue (questcompletion.bgf) and credits (creditsscreen.bgf), drawn on the SHARED
 /// HUD view as two more <see cref="Fable3HudDocument"/>s. Both are screen-manager screens, not
 /// box-manager boxes, so no `@Box.Show` names them: end_screen_hooks.cpp states when each is up
-/// and which presentation it is; everything on them is an element statement.
+/// and which document it is; everything on them is an element statement. Their pad is Godot's
+/// (<see cref="Answer"/>).
 /// </summary>
 /// <remarks>
 /// THE EPILOGUE. The show (sub_8276B460) writes the title, description, reward caption, renown
@@ -19,37 +20,73 @@ using Refii.Ui;
 /// same way; the show hides the reward caption with sub_828196E0 (0x8276B61C, `@Ui.Active`); the gold
 /// (SetGoldRewardInEpilogueScreen -> sub_8276B848) writes `EpilogueRenown` / `EpilogueRenownAmt`.
 /// The image is not an element write — the show stores it into the `ScreenShot` texture
-/// (0x8276B7F8) — so it arrives only as `@Epilogue.Open`'s second argument. INTERACT (13) closes
-/// it in the guest (vt+20 sub_8276B410): Godot draws only.
+/// (0x8276B7F8) — so it arrives only as `@Epilogue.Open`'s second argument. INTERACT (13, the pad's
+/// A) closes it through its own input (vt+20, TU3 0x827A2480 / disc 0x8276B410), which Godot runs with
+/// the player who pressed: player one always, another player only on a machine that is not the
+/// session's server (an online client: the guest's Network.IsServer, N+0x1C and N+0x1D).
 ///
 /// THE CREDITS. The roll (sub_82B3F980, then its tick sub_82B3FD70) writes the `GUI_CREDITS` lines
 /// into `Text.Text0..23` (sub_82B45268 at 0x82B3FC0C / 0x82B3FE64 / 0x82B3FEA4, `@Ui.Text` on their
 /// guards) and scrolls them and `credits_logos` with SetPosition (0x82B3FC50, 0x82B3FED0, 0x82B3FCE8,
-/// 0x82B3FF1C, `@Ui.Position`). Both documents are drawn from those statements alone (stated-only). It ends itself, or on GUI_SELECT / GUI_CANCEL (72/73,
-/// sub_82B3FF60) in the guest.
+/// 0x82B3FF1C, `@Ui.Position`). Both documents are drawn from those statements alone (stated-only).
+/// It ends itself. A and B hand GUI_SELECT (72) to its own input (TU3 sub_82B75188 / disc
+/// sub_82B3FF60), which ends the roll with a local partner seated, or on the session's server (a
+/// solo game is its own server: A skips it alone, as on the 360), and never on an online client;
+/// Godot adds no skip of its own.
 /// </remarks>
 public static class Fable3EndScreens
 {
-	/// <summary>The epilogue's widgets: the quest card (`elements`) and its button row.</summary>
+	/// <summary>
+	/// The epilogue's widgets: the quest card (`elements`) and its button row. `questcompletion.bgf`'s card
+	/// `Layer.elements` is a plain node (its leaf, bullet points, title, description, reward texts, `Image` and
+	/// `GuildSealIcon` beneath), so it is cut as any node; `Layer.Buttons` is a component.
+	/// </summary>
 	public static readonly Engine_HudLayout.GroupSubtree[] EpilogueGroups =
 	{
-		new("elements", "Epilogue", null, 0f, true),
+		new("elements", "Epilogue", null, 0f, true, AnyNode: true),
 		new("Buttons", "EpilogueButtons", null, 0f, true),
 	};
 
-	/// <summary>The credits' widgets: the rolling lines, the logo sheet and the edge fades.</summary>
+	/// <summary>
+	/// The credits' widgets: the backdrop, the rolling lines, the logo sheet and the edge fades. In
+	/// `creditsscreen.bgf` each is a plain node under `Layer`, not a component (`Layer.Background`,
+	/// `Layer.Text` over `Text0..23`, `Layer.credits_logos`, `Layer.Fade`), so each is cut as any node
+	/// (<see cref="Engine_HudLayout.GroupSubtree.AnyNode"/>): cut as components they matched nothing, the
+	/// document built no piece and the stated roll (`@Ui.Text` / `@Ui.Position` on `Text.Text&lt;i&gt;` and
+	/// `credits_logos`) had nothing to land on.
+	/// </summary>
 	public static readonly Engine_HudLayout.GroupSubtree[] CreditsGroups =
 	{
-		new("Text", "CreditsText", null, 0f, true),
-		new("credits_logos", "CreditsLogos", null, 0f, true),
-		new("Fade", "CreditsFade", null, 0.5f, true),
+		new("Background", "CreditsBackground", null, -0.5f, true, AnyNode: true),
+		new("Text", "CreditsText", null, 0f, true, AnyNode: true),
+		new("credits_logos", "CreditsLogos", null, 0f, true, AnyNode: true),
+		new("Fade", "CreditsFade", null, 0.5f, true, AnyNode: true),
 	};
 
-	/// <summary>The epilogue's presentation while it is up, else 0.</summary>
-	public static uint EpiloguePresentation { get; private set; }
+	/// <summary>The epilogue is up (between `@Epilogue.Open` and `@Epilogue.Close`).</summary>
+	public static bool EpilogueUp { get; private set; }
 
-	/// <summary>The credits' presentation while they roll, else 0.</summary>
-	public static uint CreditsPresentation { get; private set; }
+	/// <summary>The credits roll (between `@Credits.Open` and `@Credits.Close`).</summary>
+	public static bool CreditsUp { get; private set; }
+
+	/// <summary>
+	/// The tick action for a press while an end screen is up, or null: A on the epilogue is
+	/// `epilogue:&lt;p&gt;:close`; A or B on the credits is `credits:&lt;p&gt;:skip`. The epilogue stands
+	/// in front when both are up (it is the screen the guest's input reaches, the open screen object).
+	/// </summary>
+	public static string? Answer(bool a, bool b, int player = Fable3ActingPlayer.One) =>
+		Lever(EpilogueUp, CreditsUp, a, b, player);
+
+	/// <summary><see cref="Answer"/> for stated screens (pure).</summary>
+	public static string? Lever(bool epilogueUp, bool creditsUp, bool a, bool b, int player)
+	{
+		if (epilogueUp)
+		{
+			return a ? "epilogue:" + Fable3ActingPlayer.Field(player) + ":close" : null;
+		}
+
+		return creditsUp && (a || b) ? "credits:" + Fable3ActingPlayer.Field(player) + ":skip" : null;
+	}
 
 	/// <summary>The two documents, for <see cref="Fable3Hud"/> to stand beside `hud` and `interactionmode`.</summary>
 	public static Fable3HudDocument[] Documents() => new[]
@@ -72,8 +109,8 @@ public static class Fable3EndScreens
 
 		bool? up = document.Document switch
 		{
-			"questcompletion" => EpiloguePresentation != 0u,
-			"creditsscreen" => CreditsPresentation != 0u,
+			"questcompletion" => EpilogueUp,
+			"creditsscreen" => CreditsUp,
 			_ => null,
 		};
 		if (up is { } shown && view.Suppressed == shown)
@@ -86,7 +123,7 @@ public static class Fable3EndScreens
 	{
 		router.Register("@Epilogue.Open", call =>
 		{
-			EpiloguePresentation = Parse(call.Argument(0).Text);
+			EpilogueUp = true;
 			Opened(call.Argument(2).Text, call.Argument(3).Text, (int)call.Argument(4).Number,
 				Parse(call.Argument(5).Text), Parse(call.Argument(6).Text));
 		});
@@ -99,12 +136,9 @@ public static class Fable3EndScreens
 			Fable3HudRegistry.StateImage(name, texture);
 			Fable3Elements.Log($"[fable3-stated] epilogue screenshot '{call.Argument(2).Text}' texture {texture:X8} under image name {name:X8}");
 		});
-		router.Register("@Epilogue.Close", _ =>
-		{
-			EpiloguePresentation = 0u;
-		});
-		router.Register("@Credits.Open", call => CreditsPresentation = Parse(call.Argument(0).Text));
-		router.Register("@Credits.Close", _ => CreditsPresentation = 0u);
+		router.Register("@Epilogue.Close", _ => EpilogueUp = false);
+		router.Register("@Credits.Open", _ => CreditsUp = true);
+		router.Register("@Credits.Close", _ => CreditsUp = false);
 	}
 
 	/// <summary>

@@ -136,22 +136,15 @@ public partial class GameInput
 	}
 
 	/// <summary>
-	/// The prompts' device, once per frame: the player whose menu is open on split screen, else the
-	/// player whose joypad was used last; that player's controller family and remap.
+	/// The prompts' devices, once per frame. The shared set: on split screen the open menu's owner, else
+	/// player one; on one screen the player whose joypad was used last (Engine_ControllerFamily.PromptPlayer)
+	/// — that player's controller family and remap. Player two's own set: player two's controller
+	/// (Engine_UiKeyGlyphs.PadFamilyTwo), for the surfaces that are theirs alone.
 	/// </summary>
 	private static void UpdateGlyphDevice()
 	{
-		int player = 1;
-		int owner = Engine_TitleGame.Active.MenuPlayer;
-		if (Engine_Views.Split && owner is 1 or 2)
-		{
-			player = owner;
-		}
-		else if (_lastJoypad >= 0)
-		{
-			player = PlayerOfJoypad(_lastJoypad);
-		}
-
+		int player = Engine_ControllerFamily.PromptPlayer(
+			Engine_Views.Split, Engine_TitleGame.Active.OpenMenuPlayer, _lastJoypad >= 0 ? PlayerOfJoypad(_lastJoypad) : 0);
 		int joypad = PadOfPlayer(player) is >= 0 and var pad ? JoypadForPad(pad) : -1;
 		if (joypad < 0 && _lastJoypad >= 0 && PlayerOfJoypad(_lastJoypad) == player)
 		{
@@ -160,6 +153,7 @@ public partial class GameInput
 
 		Engine_UiKeyGlyphs.GlyphPlayer = player;
 		Engine_UiKeyGlyphs.PadFamily = FamilyOfJoypad(joypad);
+		Engine_UiKeyGlyphs.PadFamilyTwo = PadOfPlayer(2) is >= 0 and var two ? FamilyOfJoypad(JoypadForPad(two)) : ControllerFamily.Unknown;
 	}
 
 	/// <summary>The controller family the player with the input is holding, as the prompts draw it.</summary>

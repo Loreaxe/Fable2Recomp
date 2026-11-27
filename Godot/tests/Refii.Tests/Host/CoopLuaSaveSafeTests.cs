@@ -225,7 +225,7 @@ public class CoopLuaSaveSafeTests
 	/// only outside a Linux source tree (a packaged run); null with the reason when the text does
 	/// not compile or a source tree holds no compiler.
 	/// </summary>
-	private static byte[]? Compile(string lua, string name, out string why)
+	internal static byte[]? Compile(string lua, string name, out string why)
 	{
 		why = string.Empty;
 		if (Refii.Lua.Engine_LuaDecompiler.TryCompile(lua, name, false, out byte[] chunk, out string error))
@@ -311,7 +311,8 @@ internal readonly record struct LuaCall(string Callee, bool Tail, int Line)
 {
 	private static readonly HashSet<string> Runners = new(StringComparer.Ordinal)
 	{
-		"C.Call1", "C.Wait1", "C.RunAs", "C.RunScoped", "C.RunResolved", "C.RunNear", "C.RunJob", "C.WithFlag",
+		"C.Call1", "C.Wait1", "C.RunAs", "C.RunAsPlayer", "RunAsOf", "C.RunScoped", "C.RunResolved", "C.RunNear", "C.RunJob",
+		"C.WithFlag",
 	};
 
 	/// <summary>A callee that can reach yielding code.</summary>

@@ -29,6 +29,8 @@ public static class Engine_UiCommands
 					Refii.Core.Engine_TitleGame.Active.RegisterUiVerbs(set);
 					Engine_UiModMenus.RegisterVerbs(set);
 					set.Register(Engine_UiVerbs.OpenScreen, Engine_UiHostScreens.Open);
+					set.Register(Engine_UiVerbs.AchievementsView, Engine_UiAchievementPage.View);
+					Engine_UiHostScreens.Register(Engine_UiAchievementPage.ScreenId, Engine_UiAchievementPage.Open);
 					_set = set;
 				}
 

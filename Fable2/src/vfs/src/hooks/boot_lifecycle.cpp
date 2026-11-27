@@ -738,9 +738,15 @@ REX_EXTERN(rex_lhApp_IdleWaitForFlags) {
 // host learns that a new frame of guest state is in memory. Godot reads that state once per
 // count and interpolates between counts.
 // ============================================================================================
+// The top GameFlow command's pose slot is the pass's last call (0x821A623C..54 / disc 0x821A609C..B4); under
+// the player's own pause in an online session the world's poses follow it (coop_hero_hooks.cpp).
+extern "C" void RefiiCoopOwnPauseRunsPoses(PPCContext* ctx, uint8_t* base, double alpha);
+
 REX_EXTERN(rex_lhGameLoop_HighFrequencyUpdate) {
   REX_FUNC_PROLOGUE();
+  const double alpha = ctx.f1.f64;
   __imp__rex_lhGameLoop_HighFrequencyUpdate(ctx, base);
+  RefiiCoopOwnPauseRunsPoses(&ctx, base, alpha);
   refii_bridge_note_guest_frame();
 }
 

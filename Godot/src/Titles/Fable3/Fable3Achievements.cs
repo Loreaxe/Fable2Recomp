@@ -19,6 +19,7 @@ using Refii.Ui;
 public partial class Fable3Achievements : Fable3Canvas
 {
 	private Engine_AchievementToast _toast = null!;
+	private readonly Engine_UiViewportIdle _idle = new();
 	private Node3D _mount = null!;
 
 	protected override void Build()
@@ -50,7 +51,8 @@ public partial class Fable3Achievements : Fable3Canvas
 			_toast.Canvas = window;
 		}
 
-		// Idle the full-window 3D toast SubViewport whenever no achievement toast is visible.
-		Engine_UiSceneBuilder.SetViewportActive(CanvasViewport, _toast.Visible && !Refii.Game.GameWorld.CoverHeld);
+		// Idle the full-window 3D toast SubViewport whenever no achievement toast is visible — after
+		// one frame without it: the toast's last visible frame still has some of its fade left.
+		Engine_UiSceneBuilder.SetViewportActive(CanvasViewport, _idle.Renders(Refii.Game.GameWorld.CoverHeld, _toast.Visible));
 	}
 }

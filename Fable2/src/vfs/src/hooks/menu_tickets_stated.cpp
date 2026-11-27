@@ -8,7 +8,10 @@
 //   clear    `sub_82880CE0(registry)` (disc `sub_827BE308`): `*a1 = 0` (0x82880d00) and every
 //            node erased (0x82880d0c) — the populates' first act (e.g. 0x829b0c18, 0x829b10d0).
 //
-// The table here is ticket -> record as those two calls leave it; nothing walks the guest's map.
+// The table here is ticket -> {record, item} as those two calls leave it; nothing walks the guest's map.
+// The last allocation is kept apart: a row spawned straight after it with that ticket as its id (the
+// clothing book's suits, `sub_82880AC8` 0x829B3224 then `lhGui_InGameMenu_SpawnButton` 0x829B3284 with
+// `mr r8, r21`; disc `sub_828CC340` the same) is the row of that item (item_rows_stated.cpp).
 // A ticket at or below the last one allocated means the counter restarted (a clear, or a new
 // registry, whose counter starts at 0), and drops the table the same way.
 #include <cstdint>
@@ -23,7 +26,12 @@ namespace {
 std::mutex g_lock;
 uint32_t g_registry = 0u;
 uint32_t g_last = 0u;
-std::map<uint32_t, uint32_t> g_records;  // ticket -> record hash
+struct Filed {
+    uint32_t record = 0u;
+    uint32_t item = 0u;
+};
+std::map<uint32_t, Filed> g_records;  // ticket -> what it was filed against
+uint32_t g_last_item = 0u;
 
 bool Plausible(uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; }
 
@@ -37,7 +45,7 @@ uint32_t MenuTicketForRecord(uint32_t record) {
     }
     std::lock_guard<std::mutex> lock(g_lock);
     for (const auto& [ticket, held] : g_records) {
-        if (held == record) {
+        if (held.record == record) {
             return ticket;  // the lowest: the first row the populate made for it
         }
     }
@@ -47,7 +55,25 @@ uint32_t MenuTicketForRecord(uint32_t record) {
 uint32_t MenuRecordForTicket(uint32_t ticket) {
     std::lock_guard<std::mutex> lock(g_lock);
     const auto found = g_records.find(ticket);
-    return found != g_records.end() ? found->second : 0u;
+    return found != g_records.end() ? found->second.record : 0u;
+}
+
+uint32_t MenuItemForTicket(uint32_t ticket) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    const auto found = g_records.find(ticket);
+    return found != g_records.end() ? found->second.item : 0u;
+}
+
+bool LastMenuTicket(uint32_t* ticket, uint32_t* record, uint32_t* item) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (g_last == 0u) {
+        return false;
+    }
+    const auto found = g_records.find(g_last);
+    *ticket = g_last;
+    *record = found != g_records.end() ? found->second.record : 0u;
+    *item = g_last_item;
+    return true;
 }
 
 uint32_t MenuTicketRegistry() {
@@ -71,7 +97,8 @@ REX_EXTERN(rex_lhGuiRowTickets_Allocate) {
         g_registry = registry;
     }
     g_last = ticket;
-    g_records[ticket] = record;
+    g_last_item = item;
+    g_records[ticket] = Filed{record, item};
 }
 
 REX_EXTERN(rex_lhGuiRowTickets_Clear) {
@@ -82,4 +109,5 @@ REX_EXTERN(rex_lhGuiRowTickets_Clear) {
     g_records.clear();
     g_registry = registry;
     g_last = 0u;
+    g_last_item = 0u;
 }

@@ -85,6 +85,10 @@ int32_t refii_bridge_safe_name_for_xuid(uint64_t xuid, char* out, uint32_t capac
 int32_t refii_bridge_safe_name_for_sent(const char* sent, char* out, uint32_t capacity);
 int32_t refii_bridge_own_name(char* out, uint32_t capacity);
 
+// A member left the title's session (core/coop_channel.cpp): Refii's co-op channel forgets the
+// peer it learned, so nothing restates to an address whose player has gone.
+void refii_bridge_coop_channel_forget(void);
+
 //
 int32_t refii_bridge_read_host_asset(const char* path, size_t length,
                                      uint8_t* out, uint32_t capacity, uint32_t* out_size);
@@ -393,11 +397,22 @@ uint32_t refii_bridge_stated_pause(uint32_t* modal_mode, uint32_t* modal_id, uin
 // The weapon switches the menu has pending (Fable 2): 15 the melee item, 16 the ranged item (record
 // ids, 0 none). The HUD experience counter (Fable 2): 17 — bit 0 shown for hero one, bit 1 hero two.
 // The front-end game-flow mode (Fable 2): 18 — 1 from its enter to its exit.
-// The world held (Fable 2): 19 — 1 when the last game-flow tick ran no world sim tick.
+// The world held (Fable 2): 19 — 1 when the last game-flow tick ran no world sim tick; 2 when the world
+// ran under a pause all the same (the player's own pause in an online session); 0 in play.
 // The abilities book's discard gate (Fable 2): 20 — the highlighted row's record id with bit 0 replaced by
 // the guest's gate `sub_826C3A30` for it (1 open); 0 when no row has been gated.
+// The co-op leash (both titles, refii_bridge_coop_tether_stated): 21 the distance the camera last stated
+// to Debug.SetLimitCharacterDistance and 22 the heroes' head-to-head separation, float bits; 23 a serial,
+// one more each statement (0 before the first). Fable 3's couch: 24 — 1 while player two plays on this
+// screen (a shared-screen session with a key-2 Player, Fable3/src/hooks/src/coop_camera_hooks.cpp).
+// Player two's half's GUI.SetShouldDrawPlayerIcons (both titles, Refii._partner_player_icons): 25 — 1 off, 2 on,
+// 0 before one was stated; stated by player two's camera and, in local co-op, by every statement that is no
+// camera's (a quest's). The hero marker's record update takes it while split (each title's coop_player_icons.cpp).
 void refii_bridge_stated_value(uint32_t key, uint32_t value);
 uint32_t refii_bridge_stated_value_now(uint32_t key);
+// The core camera chunk's statement of the co-op leash each camera tick (Refii._coop_tether_stated):
+// writes keys 22, 21, then 23.
+void refii_bridge_coop_tether_stated(float distance, float separation);
 
 // THE VIEW THE SHELL DRAWS (src/runtime/src/core/stated_view.cpp): the camera the shell rebuilt
 // from the statements below, stated back every frame (RefiiHostStateCamera) for a title's hooks
@@ -427,6 +442,35 @@ void refii_bridge_camera_leave(void);
 // - up to `max_records` records whose sequence is after `after`, oldest first, into `out_words`;
 //   returns how many. A first record more than one past `after` means older ones were overwritten.
 uint32_t refii_bridge_camera_statements_read(uint32_t after, uint32_t* out_words, uint32_t max_records);
+
+// WHAT THE STATEMENTS SAY PER PLAYER (stated_view.cpp, taken as each record is stated, guest thread):
+// - the block the guest's own getter last built for player `player`'s manager (the kGuestBlock records,
+//   keyed by the kPush that names the manager's player-map key): position, forward, up (guest axes),
+//   horizontal fov in radians, the cut byte; with no manager keyed `player` the manager this machine
+//   draws (one shared camera). 1 when one is held.
+int32_t refii_bridge_camera_stated_block(int32_t player, float* out11);
+// - the camera events the statements carry, oldest first, refii::camera::kEventWords words each, up to
+//   `max_events`; returns how many and forgets them. Kinds refii::camera::kEventCut (the block's cut byte
+//   rose), kEventBlend (an InterpolateFor with ticks > 0 in the update), kEventTick (the update's push,
+//   with the block the readers see); each is the player of the push that ends the update.
+uint32_t refii_bridge_camera_events_take(uint32_t* out_words, uint32_t max_events);
+
+// THE VIEWS THE SHELL DRAWS (stated_view.cpp; RefiiHostStateCameraViews, every drawn frame): the screen
+// (mode REFII camera screen 0 shared, 1 split side by side, 2 split stacked, 3 hybrid; split 1 while two
+// views are drawn) and per player the pose drawn and the part of the window it fills,
+// refii::camera::kViewWords words (core/camera_views.h lays them out, and the events' words).
+void refii_bridge_camera_views_stated(const float* words, uint32_t count);
+// - player `player`'s view, kViewWords floats; 0 when no picture of that player is drawn here.
+int32_t refii_bridge_camera_view_read(int32_t player, float* out_words);
+// - the screen mode; `split` (may be null) 1 while two views are drawn. -1 before the shell stated one.
+int32_t refii_bridge_camera_screen_read(int32_t* split);
+
+// THE DISPLAY OFFSET A MOD STATES (camera_offset, resolved in the game VM by the camera store): player
+// `player`'s, seven floats (right, up, back in metres along the drawn camera's own axes; yaw, pitch,
+// roll and fov in degrees); `on` 0 clears it. Read by the shell for the drawn frame only: never stated
+// to the guest, never saved.
+void refii_bridge_camera_offset_set(int32_t player, const float* seven, int32_t on);
+int32_t refii_bridge_camera_offset_read(int32_t player, float* out7);
 
 // THE WORLD A TITLE STATES (src/runtime/src/core/stated_world.cpp): what its hooks see the guest's
 // own entry points called with; its host bridge reads each back for the shell.
@@ -618,19 +662,25 @@ int32_t refii_bridge_classic_particle_read(uint32_t id, uint32_t* out_meta, floa
 // stated.
 // - an icon stated: its Init, Update or ring tick returned. `visible` is the Update's own argument
 //   (1 drawn, 0 hidden this tick), -1 to keep the last one (an Init or ring tick: not drawn until
-//   an Update says so). Words: REFII_WORLD_ICON_CLASS_*, type, texture id, colour 0xRRGGBBAA,
+//   an Update says so); an Update also takes the step last stated. Words: REFII_WORLD_ICON_CLASS_*,
+//   type, texture id, colour 0xRRGGBBAA,
 //   entity, flags (REFII_WORLD_ICON_*; bit 31 is the table's), ring progress 0..300 (Fable 2: a
 //   pooled icon's slot, else 0xFFFFFFFF), player.
 //   Values: anchor x y z, scale, seconds left, age, ring speed, 0. Text: name NUL title NUL
 //   opinion, `text_length` bytes.
 // - an icon removed: the registry erased it, or it was destroyed.
+// - a step stated: the title's guest began HF step `step` (any increasing count), stated by its
+//   tick pump before that step's registry tick.
 // - a choice stated: created, or restated after the input handler. Words: action, player uid
 //   words +8 and +12, entity, kind, flags (REFII_EMOTION_CHOICE_*). Values: position x y z, manual
 //   speed. Text: Name NUL Text NUL RecordName.
 // - a choice removed: its deleter ran.
 //   Read back: rows of words, values and three NUL-terminated strings per entry, stopping at the
 //   first entry whose strings do not fit `text_capacity` (a null `out_text` reads no strings and
-//   never stops); returns the rows written. Any null out pointer skips that part.
+//   never stops); returns the rows written. Any null out pointer skips that part. An icon's
+//   REFII_WORLD_ICON_VISIBLE is set when an Update drew it in the step last stated or the one
+//   before: the guest draws an icon only inside such an Update, and its tick runs none while a GUI
+//   is up.
 #define REFII_WORLD_ICON_WORDS 8u
 #define REFII_WORLD_ICON_VALUES 8u
 #define REFII_WORLD_ICON_FLAGS_WORD 5u
@@ -652,6 +702,7 @@ int32_t refii_bridge_classic_particle_read(uint32_t id, uint32_t* out_meta, floa
 void refii_bridge_world_icon_stated(uint32_t icon, int32_t visible, const uint32_t* words,
                                     const float* values, const char* text, uint32_t text_length);
 void refii_bridge_world_icon_removed(uint32_t icon);
+void refii_bridge_world_icons_step(uint64_t step);
 uint32_t refii_bridge_world_icons_read(uint32_t* out_icons, uint32_t* out_words, float* out_values,
                                        char* out_text, uint32_t text_capacity, uint32_t max_icons);
 void refii_bridge_emotion_choice_stated(uint32_t record, const uint32_t* words, const float* values,

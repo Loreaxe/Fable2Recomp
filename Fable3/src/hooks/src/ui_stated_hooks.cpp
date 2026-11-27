@@ -84,6 +84,7 @@
 #include "box_answers.h"
 #include "core/headless_presentation.h"
 #include "gui_statements.h"
+#include "interaction_guiworld.h"
 #include "../../vfs/include/fable3_guest_build.h"
 
 REX_EXTERN(__imp__rex_GuiPresentation_Load);
@@ -371,9 +372,11 @@ REX_EXTERN(rex_InteractionButton_Show) {
   __imp__rex_InteractionButton_Show(ctx, base);
 }
 
-/// sub_82972A70(mode, scroll): the cursor and count it lays out, at entry.
+/// sub_82972A70(mode, scroll): the cursor and count it lays out, at entry. Not for the Sanctuary's
+/// class, whose rows are stated as its fillers keep them and whose cursor is Godot's
+/// (interaction_guiworld.cpp).
 REX_EXTERN(rex_InteractionList_Write) {
-  if (base != nullptr && Plausible(ctx.r3.u32)) {
+  if (base != nullptr && Plausible(ctx.r3.u32) && !IsGuiWorld(base, ctx.r3.u32)) {
     NoteInteractionList(ctx.r3.u32);
     const int32_t cursor = static_cast<int32_t>(LoadGuestU32(base, ctx.r3.u32 + ModeCursor()));
     const int32_t count = static_cast<int32_t>(LoadGuestU32(base, ctx.r3.u32 + ModeCount()));

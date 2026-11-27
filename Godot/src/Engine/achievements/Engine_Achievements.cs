@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using Refii.Save;
 using Refii.Ui;
 
 namespace Refii.Achievements;
@@ -12,13 +13,19 @@ public readonly record struct AchievementDefinition(
 
 /// <summary>
 /// THE ACHIEVEMENT SYSTEM. Definitions come from the title's XDBF (through the seam, once),
-/// unlocks come from the guest's writes (a sequence read through the same seam), the store and
-/// its file are ours, and the unlocked set goes back down so the guest's own enumerator reads the
-/// same truth. The toast takes <see cref="TakeNewUnlocks"/>; the page opens on
+/// unlocks come from the guest's writes (a sequence read through the same seam), the stores and
+/// their files are ours, and every save's unlocked set goes back down so the guest's own per-user
+/// enumerator reads the same truth. The toast takes <see cref="TakeNewUnlocks"/>; the page opens on
 /// <see cref="TakeUiRequests"/> — `XamShowAchievementsUI`, which the guest calls from its
 /// logbook row (`sub_826D9620` case 150).
 ///
-/// Everything here runs on Godot's thread: the file is written here, never on the guest thread
+/// PER CHARACTER (<see cref="Engine_AchievementCharacters"/>): each hero earns its own, from scratch;
+/// the profile's <see cref="FileName"/> is the profile total, which every unlock also joins. The
+/// guest's adoption points say which save each user's hero comes from (the bindings), so a write
+/// lands on the hero that earned it; the questions here that take a PLAYER (1 or 2) answer for the
+/// hero that player plays, and the player-less ones answer the profile total.
+///
+/// Everything here runs on Godot's thread: the files are written here, never on the guest thread
 /// that recorded the write.
 /// </summary>
 public static class Engine_Achievements
@@ -27,6 +34,9 @@ public static class Engine_Achievements
 
 	private static Engine_XdbfDatabase? _database;
 	private static Engine_AchievementStore? _store;
+	private static Engine_AchievementCharacters? _characters;
+	private static ulong _seenBinding;
+	private static bool _tableDirty = true;
 	private static readonly List<AchievementDefinition> _definitions = new();
 	private static readonly Dictionary<uint, AchievementDefinition> _byId = new();
 	private static readonly Dictionary<uint, Texture2D?> _icons = new();
@@ -52,48 +62,214 @@ public static class Engine_Achievements
 	public static AchievementDefinition? Definition(uint id) =>
 		_byId.TryGetValue(id, out AchievementDefinition definition) ? definition : null;
 
+	/// <summary>The profile total: unlocked by any of the profile's heroes, or before heroes had their own.</summary>
 	public static bool IsUnlocked(uint id) => _store?.IsUnlocked(id) ?? false;
 
-	/// <summary>When it was earned, or null while locked or when the record carries no time.</summary>
-	public static DateTime? UnlockedAt(uint id) =>
-		_store?.Get(id) is { UnlockedUnixSeconds: > 0 } unlock
-			? DateTimeOffset.FromUnixTimeSeconds(unlock.UnlockedUnixSeconds).LocalDateTime
+	/// <summary>When the profile first earned it, or null while locked or when the record carries no time.</summary>
+	public static DateTime? UnlockedAt(uint id) => When(_store?.Get(id));
+
+	/// <summary>Unlocked by the hero player <paramref name="player"/> plays on this machine.</summary>
+	public static bool IsUnlocked(int player, uint id) => StoreOf(player)?.IsUnlocked(id) ?? false;
+
+	/// <summary>When the hero player <paramref name="player"/> plays earned it, or null.</summary>
+	public static DateTime? UnlockedAt(int player, uint id) => When(StoreOf(player)?.Get(id));
+
+	private static DateTime? When(Engine_AchievementStore.Unlock? unlock) =>
+		unlock is { UnlockedUnixSeconds: > 0 } earned
+			? DateTimeOffset.FromUnixTimeSeconds(earned.UnlockedUnixSeconds).LocalDateTime
 			: null;
 
-	public static int UnlockedCount
+	/// <summary>
+	/// The guest user who plays player <paramref name="player"/>'s hero on this machine: player one is
+	/// user 0; player two is user 1 in local co-op and the joiner's own user 0 online.
+	/// </summary>
+	public static uint UserOfPlayer(int player) =>
+		player == 2 && !Refii.Core.Engine_TitleGame.Active.OnlineClient ? 1u : 0u;
+
+	/// <summary>The character id of the hero player <paramref name="player"/> plays, or null before the guest bound one.</summary>
+	public static string? CharacterId(int player) => _characters?.CurrentOf(UserOfPlayer(player))?.Character;
+
+	/// <summary>The save the hero player <paramref name="player"/> plays came from ("" for a hero no save holds yet), or null.</summary>
+	public static string? CharacterSave(int player) => _characters?.CurrentOf(UserOfPlayer(player))?.Save;
+
+	/// <summary>Every id the hero player <paramref name="player"/> plays has unlocked, ascending.</summary>
+	public static List<uint> UnlockedIds(int player) =>
+		StoreOf(player) is { } store ? Engine_AchievementCharacters.Ids(store) : new List<uint>();
+
+	/// <summary>Every id the profile has unlocked, ascending.</summary>
+	public static List<uint> ProfileUnlockedIds() =>
+		_store is { } store ? Engine_AchievementCharacters.Ids(store) : new List<uint>();
+
+	// ---------------------------------------------------------------- viewing another player's
+
+	/// <summary>
+	/// The hero player <paramref name="player"/> plays here and the profile total, as a view: what the
+	/// page shows for a local player.
+	/// </summary>
+	public static Engine_AchievementWire.View ViewOf(int player) =>
+		new(new HashSet<uint>(UnlockedIds(player)), new HashSet<uint>(ProfileUnlockedIds()));
+
+	/// <summary>
+	/// The partner of player <paramref name="player"/>, read-only: in local co-op the other local player's
+	/// hero (the profile total is the shared one); online the partner's hero and profile total as their
+	/// machine states them (<see cref="PeerView"/> of the co-op partner). Null when there is no partner, or
+	/// the partner's machine has stated nothing yet.
+	/// </summary>
+	public static Engine_AchievementWire.View? PartnerView(int player)
 	{
-		get
+		int other = player == 2 ? 1 : 2;
+		if (!Refii.Core.Engine_TitleGame.Active.OnlineClient && CharacterId(other) is not null && CharacterId(player) is not null)
 		{
-			int count = 0;
-			foreach (AchievementDefinition definition in _definitions)
+			return ViewOf(other);
+		}
+
+		// Online: the partner's machine's statement over RexNet presence, else the one it writes into its
+		// player's store on the co-op channel (Engine_AchievementStatement) — that one arrives with the
+		// session whether or not their presence reaches this node.
+		return PeerView(string.Empty) ??
+			(Refii.Core.Engine_TitleGame.Active.PeerJoined ? Stated(OnlinePartnerPlayer)?.View : null);
+	}
+
+	/// <summary>The online partner's player: the host's (1) on a joiner, the joiner's (2) on the host.</summary>
+	private static int OnlinePartnerPlayer => Refii.Core.Engine_TitleGame.Active.OnlineClient ? 1 : 2;
+
+	/// <summary>
+	/// Player <paramref name="player"/>'s achievements as the machine that plays their hero states them on the
+	/// co-op channel (<see cref="Engine_AchievementStatement"/>): what the mod surfaces answer, on both machines
+	/// alike. Null when no statement is held (no hero played, or none has arrived).
+	/// </summary>
+	public static Engine_AchievementStatement.Statement? Stated(int player) =>
+		player is 1 or 2
+			? Engine_AchievementStatement.Parse(Refii.Host.HostBridge.GetPlayerText(player, Engine_AchievementStatement.Key))
+			: null;
+
+	/// <summary>The statement this machine makes for player <paramref name="player"/>'s hero ("" while it plays none).</summary>
+	public static string StatementOf(int player) =>
+		Engine_AchievementStatement.Format(CharacterId(player),
+			Engine_AchievementWire.Encode(UnlockedIds(player), ProfileUnlockedIds()));
+
+	private static int _statementFrames;
+
+	/// <summary>
+	/// Writes the statement of every player this machine plays into that player's store when the store holds
+	/// another (a change, a new session's store), every half second.
+	/// </summary>
+	private static void StatePlayers()
+	{
+		if (_characters is null || --_statementFrames > 0)
+		{
+			return;
+		}
+
+		_statementFrames = 15;
+		uint owned = Refii.Host.HostBridge.PlayerOwned();
+		for (int player = 1; player <= 2; ++player)
+		{
+			if ((owned & (1u << (player - 1))) == 0)
 			{
-				if (IsUnlocked(definition.Id))
-				{
-					count++;
-				}
+				continue;
 			}
 
-			return count;
+			string text = StatementOf(player);
+			if (Refii.Host.HostBridge.GetPlayerText(player, Engine_AchievementStatement.Key) is { } held && held == text)
+			{
+				continue;
+			}
+
+			if (Refii.Host.HostBridge.SetPlayerText(player, Engine_AchievementStatement.Key, text))
+			{
+				GD.Print($"[achievements] player {player}'s statement on the co-op channel: " +
+					(text.Length == 0 ? "no hero" : $"character {CharacterId(player)}, {UnlockedIds(player).Count} unlock(s)"));
+			}
 		}
 	}
 
+	/// <summary>Whether the partner of player <paramref name="player"/> is on this machine (local co-op).</summary>
+	public static bool PartnerIsLocal(int player) =>
+		!Refii.Core.Engine_TitleGame.Active.OnlineClient && CharacterId(player == 2 ? 1 : 2) is not null &&
+		CharacterId(player) is not null;
+
+	/// <summary>
+	/// A player's achievements as THEIR machine states them over RexNet presence (the orb's player, or
+	/// with an empty id the online co-op partner): read-only, nothing kept. Null when none were heard.
+	/// </summary>
+	public static Engine_AchievementWire.View? PeerView(string peerId) =>
+		Engine_AchievementWire.Decode(Refii.Host.NetBridge.PeerAchievements(peerId));
+
+	private static byte[] _statedWire = Array.Empty<byte>();
+	private static bool _wireDirty = true;
+	private static int _wireRetryFrames;
+
+	/// <summary>
+	/// States this machine's own hero (user 0's) and the profile total to whoever sees this player's
+	/// presence — the orb's viewers and the online partner — when it changed; a statement the node
+	/// refused (no node yet) is made again every few seconds.
+	/// </summary>
+	private static void StateWire()
+	{
+		if (_characters is null || --_wireRetryFrames > 0)
+		{
+			return;
+		}
+
+		_wireRetryFrames = _wireDirty ? 30 : 300;
+		Engine_AchievementStore? hero = _characters.StoreOfUser(0);
+		byte[] wire = Engine_AchievementWire.Encode(
+			hero is null ? Array.Empty<uint>() : Engine_AchievementCharacters.Ids(hero), ProfileUnlockedIds());
+		if (wire.AsSpan().SequenceEqual(_statedWire))
+		{
+			_wireDirty = false;
+			return;
+		}
+
+		if (Refii.Host.NetBridge.SetPlayerAchievements(wire))
+		{
+			_statedWire = wire;
+			_wireDirty = false;
+		}
+	}
+
+	private static Engine_AchievementStore? StoreOf(int player) =>
+		player is 1 or 2 ? _characters?.StoreOfUser(UserOfPlayer(player)) : null;
+
+	public static int UnlockedCount => Count(IsUnlocked);
+
+	public static int UnlockedCountOf(int player) => Count(id => IsUnlocked(player, id));
+
 	public static int TotalCount => _definitions.Count;
 
-	public static uint UnlockedGamerscore
-	{
-		get
-		{
-			uint score = 0;
-			foreach (AchievementDefinition definition in _definitions)
-			{
-				if (IsUnlocked(definition.Id))
-				{
-					score += definition.Gamerscore;
-				}
-			}
+	public static uint UnlockedGamerscore => Score(IsUnlocked);
 
-			return score;
+	public static uint UnlockedGamerscoreOf(int player) => Score(id => IsUnlocked(player, id));
+
+	/// <summary>How many of the title's achievements <paramref name="unlocked"/> says are earned.</summary>
+	public static int Count(Func<uint, bool> unlocked)
+	{
+		int count = 0;
+		foreach (AchievementDefinition definition in _definitions)
+		{
+			if (unlocked(definition.Id))
+			{
+				count++;
+			}
 		}
+
+		return count;
+	}
+
+	/// <summary>The gamerscore of the title's achievements <paramref name="unlocked"/> says are earned.</summary>
+	public static uint Score(Func<uint, bool> unlocked)
+	{
+		uint score = 0;
+		foreach (AchievementDefinition definition in _definitions)
+		{
+			if (unlocked(definition.Id))
+			{
+				score += definition.Gamerscore;
+			}
+		}
+
+		return score;
 	}
 
 	public static uint TotalGamerscore
@@ -159,10 +335,11 @@ public static class Engine_Achievements
 		return Math.Max(fresh, 0);
 	}
 
-	/// <summary>Once per frame: load what is not loaded, ingest the guest's writes, persist.</summary>
+	/// <summary>Once per frame: load what is not loaded, take the guest's bindings and writes, persist, state the saves' sets.</summary>
 	public static void Drive()
 	{
 		EnsureStore();
+		TakeBindings();
 
 		if (_database is null && --_xdbfRetryFrames <= 0)
 		{
@@ -174,7 +351,7 @@ public static class Engine_Achievements
 				_database = database;
 				Refii.Core.Engine_TitleIcon.Adopt(database);
 				BuildDefinitions(database);
-				PushUnlockedSet();
+				_tableDirty = true;
 				Report = $"{_definitions.Count} definition(s) from the XDBF, " +
 					$"{_store!.Count} unlock(s) loaded from {StorePath}" +
 					(System.IO.File.Exists(StorePath) ? string.Empty : " (no file yet)");
@@ -186,6 +363,7 @@ public static class Engine_Achievements
 			Engine_UiSource.Current.GetAchievementUnlocks(_seenSequence, 64);
 		if (writes.Length == 0)
 		{
+			PushSaveTableIfDirty();
 			return;
 		}
 
@@ -198,7 +376,7 @@ public static class Engine_Achievements
 			}
 
 			++_writesSeen;
-			if (Unlock(write.UserIndex, write.AchievementId, "the guest wrote it"))
+			if (Unlock(write.UserIndex, write.AchievementId, write.Binding, "the guest wrote it"))
 			{
 				changed = true;
 			}
@@ -218,6 +396,53 @@ public static class Engine_Achievements
 		{
 			Commit();
 		}
+
+		PushSaveTableIfDirty();
+	}
+
+	/// <summary>The guest's adoption points since the last frame, each resolved to its character.</summary>
+	private static void TakeBindings()
+	{
+		if (_characters is null)
+		{
+			return;
+		}
+
+		foreach (Engine_UiModel.AchievementBinding binding in Engine_UiSource.Current.GetAchievementBindings(_seenBinding))
+		{
+			_seenBinding = Math.Max(_seenBinding, binding.Serial);
+			Engine_AchievementCharacters.Bound bound = _characters.Bind(binding.Serial, binding.User, binding.Save);
+			GD.Print($"[achievements] user {binding.User} plays " +
+				(binding.Save.Length == 0 ? "a hero no save holds yet" : $"the hero of '{binding.Save}'") +
+				$": character {bound.Character}, {_characters.Character(bound.Character).Count} unlock(s)");
+			_tableDirty = true;
+		}
+	}
+
+	/// <summary>
+	/// The guest wrote player <paramref name="player"/>'s hero into save <paramref name="save"/>: its
+	/// sidecar names that hero's character and its unlocks (Engine_ModSaveGate.Stamp, before the sidecar
+	/// is written).
+	/// </summary>
+	public static void StampSave(SaveSidecar sidecar, int player, string save)
+	{
+		EnsureStore();
+		_characters!.Stamp(sidecar, UserOfPlayer(player), save);
+		_tableDirty = true;
+	}
+
+	private static void PushSaveTableIfDirty()
+	{
+		StateWire();
+		StatePlayers();
+		if (!_tableDirty || _characters is null)
+		{
+			return;
+		}
+
+		_tableDirty = false;
+		_wireDirty = true;
+		Engine_UiSource.Current.SetSaveAchievementUnlocks(_characters.SaveTable());
 	}
 
 	private static int _writesSeen;
@@ -231,7 +456,10 @@ public static class Engine_Achievements
 			return;
 		}
 
-		_store = Engine_AchievementStore.Load(StorePath);
+		_characters = new Engine_AchievementCharacters(Refii.Core.Engine_Title.Active.SaveDirectory,
+			Engine_SaveLayout.SaveGames(Refii.Core.Engine_AppRoot.SaveDirectory, Refii.Core.Engine_Title.Active.TitleId),
+			StorePath);
+		_store = _characters.Ledger;
 		if (_store.LoadProblem is { } problem)
 		{
 			GD.PushWarning($"[achievements] {StorePath} {problem} — starting empty; the file is " +
@@ -245,40 +473,57 @@ public static class Engine_Achievements
 	/// the toast's queue, and (through <see cref="Commit"/>) the file and the guest's enumerator.
 	/// False when it was unlocked already.
 	/// </summary>
-	private static bool Unlock(uint userIndex, uint achievementId, string why)
+	/// <remarks>
+	/// The unlock goes to the hero of the binding it was made under and to the profile total. A hero
+	/// earning what it did not have toasts; a write from a user the guest never bound (the boot's
+	/// re-statement, before any hero is loaded) toasts only when the profile had not earned it.
+	/// </remarks>
+	private static bool Unlock(uint userIndex, uint achievementId, ulong binding, string why)
 	{
-		if (_store is null ||
-			!_store.Add(userIndex, achievementId, DateTimeOffset.UtcNow.ToUnixTimeSeconds()))
+		if (_characters is null)
 		{
 			return false;
 		}
 
-		_newUnlocks.Add(achievementId);
+		(bool forCharacter, bool forProfile) =
+			_characters.Record(userIndex, achievementId, binding, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+		if (!forCharacter && !forProfile)
+		{
+			return false;
+		}
+
+		if ((binding != 0 ? forCharacter : forProfile) && !_newUnlocks.Contains(achievementId))
+		{
+			_newUnlocks.Add(achievementId);
+		}
+
+		Engine_AchievementCharacters.Bound bound = _characters.Resolve(binding, userIndex);
 		GD.Print($"[achievements] unlocked {achievementId} " +
-			$"({Definition(achievementId)?.Name ?? "no definition yet"}) — {why}");
+			$"({Definition(achievementId)?.Name ?? "no definition yet"}) for user {userIndex}'s hero " +
+			$"(character {bound.Character}{(bound.Save.Length == 0 ? string.Empty : ", save '" + bound.Save + "'")})" +
+			$"{(forProfile ? ", new to the profile" : string.Empty)} — {why}");
 		return true;
 	}
 
-	/// <summary>Writes the store and states the unlocked set down to the guest.</summary>
+	/// <summary>Writes the stores that changed and states every save's set down to the guest.</summary>
 	private static void Commit()
 	{
-		if (_store is null)
+		if (_characters is null || _store is null)
 		{
 			return;
 		}
 
-		try
+		List<string> failed = _characters.Save();
+		_lastSaved = failed.Count == 0
+			? $"{_store.Count} unlock(s) on the profile at {DateTime.Now:HH:mm:ss}"
+			: "FAILED: " + string.Join("; ", failed);
+		foreach (string failure in failed)
 		{
-			_store.Save(StorePath);
-			_lastSaved = $"{_store.Count} unlock(s) at {DateTime.Now:HH:mm:ss}";
-		}
-		catch (Exception error)
-		{
-			_lastSaved = $"FAILED: {error.Message}";
-			GD.PushWarning($"[achievements] could not write {StorePath}: {error.Message}");
+			GD.PushWarning($"[achievements] could not write {failure}");
 		}
 
-		PushUnlockedSet();
+		_tableDirty = true;
+		PushSaveTableIfDirty();
 	}
 
 	private static string _lastSaved = "never this session";
@@ -287,7 +532,8 @@ public static class Engine_Achievements
 	public static bool DebugUnlock(uint achievementId)
 	{
 		EnsureStore();
-		if (!Unlock(0u, achievementId, "the debug channel asked"))
+		uint user = UserOfPlayer(1);
+		if (!Unlock(user, achievementId, _characters!.CurrentOf(user)?.Serial ?? 0ul, "the debug channel asked"))
 		{
 			return false;
 		}
@@ -300,9 +546,7 @@ public static class Engine_Achievements
 	public static int DebugLock(uint achievementId)
 	{
 		EnsureStore();
-		int removed = achievementId == 0u
-			? _store!.Clear()
-			: _store!.Remove(achievementId) ? 1 : 0;
+		int removed = _characters!.Remove(achievementId);
 		if (removed > 0)
 		{
 			_restated.Clear();
@@ -324,6 +568,16 @@ public static class Engine_Achievements
 			["definitions"] = _definitions.Count,
 			["unlocked"] = UnlockedCount,
 			["gamerscore"] = $"{UnlockedGamerscore}/{TotalGamerscore}",
+			["playerOne"] = new Dictionary<string, object?>
+			{
+				["character"] = CharacterId(1), ["save"] = CharacterSave(1), ["unlocked"] = UnlockedCountOf(1),
+			},
+			["playerTwo"] = new Dictionary<string, object?>
+			{
+				["character"] = CharacterId(2), ["save"] = CharacterSave(2), ["unlocked"] = UnlockedCountOf(2),
+			},
+			["bindingsSeen"] = _seenBinding,
+			["storeLoadProblems"] = _characters!.LoadProblems.ToArray(),
 			["storePath"] = StorePath,
 			["storeFileExists"] = System.IO.File.Exists(StorePath),
 			["storeUnlocks"] = _store!.Count,
@@ -349,6 +603,8 @@ public static class Engine_Achievements
 					["gamerscore"] = definition.Gamerscore,
 					["unlocked"] = IsUnlocked(definition.Id),
 					["when"] = UnlockedAt(definition.Id)?.ToString("yyyy-MM-dd HH:mm:ss"),
+					["playerOne"] = IsUnlocked(1, definition.Id),
+					["playerTwo"] = IsUnlocked(2, definition.Id),
 					["hasIcon"] = _database?.Image(definition.ImageId) is { Length: > 0 },
 				});
 			}
@@ -393,26 +649,5 @@ public static class Engine_Achievements
 			_definitions.Add(definition);
 			_byId[entry.Id] = definition;
 		}
-	}
-
-	/// <summary>The store, stated down to the seam for the guest's enumerator.</summary>
-	private static void PushUnlockedSet()
-	{
-		if (_store is null)
-		{
-			return;
-		}
-
-		var ids = new List<uint>();
-		var times = new List<ulong>();
-		foreach (Engine_AchievementStore.Unlock unlock in _store.Unlocks)
-		{
-			ids.Add(unlock.AchievementId);
-			times.Add(unlock.UnlockedUnixSeconds > 0
-				? ((ulong)unlock.UnlockedUnixSeconds * 10_000_000ul) + 116444736000000000ul
-				: 0ul);
-		}
-
-		Engine_UiSource.Current.SetAchievementUnlocks(ids.ToArray(), times.ToArray());
 	}
 }

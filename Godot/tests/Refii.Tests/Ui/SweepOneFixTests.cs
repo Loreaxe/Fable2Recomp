@@ -39,4 +39,13 @@ public class SweepOneFixTests
 		AssertThat(Engine_StatedPause.StatesPause(31u, worldHeld: 0u)).IsFalse();
 		AssertThat(Engine_StatedPause.StatesPause(0u, worldHeld: 0u)).IsTrue();
 	}
+
+	[TestCase]
+	public void AWorldThatRanUnderAPauseStatesNone()
+	{
+		// The player's own pause in an online session: the book is up (0), the guest's world ran (2).
+		AssertThat(Engine_StatedPause.StatesPause(0u, worldHeld: 2u)).IsFalse();
+		AssertThat(Engine_StatedPause.StatesPause(14u, worldHeld: 2u)).IsFalse();
+		AssertThat(Engine_StatedPause.StatesPause(31u, worldHeld: 2u)).IsFalse();
+	}
 }

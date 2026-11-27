@@ -75,7 +75,8 @@ public static class Engine_ClassicPath
 
     /// <summary>
     /// The rain and snow, one instance per view: each stands across its own view's camera.
-    /// Player two's is built when the screen splits and freed when it rejoins.
+    /// Player two's is built while the two views are drawn and freed when they close
+    /// (Engine_Views.Open); a rejoin hides it.
     /// </summary>
     private static void PumpWeather(Node host, Camera3D camera, Vector2 viewport)
     {
@@ -86,7 +87,15 @@ public static class Engine_ClassicPath
 
         if (!split)
         {
-            Refii.Level.Engine_ClassicWeather.Second?.QueueFree();
+            if (!Refii.Core.Engine_Views.Open)
+            {
+                Refii.Level.Engine_ClassicWeather.Second?.QueueFree();
+            }
+            else if (Refii.Level.Engine_ClassicWeather.Second is { Visible: true } kept)
+            {
+                kept.Visible = false;
+            }
+
             return;
         }
 
@@ -96,20 +105,34 @@ public static class Engine_ClassicPath
             return;
         }
 
+        if (!second.Visible)
+        {
+            second.Visible = true;
+        }
+
         Vector2 secondSize = Refii.Core.Engine_Views.SecondViewport is { } two ? (Vector2)two.Size : viewport;
         second.Pump(Engine_ClassicViews.Camera(1)!, secondSize);
     }
 
     /// <summary>
     /// The sky dome, one per view: each takes the mist volume its own view's eye stands in.
-    /// Player two's is built when the screen splits and freed when it rejoins.
+    /// Player two's is built while the two views are drawn and freed when they close
+    /// (Engine_Views.Open); a rejoin hides it.
     /// </summary>
     private static void PumpSky(Node host, Camera3D camera)
     {
         Refii.Level.Engine_ClassicSkyDome.Instance?.Pump(camera);
         if (Engine_ClassicViews.Count < 2 || Engine_ClassicViews.Camera(1) is not { } secondCamera)
         {
-            Refii.Level.Engine_ClassicSkyDome.Second?.QueueFree();
+            if (!Refii.Core.Engine_Views.Open)
+            {
+                Refii.Level.Engine_ClassicSkyDome.Second?.QueueFree();
+            }
+            else if (Refii.Level.Engine_ClassicSkyDome.Second is { Visible: true } kept)
+            {
+                kept.Visible = false;
+            }
+
             return;
         }
 
@@ -117,6 +140,10 @@ public static class Engine_ClassicPath
         {
             second = new Refii.Level.Engine_ClassicSkyDome { View = 1 };
             host.AddChild(second);
+        }
+        else if (!second.Visible)
+        {
+            second.Visible = true;
         }
 
         second.Pump(secondCamera);

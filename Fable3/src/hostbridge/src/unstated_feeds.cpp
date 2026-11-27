@@ -73,6 +73,10 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMenuRowLabel(uint32_t /*index*/, char
     return 0;
 }
 
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMenuRowItem(uint32_t /*index*/, char* /*out_icon*/, uint32_t /*icon_capacity*/, int32_t* /*out_emphasis*/, uint32_t* /*out_words*/, uint32_t /*word_capacity*/) {
+    return 0;
+}
+
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetMenuScreenId(void) {
     return 0;
 }
@@ -120,11 +124,7 @@ REFII_HOST_ABI_EXPORT int RefiiHostGetVideoPlanes(uint8_t* /*out_y*/, uint32_t /
     return 0;
 }
 
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldMapRegion(uint32_t* /*out_index*/, char* /*name*/, uint32_t /*name_capacity*/, char* /*distance*/, uint32_t /*distance_capacity*/, char* /*travel*/, uint32_t /*travel_capacity*/, char* /*counts*/, uint32_t /*counts_capacity*/, char* /*merchants*/, uint32_t /*merchants_capacity*/, int32_t* /*out_stars*/, char* /*level_name*/, uint32_t /*level_capacity*/, uint32_t* /*out_level_key*/, char* /*scenario*/, uint32_t /*scenario_capacity*/) {
-    return 0;
-}
-
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWornItems(uint32_t* /*words*/, uint32_t /*word_capacity*/) {
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldMapRegion(uint32_t* /*out_index*/, char* /*name*/, uint32_t /*name_capacity*/, char* /*level_name*/, uint32_t /*level_capacity*/, uint32_t* /*out_level_key*/, char* /*scenario*/, uint32_t /*scenario_capacity*/) {
     return 0;
 }
 

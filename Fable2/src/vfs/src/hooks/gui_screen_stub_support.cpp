@@ -12,6 +12,7 @@
 #include <rex/logging.h>
 
 #include "core/guest_build.h"
+#include "core/payload_bridge_fable2.h"
 #include "core/refii_mod.h"
 #include "hooks/gui_screen_stub_support.h"
 #include "hooks/gui_screen_stubs.h"
@@ -22,6 +23,12 @@ PPC_EXTERN_FUNC(rex_lhGuiManager_FindScreenHandler);
 PPC_EXTERN_FUNC(rex_lhGuiMenu_GetHighlightedItemData);
 PPC_EXTERN_FUNC(rex_lhGuiTabStrip_Show);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiTabStrip_Show);
+
+extern "C" void RefiiCoopLocalPlayerTwoCall(int on);
+
+namespace refii::vfs {
+bool MenusActForPlayerTwo(uint8_t* base);
+}  // namespace refii::vfs
 
 namespace refii::vfs::stub {
 
@@ -230,6 +237,51 @@ void HighlightedRow(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t row
   *id = LoadU32(base, row + 4u);
   DropString(ctx, base, frame, row + 12u);
   DropString(ctx, base, frame, row + 8u);
+}
+
+void AnswerBox(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t qm, uint32_t mode) {
+  if (LoadU32(base, qm + 40u) == mode) {
+    Call(ctx, base, frame, 0x8236FF58u, {qm});
+  }
+}
+
+void StateGuiOwner(PPCContext& ctx, uint8_t* base, uint32_t frame, bool player_two) {
+  const uint32_t g = Gui(base);
+  const uint32_t qm = Plausible(g) ? LoadU32(base, g + 28u) : 0u;
+  if (!Plausible(qm)) {
+    return;
+  }
+  const uint32_t root = Call(ctx, base, frame, 0x8236FFC0u, {qm, 0u});
+  if (root != 0u) {
+    CallSlot(ctx, base, frame, root, 8u, {player_two ? 1u : 0u});
+    refii_bridge_set_menu_owner_two(player_two ? 1 : 0);
+  }
+}
+
+namespace {
+uint32_t g_opener_player = 0u;  // guest tick thread only
+}  // namespace
+
+uint32_t TakeOpenerPlayer() {
+  const uint32_t player = g_opener_player;
+  g_opener_player = 0u;
+  return player;
+}
+
+void NoteOpenerPlayer(uint32_t player) { g_opener_player = player; }
+
+OwnerScope::OwnerScope(uint8_t* base, uint32_t screen, bool lend_slot)
+    : listed_(lend_slot ? base : nullptr, screen),
+      two_(base != nullptr && refii_mod_coop_mode(base) == 1 && refii::vfs::MenusActForPlayerTwo(base)) {
+  if (two_) {
+    RefiiCoopLocalPlayerTwoCall(1);
+  }
+}
+
+OwnerScope::~OwnerScope() {
+  if (two_) {
+    RefiiCoopLocalPlayerTwoCall(0);
+  }
 }
 
 void RestatePurseForPlayerTwo(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t pres, uint32_t key,

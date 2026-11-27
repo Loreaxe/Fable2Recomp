@@ -813,6 +813,10 @@ const refii::guest::Addr kForcedSlot{0x832DE958u};
 /// 0x8242F910: scope 2 writes `c[49]`, and GetOverrideCameraMode answers it while LT is held).
 constexpr uint32_t kPlayerForeground = 0x36u;
 constexpr uint32_t kPlayerLookAtCamera = 0xC4u;
+/// The normal scope's camera override, beside it (SetOverrideCameraMode: scope 1 `stw r30, 0xC0(r31)`
+/// TU3 0x8242F94C / disc 0x82411CCC; scope 2 `stw r30, 0xC4(r31)` 0x8242F958 / 0x82411CD8). The
+/// component's save writes the two as OverrideCameraModeNormal / OverrideCameraModeLookAt.
+constexpr uint32_t kPlayerNormalCamera = 0xC0u;
 /// The targeting component's force-lock byte (SetForceTargetLock 0x82A8FC60: `*(u8*)(c+20) = on`).
 constexpr uint32_t kTargetingForce = 0x14u;
 /// PLAYER_MODE_TARGET_LOCK: the targeting pass adds and clears it from the force byte.
@@ -889,6 +893,14 @@ std::array<bool, 3> g_locked{};
 }  // namespace
 
 namespace refii::fable3::modlua {
+
+void RestoreCameraModes(uint8_t* base, uint32_t hero, uint32_t normal, uint32_t look_at) {
+  const uint32_t component = Live(base, hero) ? Component(base, hero, kPlayerComponent) : 0u;
+  if (component != 0u) {
+    StoreU32(base, component + kPlayerNormalCamera, normal);
+    StoreU32(base, component + kPlayerLookAtCamera, look_at);
+  }
+}
 
 void NoteCameraHeld(int32_t player, int32_t bits) {
   if (player == 1 || player == 2) {

@@ -43,15 +43,16 @@ internal sealed class AndroidCompileCache
     /// <param name="files">The validated bundle's file hashes.</param>
     /// <param name="includes">This build's bundle-relative include directories.</param>
     /// <param name="recipe">What else decides an object's bytes (<see cref="AndroidPhoneCompiler.UnitRecipe"/>).</param>
+    /// <param name="compilerDirectory">The directory the compiler runs in, which relative dependency paths are relative to.</param>
     public AndroidCompileCache(string root, string bundleDirectory, string generated, Dictionary<string, string> files,
-        IReadOnlyCollection<string> includes, string recipe)
+        IReadOnlyCollection<string> includes, string recipe, string compilerDirectory)
     {
         var roots = new[]
         {
             CompileInputRoot.Prehashed(BundlePrefix, bundleDirectory, files, trackInputsAndShadowing: true),
             CompileInputRoot.DiskHashed(GeneratedPrefix, generated, trackInputsAndShadowing: false),
         };
-        _inner = new CompileCache(root, roots, files.Keys, includes, recipe);
+        _inner = new CompileCache(root, roots, files.Keys, includes, recipe, compilerDirectory);
     }
 
     /// <summary>The bundle's paths by file name, ordered, for the same-name check.</summary>

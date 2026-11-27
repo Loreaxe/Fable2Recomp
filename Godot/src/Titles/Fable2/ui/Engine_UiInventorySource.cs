@@ -8,32 +8,19 @@ namespace Refii.Titles.Fable2;
 using Refii.Ui;
 
 /// <summary>
-/// THE HERO'S INVENTORY, READ FROM THE DATA AREAS — the first menu source that is not a copy of
-/// something the guest's UI did.
+/// THE HERO'S INVENTORY FOR A MOD'S LIST, AND THE ITEM FACTS THE BOOKS SHARE.
 ///
-/// Every other list source watches the guest populate its own Gameface menu and mirrors the
-/// result. This one asks the simulation what the hero is carrying and asks the shipped data what
-/// each thing is called, which is the whole point: the rows exist whether or not a Gameface
-/// screen was ever built, so the list can be drawn by the editor, by a mod, or by a screen the
-/// original never had.
-///
-/// Two inputs, both already decoded and neither of them the UI:
-///
-/// - <see cref="Fable2Bridge.GetHeroInventory"/> — one record per stack, carrying the
-///   GDB key, how many, the category and the new-item marker. It has existed unread.
-/// - `globals.gdb` — the record's `NameTag` and `DescriptionTag` (Babel tags), its `IconGraphic`
-///   and its `Rating`, most of them INHERITED: a clothing item states only its two tags locally
-///   and takes the icon, rating and category from its parent chain up to `InventoryItemComponent`.
-///   `GdbMulti.TryFindInherited` is that walk.
-///
-/// The rows are not committable. A row here has no guest identity because it was never spawned
-/// into a guest menu, and it does not need one — activating it is a host action, not a
-/// `PushButtonEvent` for a screen class to interpret.
+/// The item books list the guest's own rows (<see cref="Engine_UiItemRows"/>: the populates' spawns, each
+/// with the item its row builder was handed). What is left here: `inventory:usable[:&lt;p&gt;[:&lt;cats&gt;]]`,
+/// a MOD'S list of what a player's hero can use, read from that player's hero
+/// (<see cref="Engine_UiModListSources.Inventory"/>, the `query inventory` reply — never a menu), the mod
+/// surface's half (Engine_UiInventoryMod.cs), the item category constants, the shipped database and string
+/// book every Fable 2 page reads, and the record facts a row's command needs (`UsableFromInventory`, the
+/// weapon class).
 /// </summary>
 public static partial class Engine_UiInventorySource
 {
-	/// <summary>The source name a template asks for: `inventory` for everything, `inventory:N`
-	/// for one category.</summary>
+	/// <summary>The source name a mod's menu asks for: `inventory:usable[:&lt;p&gt;[:&lt;cats&gt;]]`.</summary>
 	public const string SourceName = "inventory";
 
 	/// <summary>
@@ -167,271 +154,60 @@ public static partial class Engine_UiInventorySource
 	private static readonly uint UsableField = Engine_GameHash.Fnv1("UsableFromInventory");
 	private static readonly uint InventoryComponentField =
 		Engine_GameHash.Fnv1("InventoryItemComponent");
-	private static readonly uint GiftComponentField = Engine_GameHash.Fnv1("GiftComponent");
-	private static readonly uint CanBeGiftField = Engine_GameHash.Fnv1("CanBeGift");
 
 	private static readonly List<Engine_UiMenuSources.Row> None = new();
 
 	/// <summary>
-	/// The hero's items, or one category of them. <paramref name="argument"/> is the category
-	/// integer; anything that is not a number takes every category.
+	/// `inventory:usable[:&lt;p&gt;[:&lt;categories&gt;]]` — A MOD'S LIST of what player p's hero can use from the
+	/// inventory (p 1 or 2; absent or 0 the menus' owner): only the rows `use` acts on (UsableFromInventory,
+	/// the guest's own test), each named by its record for the row's typed subject (ModRowSubject: item,
+	/// "0x…") and carrying no command, so the mod menu's rowCommand runs for it instead of the use. Read from
+	/// that player's hero (Engine_UiModListSources.Inventory). Any other argument lists nothing.
 	/// </summary>
 	public static IReadOnlyList<Engine_UiMenuSources.Row> Rows(string argument)
 	{
-		// `inventory:usable[:<p>[:<categories>]]` — A MOD'S LIST of what player p's hero can use
-		// from the inventory (p 1 or 2; absent or 0 the menus' owner here): only the rows `use` acts
-		// on (UsableFromInventory, the guest's own test), each named by its record for the row's
-		// typed subject (ModRowSubject: item, "0x…") and carrying no command, so the mod menu's
-		// rowCommand runs for it instead of the use. Read from that player's hero
-		// (Engine_UiModListSources.Inventory), never the menus' snapshot.
-		bool usableOnly = argument == UsableOperation || argument.StartsWith(UsableOperation + ":", System.StringComparison.Ordinal);
-		int usablePlayer = 0;
-		if (usableOnly)
+		if (argument != UsableOperation && !argument.StartsWith(UsableOperation + ":", System.StringComparison.Ordinal))
 		{
-			string rest = argument.Length > UsableOperation.Length ? argument[(UsableOperation.Length + 1)..] : string.Empty;
-			int colon = rest.IndexOf(':');
-			int.TryParse(colon < 0 ? rest : rest[..colon], out usablePlayer);
-			argument = UseOperation + ":" + (colon < 0 ? string.Empty : rest[(colon + 1)..]);
-		}
-
-		List<Fable2Bridge.InventoryRecord> records = usableOnly
-			? Engine_UiModListSources.Inventory(usablePlayer)
-			: Fable2Bridge.GetHeroInventory();
-
-		// WHAT THE HERO IS ALREADY WEARING. `sub_8242FB28` drops a clothing row when that item is
-		// equipped AND the stack holds only one — a second copy stays offered, because there is
-		// still one to put on. Read once per request rather than per row.
-		var worn = new HashSet<uint>();
-		var wornCategories = new HashSet<int>();
-		foreach ((uint recordId, int category) in Refii.Host.HostBridge.GetWornItems())
-		{
-			worn.Add(recordId);
-			wornCategories.Add(category);
-		}
-		if (records.Count == 0)
-		{
-			Report = "the hero states no inventory";
-			Say(argument, Report);
+			Say(argument, "not a usable list — the item books are the guest's rows (Engine_UiItemRows)");
 			return None;
 		}
 
-		// `inventory:wear:17,18` — an optional OPERATION, then a comma list of categories. The
-		// list is a list because a displayed group is not always one category: the guest folds
-		// 2 and 9..14 and 26 onto `KeyItems`. The operation is here rather than on the template
-		// entry because it needs the row's own record hash, which only this knows.
-		string operation = SplitOperation(ref argument);
-		HashSet<int>? wanted = ParseCategories(argument);
+		string rest = argument.Length > UsableOperation.Length ? argument[(UsableOperation.Length + 1)..] : string.Empty;
+		int colon = rest.IndexOf(':');
+		int.TryParse(colon < 0 ? rest : rest[..colon], out int usablePlayer);
+		HashSet<int>? wanted = ParseCategories(colon < 0 ? string.Empty : rest[(colon + 1)..]);
+		List<Fable2Bridge.InventoryRecord> records = Engine_UiModListSources.Inventory(usablePlayer);
 
-		if (operation == DyeOperation)
-		{
-			return DyeTargets(argument, wanted, records);
-		}
-
-		if (operation == AugmentOperation)
-		{
-			return AugmentTargets(records);
-		}
-
-		if (operation == AugmentRemoveOperation)
-		{
-			return AugmentRemoveTargets(records);
-		}
-
-		// GROUPED ONLY WHEN THE REQUEST SPANS MORE THAN ONE GROUP. A screen that authors its own
-		// category rows asks for one group each — `KeyItems` is eight category integers but a
-		// single group — and must not get a second header nested inside the row it already has.
-		// A screen whose categories depend on what the player is carrying asks for all of them,
-		// and there the headers ARE the list, created per group as rows are seen. That is the
-		// guest's own arrangement: `sub_82430468` walks its 27 slots and emits a header only
-		// where the count is non-zero.
-		bool grouped = GroupsIn(wanted) > 1;
 		var rows = new List<Engine_UiMenuSources.Row>(records.Count);
-		int unnamed = 0;
 		int hidden = 0;
-		int ungiftable = 0;
-		int equipped = 0;
-
-		// WHAT THE HERO CARRIES, by record — an outfit is listed only for its pieces.
-		var carried = new HashSet<uint>();
 		foreach (Fable2Bridge.InventoryRecord record in records)
 		{
-			carried.Add(record.RecordId);
-		}
-
-		var outfits = new HashSet<uint>();
-		int unwearable = 0;
-
-		// THE SLOT'S `None` ROW, FIRST — the guest spawns one per clothing category immediately
-		// after the header (`sub_829B3340` for 17..23, `sub_829B2D58` for Suits), and answers a
-		// press on it by taking that slot's garment off.
-		AddNoneRows(operation, wanted, wornCategories, grouped, rows);
-
-		foreach (Fable2Bridge.InventoryRecord record in records)
-		{
-			if (wanted is not null && !wanted.Contains(record.Category))
-			{
-				continue;
-			}
-
-			if (!Listable(record, wanted is not null && wanted.Contains(record.Category)))
-			{
-				++hidden;
-				continue;
-			}
-
-			// AN OUTFIT IS LISTED FOR ITS PIECES. `sub_829B2D58` spawns a suit the hero carries
-			// only when `sub_829B2AE8` finds at least one of its `SuitParts` in the inventory by
-			// record (`sub_824F1C90`) — an outfit with nothing to put on is not offered. One row
-			// per outfit: a second copy of the same suit would dress the hero identically.
-			string rowOperation = operation;
-
-			// AN AUGMENT REMOVER IS CHOSEN LIKE AN AUGMENT, BUT FOR THE OTHER LIST. It sits in
-			// the same category; `sub_826CEEF0` tells them apart by `IsAugmentRemover`.
-			if (operation == AugmentSelectOperation &&
-				TryItemField(record.RecordId, RemoverField, (int)GdbFieldType.Bool, out uint remover) &&
-				remover != 0u)
-			{
-				rowOperation = RemoverSelectOperation;
-			}
-
-			if (record.Category == Category.Suits && operation == WearOperation)
-			{
-				if (!outfits.Add(record.RecordId))
-				{
-					++hidden;
-					continue;
-				}
-
-				bool owned = false;
-				foreach (uint piece in Engine_UiItemStats.SuitPieces(record.RecordId))
-				{
-					if (carried.Contains(piece))
-					{
-						owned = true;
-						break;
-					}
-				}
-
-				if (!owned)
-				{
-					++unwearable;
-					continue;
-				}
-
-				rowOperation = OutfitOperation;
-			}
-
-			// A DOG ITEM IS ACTIVATED, NOT WORN. The clothing screen's answer `sub_826D4D58` takes a
-			// Category 24 row to `lhGuiInventory_ActivateItemByCategory` and leaves the screen
-			// (0x826D5050..0x826D506C, disc 0x82580AF8..0x82580B04); the pump commits the row
-			// through that answer.
-			if (record.Category == Category.Dog && operation == WearOperation)
-			{
-				rowOperation = EquipOperation;
-			}
-
-			// A GIFT LIST IS THE INVENTORY NARROWED BY `sub_8242FB28`, and by nothing else — see
-			// Listable for why the two exclusions below are not applied to every screen.
-			if (operation == "gift")
-			{
-				// Case 0x19: an outfit is never a gift.
-				if (record.Category == Category.Suits)
-				{
-					++hidden;
-					continue;
-				}
-
-				// Cases 1 and 0x11..0x16: on, and the last one — nothing spare to give away.
-				if (WearableCategory(record.Category) &&
-					record.Count <= 1 && worn.Contains(record.RecordId))
-				{
-					++equipped;
-					continue;
-				}
-
-				if (!CanBeGift(record.RecordId))
-				{
-					++ungiftable;
-					continue;
-				}
-			}
-
-			if (usableOnly && !Acts(rowOperation, record))
+			if ((wanted is not null && !wanted.Contains(record.Category)) || !Listable(record, true) ||
+				!UsableFromInventory(record.RecordId))
 			{
 				++hidden;
 				continue;
 			}
 
 			string tag = NameTagOf(record);
-			string label = LabelOf(record, tag);
-			if (tag.Length == 0)
-			{
-				++unnamed;
-			}
-
 			rows.Add(new Engine_UiMenuSources.Row(
-				// THE ITEM'S `NameTag`, WHICH IS THE GUEST'S OWN ROW NAME. `sub_826CE8D0` passes
-				// exactly this string as `String1` (read at 0x8276457C), so a row we built from
-				// the data areas and a row the guest spawned for the same item carry the same
-				// identity — which is what lets the label join find it and what lets a commit
-				// borrow the guest's `(EventType, id)` until host actions exist for these.
-				//
-				// Falls back to the GDB key so an item with no tag is still distinct.
-				Name: usableOnly ? Refii.Mods.ModRowSubject.ItemRow(record.RecordId) : tag.Length != 0 ? tag : $"Item:{record.RecordId:X8}",
-				Label: label,
+				Name: Refii.Mods.ModRowSubject.ItemRow(record.RecordId),
+				Label: LabelOf(record, tag),
 				Icon: IconOf(record),
 				EventType: 0,
 				Id: record.RecordId,
 				Rating: RatingOf(record),
-
-				// Never committable — see the class note.
 				Committable: false,
 				Ghosted: false,
-
-				// THE ROW'S OWN ACTION: `Inventory:<op>:<record hash>`. On the items, clothing and
-				// gift screens the pump commits it through the screen's own answer, as the
-				// populate's ticket for the record (CommitItemThroughScreen), so the screen's
-				// refusals, tutorials, confirm and exit run. Empty when the screen states no
-				// operation or the item refuses it, and then the row does NOTHING on A — as the
-				// guest's own list does (`sub_826D19B8` tests `UsableFromInventory` first).
-				Command: !usableOnly && Acts(rowOperation, record)
-					? $"{InventoryAction}{rowOperation}:{record.RecordId}"
-					: null,
-				Group: grouped ? Category.NameOf(record.Category) : string.Empty,
-				GroupTag: grouped ? Category.TagOf(record.Category) : string.Empty,
-				IsHeader: false,
-
-				// A worn clothing piece is emphasised: `sub_826D0890` states `Float1 = 1` for a
-				// category 17..23 item `sub_824C4258` finds on component 15, then runs
-				// `g_Menu:SetItemEmphasisByIndex()` (0x826D0BE4). Matched by record, the guest by
-				// instance, so a second copy of a worn record shares the tint.
-				Emphasised: record.Category is >= 17 and <= 23 && worn.Contains(record.RecordId),
-
-				// An inventory record IS what the header counts, and the new-item marker follows
-				// `*(item + 20) == 0` — the export states that byte as `Viewed`.
+				Command: null,
 				Counted: true,
 				Unviewed: !record.Viewed,
-
-				// `inventory:usable` is a mod's list, named by `ModRowSubject.ItemRow` — no row
-				// the guest spawns.
-				FromMod: usableOnly,
-
-				// The item instance: two copies of one record are two rows with their own dye.
+				FromMod: true,
 				Instance: record.Item));
 		}
 
-		Report = $"{rows.Count} row(s) from {records.Count} inventory record(s)" +
-			(wanted is null ? string.Empty : $" in categor(y/ies) {argument}") +
-			(hidden == 0 ? string.Empty : $", {hidden} not listable") +
-			(ungiftable == 0 ? string.Empty : $", {ungiftable} not giftable") +
-			(equipped == 0 ? string.Empty : $", {equipped} already worn") +
-			(unwearable == 0 ? string.Empty : $", {unwearable} outfit(s) with no piece carried") +
-			(unnamed == 0 ? string.Empty : $", {unnamed} with no NameTag");
-
-		// Change-keyed per request, because this is asked once per category per rebuild and a
-		// line each would drown the log. An empty answer is the one that matters: it is the
-		// difference between "you are carrying no potions" and "the read is broken", and the
-		// counts here separate them.
+		Report = $"{rows.Count} usable row(s) from {records.Count} inventory record(s) of player {usablePlayer}" +
+			(hidden == 0 ? string.Empty : $", {hidden} not listed");
 		Say(argument, Report);
 		return rows;
 	}
@@ -451,48 +227,35 @@ public static partial class Engine_UiInventorySource
 	}
 
 	/// <summary>
-	/// Whether this row performs the screen's operation at all.
-	///
-	/// `use` is gated on the item's own `UsableFromInventory`, which is the guest's own test
-	/// (`sub_827649C8`, checked at 0x826D19B8 before it will dispatch a use). A trophy and a book
-	/// sit in the item list but are not consumable, and a row with no command is inert rather
-	/// than performing an operation the data forbids.
-	///
-	/// `wear` and `gift` are not gated here: wear is only ever offered on the clothing
-	/// categories, and gift has its own predicate on a component this cannot yet read.
+	/// What the hero carries in <paramref name="category"/>, by record with its label — the decorate mode's
+	/// furniture cards (GameDecorate), read from the hero's inventory (<see cref="Fable2Bridge.GetHeroInventory"/>),
+	/// not from a menu.
 	/// </summary>
-	private const string WearOperation = "wear";
+	public static List<(uint Record, string Label)> Carried(int category)
+	{
+		var carried = new List<(uint, string)>();
+		foreach (Fable2Bridge.InventoryRecord record in Fable2Bridge.GetHeroInventory())
+		{
+			if (record.Category == category && Listable(record, true))
+			{
+				carried.Add((record.RecordId, LabelOf(record, NameTagOf(record))));
+			}
+		}
 
-	/// <summary>
-	/// `Inventory:outfit:<suit>` — the pump runs `sub_826CBF10`, which puts on the hero's own
-	/// pieces of the suit and never the suit item itself (`sub_826D3A10`, event 89).
-	/// </summary>
-	private const string OutfitOperation = "outfit";
-
-	/// <summary>The `use` operation, gated on `UsableFromInventory` (<see cref="Acts"/>).</summary>
-	private const string UseOperation = "use";
-
-	/// <summary>`equip` — the guest's activation switch `sub_826C9AB8`, by the item's Category.</summary>
-	private const string EquipOperation = "equip";
+		return carried;
+	}
 
 	/// <summary>`inventory:usable` — only what `use` acts on, as typed rows for a mod's menu.</summary>
 	public const string UsableOperation = "usable";
 
-	private static bool Acts(string operation, Fable2Bridge.InventoryRecord record)
-	{
-		if (operation.Length == 0)
-		{
-			return false;
-		}
-
-		if (operation != "use")
-		{
-			return true;
-		}
-
-		return TryItemField(record.RecordId, UsableField, (int)GdbFieldType.Bool, out uint usable) &&
-			usable != 0;
-	}
+	/// <summary>
+	/// Whether the record's item is usable from the inventory — `UsableFromInventory` on its
+	/// InventoryItemComponent, the guest's own test (`sub_827649C8`, checked at 0x826D19B8 before it will
+	/// dispatch a use). True when there is no database to ask.
+	/// </summary>
+	public static bool UsableFromInventory(uint record) =>
+		Globals is null ||
+		(TryItemField(record, UsableField, (int)GdbFieldType.Bool, out uint usable) && usable != 0);
 
 	/// <summary>
 	/// A COMPONENT of an item, by the field the entity names it with.
@@ -547,422 +310,6 @@ public static partial class Engine_UiInventorySource
 	private static string ItemString(uint entity, uint field) =>
 		TryItemField(entity, field, (int)GdbFieldType.String, out uint hash) ? Globals!.NameOf(hash) : string.Empty;
 
-	/// <summary>
-	/// The guest's gift predicate — `CanBeGift` on the item's `GiftComponent`, which
-	/// `sub_8242FB28` reads at 0x82430148 and rejects outright when false or absent.
-	///
-	/// `IsRomantic` (0x82430194) is deliberately NOT applied, and the reason is not the one this
-	/// comment used to give. It is an AGE GATE, not a partner test: the guest rejects a romantic
-	/// gift only when `sub_821C2A18(targetAge) &lt; 2` — that function is registered as the Lua
-	/// `GetAgeGroup` and returns 0 below 1.0, 1 below 18.0, 2 below 50.0, 3 above. So the shipped
-	/// rule is "do not offer romantic gifts to a child", and it costs nothing to leave out: the
-	/// target is resolved live from the giver's property 77 through that object's vtable+68 and
-	/// is not a field we can read, and an adult recipient — which is nearly all of them — sees
-	/// exactly the same list either way.
-	///
-	/// `IsRing` (`sub_824303E8`) is also not applied. It drops wedding rings, but only while
-	/// `sub_823588A8(dword_83496AD8)` holds — a live-session participant mask, one slot occupied
-	/// and the next empty. In single player that predicate is false and the ring stays.
-	/// </summary>
-	private static bool CanBeGift(uint entity) =>
-		TryComponent(entity, GiftComponentField, out GdbCursor gift) &&
-		Globals!.TryFindInherited(gift, CanBeGiftField, (int)GdbFieldType.Bool,
-			out _, out uint canBeGift, out _) &&
-		canBeGift != 0;
-
-	/// <summary>
-	/// The categories `sub_8242FB28` tests for "equipped, and the last one" before it will offer
-	/// an item as a gift — case 1 (Weapons) and cases 0x11..0x16 (Hats..Shoes). Note it stops at
-	/// 22: masks and outfits are not in that arm of the switch.
-	/// </summary>
-	private static bool WearableCategory(int category) =>
-		category == Category.Weapons ||
-		(category >= Category.Hats && category <= Category.Shoes);
-
-	/// <summary>
-	/// ONE `None` ROW PER CLOTHING SLOT — the row that takes the garment off.
-	///
-	/// The guest spawns it unconditionally, right after the slot's header and before any item:
-	/// `sub_829B3340` for 17..23 and `sub_829B2D58` for Suits, each a direct `sub_826CE8D0` whose
-	/// String1 and String2 are both `INV_ITEM_CLOTHES_NONE_&lt;SUFFIX&gt;` and whose String4 is the
-	/// category's own name, with the id and event type below.
-	///
-	/// What the builder does after spawning it is EMPHASIS, not existence. `sub_829B1FC0(screen,
-	/// category)` asks component 15 whether anything is worn in that slot
-	/// (`sub_824C4418`, which walks the worn vector at +16..+20, stride 24, matching
-	/// `*(entry+16) == category`); when nothing is, the row is emphasised
-	/// (`sub_823DFA98(16, name, 1)` = `g_Menu:SetItemEmphasis()`), and when something is, that
-	/// emphasis is cleared. So `None` is the marker for "this slot is empty", and pressing it
-	/// when the slot is NOT empty is what undresses.
-	/// </summary>
-	private static readonly Dictionary<int, (string Suffix, int EventType, uint Id)> NoneRows =
-		new()
-		{
-			[Category.Suits] = ("SUITS", 90, 0x186FAu),
-			[Category.Hats] = ("HATS", 91, 0x186FBu),
-			[Category.Coats] = ("COATS", 92, 0x186FCu),
-			[Category.Shirts] = ("SHIRTS", 93, 0x186FDu),
-			[Category.Gloves] = ("GLOVES", 94, 0x186FEu),
-			[Category.Pants] = ("PANTS", 95, 0x186FFu),
-			[Category.Shoes] = ("SHOES", 96, 0x18700u),
-			[Category.Accessories] = ("MASKS", 97, 0x18701u),
-		};
-
-	/// <summary>The dye list's operation: rows are what the held dye can go on.</summary>
-	public const string DyeOperation = "dye";
-
-	/// <summary>The augment list's operation: rows are what the held augment can go on.</summary>
-	public const string AugmentOperation = "augment";
-
-	/// <summary>The remove list's operation: rows are what the held remover can strip.</summary>
-	public const string AugmentRemoveOperation = "augmentremove";
-
-	/// <summary>An Augmentations row's operation: the press holds the augment (guest event 83).</summary>
-	public const string AugmentSelectOperation = "augmentselect";
-
-	/// <summary>
-	/// An Augmentations row's operation for an item whose `InventoryItemComponent` states
-	/// `IsAugmentRemover`: the press holds the remover (guest event 310, picked over 83 by
-	/// `sub_826CEEF0` on exactly this field).
-	/// </summary>
-	public const string RemoverSelectOperation = "augmentremoverselect";
-
-	private static readonly uint RemoverField = Engine_GameHash.Fnv1("IsAugmentRemover");
-	private static readonly uint RemovableField = Engine_GameHash.Fnv1("CanHaveAugmentsRemoved");
-
-	/// <summary>
-	/// THE REMOVE LIST: every carried item whose `InventoryItemComponent` states
-	/// `CanHaveAugmentsRemoved` and whose instance record holds at least one pair — the gate
-	/// `sub_829B10A8` applies before it spawns a 311 row, and the test `sub_826CA840` makes
-	/// before it strips (a weapon with no record, or an empty one, is refused). A strip takes
-	/// EVERY pair back into the inventory, seeded ones included: there is no per-pair rule.
-	/// </summary>
-	private static IReadOnlyList<Engine_UiMenuSources.Row> AugmentRemoveTargets(List<Fable2Bridge.InventoryRecord> records)
-	{
-		uint remover = Engine_UiAugmentFlow.Remover;
-		if (remover == 0u)
-		{
-			return None;
-		}
-
-		var rows = new List<Engine_UiMenuSources.Row>();
-		var seen = new HashSet<uint>();
-		int empty = 0;
-		foreach (Fable2Bridge.InventoryRecord record in records)
-		{
-			if (!seen.Add(record.RecordId) || !Listable(record, asked: true) ||
-				!TryItemField(record.RecordId, RemovableField, (int)GdbFieldType.Bool, out uint removable) ||
-				removable == 0u)
-			{
-				continue;
-			}
-
-			(uint Primary, uint Secondary)[]? socketed = Fable2Bridge.GetItemAugments(record.RecordId);
-			if (socketed is null || socketed.Length == 0)
-			{
-				++empty;
-				continue;
-			}
-
-			string tag = NameTagOf(record);
-			rows.Add(new Engine_UiMenuSources.Row(
-				Name: $"{(tag.Length != 0 ? tag : $"Item:{record.RecordId:X8}")}:augmentremove",
-				Label: LabelOf(record, tag),
-				Icon: IconOf(record),
-				EventType: 0,
-				Id: record.RecordId,
-				Rating: Engine_UiItemStats.AugmentSlotCode(record.RecordId, socketed),
-				Committable: false,
-				Ghosted: false,
-				Command: $"{InventoryAction}{AugmentRemoveOperation}:{remover}:{record.RecordId}",
-				Group: string.Empty,
-				GroupTag: string.Empty,
-				IsHeader: false,
-				Emphasised: false,
-				Counted: true));
-		}
-
-		Say(AugmentRemoveOperation, $"{rows.Count} strip row(s) for remover 0x{remover:X8}, {empty} without an augment");
-		return rows;
-	}
-
-	/// <summary>
-	/// THE AUGMENT LIST: every carried item whose definition has an `AugmentableComponent` with a
-	/// slot still free — the test `sub_826CA298` applies before it attaches (`NumberOfSlots`
-	/// against the instance record's pairs, seeded from `InitialAugmentations`). The guest's own
-	/// list is its weapons; the slot test is the authority, so an augmentable accessory lists too.
-	/// A row's pips are its slot code, filled and empty, as the weapons screen draws them.
-	/// </summary>
-	private static IReadOnlyList<Engine_UiMenuSources.Row> AugmentTargets(List<Fable2Bridge.InventoryRecord> records)
-	{
-		uint augment = Engine_UiAugmentFlow.Augment;
-		if (augment == 0u)
-		{
-			return None;
-		}
-
-		var rows = new List<Engine_UiMenuSources.Row>();
-		var seen = new HashSet<uint>();
-		int full = 0;
-		foreach (Fable2Bridge.InventoryRecord record in records)
-		{
-			if (!seen.Add(record.RecordId) || !Listable(record, asked: true))
-			{
-				continue;
-			}
-
-			IReadOnlyList<(uint Primary, uint Secondary)> socketed =
-				Fable2Bridge.GetItemAugments(record.RecordId) ?? System.Array.Empty<(uint Primary, uint Secondary)>();
-			(int slots, int filled) = Engine_UiItemStats.AugmentSlotUse(record.RecordId, socketed);
-			if (slots <= 0)
-			{
-				continue;
-			}
-
-			if (filled >= slots)
-			{
-				++full;
-				continue;
-			}
-
-			string tag = NameTagOf(record);
-			rows.Add(new Engine_UiMenuSources.Row(
-				Name: $"{(tag.Length != 0 ? tag : $"Item:{record.RecordId:X8}")}:augment",
-				Label: LabelOf(record, tag),
-				Icon: IconOf(record),
-				EventType: 0,
-				Id: record.RecordId,
-				Rating: Engine_UiItemStats.AugmentSlotCode(record.RecordId, socketed),
-				Committable: false,
-				Ghosted: false,
-				Command: $"{InventoryAction}{AugmentOperation}:{augment}:{record.RecordId}",
-				Group: string.Empty,
-				GroupTag: string.Empty,
-				IsHeader: false,
-				Emphasised: false,
-				Counted: true));
-		}
-
-		Say(AugmentOperation, $"{rows.Count} target row(s) for augment 0x{augment:X8}, {full} full");
-		return rows;
-	}
-
-	/// <summary>A carried item's label by record, as its row shows it; the hex id when it is not carried.</summary>
-	public static string LabelFor(uint recordId)
-	{
-		foreach (Fable2Bridge.InventoryRecord record in Fable2Bridge.GetHeroInventory())
-		{
-			if (record.RecordId == recordId)
-			{
-				return LabelOf(record, NameTagOf(record));
-			}
-		}
-
-		return $"0x{recordId:X8}";
-	}
-
-	private static readonly uint AppearanceComponentField =
-		Engine_GameHash.Fnv1("AppearanceModifierComponent");
-	private static readonly uint DyeTexturesField = Engine_GameHash.Fnv1("DyeTextures");
-	private static readonly uint[] DyeLayerFields =
-	{
-		Engine_GameHash.Fnv1("Layer1"), Engine_GameHash.Fnv1("Layer2"),
-	};
-
-	/// <summary>
-	/// Whether the item takes a dye in this slot — the guest's own test `sub_826CB120`: its
-	/// def has `DyeTextures` and that names a `Layer1` (slot 0) or `Layer2` (slot 1). The guest
-	/// repeats the test before it dyes, so an unreadable database offers the row and leaves
-	/// the refusal to it.
-	/// </summary>
-	private static bool TakesDye(uint entity, int slot)
-	{
-		if (Globals is not { } globals)
-		{
-			return true;
-		}
-
-		return TryComponent(entity, AppearanceComponentField, out GdbCursor appearance) &&
-			globals.TryFindInherited(appearance, DyeTexturesField, (int)GdbFieldType.Reference,
-				out _, out uint textures, out _) &&
-			textures != 0u && globals.TryLookup(textures, out GdbCursor layers) &&
-			globals.TryFindInherited(layers, DyeLayerFields[slot], -1, out _, out uint layer, out _) &&
-			layer != 0u && layer != GdbHash.Null;
-	}
-
-	/// <summary>
-	/// THE DYE LIST. `sub_829B2168` offers every owned garment in categories 17..24, worn or
-	/// not, and the hair, beard and moustache only while they are on (`sub_829B1FC0`). A press
-	/// dyes slot 1 and the screen's second button dyes slot 2 (`sub_826D3108` with 0 and 1); a
-	/// row per slot states the same two choices in a list. The press is the guest's TOGGLE: a
-	/// slot that is already dyed is scrubbed (`sub_826CAFA8` -> `sub_826CAE08`), and the row
-	/// says which it will do.
-	/// </summary>
-	private static IReadOnlyList<Engine_UiMenuSources.Row> DyeTargets(
-		string argument,
-		HashSet<int>? wanted,
-		List<Fable2Bridge.InventoryRecord> records)
-	{
-		uint dye = Engine_UiDyeFlow.Dye;
-		if (dye == 0u || wanted is null)
-		{
-			return None;
-		}
-
-		var rows = new List<Engine_UiMenuSources.Row>();
-		var seen = new HashSet<uint>();
-		Dictionary<uint, Fable2Bridge.DyeState> dyed = Fable2Bridge.GetDyeStates();
-
-		void Offer(uint recordId, string tag, string text, string icon)
-		{
-			if (!seen.Add(recordId))
-			{
-				return;
-			}
-
-			for (int slot = 0; slot < 2; slot++)
-			{
-				if (!TakesDye(recordId, slot))
-				{
-					continue;
-				}
-
-				// The footer's own choice (`sub_829B5D68`): scrub when the slot is dyed.
-				bool scrubs = dyed.TryGetValue(recordId, out Fable2Bridge.DyeState state) &&
-					(slot == 0 ? state.Slot1 : state.Slot2);
-				string slotTag = $"GUI_SCREEN_DYE_{(scrubs ? "SCRUB" : "APPLY")}_{slot + 1}";
-				string slotText = Strings is { } book && book.TryGetString(slotTag, out string said) &&
-					said.Length != 0
-					? said
-					: slotTag;
-
-				rows.Add(new Engine_UiMenuSources.Row(
-					Name: $"{(tag.Length != 0 ? tag : $"Item:{recordId:X8}")}:dye{slot + 1}",
-					Label: $"{text} — {slotText}",
-					Icon: icon,
-					EventType: 0,
-					Id: recordId,
-					Rating: Engine_UiMenuConstants.EmptyRatingSlide,
-					Committable: false,
-					Ghosted: false,
-					Command: $"{InventoryAction}{DyeOperation}:{dye}:{recordId}:{slot}",
-					Group: string.Empty,
-					GroupTag: string.Empty,
-					IsHeader: false,
-					Emphasised: false,
-					Counted: slot == 0,
-
-					// The instance the press acts on — the worn one, else the first carried.
-					Instance: dyed.TryGetValue(recordId, out Fable2Bridge.DyeState target) ? target.Item : 0u));
-			}
-		}
-
-		bool hair = wanted.Contains(Category.Hair) || wanted.Contains(Category.Beard) ||
-			wanted.Contains(Category.Moustache);
-		if (hair)
-		{
-			foreach ((uint recordId, int category) in Refii.Host.HostBridge.GetWornItems())
-			{
-				if (!wanted.Contains(category))
-				{
-					continue;
-				}
-
-				string tag = category == Category.Hair ? "INV_ITEM_HAIR"
-					: category == Category.Beard ? "INV_ITEM_HAIR_BEARD"
-					: "INV_ITEM_HAIR_MOUSTACHE";
-				string text = Strings is { } book && book.TryGetString(tag, out string said) &&
-					said.Length != 0
-					? said
-					: tag;
-				Offer(recordId, tag, text, NoneRowIcon);
-			}
-		}
-
-		foreach (Fable2Bridge.InventoryRecord record in records)
-		{
-			// `Category > 16 && Category <= 24` — the guest's own range test (0x829B2574).
-			if (!wanted.Contains(record.Category) ||
-				record.Category <= Category.Books || record.Category > Category.Dog ||
-				!Listable(record, asked: true))
-			{
-				continue;
-			}
-
-			string tag = NameTagOf(record);
-			Offer(record.RecordId, tag, LabelOf(record, tag), IconOf(record));
-		}
-
-		Say(DyeOperation + ":" + argument, $"{rows.Count} dye row(s) for dye 0x{dye:X8}");
-		return rows;
-	}
-
-	/// <summary>See <see cref="NoneRows"/>. Only the clothing screen states `wear`.</summary>
-	private static void AddNoneRows(
-		string operation,
-		HashSet<int>? wanted,
-		HashSet<int> wornCategories,
-		bool grouped,
-		List<Engine_UiMenuSources.Row> rows)
-	{
-		if (operation != "wear" || wanted is null)
-		{
-			return;
-		}
-
-		foreach (int category in wanted)
-		{
-			if (!NoneRows.TryGetValue(category, out (string Suffix, int EventType, uint Id) none))
-			{
-				continue;
-			}
-
-			bool wearing = wornCategories.Contains(category);
-			string tag = "INV_ITEM_CLOTHES_NONE_" + none.Suffix;
-
-			// THE LABEL IS THE RESOLVED TEXT, not the tag. `SpawnSourced` puts a non-header row's
-			// `Label` straight into `StatedLabel`, which the view draws verbatim — so handing it
-			// the Babel key printed `INV_ITEM_CLOTHES_NONE_HATS` across the row. Every other row
-			// here resolves its tag through `LabelOf` before it is spawned; this one has to too.
-			string label = Strings is { } book && book.TryGetString(tag, out string resolved) &&
-				resolved.Length != 0
-				? resolved
-				: tag;
-
-			rows.Add(new Engine_UiMenuSources.Row(
-				Name: tag,
-				Label: label,
-				Icon: NoneRowIcon,
-				EventType: none.EventType,
-				Id: none.Id,
-				Rating: Engine_UiMenuConstants.EmptyRatingSlide,
-
-				// The id IS the guest's own — a fixed constant, not a per-population ticket — but
-				// the host performs the undress itself rather than pushing an identity, because
-				// the guest's answer runs the 3D preview and the presentation as well.
-				Committable: false,
-
-				// Nothing on: the row is the current state, and there is nothing to take off.
-				Ghosted: false,
-				Command: wearing
-					? $"{InventoryAction}unequip:{none.EventType}"
-					: null,
-				Group: grouped ? Category.NameOf(category) : string.Empty,
-				GroupTag: grouped ? Category.TagOf(category) : string.Empty,
-				IsHeader: false,
-				Emphasised: !wearing,
-
-				// `None` stands for no inventory record, so the header does not count it.
-				Counted: false));
-		}
-	}
-
-	/// <summary>`dword_8349D930` — the icon every clothing row states, `None` included.</summary>
-	private const string NoneRowIcon = @"Art\GUI\WheelIcons\icon_world_map.tga";
-
-	/// <summary>The weapons screen's two lists — see <see cref="Weapons"/>.</summary>
-	public const string WeaponsSource = "weapons";
-
 	private static readonly uint WeaponTypeField = Engine_GameHash.Fnv1("WeaponType");
 
 	/// <summary>
@@ -983,154 +330,6 @@ public static partial class Engine_UiInventorySource
 				out _, out weaponType, out _));
 	}
 
-	/// <summary>
-	/// THE WEAPONS SCREEN'S MELEE OR RANGED HALF. <paramref name="argument"/> is `melee` or
-	/// `ranged`.
-	///
-	/// The guest keeps both halves in one category — everything the row builder buckets as
-	/// `Category == 1` (`sub_829B1968`) — and splits them by the item's own `WeaponType`, a GDB
-	/// field read at type code 2 (`sub_82472890`) and mapped by `sub_82561420`: values 2, 3 and 4
-	/// are melee, 5 through 8 are ranged, anything else is neither and is not listed.
-	///
-	/// A row's action is `Inventory:equip:&lt;record&gt;`; the pump commits it through the items
-	/// screen's own answer with the populate's ticket for the record (CommitItemThroughScreen).
-	/// </summary>
-	public static IReadOnlyList<Engine_UiMenuSources.Row> Weapons(string argument)
-	{
-		int wanted = argument.Equals("ranged", System.StringComparison.OrdinalIgnoreCase) ? 2 : 1;
-		List<Fable2Bridge.InventoryRecord> records =
-			Fable2Bridge.GetHeroInventory();
-
-		var rows = new List<Engine_UiMenuSources.Row>();
-		int untyped = 0;
-		foreach (Fable2Bridge.InventoryRecord record in records)
-		{
-			// A WEAPON IS A RECORD WITH A WeaponType, whatever category the guest stamped on the
-			// inventory record. The stamp is what the guest's own screen keys on, but a weapon
-			// given by record id (a co-op hero's) arrived with a different stamp and the fold
-			// listed nothing; the GDB's own WeaponComponent is the authority here.
-			bool byType = TryWeaponType(record.RecordId, out uint weaponType);
-			if ((record.Category != Category.Weapons && !byType) || !Listable(record, asked: true))
-			{
-				continue;
-			}
-
-			if (!byType)
-			{
-				++untyped;
-				continue;
-			}
-
-			if (WeaponClass((int)weaponType) != wanted)
-			{
-				continue;
-			}
-
-			string tag = NameTagOf(record);
-			rows.Add(new Engine_UiMenuSources.Row(
-				Name: tag.Length != 0 ? tag : $"Item:{record.RecordId:X8}",
-				Label: LabelOf(record, tag),
-				Icon: IconOf(record),
-				EventType: 0,
-				Id: record.RecordId,
-				Rating: RatingOf(record),
-				Committable: false,
-				Ghosted: false,
-				Command: $"{InventoryAction}equip:{record.RecordId}",
-				Group: string.Empty,
-				GroupTag: string.Empty,
-				IsHeader: false,
-				Emphasised: false,
-				Counted: true,
-				Unviewed: !record.Viewed));
-		}
-
-		// The weapon in hand. The guest's list is component 13 (`sub_829B1968`) with the equipped
-		// record emphasised (`sub_826D0C08`); a weapon a def hands out at spawn is held on
-		// component 28 with no inventory record, so it is listed here, emphasised.
-		if (Fable2Bridge.HeroWeapons() is { } held)
-		{
-			// A PENDING SWITCH WINS: the guest's list emphasises the weapon just chosen, and the
-			// one in hand only while its class has nothing pending (`sub_826D0C08`, 0x826d0e04).
-			uint heldId = wanted == 2 ? held.Ranged : held.Melee;
-			if (Fable2Bridge.PendingWeapons() is { } pending &&
-				(wanted == 2 ? pending.Ranged : pending.Melee) is var chosen && chosen != 0u)
-			{
-				heldId = chosen;
-			}
-
-			int at = rows.FindIndex(r => r.Id == heldId);
-			if (heldId != 0u && at >= 0)
-			{
-				rows[at] = rows[at] with { Emphasised = true };
-			}
-			else if (heldId != 0u && TryWeaponType(heldId, out uint heldType) &&
-				WeaponClass((int)heldType) == wanted)
-			{
-				var heldRecord = new Fable2Bridge.InventoryRecord(
-					heldId, 1, Category.Weapons, true);
-				string tag = NameTagOf(heldRecord);
-				rows.Insert(0, new Engine_UiMenuSources.Row(
-					Name: tag.Length != 0 ? tag : $"Item:{heldId:X8}",
-					Label: LabelOf(heldRecord, tag),
-					Icon: IconOf(heldRecord),
-					EventType: 0,
-					Id: heldId,
-					Rating: RatingOf(heldRecord),
-					Committable: false,
-					Ghosted: false,
-
-					// A on the held weapon runs the guest's own switch (`sub_826C9AB8`, the same
-					// call the list's own A makes), which decides what re-choosing it means.
-					Command: $"{InventoryAction}equip:{heldId}",
-					Group: string.Empty,
-					GroupTag: string.Empty,
-					IsHeader: false,
-					Emphasised: true,
-					Counted: false,
-					Unviewed: false));
-			}
-		}
-
-		// WHAT THE RECORDS SAY THEY ARE, when nothing matched: the category the guest stamped on
-		// each record is what this list keys on, and a weapon given by record id can arrive
-		// stamped as something else. Once per outcome.
-		string why = string.Empty;
-		if (rows.Count == 0 && records.Count != 0)
-		{
-			var byCategory = new SortedDictionary<int, int>();
-			foreach (Fable2Bridge.InventoryRecord record in records)
-			{
-				byCategory[record.Category] = byCategory.TryGetValue(record.Category, out int n) ? n + 1 : 1;
-			}
-
-			var parts = new List<string>();
-			foreach ((int category, int n) in byCategory)
-			{
-				parts.Add($"{category}x{n}");
-			}
-
-			var typed = new List<string>();
-			foreach (Fable2Bridge.InventoryRecord record in records)
-			{
-				if (TryWeaponType(record.RecordId, out uint weaponType))
-				{
-					typed.Add($"{record.RecordId:X8}:cat{record.Category}:type{weaponType}" +
-						(Listable(record, asked: true) ? string.Empty : ":unlistable"));
-				}
-			}
-
-			why = $"; categories {string.Join(" ", parts)}; records with a WeaponType: " +
-				(typed.Count == 0 ? "none" : string.Join(" ", typed));
-		}
-
-		Say($"weapons:{argument}",
-			$"{rows.Count} {(wanted == 2 ? "ranged" : "melee")} weapon(s) of " +
-			$"{records.Count} inventory record(s)" +
-			(untyped == 0 ? string.Empty : $", {untyped} weapon(s) stating no WeaponType") + why);
-		return rows;
-	}
-
 	/// <summary>The record's weapon class by its own WeaponType: 1 melee, 2 ranged, 0 neither or no database.</summary>
 	public static int WeaponClassOf(uint record) =>
 		Globals is not null && TryWeaponType(record, out uint weaponType) ? WeaponClass((int)weaponType) : 0;
@@ -1145,63 +344,6 @@ public static partial class Engine_UiInventorySource
 
 	/// <summary>The action prefix the guest-tick pump answers — see `DispatchInventoryAction`.</summary>
 	public const string InventoryAction = "Inventory:";
-
-	/// <summary>
-	/// Takes a leading `wear:` / `gift:` off the argument and returns it, leaving the category
-	/// list behind. A leading token that parses as a number is a category, not an operation.
-	/// </summary>
-	private static string SplitOperation(ref string argument)
-	{
-		int colon = argument.IndexOf(':');
-		if (colon < 0)
-		{
-			// THE AUGMENT LISTS NAME NO CATEGORIES: their rows are whatever carries a free
-			// slot, or an augment to strip, so `inventory:augment` is the whole request. Read
-			// as a category list it parsed to nothing, and nothing means EVERY category — the
-			// held list came up as the items screen's nineteen groups.
-			if (argument == AugmentOperation || argument == AugmentRemoveOperation)
-			{
-				string bare = argument;
-				argument = string.Empty;
-				return bare;
-			}
-
-			return string.Empty;
-		}
-
-		string head = argument[..colon];
-		if (head.Length == 0 || int.TryParse(head, out _))
-		{
-			return string.Empty;
-		}
-
-		argument = argument[(colon + 1)..];
-		return head;
-	}
-
-	/// <summary>
-	/// How many distinct GROUP NAMES a request covers. Null (everything) counts as many; the
-	/// eight integers that all name `KeyItems` count as one.
-	/// </summary>
-	private static int GroupsIn(HashSet<int>? wanted)
-	{
-		if (wanted is null)
-		{
-			return int.MaxValue;
-		}
-
-		var names = new HashSet<string>(System.StringComparer.Ordinal);
-		foreach (int category in wanted)
-		{
-			string name = Category.NameOf(category);
-			if (name.Length != 0)
-			{
-				names.Add(name);
-			}
-		}
-
-		return names.Count;
-	}
 
 	private static HashSet<int>? ParseCategories(string argument)
 	{
@@ -1221,6 +363,7 @@ public static partial class Engine_UiInventorySource
 
 		return wanted.Count == 0 ? null : wanted;
 	}
+
 
 	/// <summary>
 	/// Whether the guest would list this record at all — `sub_827642E0`, which every populator
@@ -1331,46 +474,14 @@ public static partial class Engine_UiInventorySource
 		ItemString(record.RecordId, IconField);
 
 	/// <summary>
-	/// The star strip. Inherited like everything else — a suit takes its rating from the clothing
-	/// record above it — and defaulted to the empty slide rather than to one star, so an item
-	/// that states none draws no stars instead of the wrong number.
+	/// The star strip a mod's usable row draws: the constant 11 the augment, dye and book categories carry
+	/// (`li r29, 0xB` 0x826CE50C) and the GDB `Rating` doubled otherwise (`slwi r29, r3, 1` 0x826CE524), the row
+	/// builder's own arms; a usable list holds no weapon, so the augment-slot arm is not asked.
 	/// </summary>
-	private static int RatingOf(Fable2Bridge.InventoryRecord record)
-	{
-		// `sub_826CE230` computes this and passes it as SpawnButton's NINTH argument, which is
-		// `Float4`. Three arms, switched on the category:
-		//
-		//   Augmentations, Dyes, Books  -> the constant 11 (`li r29, 0xB` at 0x826CE50C)
-		//   Weapons, Accessories        -> an augment-SLOT code, not a rating: 2 per filled slot
-		//                                  and 1 per empty one, slot 1 on the hundreds digit —
-		//                                  see Engine_UiItemStats.AugmentSlotCode.
-		//   everything else             -> GDB `Rating` DOUBLED (`slwi r29, r3, 1`, 0x826CE524)
-		//
-		// The doubling is the guest's, so it is kept: whatever turns `Float4` into one to three
-		// stars lives in the shipped Lua and expects the doubled number.
-		if (record.Category is Category.Augmentations or Category.Dyes or Category.Books)
-		{
-			return AugmentedRating;
-		}
-
-		// An outfit is its pieces, and its own `Rating` grades nothing the player wears — the
-		// row reads its name alone (a remaster choice, like the dropped stack count).
-		if (record.Category == Category.Suits)
-		{
-			return Engine_UiMenuConstants.EmptyRatingSlide;
-		}
-
-		if (record.Category is Category.Weapons or Category.Accessories)
-		{
-			return Engine_UiItemStats.AugmentSlotCode(
-				record.RecordId, Fable2Bridge.GetItemAugments(record.RecordId));
-		}
-
-		return TryItemNumber(record.RecordId, RatingField, out uint rating)
-			? (int)rating * 2
-			: Engine_UiMenuConstants.EmptyRatingSlide;
-	}
-
-	/// <summary>`li r29, 0xB` — the constant the augment, dye and book categories carry.</summary>
-	private const int AugmentedRating = 11;
+	private static int RatingOf(Fable2Bridge.InventoryRecord record) =>
+		record.Category is Category.Augmentations or Category.Dyes or Category.Books
+			? 11
+			: TryItemNumber(record.RecordId, RatingField, out uint rating)
+				? (int)rating * 2
+				: Engine_UiMenuConstants.EmptyRatingSlide;
 }

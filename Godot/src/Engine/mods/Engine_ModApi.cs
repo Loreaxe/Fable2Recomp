@@ -758,7 +758,7 @@ public static class ModApi
 				F("type", "int32_t", "the game's crime type (2 murder, 3 assault, 6 trespass, 11 vandalism among them)"),
 			}),
 		new ModApiEvent("Achievement", "achievement", 65, "rex_CECStats_UnlockAchievement (r3 stats component, owner at +4; r4 id)",
-			"An achievement unlocks, for both heroes (scripts and the stats code both unlock here).",
+			"An achievement unlocks, for both heroes (scripts and the stats code both unlock here). Each hero earns its own: an unlock is the hero's (its character's) and also counts on the profile's total. Query a player's with achievement_unlocked / achievements / character_id.",
 			"it stays locked",
 			new[]
 			{
@@ -1821,6 +1821,64 @@ public static class ModApi
 				F("level", "const char* / string", "the current level, whose region the kill is counted for"),
 				F("player", "int32_t", "always 0: the game does not state who"),
 			}),
+		new ModApiEvent("CameraCut", "camera_cut", 164, "the camera statements (src/runtime/src/core/stated_view.cpp): the block the manager's getter built (rex_lhCameraManager_Block) carries the cut byte set where its previous block had it clear; raised at the guest tick for the player of the push (rex_lhCameraManager_Push) that ends the update",
+			"The game CUT player p's camera: the camera its readers see jumped to a new place instead of blending (a cutscene's shot, a load, a canned camera's start). " + CameraEventsMeaning + " Read-only.",
+			string.Empty,
+			new[] { F("player", "int32_t", "1 or 2: whose camera") }),
+		new ModApiEvent("CameraBlend", "camera_blend", 165, "the camera statements: Camera.InterpolateFor (rex_Camera_InterpolateFor) with ticks above 0 stated since the previous push; raised at the guest tick for the player of the push (rex_lhCameraManager_Push) that ends the update",
+			"Player p's camera started a BLEND to its new place over ticks guest ticks (a camera script's transition: aiming in and out, a spell's charge, a canned camera's end). " + CameraEventsMeaning + " Read-only.",
+			string.Empty,
+			new[]
+			{
+				F("player", "int32_t", "1 or 2"),
+				F("ticks", "int32_t", "the blend's length in guest ticks (15 a second), the longest stated in the update"),
+			}),
+		new ModApiEvent("CameraScreenChanged", "camera_screen_changed", 166, "the views the shell states every drawn frame (RefiiHostStateCameraViews): raised at the guest tick when the screen mode or the split differs from the last raised",
+			"The co-op SCREEN changed: the mode the player chose (camera_screen_mode) or whether two views are drawn (camera_split). " + CameraScreenModeMeaning + " Read-only.",
+			string.Empty,
+			new[]
+			{
+				F("mode", "int32_t", "0 shared, 1 split_vertical, 2 split_horizontal, 3 hybrid"),
+				F("split", "bool", "two views are drawn now"),
+				F("previous", "int32_t", "the mode before, -1 for none raised yet"),
+				F("reason", "int32_t", "0 the player's choice or a player joining or leaving, 1 hybrid's distance"),
+			}),
+		new ModApiEvent("CameraZoomChanged", "camera_zoom_changed", 167, "the game VM: the core camera chunk after each SACCamera:CalculateActiveZoomLevel, when the camera's zoom set (CurrentZoomSet.Name) or whether it blends toward combat (ZoomLevelCombatWeight > 0) differs from the last stated for its player",
+			"Player p's exploring camera changed ZOOM: another set (exterior, interior, vanity; Fable 3 also sprint, vault, falling ...) or into or out of the combat blend. " + CameraZoomMeaning + " Read-only.",
+			string.Empty,
+			new[]
+			{
+				F("player", "int32_t", "1 or 2"),
+				F("set", "const char* / string", "the zoom set's name, \"\" for an unnamed one"),
+				F("previous_set", "const char* / string", "the set before, \"\" for none"),
+				F("level", "int32_t", "the index in the set"),
+				F("combat", "float", "the weight toward the combat camera, 0..1"),
+				F("string_length", "float", "metres"),
+				F("cage_radius", "float", "metres"),
+				F("max_cage_radius", "float", "metres, 0 for none"),
+				F("height", "float", "the camera's height over the focus, metres"),
+				F("focal_offset", "float", "the focus's height over the feet, metres"),
+				F("fov", "float", "degrees, horizontal"),
+				F("max_coop_distance", "float", "the co-op leash the level states, metres, 0 for none"),
+			}),
+		new ModApiEvent("CameraTick", "camera_tick", 168, "the camera statements: each push (rex_lhCameraManager_Push), the end of one camera manager's update; raised at the guest tick with the block its getter built (rex_lhCameraManager_Block)",
+			"Once per guest tick per player, after the camera's update and before it is drawn: the block the game's readers see. A handler that wants the picture moved states camera_offset. " + CameraEventsMeaning + " Read-only.",
+			string.Empty,
+			new[]
+			{
+				F("player", "int32_t", "1 or 2"),
+				F("x", "float", "the position, guest axes"),
+				F("y", "float", "the position"),
+				F("z", "float", "the position"),
+				F("fx", "float", "forward"),
+				F("fy", "float", "forward"),
+				F("fz", "float", "forward"),
+				F("ux", "float", "up"),
+				F("uy", "float", "up"),
+				F("uz", "float", "up"),
+				F("fov", "float", "degrees, horizontal"),
+				F("cut", "bool", "the block's cut byte"),
+			}),
 	};
 
 	/// <summary>
@@ -1989,6 +2047,11 @@ public static class ModApi
 		[158] = "an item another wear replaces is removed here too",
 		[159] = "every dye is decided (the partner's packet is not raised); dye is 0",
 		[162] = "decided only for a change sent to the co-op partner (r5 = 0), else reported; unscaled is r6",
+		[164] = "player 1, and player 2 on a couch screen drawn split (player two's own camera manager, keyed 2 by its push); on a shared couch screen player 1 alone, the one camera drawn",
+		[165] = "as camera_cut",
+		[166] = "the couch co-op screen (shared, split, hybrid) as on Fable 2; outside a couch game shared and split false",
+		[167] = "the sets of Fable 3's SACCamera (Sprint, Vault, Falling, ICS ... besides Exterior and Interior)",
+		[168] = "as camera_cut",
 	};
 
 	/// <summary>Whether <paramref name="title"/> (its folder, <c>Fable2</c> / <c>Fable3</c>) raises the event.</summary>
@@ -2342,6 +2405,12 @@ public static class ModApi
 		new ModApiHelper("int32_t refii_mod_camera_mode(player)", CameraModeMeaning + " REFII_CAMERA_*; stated from the game VM by the core camera chunk after each CameraManager:FrameUpdate. Guest thread"),
 		new ModApiHelper("int32_t refii_mod_camera_override(player, mode, fov, pitch_limit, blend, flags)", CameraOverrideMeaning + " fov / pitch_limit 0 or less and blend below 0 are the camera's own; flags REFII_CAMERA_HOLD_AIM (1) is the aim option. Guest thread"),
 		new ModApiHelper("float refii_mod_camera_fov(base, player)", CameraFovMeaning + " Guest thread"),
+		new ModApiHelper("int32_t refii_mod_camera_state(ctx, base, player, call, arguments)", CameraShapeMeaning + " The native form of every shape call: call its name (\"camera_tune\" ...), arguments what follows the player as the Lua call writes it (\"{pitch_speed=0.09}\", \"0\", \"true,{shared=true}\", \"nil\"); owner \"native\"; camera_offset and camera_shake go the same way (\"{right=0.3,up=0.1}\", \"{kind='quake',level=0.6,seconds=0.4}\"). 1 when the call ran. Guest tick thread"),
+		new ModApiHelper("int32_t refii_mod_camera_pose(player, out12)", CameraPoseMeaning + " out12: position, forward, up, fov, vfov (degrees), cut. 1 when drawn. Any thread"),
+		new ModApiHelper("int32_t refii_mod_camera_stated(player, out11)", CameraStatedMeaning + " out11: position, forward, up, fov (degrees), cut. 1 when stated. Any thread"),
+		new ModApiHelper("int32_t refii_mod_camera_view(player, out4)", CameraViewMeaning + " out4: x, y, width, height. 1 when drawn. Any thread"),
+		new ModApiHelper("int32_t refii_mod_camera_screen_mode(split)", CameraScreenModeMeaning + " REFII_CAMERA_SCREEN_* (0 shared, 1 split_vertical, 2 split_horizontal, 3 hybrid), -1 before the shell stated one; split (may be null) " + CameraSplitMeaning + " Any thread"),
+		new ModApiHelper("int32_t refii_mod_camera_ray(player, x, y, out6)", CameraRayMeaning + " out6: origin, direction. 1 when drawn. Any thread"),
 		new ModApiHelper("int32_t refii_mod_hide_part(entity, part, on) / refii_mod_hide_part_for(entity, part, on, player)", HidePartMeaning + " refii_mod_hide_part is player 0. Posted to Godot. Any thread"),
 		new ModApiHelper("int32_t refii_mod_hud_icon(player, element, texture) / refii_mod_hud_slide(player, element, slide) / refii_mod_hud_hold(player, piece, on)", HudOverrideMeaning),
 		new ModApiHelper("uint32_t refii_mod_light(entity, xyz, rgb, energy, range, options) / refii_mod_light_remove(id)",
@@ -2532,6 +2601,115 @@ public static class ModApi
 		"live block the player's view is drawn from (manager+0x90, +0x30 copied from the active camera each frame), 0 with no camera. Every camera writes its own FOV each update, " +
 		"so there is no per-player FOV to set: camera_override's fov is the stated way.";
 
+	/// <summary>The camera's shape, the rule every shape call keeps, the same on every surface.</summary>
+	public const string CameraShapeMeaning =
+		"THE CAMERA'S SHAPE IS STATED, NOT WRAPPED. A mod states VALUES for player p's camera (1 or 2) and the engine applies them where the camera reads its own, on both titles, " +
+		"so the same mod code keeps working when the camera's implementation changes. Each statement belongs to its owner (the mod; a Godot script's is the host's, or the owner it names); " +
+		"the value IN FORCE is the one stated last among the owners still stating it, and letting a statement go (nil / null) gives the slot back to the mod under it. " +
+		"camera_frame, camera_focus, camera_combat_blend, camera_interest, camera_lock_frame and camera_mode_allow apply to a camera that frames ONE hero (single player, online co-op, split screen): " +
+		"a shared couch screen keeps the game's own camera, which frames two heroes; camera_pitch_hold too unless stated shared; camera_tune applies to every camera of that player. " +
+		"NEVER SAVED: the values live in the game VM beside Refii, outside every table the save writes. Made new when the mods' Lua loads (each session, each reload): state them from init.lua, camera.lua or on lua_ready. " +
+		"Fable 3 answers every call and key as Fable 2 does (fp_* over its own FirstPersonCamera: only GAME_ACTION_CAMERA_ROTATION turns the held view).";
+
+	/// <summary>The camera's tunables, the same on every surface.</summary>
+	public const string CameraTuneMeaning =
+		"TUNES player p's cameras by name, each key a number (false lets that key go; nil instead of the table lets go every key this owner stated): " +
+		"pitch_speed (how fast the stick's Y moves the manual height; the game's 0.05), pitch_max / pitch_min (how far up / down the manual height goes; 0.7 each), " +
+		"move_damping (the rolling average of the camera's height and focus; 1 follows at once), lock_strength (the cosine of the cone a lock holds its target inside; 0.9), " +
+		"lock_turn_speed (degrees a second the camera turns to a lock; 250); the gun aim: ranged_tightness (the share of the field of view the aim point may wander in before the camera follows), " +
+		"ranged_offset (degrees the aim sits off to the side), ranged_pitch_limit (degrees of elevation; 30); the held first-person view (a camera_override hold of CAMERA_FIRST_PERSON): " +
+		"fp_view 1 makes it the free-look view — only the look input turns it, the hero is turned to it by fp_face (0 never, 1 while standing, 2 always), the body is not faded, " +
+		"a scene's framed point is faced until the player looks away — with fp_fov, fp_pitch_limit (degrees), fp_eye_forward and fp_eye_height (metres from the head) and " +
+		"fp_scenes 1 (a scene's own SIMPLE or GAME camera is shown through the held view, never in a full cutscene). The orbit keys are the camera class's own fields, written for the player whose camera updates next.";
+
+	/// <summary>The explore framing, the same on every surface.</summary>
+	public const string CameraFrameMeaning =
+		"FRAMES player p's exploring camera: distance (metres: the string, the cage and its maximum, so the camera orbits at one distance), interior_scale (the distance indoors is distance times it), " +
+		"height (the camera's height over the focus), focus_height (the focus's height over the hero's feet), slot (how far the focus may wander from the hero; 0 pins it), " +
+		"track (how much the camera is carried by the hero's movement), levels \"first\" (the game's first exterior and first interior zoom level; the default) or \"all\". " +
+		"A key left out stays the game's. The game's own values are kept and put back when the frame is let go (nil).";
+
+	/// <summary>The focus slide, the same on every surface.</summary>
+	public const string CameraFocusMeaning =
+		"SLIDES the focus of player p's exploring camera right metres to the camera's right and up metres up — an over-the-shoulder frame — moving ease of the way there each camera update " +
+		"(1 at once) and back the same way when let go (nil).";
+
+	/// <summary>The combat blend, the same on every surface.</summary>
+	public const string CameraCombatBlendMeaning =
+		"the weight (0..1) player p's exploring camera blends toward the game's high combat camera with, instead of the game's own (which rises as a foe nears); 0 is no combat camera; nil the game's own.";
+
+	/// <summary>What pulls the frame, the same on every surface.</summary>
+	public const string CameraInterestMeaning =
+		"WHAT PULLS player p's exploring camera's frame: foes false hides nearby foes from it, passers false nearby villagers and creatures; a quest's own interesting entities always count. nil the game's own.";
+
+	/// <summary>The held pitch, the same on every surface.</summary>
+	public const string CameraPitchHoldMeaning =
+		"HOLDS the manual pitch of player p's exploring camera where the stick or mouse put it (the game springs it back to level every update). Options: min / max (the pitch range while held, " +
+		"down and up; the camera's own bounds when absent), shared true (also on a shared couch screen).";
+
+	/// <summary>The framed lock, the same on every surface.</summary>
+	public const string CameraLockFrameMeaning =
+		"FRAMES the target player p's hero is locked on (lock_target, the game's own lock) without the look-at button held, as the game frames a held lock: the camera turns to keep the target inside its cone. " +
+		"Options: strength (the cone's cosine; the camera's lock_strength when absent), tilt false (do not pitch toward the target). Stated while the mod's own lock stands; false lets it go.";
+
+	/// <summary>Whether a mode may be picked, the same on every surface.</summary>
+	public const string CameraModeAllowMeaning =
+		"whether the game may PICK camera mode (CAMERA_*) for player p by itself: allow false and the mode's own validity test answers no for that player (CAMERA_MAGIC_AIM: charging and casting keep the exploring camera); " +
+		"a quest's or a hold's stated camera of that mode still runs. true gives the game's own test back.";
+
+	/// <summary>The display offset, the same on every surface.</summary>
+	public const string CameraOffsetMeaning =
+		"OFFSETS the picture drawn for player p: { right, up, back } metres along the drawn camera's own axes, { yaw, pitch, roll } degrees about its up, right and back, fov degrees added to the drawn angle; " +
+		"nil lets it go. DISPLAY ONLY: the game's camera, every reader of it (aim, movement, the AI) and the save never see it; the camera_* reads answer the stated camera, camera_pose the picture with the offset. " +
+		"Owners stand as the shape calls' do (the last stated among those still stating). Handy from camera_tick for a hit's kick or a photo-style lean.";
+
+	/// <summary>A shake of one player's camera, through the game's own screen shake.</summary>
+	public const string CameraShakeMeaning =
+		"SHAKES player p's camera through the game's own screen shake (Player.AddScreenShake: a timed source on the camera manager, the largest of a kind's sources in force, added to the camera's shake as it eases): " +
+		"{ kind (banshee, troll, explosion, quake, magic_charge, magic_cast, combat or the game's number; quake when left out), level (1), attack, decay (0.5) and seconds (1) in seconds, add (true adds to that kind's level instead of replacing it), open (true holds it until faded) }; " +
+		"{ kind, fade = seconds } fades that kind out (Player.FadeScreenShake). The game gives every shake to player one's camera; for player two the call runs inside player two's camera bracket, so on a split screen player two's own camera shakes " +
+		"and on a shared screen the one shared camera does. False when player p's picture is not drawn on this machine (an online partner) or the game has no hero. The game's camera, its readers and the save see the shake as they see the game's own.";
+
+	/// <summary>The drawn pose, the same on every surface.</summary>
+	public const string CameraPoseMeaning =
+		"the pose player p's picture is DRAWN with this frame (the shell's camera, eased between the game's ticks, with any camera_offset): position, forward and up (guest axes), fov (the horizontal angle the game states, degrees), " +
+		"vfov (the drawn view's vertical angle, degrees), cut (the frame's camera was cut to, not blended); on a shared couch screen both players' is the one picture; nothing for a player not drawn on this machine (an online partner, no player two). " +
+		"In photo mode the last game pose.";
+
+	/// <summary>The stated block, the same on every surface.</summary>
+	public const string CameraStatedMeaning =
+		"the camera the GAME'S READERS SEE for player p at its last tick — the block its own camera getter built for that player's camera manager (movement, aim, the AI and the save read this one): position, forward, up (guest axes), fov (horizontal, degrees), cut (the cut byte). " +
+		"A player with no camera of their own (a shared couch screen) sees the shared camera's. Fable 2 and Fable 3.";
+
+	/// <summary>The active zoom level, the same on every surface.</summary>
+	public const string CameraZoomMeaning =
+		"the ZOOM LEVEL player p's exploring camera uses now, after its blends: set (the game's name of the zoom set: \"Exterior\", \"Interior\", \"Vanity\" ...; Fable 3 also \"Sprint\", \"Vault\", \"Falling\" ...; \"\" for an unnamed one), " +
+		"level (the index in it), combat (the weight toward the combat camera, 0..1), string_length, cage_radius, max_cage_radius, height, focal_offset, fov, max_coop_distance (the leash the camera states in co-op; 0 for none). " +
+		"Nothing while the player's camera is not the exploring one. camera_zoom_changed follows a change of set or of combat.";
+
+	/// <summary>The screen mode, the same on every surface.</summary>
+	public const string CameraScreenModeMeaning =
+		"the CO-OP SCREEN the player chose: \"shared\" (one view of both heroes), \"split_vertical\" (side by side), \"split_horizontal\" (stacked), \"hybrid\" (shared until the heroes part); " +
+		"camera_split says whether two views are drawn now. Both titles: Fable 3's couch co-op takes the same three screens. camera_screen_changed follows each change.";
+
+	/// <summary>Whether two views are drawn, the same on every surface.</summary>
+	public const string CameraSplitMeaning =
+		"true while TWO VIEWS are drawn (local co-op on a split screen, or hybrid while split); split_screen stays as its alias.";
+
+	/// <summary>A player's part of the window, the same on every surface.</summary>
+	public const string CameraViewMeaning =
+		"the part of the window player p's picture fills: x, y, width, height, each 0..1 from the window's top left (the whole window on a shared screen); nothing for a player not drawn here.";
+
+	/// <summary>A ray through a player's view, the same on every surface.</summary>
+	public const string CameraRayMeaning =
+		"the LINE through point (x, y) of player p's view — each 0..1 from the view's top left, the centre when left out — from the drawn camera: origin (its position) and direction (unit length), guest axes, " +
+		"through the picture exactly as drawn (its own vertical and horizontal angles). What an aim line or a click picks along; nothing for a player not drawn here.";
+
+	/// <summary>The camera events, the same on every surface.</summary>
+	public const string CameraEventsMeaning =
+		"camera_cut (the game cut player p's camera: its block's cut byte rose), camera_blend (an InterpolateFor started a blend of ticks guest ticks), camera_tick (once per guest tick per player, after the camera's update, with the block its readers see), " +
+		"camera_zoom_changed (the zoom set or combat changed), camera_screen_changed (the co-op screen or the split changed): read off the game's own camera statements, at the guest tick.";
+
 	/// <summary>A hidden part, the same on every surface.</summary>
 	public const string HidePartMeaning =
 		"HIDES a part of an entity in the drawing (on) or shows it again: part a bone of the entity's rig by its rig name, the same in either title (Shadow_Neck: the bone and every bone " +
@@ -2674,9 +2852,10 @@ public static class ModApi
 		new ModApiHelper("Refii.relation(a, b) / Refii.alive(e) / Refii.definition(e) / Refii.name(e) / Refii.player_of(e)", "the faction rule (1 neutral 2 ally 4 enemy), liveness, the definition hash, the instance name, 1/2/0"),
 		new ModApiHelper("Refii.level_name() / Refii.player_hero(p) / Refii.local_hero() / Refii.menu_player()", "the loaded level, a player's hero, the local hero (in local co-op: the hero of whoever owns the open menus), whose menus are open (1/2)"),
 		new ModApiHelper("Refii.player_value(p, key [, fallback]) / Refii.player_set(p, key, v) / Refii.player_add(p, key, d [, saved]) / Refii.player_save(p, key, v) / Refii.player_here(p) / Refii.event_replica()", "per-player values, the same on both co-op machines; saved ones go home with the hero"),
+		new ModApiHelper("Refii.achievement_unlocked(p, id) / Refii.achievements(p) -> \"id,id,…\" / Refii.character_id(p) -> \"…\"", "whether the hero player p plays has unlocked achievement id, every id it has (ascending, \"\" for none), and its character id (the one its saves carry in refii_save.json, \"\" before the game bound one): achievements are per character; the answer is what the machine playing that hero states on the co-op channel, so both machines answer alike, the partner's hero included"),
 		new ModApiHelper("Refii.player_value_text(p, key) / Refii.player_set_text(p, key, text) / Refii.player_save_text(p, key, text) / Refii.player_value_hash(p, key) -> \"0x…\" / Refii.player_save_hash(p, key, \"0x…\")", PlayerTextMeaning + " The readers answer nil for none"),
 		new ModApiHelper("Refii.player_for(e)", PlayerForMeaning + " — the core co-op layer's own rule for who an NPC acts toward"),
-		new ModApiHelper("Refii.acting_player()", "1 or 2: who \"the hero\" (GetPlayerHero) means right now — 2 inside Refii.run_as_player(2, …) and in AI acting for player two, else 1"),
+		new ModApiHelper("Refii.acting_player()", "1 or 2: who \"the hero\" (GetPlayerHero) means right now — 2 inside Refii.run_as_player(2, …) and in AI acting for player two, and outside any scope on an online joiner (its own player is player two there), else 1"),
 		new ModApiHelper("Refii.run_as_player(p, fn, ...)", "runs fn with GetPlayerHero(), GetPlayerHenchman() and QuestManager.HeroEntity as player p's (the partner as the henchman): a shipped script acts for either hero"),
 		new ModApiHelper("Refii.combat_state(p) -> midst, close_to_combat, in_any_combat", "player p's combat state, kept per hero (the shipped global is one state)"),
 		new ModApiHelper("Refii.show_to_player(p, name, ...)", "runs the function a global path names (\"GUI.DisplayMessageBox\", \"GUI.AskYesNoQuestion\", \"TutorialManager.DisplayTutorial\", any) for player p on player p's screen: on the other machine when p is played there (a question waits and returns p's answer), else here as p (split screen: p's half). The game's own box, camera, HUD and Player.* calls made while acting as player p (Refii.run_as_player) follow p by themselves"),
@@ -2729,6 +2908,22 @@ public static class ModApi
 		new ModApiHelper("Refii.camera_mode(p)", CameraModeMeaning),
 		new ModApiHelper("Refii.camera_override(p, mode [, {fov, pitch_limit, blend, aim}])", CameraOverrideMeaning + " Returns true when stated"),
 		new ModApiHelper("Refii.fov(p)", CameraFovMeaning),
+		new ModApiHelper("Refii.camera_tune(p, {key = number, ..})", CameraTuneMeaning + " " + CameraShapeMeaning),
+		new ModApiHelper("Refii.camera_frame(p, {distance, interior_scale, height, focus_height, slot, track, levels})", CameraFrameMeaning),
+		new ModApiHelper("Refii.camera_focus(p, {right, up, ease})", CameraFocusMeaning),
+		new ModApiHelper("Refii.camera_combat_blend(p, weight)", CameraCombatBlendMeaning),
+		new ModApiHelper("Refii.camera_interest(p, {foes, passers})", CameraInterestMeaning),
+		new ModApiHelper("Refii.camera_pitch_hold(p, on [, {min, max, shared}])", CameraPitchHoldMeaning),
+		new ModApiHelper("Refii.camera_lock_frame(p, on [, {strength, tilt}])", CameraLockFrameMeaning),
+		new ModApiHelper("Refii.camera_mode_allow(p, mode, allow)", CameraModeAllowMeaning),
+		new ModApiHelper("Refii.camera_offset(p, {right, up, back, yaw, pitch, roll, fov})", CameraOffsetMeaning),
+		new ModApiHelper("Refii.camera_shake(p, {kind, level, attack, decay, seconds, add, open} | {kind, fade})", CameraShakeMeaning + " Returns true when the game took it"),
+		new ModApiHelper("Refii.camera_pose(p)", CameraPoseMeaning + " A table { x, y, z, fx, fy, fz, ux, uy, uz, fov, vfov, cut }, or nil"),
+		new ModApiHelper("Refii.camera_stated(p)", CameraStatedMeaning + " A table { x, y, z, fx, fy, fz, ux, uy, uz, fov, cut }, or nil"),
+		new ModApiHelper("Refii.camera_zoom(p)", CameraZoomMeaning + " A table, or nil"),
+		new ModApiHelper("Refii.camera_screen_mode() / Refii.camera_split()", CameraScreenModeMeaning + " " + CameraSplitMeaning),
+		new ModApiHelper("Refii.camera_view(p)", CameraViewMeaning + " x, y, w, h, or nil"),
+		new ModApiHelper("Refii.camera_ray(p [, x, y])", CameraRayMeaning + " ox, oy, oz, dx, dy, dz, or nil"),
 		new ModApiHelper("Refii.hide_part(e, part, on [, p])", HidePartMeaning + " Returns true when posted"),
 		new ModApiHelper("Refii.hud_icon(p, element, texture) / Refii.hud_slide(p, element, slide) / Refii.hud_hold(p, piece, on)", HudOverrideMeaning + " True when posted"),
 		new ModApiHelper("Refii.light(target, color, energy, range [, o]) / Refii.light_remove(id)",
@@ -2778,6 +2973,7 @@ public static class ModApi
 		new ModApiHelper("signal <event>(e) / signal mod_event(name, e)", "every catalog event, by its Lua name, with a Dictionary of its fields"),
 		new ModApiHelper("on_verdict(event, handler) / remove_verdict(event, handler)", "a handler run inside the game's seam: change a writable field of e or set e.cancel (return true) to refuse; read(what, args) reads the game there at once"),
 		new ModApiHelper("hero(player)", "the player's hero handle as the bus last stated it (hero_ready / hero_gone), or 0 — player 1 is the host's hero on BOTH machines, so on a joiner hero(1) is the partner"),
+		new ModApiHelper("achievement_unlocked(player, id) -> bool / achievements(player) -> int[] / character_id(player) -> String", "Refii.achievement_unlocked / Refii.achievements / Refii.character_id: whether the hero that player plays has unlocked an achievement, its unlocked ids (ascending), its character id (\"\" before the game bound one) — the same statement Lua reads, on both co-op machines alike"),
 		new ModApiHelper("local_hero() / coop_mode() / menu_player() / world_here() / player_here(player)", "the guest's last answers (asked every frame while a script is loaded, one guest tick behind): the local player's hero handle (in local co-op the menu owner's), 0 alone 1 local co-op 2 hosting 3 joined, whose menus are open (1/2), whether this machine runs the shared world, whether this machine plays that player's hero (Refii.player_here: both alone and in local co-op, player one hosting, player two joined)"),
 		new ModApiHelper("e.replica", "true in a signal's (or verdict's) dictionary when the event is a copy of the other co-op machine's — the game's own copy or a RELAYED one; absent otherwise"),
 		new ModApiHelper("player_set(p, key, v) / player_add(p, key, d, saved) / player_save(p, key, v)", "per-player values, written to the store Refii.player_set / _add / _save write: the same on both co-op machines; saved ones go home with the hero"),
@@ -2878,6 +3074,22 @@ public static class ModApi
 		new ModApiHelper("camera_mode(player) -> int · query camera_mode P", CameraModeMeaning + " As the bus last stated it (camera_changed), a guest tick behind; the query asks the guest now (mode, fov)"),
 		new ModApiHelper("camera_override(player, mode [, {fov, pitch_limit, blend, aim}]) · camera_override P MODE [FOV [PITCH [BLEND [FLAGS]]]]", CameraOverrideMeaning + " Posted, stated on the guest's next tick"),
 		new ModApiHelper("fov(player) -> float", CameraFovMeaning + " Read at the call from the block this machine draws the player's view from"),
+		new ModApiHelper("camera_tune(player, values, owner = \"\") -> bool", CameraTuneMeaning + " " + CameraShapeMeaning + " Posted, stated on the guest's next tick"),
+		new ModApiHelper("camera_frame(player, values, owner = \"\") -> bool", CameraFrameMeaning + " Posted"),
+		new ModApiHelper("camera_focus(player, values, owner = \"\") -> bool", CameraFocusMeaning + " Posted"),
+		new ModApiHelper("camera_combat_blend(player, weight, owner = \"\") -> bool", CameraCombatBlendMeaning + " Posted"),
+		new ModApiHelper("camera_interest(player, values, owner = \"\") -> bool", CameraInterestMeaning + " Posted"),
+		new ModApiHelper("camera_pitch_hold(player, on, options = {}, owner = \"\") -> bool", CameraPitchHoldMeaning + " Posted"),
+		new ModApiHelper("camera_lock_frame(player, on, options = {}, owner = \"\") -> bool", CameraLockFrameMeaning + " Posted"),
+		new ModApiHelper("camera_mode_allow(player, mode, allow, owner = \"\") -> bool", CameraModeAllowMeaning + " Posted"),
+		new ModApiHelper("camera_offset(player, values, owner = \"\") -> bool", CameraOffsetMeaning + " Posted"),
+		new ModApiHelper("camera_shake(player, values) -> bool", CameraShakeMeaning + " Posted; true when the line was posted"),
+		new ModApiHelper("camera_pose(player) -> Dictionary", CameraPoseMeaning + " { position, forward, up: Vector3; fov, vfov; cut }, empty where not drawn; read at the call"),
+		new ModApiHelper("camera_stated(player) -> Dictionary", CameraStatedMeaning + " { position, forward, up; fov; cut }, from the block this machine rebuilt for the player's manager"),
+		new ModApiHelper("camera_zoom(player) -> Dictionary", CameraZoomMeaning + " As the bus last stated it (camera_zoom_changed)"),
+		new ModApiHelper("camera_screen_mode() -> String / camera_split() -> bool", CameraScreenModeMeaning + " " + CameraSplitMeaning),
+		new ModApiHelper("camera_view(player) -> Rect2", CameraViewMeaning + " An empty Rect2 where not drawn"),
+		new ModApiHelper("camera_ray(player) / camera_ray(player, x, y) -> Dictionary", CameraRayMeaning + " { origin, direction: Vector3 }, empty where not drawn"),
 		new ModApiHelper("hide_part(handle, part, on, player = 0) -> bool", HidePartMeaning),
 		new ModApiHelper("hud_icon(player, element, texture) -> bool / hud_slide(player, element, slide) -> bool / hud_hold(player, piece, on = true) -> bool / hud_overrides(player)", HudOverrideMeaning + " hud_overrides answers icons, slides, holds"),
 		new ModApiHelper("light(target, color, energy, range, options = null) -> id / light_remove(id) / lights()",
@@ -3041,6 +3253,7 @@ public static class ModApi
 		T("local_hero menu_player coop_mode world_here split_screen",
 			"local_hero menu_player coop_mode world_here split_screen query:local_hero query:menu_player query:coop_mode query:world_here query:coop_state"),
 		T("player_here event_replica", "player_here query:player_here e.replica"),
+		T("achievement_unlocked achievements character_id", "achievement_unlocked achievements character_id"),
 		T("player_value player_set player_add player_save", "player_value player_set player_add player_save query:player_value"),
 		T("player_value_text player_set_text player_save_text player_value_hash player_save_hash",
 			"player_text player_set_text player_save_text player_value_hash player_save_hash query:player_text"),
@@ -3057,6 +3270,11 @@ public static class ModApi
 		T("press tap ask_host:presses", "press tap presses"),
 		T("attack_mode", "attack_mode"),
 		T("camera_mode camera_override fov", "camera_mode camera_override fov query:camera_mode"),
+		T("camera_tune camera_frame camera_focus camera_combat_blend camera_interest camera_pitch_hold camera_lock_frame camera_mode_allow",
+			"camera_tune camera_frame camera_focus camera_combat_blend camera_interest camera_pitch_hold camera_lock_frame camera_mode_allow"),
+		T("camera_offset camera_pose camera_stated camera_zoom camera_screen_mode camera_split camera_view camera_ray",
+			"camera_offset camera_pose camera_stated camera_zoom camera_screen_mode camera_split camera_view camera_ray"),
+		T("camera_shake", "camera_shake"),
 		T("hide_part", "hide_part"),
 		// What is drawn: effects, lights, the HUD, menus and boxes.
 		T("play_fx play_fx_on stop_fx", "play_fx play_fx_on stop_fx"),

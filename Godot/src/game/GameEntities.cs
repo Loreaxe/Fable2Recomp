@@ -76,6 +76,17 @@ public partial class GameEntities : Node3D
     public MeshInstance3D? NodeFor(uint address) =>
         _nodes.TryGetValue(address, out MeshInstance3D? node) && GodotObject.IsInstanceValid(node) ? node : null;
 
+    /// <summary>
+    /// Where the body of one live entity is, for the consumer <see cref="NodeFor"/> answered null:
+    /// not walked, walked with nothing stated, stated and building, or built.
+    /// </summary>
+    public Refii.Entities.Engine_FigureBody.State BodyStateOf(uint address) =>
+        Refii.Entities.Engine_FigureBody.Of(
+            _lastModelHash.TryGetValue(address, out uint statedModel),
+            _compositeParts.TryGetValue(address, out uint[]? statedParts) ? statedParts.Length : 0,
+            statedModel != 0u,
+            NodeFor(address) is not null);
+
     public bool TryDecorationGeometry(uint address, out Mesh mesh, out Transform3D transform, out uint layers)
     {
         mesh = null!; transform = default; layers = 0;
@@ -264,6 +275,9 @@ public partial class GameEntities : Node3D
         public Refii.Entities.Engine_CorpsePolicy.CorpseDeathMode DeathMode;
         public bool RecordClassified;
         public bool ClassifiedFromGdb;
+
+        /// <summary>The bridge stated CECCreature_FinishDeath for it (HostBridge GuestCorpseFlag).</summary>
+        public bool GuestCorpse;
         public bool SawVisibleWhileDead;
         public bool SawPosedWhileDead;
         public bool SawRagdollWhileDead;
@@ -1771,7 +1785,7 @@ public partial class GameEntities : Node3D
             // ramps its colour over several ticks on a target that may not move. Cheap when
             // unchanged: the word is stored per mesh and compared first.
             Refii.Entities.Engine_EntityHighlight.Apply(
-                node, entity.Highlighted, entity.HighlightColour, entity.Highlight);
+                node, entity.Highlighted, entity.HighlightColour, entity.Highlight, entity.Address);
 
             DueLap(DueLook);
 
@@ -2890,10 +2904,23 @@ public partial class GameEntities : Node3D
             uint parent = _attachments.ParentOf(child);
             Transform3D placed = stated;
             (string? childModel, bool isFurniture) = ChildFactsOf(child, node);
-            bool onBone = !isFurniture &&
-                _nodes.TryGetValue(parent, out MeshInstance3D? parentNode) &&
-                _skeletons.TryGetValue(parent, out Refii.Entities.Engine_EntitySkeleton? rig) &&
-                PlaceOnParent(child, stated, parent, parentNode, rig, isFurniture, childModel, out placed);
+            bool onBone = false;
+            if (isFurniture)
+            {
+                _attachments.NoteStated(child, Refii.Entities.Engine_EntityAttachments.ExitStatedFurniture);
+            }
+            else if (!_nodes.TryGetValue(parent, out MeshInstance3D? parentNode))
+            {
+                _attachments.NoteStated(child, Refii.Entities.Engine_EntityAttachments.ExitStatedParentNotDrawn);
+            }
+            else if (!_skeletons.TryGetValue(parent, out Refii.Entities.Engine_EntitySkeleton? rig))
+            {
+                _attachments.NoteStated(child, Refii.Entities.Engine_EntityAttachments.ExitStatedParentNoRig);
+            }
+            else
+            {
+                onBone = PlaceOnParent(child, stated, parent, parentNode, rig, isFurniture, childModel, out placed);
+            }
             if (!onBone)
             {
                 ++AttachedOnStated;
@@ -4638,6 +4665,7 @@ public partial class GameEntities : Node3D
         }
 
         track.DeathAge += walkDelta;
+        track.GuestCorpse |= entity.Appearance.IsGuestCorpse;
 
         if (!track.RecordClassified || (!track.ClassifiedFromGdb && track.ModelPath is null))
         {
@@ -4690,6 +4718,15 @@ public partial class GameEntities : Node3D
         return null;
     }
 
+    /// <summary>The guest leaves this dead creature lying (Engine_CorpsePolicy.LeavesCorpse).</summary>
+    private static bool LeavesCorpse(DeadCorpseTrack track) =>
+        Refii.Entities.Engine_CorpsePolicy.LeavesCorpse(
+            Refii.Core.Engine_TitleGame.Active.StatesCorpses,
+            track.GuestCorpse,
+            track.DeathMode,
+            unstatedExcluded: track.DeathMode == Refii.Entities.Engine_CorpsePolicy.CorpseDeathMode.Excluded ||
+                (!track.ClassifiedFromGdb && Refii.Entities.Engine_CorpsePolicy.HasExcludedName(track.ModelPath)));
+
     private HostBridge.EntityAppearance ResolveEffectiveAppearance(
         in HostBridge.GuestEntity entity,
         Refii.Core.Engine_TitleGame title,
@@ -4711,7 +4748,8 @@ public partial class GameEntities : Node3D
                 track.SawPosedWhileDead,
                 track.SawRagdollWhileDead,
                 track.SawDisarticulatedWhileDead || _disarticulated.ContainsKey(entity.Address),
-                track.SawCollapsedPoseWhileDead))
+                track.SawCollapsedPoseWhileDead) ||
+            !LeavesCorpse(track))
         {
             return entity.Appearance;
         }
@@ -4915,6 +4953,7 @@ public partial class GameEntities : Node3D
 
         var candidate = new Refii.Entities.Engine_CorpsePolicy.CorpseCandidate(
             IsDeadCreature: true,
+            GuestLeftCorpse: LeavesCorpse(track),
             HasSkeleton: hasSkeleton,
             SawVisibleWhileDead: track.SawVisibleWhileDead,
             SawEtherealWhileAlive: _sawEtherealAlive.Contains(address),

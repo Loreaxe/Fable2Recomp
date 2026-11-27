@@ -125,6 +125,42 @@ public class HudTopBoxLayoutTests
 		AssertThat(Engine_UiTopBoxLayout.Leading(0) > 0f).IsTrue();
 	}
 
+	private static float VisibleWidth(float x, float y) => Engine_HudLayout.CanvasExtent(new Godot.Vector2(x, y)).X;
+
+	/// <summary>
+	/// The quest banner on split screen (int7 shots/vc2.jpg): each half is a 960x1080 view whose canvas
+	/// shows 952 units, and the stated 1076 ran the line across the other player's half. A half wraps at
+	/// the stated width's share of its view, and the line fits inside it.
+	/// </summary>
+	[TestCase]
+	public void ASplitScreenHalfWrapsTheBannerInsideItself()
+	{
+		float wide = VisibleWidth(1920f, 1080f);
+		float half = VisibleWidth(960f, 1080f);
+		float wrap = Engine_UiTopBoxLayout.WrapWidthIn(Engine_UiHudTopBox.WrapWidth, half, wide);
+		AssertThat(wrap < half).IsTrue();
+		AssertThat(wrap).IsEqualApprox(Engine_UiHudTopBox.WrapWidth * (half / wide), 0.01f);
+		AssertThat(Engine_UiHudTopBox.WrapWidth > half).IsTrue();
+
+		// Stacked halves are 1920x540: wider than 16:9, so the stated width stands.
+		AssertThat(Engine_UiTopBoxLayout.WrapWidthIn(Engine_UiHudTopBox.WrapWidth, VisibleWidth(1920f, 540f), wide))
+			.IsEqual(Engine_UiHudTopBox.WrapWidth);
+	}
+
+	/// <summary>The single-player picture at 16:9 and wider keeps the guest's stated width.</summary>
+	[TestCase]
+	public void A16By9OrWiderViewKeepsTheStatedWidth()
+	{
+		float wide = VisibleWidth(1920f, 1080f);
+		AssertThat(Engine_UiTopBoxLayout.WrapWidthIn(Engine_UiHudTopBox.WrapWidth, wide, wide))
+			.IsEqual(Engine_UiHudTopBox.WrapWidth);
+		AssertThat(Engine_UiTopBoxLayout.WrapWidthIn(Engine_UiHudTopBox.WrapWidth, VisibleWidth(2560f, 1440f), wide))
+			.IsEqual(Engine_UiHudTopBox.WrapWidth);
+		AssertThat(Engine_UiTopBoxLayout.WrapWidthIn(Engine_UiHudTopBox.WrapWidth, VisibleWidth(3440f, 1440f), wide))
+			.IsEqual(Engine_UiHudTopBox.WrapWidth);
+		AssertThat(Engine_UiTopBoxLayout.WrapWidthIn(0f, VisibleWidth(960f, 1080f), wide)).IsEqual(0f);
+	}
+
 	/// <summary>
 	/// The box fit's re-statement of the TopBox strings (wrapped to the guest's font) is not
 	/// taken; every other TextName write is.

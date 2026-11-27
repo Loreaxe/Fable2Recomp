@@ -290,8 +290,9 @@ public partial class Engine_EntityHighlightLayer : Node
     }
 
     /// <summary>
-    /// View 0's: hosts this instance on player one's view and builds view 1's while the screen is
-    /// split; back on the window, and view 1's freed, when it rejoins.
+    /// View 0's: builds view 1's while the two views are open (Engine_Views.Open) and frees it when they
+    /// close; hosts this instance on player one's view while they are drawn and on the window while it
+    /// draws, so a split or rejoin re-hosts and builds nothing.
     /// </summary>
     private void FollowViews()
     {
@@ -300,11 +301,11 @@ public partial class Engine_EntityHighlightLayer : Node
             return;
         }
 
-        if (Refii.Core.Engine_Views.Split &&
+        if (Refii.Core.Engine_Views.Open &&
             Refii.Core.Engine_Views.FirstViewport is { } first && GodotObject.IsInstanceValid(first) &&
             Refii.Core.Engine_Views.SecondViewport is { } second && GodotObject.IsInstanceValid(second))
         {
-            _host = first;
+            _host = Refii.Core.Engine_Views.Split ? first : _windowHost;
             if (_second is null || !GodotObject.IsInstanceValid(_second))
             {
                 _second = new Engine_EntityHighlightLayer
@@ -423,7 +424,7 @@ public partial class Engine_EntityHighlightLayer : Node
         // need not run every frame, and a highlight lasts until the guest clears it.
         Array.Clear(_targets, 0, Slots);
         bool active = _enabled && (Refii.Lighting.Engine_PostFxRoute.LayersReachScreen || PhoneComposites) &&
-            Gather(main.GlobalPosition, _targets);
+            Gather(_view, main.GlobalPosition, _targets);
         _viewport.RenderTargetUpdateMode = active ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
 
         // The stated width, read here because this is the main thread; the post chain runs on
@@ -511,13 +512,18 @@ public partial class Engine_EntityHighlightLayer : Node
     private static float Quantise(float v) => MathF.Round(Math.Clamp(v, 0f, 1f) * 255f) / 255f;
 
     /// <summary>Each lit slot's colour, alpha and world box, for this frame's camera. False
-    /// when no slot is lit.</summary>
-    private static bool Gather(Vector3 camera, Target[] targets)
+    /// when no slot is lit. Split, a view gathers only its own player's targets
+    /// (<see cref="Engine_EntityHighlight.DrawnInView"/>).</summary>
+    private static bool Gather(int view, Vector3 camera, Target[] targets)
     {
         bool any = false;
+        bool split = Refii.Core.Engine_Views.Split;
         foreach (Engine_EntityHighlight.Lit lit in Engine_EntityHighlight.Active())
         {
-            if (lit.Slot < 1 || lit.Slot > Slots || !TryBounds(lit.Node, out Aabb box))
+            if (lit.Slot < 1 || lit.Slot > Slots ||
+                split && lit.Entity != 0u &&
+                !Engine_EntityHighlight.DrawnInView(view, split, Refii.Core.Engine_TitleGame.Active.TargetedBy(lit.Entity)) ||
+                !TryBounds(lit.Node, out Aabb box))
             {
                 continue;
             }

@@ -6,28 +6,23 @@ using Refii.Ui;
 using Row = Refii.Ui.Engine_UiMenuSources.Row;
 
 /// <summary>
-/// Fable 2's own menu sources — the hero's inventory and weapons, the world map's quests, jobs,
-/// regions, sales and family, the properties, the abilities and the shop — added to the shell's
+/// Fable 2's own menu sources — the item books' rows, a mod's usable list, the world map's properties,
+/// the abilities and the shop — added to the shell's
 /// (<see cref="Engine_UiMenuSources"/>) when the title installs.
 /// </summary>
 public static class Fable2MenuSources
 {
 	public static void Register()
 	{
-		// THE FIRST DATA-AREA SOURCE. `capture` and `spawn` both watch the guest build its own
-		// menu; this one reads the hero's inventory and the shipped GDB directly, so the rows
-		// exist without a Gameface screen ever having been built.
+		// A mod's list of what a player's hero can use (`inventory:usable`), read from that hero.
 		Engine_UiMenuSources.RegisterGame(Engine_UiInventorySource.SourceName, Engine_UiInventorySource.Rows);
 
-		// The weapons screen's two halves — one category, split by the item's WeaponType.
-		Engine_UiMenuSources.RegisterGame(Engine_UiInventorySource.WeaponsSource, Engine_UiInventorySource.Weapons);
+		// The item books (items, weapons, clothing, the dye and augment targets, the gift): the guest's own
+		// rows, each with the item its row builder was handed, the row's A stamped on.
+		Engine_UiMenuSources.RegisterGameCapturing(Engine_UiItemRows.SourceName, Engine_UiItemRows.Rows);
 
-		// The world map's two halves of one list — see Engine_UiQuestSource.
-		Engine_UiMenuSources.RegisterGame(Engine_UiQuestSource.QuestsSource, Engine_UiQuestSource.Quests);
-		Engine_UiMenuSources.RegisterGame(Engine_UiQuestSource.JobsSource, Engine_UiQuestSource.Jobs);
-		Engine_UiMenuSources.RegisterGame(Engine_UiQuestSource.RegionsSource, Engine_UiQuestSource.Regions);
-		Engine_UiMenuSources.RegisterGame(Engine_UiQuestSource.SalesSource, Engine_UiQuestSource.Sales);
-		Engine_UiMenuSources.RegisterGame(Engine_UiQuestSource.FamilySource, Engine_UiQuestSource.Family);
+		// The world map's Properties category, the remaster's own; its other five are the guest's
+		// population (`capture:<category>`, Fable2UiTemplates).
 		Engine_UiMenuSources.RegisterGame(Engine_UiPropertySource.SourceName, Engine_UiPropertySource.Rows);
 		Engine_UiMenuSources.RegisterGame(Engine_UiAbilitySource.SourceName, Engine_UiAbilitySource.Rows);
 

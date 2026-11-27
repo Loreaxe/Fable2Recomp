@@ -175,7 +175,7 @@ public class RuntimeCVarOwnerTests
 		foreach (string fable2Only in new[]
 				 {
 					 "vfs_trace_vfs", "vfs_loose_asset_root", "lua_trace_script_loads", "developer_menu_enabled",
-					 "pubgame_vector_shapes", "pubgame_raster_scale_percent", "coop_split_screen",
+					 "pubgame_vector_shapes", "pubgame_raster_scale_percent",
 					 "decorate_mode_enabled",
 				 })
 		{
@@ -186,6 +186,7 @@ public class RuntimeCVarOwnerTests
 		foreach (string shared in new[]
 				 {
 					 "log_level", "user_language", "camera_invert_y", "lighting_preset", "hdr_output",
+					 "coop_screen_mode", "coop_split_screen_orientation",
 					 "display_resolution", "mouse_input", "texture_upscaling_enabled",
 					 "mouse_sensitivity", "discord_presence", "fx_live_effects",
 				 })

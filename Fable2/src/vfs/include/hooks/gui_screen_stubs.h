@@ -70,26 +70,29 @@ bool DispatchCard(PPCContext& ctx, uint8_t* base, uint32_t player, const std::st
 /// `ExitScreen(QM, 1)`, whose OnExit applies the visit.
 bool DispatchShopClose(PPCContext& ctx, uint8_t* base, uint32_t player);
 
-/// `Gift:<p>:close` — the gift screen's B, the guest's own helper `sub_826C4C50` (player one's alone).
+/// `Gift:<p>:close` — the gift screen's B, the guest's own helper `sub_826C4C50` (the screen's owner's).
 bool DispatchGiftClose(PPCContext& ctx, uint8_t* base, uint32_t player);
 
-/// `Furniture:<p>:close` — upgrade furniture's B (player one's alone): `ExitScreen(QM, 1)` and the
+/// `Furniture:<p>:close` — upgrade furniture's B (the screen's owner's): `ExitScreen(QM, 1)` and the
 /// preview's Hide.
 bool DispatchFurnitureClose(PPCContext& ctx, uint8_t* base, uint32_t player);
 
+/// A furniture upgrade ran: the screen's next Update refills its pages (the guest's h+348 = -1,
+/// 0x826B6D5C / disc 0x8259BEC4).
+void FurnitureUpgraded();
+
 /// `Decoration:<p>:mount:<ticket>|takedown|close` — the decoration screen's A on the row the ticket
 /// names (the guest's own mount `sub_826B7550`), its Y (`sub_8243ED88`) and its B, each ending in
-/// `ExitScreen(QM, 1)` and the preview's Hide as the handler's arms do; player one's alone.
+/// `ExitScreen(QM, 1)` and the preview's Hide as the handler's arms do; the screen's owner's.
 bool DispatchDecoration(PPCContext& ctx, uint8_t* base, uint32_t player, const std::string& verb, uint32_t ticket);
 
-/// The real-estate screen's (28) Update, run by its household wrapper (mod_events.cpp) with r3 the
-/// handler.
+/// The real-estate screen's (28) OnEnter, Update, OnMenuEvent (r4 the event) and OnModalAnswer (r4 the
+/// code, r5 the player), run by their household wrappers (mod_events.cpp) with r3 the handler. OnEnter's
+/// `owner_two`: the screen is local player two's, and states them as the GUI's owner.
+void RealEstateScreenOnEnter(PPCContext& ctx, uint8_t* base, bool owner_two);
 void RealEstateScreenUpdate(PPCContext& ctx, uint8_t* base);
-
-/// The page's numbers (`RealEstate`) for the household the real-estate handler `screen` is bound to:
-/// the buyer at +0x90 and the building at +0xA4, as `sub_826B1A08` (disc `sub_82596CB8`) stored them
-/// at OnEnter. Published empty when the binding holds no building. Defined in guest_tick_pump.cpp.
-void PublishBoundRealEstate(PPCContext& ctx, uint8_t* base, uint32_t screen);
+void RealEstateScreenOnMenuEvent(PPCContext& ctx, uint8_t* base);
+void RealEstateScreenOnModalAnswer(PPCContext& ctx, uint8_t* base);
 
 /// `RealEstate:<p>:event:<110..120>` — a real-estate row's commit by the event its spawn stated: the
 /// handler's own OnMenuEvent with that type (its confirm, numeric box and consequence are the guest's).

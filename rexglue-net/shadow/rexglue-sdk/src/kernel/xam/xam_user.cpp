@@ -15,10 +15,15 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
 
+#include <chrono>
 #include <cstring>
 
 #include <achievement/achievement_runtime.h>
+#include <atomic>
 #include <rex/cvar.h>
+#include <rex/input/input.h>
+#include <rex/input/input_system.h>
+#include <rex/runtime.h>
 #include <rex/kernel/xam/private.h>
 #include <rex/logging.h>
 #include <rex/math.h>
@@ -31,6 +36,7 @@
 #include <rex/system/xio.h>
 #include <rex/system/xthread.h>
 #include <rex/system/xtypes.h>
+#include <rex/thread.h>
 
 REXCVAR_DEFINE_UINT32(user_language, 1, "Kernel", "User's language ID");
 
@@ -39,6 +45,81 @@ namespace kernel {
 namespace xam {
 using namespace rex::system;
 using namespace rex::system::xam;
+
+// REFII SHADOW: PLAYER TWO ON THE SHARED PROFILE. Local co-op is one profile and one save set, so
+// when a title asks to sign a second player in (XamShowSigninUI, below) the next connected pad's
+// user is signed in LOCALLY to the same profile: the same settings, the same saves (the content
+// layer has one root for every user index), never Live. Each user keeps its own XUID — the shared
+// profile's with the user index in its lowest bits — because both titles tell users apart by XUID
+// (Fable 3 maps an XUID back to its user by the low word, TU3 sub_8236AFA0
+// `LODWORD(v13.xuid) == a2` 0x8236B058; Fable 2 keeps it on the Player, lhSceneNode_Create 0x82389AD8).
+//
+// WHO SIGNS IN: the user the title's own ask names. XamShowSigninUI names none, but both titles ask
+// for one user and test that user after: Fable 2 `sub_82882AD8(user)` (TU1 / disc `sub_828867C0`,
+// `1 << a1 & dword_83496A70` 0x82882B04 / 0x82882B98) with the co-op screen's +0x12C — player two's
+// Player's +0x28, the pad that joined (`sub_82264230(netmgr, 2)` / `lwz r11,0x28(r3)` / `stw
+// r11,0x12C(r31)` 0x8243770C..0x82437724); Fable 3's drop-in join `sub_82459A80(user, ..)` / disc
+// `sub_8243A190` (the pad that pressed START) calls `sub_8236B410(.., user, ..)` 0x82459B30 and then
+// tests that user's record 0x82459B54. The title's hooks state that user around their ask
+// (RefiiXamSigninAskFor); with none stated the lowest connected pad not signed in is signed in.
+//
+// SIGNED OUT WHEN ITS PAD GOES. A user signed in here is signed out once its pad has been disconnected
+// for kSignOutAfter (the shell states every pad's connection each frame, RefiiXamNotePad): the user's
+// state drops to 0 and XN_SYS_SIGNINCHANGED goes out, as when a profile signs out at the dashboard.
+// Each title then takes the change its own way — Fable 2 rebuilds its signed-in mask from
+// XamUserGetSigninState (`sub_82184DA8` case 0xA, 0x82184FB4..0x82185054), Fable 3 re-reads its user
+// records (`sub_821881C0` 0x82188240 -> `sub_8236B788`, then `+25` for the session's names,
+// `sub_82197320` 0x82197378) — and the player plays on unsigned, as one who chose to continue without
+// signing in; the title's next ask (Fable 2's co-op X, Fable 3's next drop-in) signs them in again.
+// Player one (user 0, the profile's own) is never signed out.
+
+/// Users 1..3 signed in to the shared profile, one bit each.
+static std::atomic<uint32_t> g_local_signed_in{0};
+
+/// The user the title's ask on this thread names (RefiiXamSigninAskFor), -1 none.
+static thread_local int32_t t_signin_for = -1;
+
+/// How long a signed-in user's pad stays disconnected before the user is signed out: longer than a
+/// wireless pad's reconnect, so a blip signs nobody out.
+static constexpr std::chrono::seconds kSignOutAfter{3};
+
+/// Per user 1..3: when its pad was first seen disconnected while signed in (0: connected).
+static std::atomic<int64_t> g_pad_gone_since[4]{};
+
+static bool LocallySignedIn(uint32_t user_index) {
+  return user_index >= 1 && user_index < 4 && (g_local_signed_in.load() & (1u << user_index)) != 0;
+}
+
+/// The shared profile when `user_index` is signed in to it, else null. User 0 is always the profile's.
+static UserProfile* SignedInProfile(uint32_t user_index) {
+  if (user_index != 0 && !LocallySignedIn(user_index)) {
+    return nullptr;
+  }
+  return REX_KERNEL_STATE()->user_profile();
+}
+
+/// The XUID of `user_index`: the profile's own for user 0, the user index in its lowest bits for a
+/// second player (bits 54/55 untouched: user_profile.cpp's permission mask).
+static uint64_t UserXuid(uint32_t user_index, const UserProfile* profile) {
+  return profile->xuid() ^ static_cast<uint64_t>(user_index);
+}
+
+/// The sign-in state the title reads for `user_index`: the profile's for user 0, signed in locally
+/// (1) for a second player — never Live.
+static uint32_t UserSigninState(uint32_t user_index, const UserProfile* profile) {
+  return user_index == 0 ? profile->signin_state() : 1u;
+}
+
+/// A local user signed in to the shared profile whose XUID this is, or -1 (a remote player's).
+static int32_t LocalUserOfXuid(uint64_t xuid) {
+  const auto& profile = REX_KERNEL_STATE()->user_profile();
+  for (uint32_t user = 0; user < 4; ++user) {
+    if (SignedInProfile(user) != nullptr && UserXuid(user, profile) == xuid) {
+      return static_cast<int32_t>(user);
+    }
+  }
+  return -1;
+}
 
 i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
   assert_true(type_mask == 1 || type_mask == 2 || type_mask == 3 || type_mask == 4 ||
@@ -49,16 +130,15 @@ i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
   uint32_t result = X_E_NO_SUCH_USER;
   uint64_t xuid = 0;
   if (user_index < 4) {
-    if (user_index == 0) {
-      const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+    if (const auto user_profile = SignedInProfile(user_index)) {
       auto type = user_profile->type() & type_mask;
       if (type & (2 | 4)) {
         // maybe online profile?
-        xuid = user_profile->xuid();
+        xuid = UserXuid(user_index, user_profile);
         result = X_E_SUCCESS;
       } else if (type & 1) {
         // maybe offline profile?
-        xuid = user_profile->xuid();
+        xuid = UserXuid(user_index, user_profile);
         result = X_E_SUCCESS;
       }
     }
@@ -72,17 +152,16 @@ i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
 u32 XamUserGetSigninState_entry(u32 user_index) {
   uint32_t signin_state = 0;
   if (user_index < 4) {
-    if (user_index == 0) {
-      const auto& user_profile = REX_KERNEL_STATE()->user_profile();
-      signin_state = user_profile->signin_state();
-      // Titles gate their whole Live stack on this; log transitions so
-      // netplay bring-up can see what the guest saw (0 none / 1 local /
-      // 2 signed in to Live).
-      static uint32_t last_logged_state = UINT32_MAX;
-      if (signin_state != last_logged_state) {
-        last_logged_state = signin_state;
-        REXKRNL_INFO("XamUserGetSigninState(0) -> {}", signin_state);
-      }
+    if (const auto user_profile = SignedInProfile(user_index)) {
+      signin_state = UserSigninState(user_index, user_profile);
+    }
+    // Titles gate their whole Live stack on this; log transitions so netplay bring-up can see what
+    // the guest saw (0 none / 1 local / 2 signed in to Live), per user.
+    static uint32_t last_logged_state[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    const uint32_t user = static_cast<uint32_t>(user_index);
+    if (signin_state != last_logged_state[user] && (user == 0 || signin_state != 0)) {
+      last_logged_state[user] = signin_state;
+      REXKRNL_INFO("XamUserGetSigninState({}) -> {}", user, signin_state);
     }
   }
   return signin_state;
@@ -104,13 +183,15 @@ i32 XamUserGetSigninInfo_entry(u32 user_index, u32 flags, ppc_ptr_t<X_USER_SIGNI
   }
 
   std::memset(info, 0, sizeof(X_USER_SIGNIN_INFO));
-  if (user_index) {
+  const auto user_profile = SignedInProfile(user_index);
+  if (!user_profile) {
     return X_E_NO_SUCH_USER;
   }
 
-  const auto& user_profile = REX_KERNEL_STATE()->user_profile();
-  info->xuid = user_profile->xuid();
-  info->signin_state = user_profile->signin_state();
+  // unk08 (dwInfoFlags) stays 0: never XUSER_INFO_FLAG_GUEST (2) — Fable 3 counts a guest as not
+  // signed in (TU3 sub_8236B788 0x8236B850 -> record[2]), and a player on the shared profile is none.
+  info->xuid = UserXuid(user_index, user_profile);
+  info->signin_state = UserSigninState(user_index, user_profile);
   rex::string::copy_truncating(info->name, user_profile->name(), rex::countof(info->name));
   return X_E_SUCCESS;
 }
@@ -120,11 +201,11 @@ u32 XamUserGetName_entry(u32 user_index, mapped_string buffer, u32 buffer_len) {
     return X_E_INVALIDARG;
   }
 
-  if (user_index) {
+  const auto user_profile = SignedInProfile(user_index);
+  if (!user_profile) {
     return X_E_NO_SUCH_USER;
   }
 
-  const auto& user_profile = REX_KERNEL_STATE()->user_profile();
   const auto& user_name = user_profile->name();
   rex::string::copy_truncating(buffer, user_name, std::min(buffer_len, uint32_t(16)));
   return X_E_SUCCESS;
@@ -135,7 +216,8 @@ u32 XamUserGetGamerTag_entry(u32 user_index, mapped_wstring buffer, u32 buffer_l
     return X_E_INVALIDARG;
   }
 
-  if (user_index) {
+  const auto user_profile = SignedInProfile(user_index);
+  if (!user_profile) {
     return X_E_NO_SUCH_USER;
   }
 
@@ -143,7 +225,6 @@ u32 XamUserGetGamerTag_entry(u32 user_index, mapped_wstring buffer, u32 buffer_l
     return X_E_INVALIDARG;
   }
 
-  const auto& user_profile = REX_KERNEL_STATE()->user_profile();
   auto user_name = rex::string::to_utf16(user_profile->name());
   rex::string::copy_and_swap_truncating(buffer, user_name, std::min(buffer_len, uint32_t(16)));
   return X_E_SUCCESS;
@@ -222,8 +303,8 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index, ui
   // Title ID = 0 means us.
   // 0xfffe07d1 = profile?
 
-  if (!xuids && user_index) {
-    // Only support user 0.
+  if (!xuids && !SignedInProfile(user_index)) {
+    // Only signed-in local users (the shared profile's).
     if (overlapped) {
       REX_KERNEL_STATE()->CompleteOverlappedImmediate(
           REX_KERNEL_MEMORY()->HostToGuestVirtual(overlapped), X_ERROR_NO_SUCH_USER);
@@ -242,7 +323,8 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index, ui
   // data for a remote player is a normal response on hardware and titles
   // handle it; asserting local-only here aborted the host the moment a peer
   // joined.
-  const bool is_local_xuid = !xuids || static_cast<uint64_t>(xuids[0]) == user_profile->xuid();
+  const int32_t xuid_user = xuids ? LocalUserOfXuid(static_cast<uint64_t>(xuids[0])) : -1;
+  const bool is_local_xuid = !xuids || xuid_user >= 0;
 
   // First call asks for size (fill buffer_size_ptr).
   // Second call asks for buffer contents with that size.
@@ -288,7 +370,7 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index, ui
     std::memset(out_setting, 0, sizeof(X_USER_PROFILE_SETTING));
     out_setting->from = !setting || !setting->is_set ? 0 : setting->is_title_specific() ? 2 : 1;
     if (xuids) {
-      out_setting->xuid = is_local_xuid ? user_profile->xuid() : static_cast<uint64_t>(xuids[0]);
+      out_setting->xuid = static_cast<uint64_t>(xuids[0]);
     } else {
       out_setting->user_index = static_cast<uint32_t>(user_index);
     }
@@ -332,8 +414,9 @@ u32 XamUserWriteProfileSettings_entry(u32 title_id, u32 user_index, u32 setting_
     return X_ERROR_INVALID_PARAMETER;
   }
 
-  if (user_index) {
-    // Only support user 0.
+  // A signed-in player two writes the shared profile's settings, as player one does: one profile.
+  const auto user_profile = SignedInProfile(user_index);
+  if (!user_profile) {
     if (overlapped) {
       REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped.guest_address(),
                                                       X_ERROR_NO_SUCH_USER);
@@ -343,7 +426,6 @@ u32 XamUserWriteProfileSettings_entry(u32 title_id, u32 user_index, u32 setting_
   }
 
   // Update and save settings.
-  const auto& user_profile = REX_KERNEL_STATE()->user_profile();
 
   for (uint32_t n = 0; n < setting_count; ++n) {
     const X_USER_PROFILE_SETTING& setting = settings[n];
@@ -401,7 +483,7 @@ u32 XamUserCheckPrivilege_entry(u32 user_index, u32 mask, mapped_u32 out_value) 
       return X_ERROR_INVALID_PARAMETER;
     }
 
-    if (user_index) {
+    if (user_index && !SignedInProfile(user_index)) {
       return X_ERROR_NO_SUCH_USER;
     }
   }
@@ -413,9 +495,10 @@ u32 XamUserCheckPrivilege_entry(u32 user_index, u32 mask, mapped_u32 out_value) 
   // raises a fatal EError 6 and abandons its whole presence machine). When
   // only signed in locally (offline), keep denying so single-player titles
   // don't wander into online paths.
+  // A second player on the shared profile is signed in locally only, so it is denied every privilege.
   const auto& profile = REX_KERNEL_STATE()->user_profile();
-  const bool signed_in_to_live =
-      profile && profile->signin_state() == 2;  // eXamUserSigninState_SignedInToLive
+  const bool signed_in_to_live = (user_index == 0 || user_index == 0xFF) && profile &&
+                                 profile->signin_state() == 2;  // eXamUserSigninState_SignedInToLive
   *out_value = signed_in_to_live ? 1 : 0;
   return X_ERROR_SUCCESS;
 }
@@ -477,9 +560,8 @@ u32 XamUserAreUsersFriends_entry(u32 user_index, u32 unk1, u32 unk2, mapped_u32 
   if (user_index >= 4) {
     result = X_ERROR_INVALID_PARAMETER;
   } else {
-    if (user_index == 0) {
-      const auto& user_profile = REX_KERNEL_STATE()->user_profile();
-      if (user_profile->signin_state() == 0) {
+    if (const auto user_profile = SignedInProfile(user_index)) {
+      if (UserSigninState(user_index, user_profile) == 0) {
         result = X_ERROR_NOT_LOGGED_ON;
       } else {
         // No friends!
@@ -511,13 +593,66 @@ u32 XamUserAreUsersFriends_entry(u32 user_index, u32 unk1, u32 unk2, mapped_u32 
 u32 XamShowSigninUI_entry(u32 unk, u32 unk_mask) {
   // Mask values vary. Probably matching user types? Local/remote?
 
+  // A SECOND PLAYER SIGNS IN TO THE SHARED PROFILE, with no box: the dashboard's sign-in signs in the
+  // player at a connected controller, so the lowest connected pad whose user is not signed in is
+  // signed in here. Both titles ask only for a user who is not signed in (Fable 2: the co-op screen's
+  // X, sub_82438CF8 case 38 -> sub_82882AD8 `XamShowSigninUI(2, 0)` 0x82882B10, gated on the
+  // signed-in mask 0x82882B04; Fable 3: the drop-in join's sign-in round sub_8236B410 before its
+  // warning box) and re-read every user's state on the XN_SYS_SIGNINCHANGED below (Fable 2
+  // sub_82184DA8 case 0xA rebuilds the mask from XamUserGetSigninState, 0x82184FB4..0x82185028; Fable 3
+  // TU3 sub_821881C0 0x82188240 -> sub_8236B788).
+  {
+    auto* input = static_cast<rex::input::InputSystem*>(REX_KERNEL_STATE()->emulator()->input_system());
+    const auto connected = [input](uint32_t user) {
+      rex::input::X_INPUT_CAPABILITIES caps = {};
+      return input != nullptr && input->GetCapabilities(user, 0, &caps) == X_ERROR_SUCCESS;
+    };
+    const auto sign_in = [&](uint32_t user, const char* why) {
+      g_local_signed_in.fetch_or(1u << user);
+      g_pad_gone_since[user].store(0);
+      REXKRNL_INFO("XamShowSigninUI({}, {:#x}): user {} signed in to the shared profile '{}' (local, {:016X}), {}",
+                   static_cast<uint32_t>(unk), static_cast<uint32_t>(unk_mask), user,
+                   REX_KERNEL_STATE()->user_profile()->name(),
+                   UserXuid(user, REX_KERNEL_STATE()->user_profile()), why);
+    };
+    const int32_t named = t_signin_for;
+    if (named >= 1 && named < 4 && !LocallySignedIn(static_cast<uint32_t>(named)) &&
+        connected(static_cast<uint32_t>(named))) {
+      sign_in(static_cast<uint32_t>(named), "the user the title's ask names");
+    } else {
+      if (named >= 1 && named < 4 && !LocallySignedIn(static_cast<uint32_t>(named))) {
+        REXKRNL_WARN("XamShowSigninUI: the title asked for user {}, whose pad is not connected", named);
+      }
+      for (uint32_t user = 1; user < 4 && named < 1; ++user) {
+        if (!LocallySignedIn(user) && connected(user)) {
+          sign_in(user, "the lowest connected pad not signed in");
+          break;
+        }
+      }
+    }
+  }
+
   // The dashboard's sequence: XN_SYS_UI on, XN_SYS_SIGNINCHANGED, XN_SYS_UI off. A caller may
   // wait for BOTH edges — Fable 2's `sub_82882AD8` spins until XN_SYS_UI(1) sets its
   // UI-showing flag (0x82882b30), then until XN_SYS_UI(0) clears it; without the "on" edge
   // it never leaves the first spin.
+  //
+  // THE "OFF" EDGE COMES LATER, as the dashboard's UI closes later: only "on" goes now, and
+  // XN_SYS_SIGNINCHANGED and "off" follow on the kernel's dispatch thread after the deferred
+  // dialogs' delay. Fable 3 TU3's listener sub_821881C0 drains EVERY pending notification in one
+  // pump (`bl XNotifyGetNext` 0x821882C0, `bne cr6, loc_82188210` 0x821882C8; XN_SYS_UI -> `stb r9,
+  // 0x18(r31)` 0x82188234), so "on" and "off" queued together set and cleared the flag inside one pump
+  // and sub_8236B410's first spin (`lbz r11,0x18(r30)` 0x8236B4A4..0x8236B4CC, pumping through
+  // sub_821976B8 0x8236B4B8) never saw it rise. Disc's listener sub_821882E8 takes one
+  // notification per pump (`bl XNotifyGetNext` 0x8218831C, every path to the return 0x821883EC), which
+  // is why disc passed.
   REX_KERNEL_STATE()->BroadcastNotification(0x00000009, 1);
-  REX_KERNEL_STATE()->BroadcastNotification(0x0000000A, 1);
-  REX_KERNEL_STATE()->BroadcastNotification(0x00000009, 0);
+  REX_KERNEL_STATE()->PostToDispatchThread([]() {
+    rex::thread::Sleep(std::chrono::milliseconds(100));
+    REX_KERNEL_STATE()->BroadcastNotification(0x0000000A, 1);
+    REX_KERNEL_STATE()->BroadcastNotification(0x00000009, 0);
+    REXKRNL_INFO("XamShowSigninUI: the sign-in UI closed (XN_SYS_SIGNINCHANGED, XN_SYS_UI off)");
+  });
   return X_ERROR_SUCCESS;
 }
 
@@ -660,10 +795,14 @@ u32 XamUserCreateAchievementEnumerator_entry(u32 title_id, u32 user_index, u32 x
 
   // Unlocks are what Godot states (Engine_Achievements pushes its store through the bridge)
   // plus anything the guest wrote this session — the seam, never the SDK's AchievementManager.
-  auto fill_unlock = [](XStaticAchievementEnumerator::AchievementDetails& item, uint32_t id,
-                        const rex::system::KernelState* ks) {
+  // PER USER: the hero user_index plays, answered from the save its hero came from
+  // (refii::achievement::BindUser at the guest's adoption points) — Fable 2 reads back at 0x824DF328,
+  // Fable 3 at 0x823E3164, each for the user of the hero whose Player is being bound.
+  auto fill_unlock = [user = static_cast<uint32_t>(user_index)](
+                         XStaticAchievementEnumerator::AchievementDetails& item, uint32_t id,
+                         const rex::system::KernelState* ks) {
     (void)ks;
-    uint64_t ft = refii::achievement::GetAchievementUnlockTime(id);
+    uint64_t ft = refii::achievement::GetUserAchievementUnlockTime(user, id);
     if (ft) {
       item.flags |= kAchievedFlags;
       item.unlock_time.unk_0 = static_cast<uint32_t>(ft & 0xFFFF'FFFF);
@@ -764,6 +903,41 @@ u32 XamSessionRefObjByHandle_entry(u32 handle, mapped_u32 obj_ptr) {
 }  // namespace xam
 }  // namespace kernel
 }  // namespace rex
+
+// The title's hooks name the user their sign-in ask is for, on the asking thread, around the ask
+// (Fable 2 rex_lhGuiCoopScreen_SignInPlayerTwo, Fable 3 rex_CoopJoin_SetupHero); -1 clears it.
+extern "C" void RefiiXamSigninAskFor(int32_t user) { rex::kernel::xam::t_signin_for = user; }
+
+// The shell's pad publication (RefiiHostSetControllerState, every frame per pad): a user signed in here
+// whose pad stays disconnected for kSignOutAfter is signed out (head note).
+extern "C" void RefiiXamNotePad(uint32_t user, int32_t connected) {
+  using namespace rex::kernel::xam;
+  if (user < 1 || user >= 4) {
+    return;
+  }
+  if (connected != 0 || !LocallySignedIn(user)) {
+    g_pad_gone_since[user].store(0);
+    return;
+  }
+  const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch())
+                          .count();
+  int64_t since = g_pad_gone_since[user].load();
+  if (since == 0) {
+    g_pad_gone_since[user].store(now);
+    return;
+  }
+  if (now - since < std::chrono::duration_cast<std::chrono::milliseconds>(kSignOutAfter).count()) {
+    return;
+  }
+  g_pad_gone_since[user].store(0);
+  if ((g_local_signed_in.fetch_and(~(1u << user)) & (1u << user)) == 0) {
+    return;
+  }
+  REXKRNL_INFO("Refii sign-in: user {}'s pad has been disconnected for {} s: user {} signed out (XN_SYS_SIGNINCHANGED)",
+               user, kSignOutAfter.count(), user);
+  REX_KERNEL_STATE()->PostToDispatchThread([]() { REX_KERNEL_STATE()->BroadcastNotification(0x0000000A, 1); });
+}
 
 REX_EXPORT(__imp__XamUserGetXUID, rex::kernel::xam::XamUserGetXUID_entry)
 REX_EXPORT(__imp__XamUserGetSigninState, rex::kernel::xam::XamUserGetSigninState_entry)

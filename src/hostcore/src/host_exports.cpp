@@ -100,6 +100,7 @@ void FlushLogging();
 #include "core/player_state.h"
 #include "core/guest_tick_queue.h"
 #include "core/gui_native_calls.h"
+#include "core/queue_put_back.h"
 #include "refii_payload/payload.h"
 #include "core/mouse_look_state.h"
 #include "core/movie_state.h"
@@ -778,7 +779,78 @@ extern "C" {
 ///     Engine_CameraFeed.cs); Fable 3 no longer reads the finished block at the view's fill or the
 ///     frame blend. Adds RefiiHostStateCamera: the shell states the drawn camera back for the hooks
 ///     that read it natively (Fable 3's mouse look and Refii.fov).
-REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 259; }
+/// 260 removes (Fable 2) RefiiHostGetShopFront, RefiiHostSetShopPrice, RefiiHostGetShopPrice and
+///     RefiiHostGetFurniture: the shop's front page, its asking price and the upgrade-furniture pages
+///     are stated by the guest's own page fills (`@PageFill`, page_fills_stated.cpp).
+/// 261 removes (Fable 2) RefiiHostGetRealEstate: screen 28's pages are stated by their own fills
+///     (`@PageFill` scopes page1 / page2 / tick); the map's property row keeps RefiiHostGetPropertyEstate.
+/// 262 narrows RefiiHostGetWorldMapRegion to the minimap's keys (index, name, first level, level key,
+///     scenario; Fable 3 answers the same empty shape): the world map's region, quest, job, sale and
+///     family pages are stated by their own fills (`@PageFill` scopes row.region .. row.family) and its
+///     rows are the guest's own population. Removes (Fable 2) RefiiHostGetSales,
+///     RefiiHostGetFastTravelRegions, RefiiHostGetFamily, RefiiHostGetFamilyDetails,
+///     RefiiHostGetQuestTrailOverride, RefiiHostSetQuestTravel, RefiiHostGetQuestTravel and
+///     RefiiHostGetQuestTasks.
+/// 270 adds RefiiHostGetMenuRowItem — a captured row's icon, its stated mark and the item its row builder
+///     was handed (Fable 2: the item books' rows are the guest's own, hooks/item_rows_stated.cpp; Fable 3
+///     answers no row). Removes RefiiHostGetWornItems (both titles) and (Fable 2) RefiiHostGetDyeStates:
+///     the lists' worn, held and empty-slot marks are the guest's statements; RefiiHostGetItemDyeLayers now
+///     names the one item it reads.
+/// 271 removes (Fable 2) RefiiHostGetItemAugments: the item books' pages are stated by their own fills
+///     (`@PageFill` scope row on screens 15 / 16 / 25, with the quad colour kind `tint`), the augment lines in
+///     the stated description.
+/// 272 adds RefiiHostStateCameraViews — the shell states the screen and, per player, the pose it draws
+///     and the part of the window it fills, every drawn frame (core/camera_views.h), for the camera mod
+///     API's read calls — and RefiiHostGetCameraOffset: the display offset a mod stated (camera_offset).
+/// 273 adds RefiiHostGetSystemMessageBox and RefiiHostAnswerSystemMessageBox: the guest's
+///     XamShowMessageBoxUI is shown by the shell and answered with a button's index (rexglue shadow
+///     xam_ui.cpp), for every title.
+/// 274 makes achievements per character: RefiiHostGetAchievementUnlocks also gives each write's
+///     binding serial; RefiiHostGetAchievementBindings gives the guest's adoption points' bindings
+///     (user -> save); RefiiHostSetSaveAchievementUnlocks states every save's unlocked set for the
+///     per-user enumerator and replaces RefiiHostSetAchievementUnlocks, which is removed.
+/// 275 adds RefiiHostGetHeroSaveChoice and RefiiHostAnswerHeroSaveChoice: the save a joining player's
+///     hero comes from is that player's choice, asked by the guest's join and answered by the shell
+///     (achievement/hero_save_choice.h).
+/// 276 adds (Fable 2) RefiiHostGetTargetedBy — who targets each thing, as the guest's targeted setter
+///     leaves it — so each split view draws its own player's targeting highlight; and
+///     RefiiHostGetPlayerTwoPrompts / RefiiHostGetPlayerOneHiddenPrompts now also attribute a targeted
+///     thing's "Interact" icon (a villager's job title) to the players targeting it.
+/// 277 adds RefiiHostSetPlayerText: the shell writes a player's session TEXT (core/player_state.h) — the
+///     achievements statement (core/achievement_statement.h) both mod surfaces and the co-op partner read.
+///     RefiiHostAnswerHeroSaveChoice also takes -3: the joining player cancels the join.
+REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 277; }
+
+extern "C" uint32_t RefiiSystemMessageBoxFront(char* out, uint32_t capacity);
+extern "C" void RefiiXamNotePad(uint32_t user, int32_t connected);
+extern "C" int RefiiSystemMessageBoxAnswer(uint32_t id, int32_t button);
+extern "C" uint32_t RefiiHeroSaveChoiceFront(char* out, uint32_t capacity);
+extern "C" int32_t RefiiHeroSaveChoiceAnswer(uint32_t id, int32_t choice);
+
+/// The oldest system message box the guest waits on (XamShowMessageBoxUI), fields split by 0x1F:
+/// id, user, flags, focused button, button count, title, text, the captions. 0 when none waits.
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetSystemMessageBox(char* out, uint32_t capacity) {
+    return RefiiSystemMessageBoxFront(out, capacity);
+}
+
+/// The shell's answer to system message box `id`: a button's index, -1 to cancel it. 0 when the
+/// box is gone or has no such button.
+REFII_HOST_ABI_EXPORT int RefiiHostAnswerSystemMessageBox(uint32_t id, int32_t button) {
+    return RefiiSystemMessageBoxAnswer(id, button);
+}
+
+/// The save choice a joining player's hero waits on (the guest's join, achievement/hero_save_choice.h),
+/// fields split by 0x1F: id, user, the profile's save count, the choice count, each save's name in the
+/// guest's own order of preference. The record's length; 0 when none waits. Copied when it fits.
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetHeroSaveChoice(char* out, uint32_t capacity) {
+    return RefiiHeroSaveChoiceFront(out, capacity);
+}
+
+/// The shell's answer to save choice `id`: a save's index, or -1 for a new hero. 0 when the question is
+/// gone or the index is out of range.
+REFII_HOST_ABI_EXPORT int RefiiHostAnswerHeroSaveChoice(uint32_t id, int32_t choice) {
+    return RefiiHeroSaveChoiceAnswer(id, choice);
+}
 
 /// The loading screen, as the title's own calls state it: made by its manager, the fade its tick
 /// leaves, the take-down requested and finished. Returns 1 while a screen exists.
@@ -822,6 +894,18 @@ REFII_HOST_ABI_EXPORT void RefiiHostStateCamera(const float* eleven) {
     if (eleven != nullptr) {
         refii_bridge_camera_stated(eleven, eleven + 3, eleven + 6, eleven[9], eleven[10] != 0.0f ? 1 : 0);
     }
+}
+
+/// The screen and the views the shell draws this frame, refii::camera::kViewsWords floats
+/// (src/runtime/include/core/camera_views.h).
+REFII_HOST_ABI_EXPORT void RefiiHostStateCameraViews(const float* words, uint32_t count) {
+    refii_bridge_camera_views_stated(words, count);
+}
+
+/// The display offset stated for `player` (1 or 2): seven floats into `out7` (right, up, back in metres
+/// along the drawn camera's axes; yaw, pitch, roll, fov in degrees). 1 while one is stated.
+REFII_HOST_ABI_EXPORT int32_t RefiiHostGetCameraOffset(int32_t player, float* out7) {
+    return refii_bridge_camera_offset_read(player, out7);
 }
 
 /// The word a title's own call last stated under `key` (payload_bridge.h lists the keys); 0 until
@@ -1034,6 +1118,18 @@ REFII_HOST_ABI_EXPORT void RefiiHostSetHostAim(int32_t active, float fwd_x, floa
 }
 
 
+/// Writes a player's session TEXT (core/player_state.h) for `player` (1 or 2): never saved, the same on
+/// both co-op machines (the owner's write goes to the peer, a peer's to the owner). Returns 1 when written.
+REFII_HOST_ABI_EXPORT int32_t RefiiHostSetPlayerText(int32_t player, const char* key, const char* text) {
+    if (key == nullptr || (player != 1 && player != 2)) {
+        return 0;
+    }
+    const char* value = text != nullptr ? text : "";
+    refii_bridge_player_write_text(player, key, std::strlen(key), value, std::strlen(value), 0);
+    return 1;
+}
+
+
 /// Writes a SAVED player value (core/player_state.h) for `player` (1 or 2), as a mod's would: kept
 /// with that player's save, the same on both machines. Returns 1 when written.
 REFII_HOST_ABI_EXPORT int32_t RefiiHostSetPlayerValue(int32_t player, const char* key, float value) {
@@ -1178,6 +1274,8 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostTakeGuiNativeCalls(char* out_utf8, uint3
         return true;
     };
 
+    // The first call NOT handed over; it and everything after go back to the front of the queue.
+    std::size_t handed = 0;
     for (const refii::vfs::GuiNativeCall& call : calls) {
         if (written >= max_records) {
             break;
@@ -1254,7 +1352,19 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostTakeGuiNativeCalls(char* out_utf8, uint3
         }
 
         ++written;
+        ++handed;
     }
+
+    // NOTHING IS DROPPED. The caller drains again while calls wait; a first record that fits no
+    // buffer makes it grow its buffers, and only one that still does not fit at the ceiling is
+    // dropped, by name.
+    if (handed < calls.size() && written == 0u &&
+        (utf8_capacity >= refii::vfs::kDrainTextCeiling || kinds_capacity >= refii::vfs::kDrainKindCeiling)) {
+        REXLOG_WARN("Refii UI cut: GUI call '{}' ({} argument(s)) fits no drain buffer ({} text bytes, {} kind bytes) — dropped",
+                    calls[handed].name, calls[handed].arguments.size(), utf8_capacity, kinds_capacity);
+        ++handed;
+    }
+    refii::vfs::PutBackGuiNativeCalls(calls, handed);
 
     return written;
 }
@@ -1624,6 +1734,8 @@ REFII_HOST_ABI_EXPORT void RefiiHostSetControllerState(uint32_t user_index, int 
                                  int32_t thumb_ry) {
     refii::host::PublishControllerState(user_index, HostControllerState(connected, buttons,
         left_trigger, right_trigger, thumb_lx, thumb_ly, thumb_rx, thumb_ry));
+    // A user signed in to the shared profile is signed out once its pad has gone (shadow xam_user.cpp).
+    RefiiXamNotePad(user_index, connected);
 }
 
 /// Android's physical-phase publication. The tag is independent of analog packet updates; it is
@@ -1634,6 +1746,7 @@ REFII_HOST_ABI_EXPORT void RefiiHostSetControllerStateTracked(uint32_t user_inde
                                  int32_t thumb_ry, uint64_t receipt_token) {
     refii::host::PublishControllerStateTracked(user_index, HostControllerState(connected, buttons,
         left_trigger, right_trigger, thumb_lx, thumb_ly, thumb_rx, thumb_ry), receipt_token);
+    RefiiXamNotePad(user_index, connected);
 }
 
 /// The last successful non-null state-copy receipt (capabilities, vibration, NULL queries and
@@ -1710,7 +1823,7 @@ REFII_HOST_ABI_EXPORT void RefiiHostSetTimeBaseFrozen(uint32_t frozen) {
 //
 // Godot owns achievements (Engine_Achievements): the definitions parsed from the title's XDBF,
 // the unlock store and its file, the toast and the page. `refii_achievement` is the guest-facing
-// seam only, and these four exports are its two directions: the guest's writes and its UI
+// seam only, and these exports are its two directions: the guest's writes and its UI
 // requests come up; the XDBF comes up once; the unlocked set the host states goes down for the
 // guest's own enumerator to read back.
 //----------------------------------------------------------------------------------
@@ -1719,10 +1832,13 @@ REFII_HOST_ABI_EXPORT void RefiiHostSetTimeBaseFrozen(uint32_t frozen) {
 ///
 /// A sequence, not a flushing queue: the seam keeps every write of the session stamped with a
 /// monotonic sequence, so the read is idempotent and two readers cannot lose one between them.
+/// `out_bindings` takes the serial of the writing user's binding (RefiiHostGetAchievementBindings),
+/// 0 when the user was never bound.
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetAchievementUnlocks(uint64_t after_sequence,
                                                              uint32_t* out_ids,
                                                              uint32_t* out_users,
                                                              uint64_t* out_sequences,
+                                                             uint64_t* out_bindings,
                                                              uint32_t max_unlocks) {
     const std::vector<refii::achievement::AchievementUnlock> writes =
         refii::achievement::GetAchievementWritesSnapshot();
@@ -1735,6 +1851,7 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetAchievementUnlocks(uint64_t after_seq
         if (out_ids != nullptr) out_ids[written] = write.achievement_id;
         if (out_users != nullptr) out_users[written] = write.user_index;
         if (out_sequences != nullptr) out_sequences[written] = write.sequence;
+        if (out_bindings != nullptr) out_bindings[written] = write.binding;
         ++written;
     }
 
@@ -1753,20 +1870,52 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetTitleXdbf(uint8_t* out_bytes, uint32_
     return static_cast<uint32_t>(xdbf.size());
 }
 
-/// The unlocked set as the host's store has it — ids with unlock FILETIMEs — for the guest's
-/// `XamUserCreateAchievementEnumerator` to answer from. Replaces the previous statement.
-REFII_HOST_ABI_EXPORT void RefiiHostSetAchievementUnlocks(const uint32_t* ids,
-                                                          const uint64_t* unlock_filetimes,
-                                                          uint32_t count) {
-    if (ids == nullptr || count == 0) {
-        refii::achievement::SetUnlockedAchievements({}, {});
-        return;
+/// The guest's adoption points' bindings with a serial above `after_serial`, oldest first, one per
+/// line: `serial<TAB>user<TAB>save<LF>` (save empty: a hero no save holds yet). Returns the bytes the
+/// whole answer needs; writes it only when `capacity` holds it all (plus the null).
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetAchievementBindings(uint64_t after_serial, char* out, uint32_t capacity) {
+    std::string text;
+    for (const auto& binding : refii::achievement::GetBindingsSnapshot()) {
+        if (binding.serial <= after_serial) continue;
+        text += std::to_string(binding.serial) + '\t' + std::to_string(binding.user_index) + '\t' + binding.save + '\n';
     }
+    if (out != nullptr && capacity > text.size()) {
+        std::memcpy(out, text.data(), text.size());
+        out[text.size()] = 0;
+    }
+    return static_cast<uint32_t>(text.size());
+}
 
-    refii::achievement::SetUnlockedAchievements(
-        std::span<const uint32_t>(ids, count),
-        unlock_filetimes == nullptr ? std::span<const uint64_t>()
-                                    : std::span<const uint64_t>(unlock_filetimes, count));
+/// Every save's unlocked set, as the host's per-character stores have it, for the guest's per-user
+/// `XamUserCreateAchievementEnumerator`: one save per line, `save<TAB>id:filetime,id:filetime,...<LF>`
+/// (a filetime of 0: unlocked, time unknown). Replaces the previous statement.
+REFII_HOST_ABI_EXPORT void RefiiHostSetSaveAchievementUnlocks(const char* table) {
+    std::vector<refii::achievement::SaveUnlocks> saves;
+    const std::string_view text = table != nullptr ? std::string_view(table) : std::string_view();
+    for (size_t at = 0; at < text.size();) {
+        size_t end = text.find('\n', at);
+        if (end == std::string_view::npos) end = text.size();
+        const std::string_view line = text.substr(at, end - at);
+        at = end + 1;
+        const size_t tab = line.find('\t');
+        if (tab == std::string_view::npos || tab == 0) continue;
+        refii::achievement::SaveUnlocks save;
+        save.save = std::string(line.substr(0, tab));
+        const std::string list(line.substr(tab + 1));
+        for (size_t p = 0; p < list.size();) {
+            size_t comma = list.find(',', p);
+            if (comma == std::string::npos) comma = list.size();
+            const std::string item = list.substr(p, comma - p);
+            p = comma + 1;
+            const size_t colon = item.find(':');
+            const uint32_t id = static_cast<uint32_t>(std::strtoul(item.substr(0, colon).c_str(), nullptr, 10));
+            if (id == 0) continue;
+            save.ids.push_back(id);
+            save.filetimes.push_back(colon == std::string::npos ? 0ull : std::strtoull(item.substr(colon + 1).c_str(), nullptr, 10));
+        }
+        saves.push_back(std::move(save));
+    }
+    refii::achievement::SetSaveUnlocks(std::move(saves));
 }
 
 /// How many times the guest has called `XamShowAchievementsUI` this session; the host opens

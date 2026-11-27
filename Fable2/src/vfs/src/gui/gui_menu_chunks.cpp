@@ -1,4 +1,5 @@
 #include "gui/gui_menu_chunks.h"
+#include "core/queue_put_back.h"
 
 #include <algorithm>
 #include <atomic>
@@ -183,6 +184,11 @@ void NotePopulate(const MenuChunkCall& call) {
             } else if (is("g_Menu:RefreshChildsButtonText(") && parent != nullptr &&
                        !parent->text.empty()) {
                 RestateCapturedMenuRow(name->text, &parent->text, nullptr, nullptr, &text_tag->text);
+            } else if (is("g_Menu:RefreshButtonText(") || is("g_Menu:RefreshButton(")) {
+                // By name, the first row so named, as the script's `GetMenuItem(String1)`: the item books'
+                // page fills take the new mark off the seen row this way (`sub_829B5160` 0x829B55AC,
+                // `sub_829B6310` 0x829B67C8).
+                RestateCapturedMenuRow(name->text, nullptr, nullptr, nullptr, &text_tag->text);
             }
         }
         return;
@@ -331,11 +337,34 @@ extern "C" uint32_t refii_bridge_menu_last_spawn_ordinal(uint32_t presentation) 
     return found == Populates().end() ? 0u : found->second.last;
 }
 
+extern "C" int32_t refii_bridge_staged_menu_attribute(const char* name, char* text, uint32_t text_capacity,
+                                                      float* number) {
+    std::lock_guard<std::mutex> lock(Mutex());
+    const MenuChunkAttribute* staged = StagedNamed(Staged(), name);
+    if (staged == nullptr) {
+        return 0;
+    }
+    if (text != nullptr && text_capacity != 0u) {
+        const size_t take = std::min<size_t>(staged->text.size(), text_capacity - 1u);
+        std::memcpy(text, staged->text.data(), take);
+        text[take] = '\0';
+    }
+    if (number != nullptr) {
+        *number = staged->number;
+    }
+    return 1;
+}
+
 std::vector<MenuChunkCall> TakeMenuChunkCalls() {
     std::vector<MenuChunkCall> taken;
     std::lock_guard<std::mutex> lock(Mutex());
     taken.swap(Pending());
     return taken;
+}
+
+void PutBackMenuChunkCalls(std::vector<MenuChunkCall>& taken, std::size_t from) {
+    std::lock_guard<std::mutex> lock(Mutex());
+    PutBackFront(Pending(), taken, from);
 }
 
 void MenuChunkCounters(uint64_t* out_recorded, uint32_t* out_pending, uint64_t* out_dropped) {

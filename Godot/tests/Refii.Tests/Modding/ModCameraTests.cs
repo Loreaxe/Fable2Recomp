@@ -3,6 +3,7 @@ namespace Refii.Tests.Modding;
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using GdUnit4;
 using static GdUnit4.Assertions;
 using Refii.Entities;
@@ -157,9 +158,10 @@ public class ModCameraTests
         }
 
         string core = Read(root, "Godot", "src", "Titles", "Fable2", "host", "CoopHeroLua.cs");
-        // Around every CameraManager:FrameUpdate(hero): the hold before, the statement after, on both paths.
+        // Around every CameraManager:FrameUpdate(hero): the hold before, the statement after, on all three paths
+        // (unswapped, local co-op player one on the shipped fields, the swapped per-hero state).
         AssertThat(core.Contains("pcall(C.CameraHold, hero)", StringComparison.Ordinal)).IsTrue();
-        AssertThat(core.Split("pcall(C.CameraStated, hero, self.CurrentCamera)").Length - 1).IsEqual(2);
+        AssertThat(core.Split("pcall(C.CameraStated, hero, self.CurrentCamera)").Length - 1).IsEqual(3);
         // The mode is the override set's key for the active camera.
         AssertThat(core.Contains("set.OverridesCameraValidity and type(set.CameraModes) == \"table\"", StringComparison.Ordinal)).IsTrue();
         // The game's own per-player hold, with the data its cameras read.
@@ -255,5 +257,313 @@ public class ModCameraTests
         AssertThat(off!.Value.On).IsFalse();
         AssertThat(Engine_UiModRequest.Parse(RefiiHost.ParseFieldsPlain("op='hide_part',entity=0,part='Shadow_Neck',on=1")).HasValue).IsFalse();
         AssertThat(Engine_UiModRequest.Parse(RefiiHost.ParseFieldsPlain("op='hide_part',entity=5,part='',on=1")).HasValue).IsFalse();
+    }
+
+    private static readonly string[] ShapeCalls =
+    {
+        "camera_tune", "camera_frame", "camera_focus", "camera_combat_blend", "camera_interest", "camera_pitch_hold",
+        "camera_lock_frame", "camera_mode_allow", "camera_offset", "camera_shake",
+    };
+
+    /// <summary>
+    /// The camera's shape calls (C2b): one list on the three surfaces, stated into the game VM's store
+    /// by the shared preamble and applied by each title's core camera chunk.
+    /// </summary>
+    [TestCase]
+    public void TheShapeCallsAreOnEverySurface()
+    {
+        AssertThat(ModLuaCamera.Calls.ToList()).IsEqual(ShapeCalls.ToList());
+        string runtime = ModLuaCamera.Runtime;
+        AssertThat(runtime.Contains("Refii._camera_calls = { " + string.Join(", ", ShapeCalls.Select(c => "'" + c + "'")) + " }", StringComparison.Ordinal)).IsTrue();
+        foreach (string call in ShapeCalls)
+        {
+            AssertThat(runtime.Contains("function Refii._camera_do." + call + "(owner, p", StringComparison.Ordinal)).OverrideFailureMessage(call).IsTrue();
+            AssertThat(ModApi.LuaHelpers.Any(h => h.Signature.StartsWith("Refii." + call + "(p", StringComparison.Ordinal))).OverrideFailureMessage("Lua " + call).IsTrue();
+            AssertThat(ModApi.GodotHelpers.Any(h => h.Signature.StartsWith(call + "(player", StringComparison.Ordinal))).OverrideFailureMessage("Godot " + call).IsTrue();
+            AssertThat(typeof(RefiiHost).GetMethods().Any(m => m.Name == call)).OverrideFailureMessage("RefiiHost." + call).IsTrue();
+        }
+
+        AssertThat(ModApi.Helpers.Any(h => h.Signature.Contains("refii_mod_camera_state(", StringComparison.Ordinal))).IsTrue();
+        AssertThat(ModLua.RuntimePreamble(Array.Empty<(string, float)>()).Contains(runtime, StringComparison.Ordinal)).IsTrue();
+        // A mod's block states as that mod: its view carries the calls with the mod as owner.
+        AssertThat(ModLua.RequireRuntime.Contains("if Refii._camera_view ~= nil then Refii._camera_view(view, mod) end", StringComparison.Ordinal)).IsTrue();
+        AssertThat(runtime.Contains("rawset(view, name, function(...) return Refii._camera_call(mod, name, ...) end)", StringComparison.Ordinal)).IsTrue();
+
+        // Fable 3's VM walks pairs only with two loop variables (Fable3CoreLua's header): the preamble
+        // both titles run never loops with one.
+        AssertThat(Regex.IsMatch(runtime, @"for\s+\w+\s+in\s+pairs\(")).IsFalse();
+        // The store holds plain values under Refii, a permanent written by name: no entity, no function.
+        AssertThat(runtime.Contains("Refii._cam = { { layers = {} }, { layers = {} }", StringComparison.Ordinal)).IsTrue();
+
+        string? root = RepoRoot();
+        if (root == null)
+        {
+            return;
+        }
+
+        string header = Read(root, "src", "runtime", "include", "core", "refii_mod_requests.h");
+        AssertThat(header.Contains("extern \"C\" int32_t refii_mod_camera_state(PPCContext* ctx, uint8_t* base, int32_t player, const char* call,", StringComparison.Ordinal)).IsTrue();
+        string requests = Read(root, "src", "payload", "src", "core", "mod_requests.cpp");
+        AssertThat(requests.Contains("Refii._camera_call('native','", StringComparison.Ordinal)).IsTrue();
+
+        string host = Read(root, "Godot", "src", "Engine", "mods", "Engine_RefiiHost.cs");
+        AssertThat(host.Contains("if Refii and Refii._camera_call then Refii._camera_call(", StringComparison.Ordinal)).IsTrue();
+        AssertThat(host.Contains("ModLuaLane.Literal(\"godot:\" + (owner ?? string.Empty))", StringComparison.Ordinal)).IsTrue();
+
+        // Each title's core camera chunk applies what is stated, and is the shipped function with nothing stated.
+        string f2 = Read(root, "Godot", "src", "Titles", "Fable2", "host", "CoopHeroLua.cs");
+        foreach (string applied in new[]
+                 {
+                     "SACCamera.CalculateActiveZoomLevel = C.CamCalculateActiveZoomLevel", "SACCamera.GetDesiredCombatCamWeight = C.CamGetDesiredCombatCamWeight",
+                     "SACCamera.CalculateCentreAndCage = C.CamCalculateCentreAndCage", "SACCamera.GetHeight = C.CamGetHeight",
+                     "SACCamera.CalculateDesiredDirection = C.CamCalculateDesiredDirection", "RangedCombatCamera.GetTightness = C.CamGetTightness",
+                     "RangedCombatCamera.GetOffsetDegrees = C.CamGetOffsetDegrees", "Refii._camera_changed = C.CamChanged",
+                     "return not CameraFunctions.IsMultiplayer(hero)", "pcall(C.CamTuneFor, hero)",
+                 })
+        {
+            AssertThat(f2.Contains(applied, StringComparison.Ordinal)).OverrideFailureMessage("Fable 2 lacks " + applied).IsTrue();
+        }
+
+        string f3 = Read(root, "Godot", "src", "Titles", "Fable3", "Fable3CoreLua.cs");
+        foreach (string applied in new[]
+                 {
+                     "SACCamera.CalculateActiveZoomLevel = function(self, ...)", "SACCamera.GetDesiredCombatCamWeight = function(self, ...)",
+                     "SACCamera.CalculateCentreAndCage = function(self, ...)", "SACCamera.GetHeight = function(self, current_pos, centre, cage_radius, ...)",
+                     "SACCamera.CalculateDesiredDirection = function(self, ...)", "function Refii._camera_changed(p)",
+                     "return not CameraFunctions.IsMultiplayerSharedScreen(hero)", "pcall(Refii._camapi.TuneFor, player)",
+                     "\"SlotDepthNear\", \"SlotDepthFar\"", "if Refii._wrap_camera_api ~= nil then Refii._wrap_camera_api() end",
+                 })
+        {
+            AssertThat(f3.Contains(applied, StringComparison.Ordinal)).OverrideFailureMessage("Fable 3 lacks " + applied).IsTrue();
+        }
+
+        int from = f3.IndexOf("local A = Refii._camapi or {}", StringComparison.Ordinal);
+        int to = f3.IndexOf("Refii._wrap_camera_api = A.Wrap", StringComparison.Ordinal);
+        AssertThat(from > 0 && to > from).IsTrue();
+        AssertThat(Regex.IsMatch(f3[from..to], @"for\s+\w+\s+in\s+pairs\(")).IsFalse();
+
+        string reference = Read(root, "Godot", "docs", "modding", "reference-calls.md");
+        string chapter = Read(root, "Godot", "docs", "modding", "cutscenes.md");
+        AssertThat(chapter.Contains("## Shaping the camera", StringComparison.Ordinal)).IsTrue();
+        foreach (string call in ShapeCalls)
+        {
+            AssertThat(reference.Contains("`Refii." + call + "(p", StringComparison.Ordinal)).OverrideFailureMessage("reference-calls.md lacks Refii." + call).IsTrue();
+            AssertThat(chapter.Contains("`Refii." + call + "(p", StringComparison.Ordinal)).OverrideFailureMessage("cutscenes.md lacks Refii." + call).IsTrue();
+        }
+    }
+
+    /// <summary>
+    /// camera_shake (cam3 left it out): the game's own screen shake, which the game gives to player one's
+    /// camera only (Fable 2 sub_823EB468 asks the getter sub_821F87C8, `bl` 0x823EB4A4, for the manager whose
+    /// +0x48 list takes it; Fable 3 sub_8243B330 the selector sub_82208EA0, manager +0x4C), so player two's
+    /// call runs inside player two's camera bracket on both titles.
+    /// </summary>
+    [TestCase]
+    public void AShakeForPlayerTwoRunsInsidePlayerTwosBracket()
+    {
+        string runtime = ModLuaCamera.Runtime;
+        int at = runtime.IndexOf("function Refii._camera_do.camera_shake(owner, p, t)", StringComparison.Ordinal);
+        AssertThat(at > 0).IsTrue();
+        string body = runtime.Substring(at, runtime.IndexOf("\nend\n", at, StringComparison.Ordinal) - at);
+        string[] steps =
+        {
+            "if Refii.camera_pose == nil or Refii.camera_pose(p) == nil then return false end",
+            "Refii.entity(Refii.player_hero(1))",
+            "call, spec = Player.FadeScreenShake, { ID = kind, DecayTime = t.fade }",
+            "call, spec = Player.AddScreenShake, { ID = kind, MaxLevel = n(t.level, 1)",
+            "local partner = p == 2 and Refii._partner_screen ~= nil",
+            "if partner then Refii._partner_screen(true) end",
+            "local ok = pcall(call, hero, spec)",
+            "if partner then Refii._partner_screen(false) end",
+        };
+        int last = -1;
+        foreach (string step in steps)
+        {
+            int found = body.IndexOf(step, last + 1, StringComparison.Ordinal);
+            AssertThat(found > last).OverrideFailureMessage(step).IsTrue();
+            last = found;
+        }
+
+        string? root = RepoRoot();
+        if (root == null)
+        {
+            return;
+        }
+
+        string f2 = Read(root, "Fable2", "src", "vfs", "src", "hooks", "mod_lua_natives.cpp");
+        AssertThat(f2.Contains("{\"_partner_screen\", &NativePartnerScreen, 0}", StringComparison.Ordinal)).IsTrue();
+        string f2Getter = Read(root, "Fable2", "src", "hooks", "src", "coop_camera_readers.cpp");
+        AssertThat(f2Getter.Contains("if (RefiiCoopPartnerScreenDepth() > 0 && RefiiCoopSplitScreen() != 0) {", StringComparison.Ordinal)).IsTrue();
+        string f3 = Read(root, "Fable3", "src", "hooks", "src", "mod_lua_hooks.cpp");
+        AssertThat(f3.Contains("{\"_partner_screen\", &NativePartnerScreen, 0u}", StringComparison.Ordinal)).IsTrue();
+        string f3Hooks = Read(root, "Fable3", "src", "hooks", "src", "coop_camera_hooks.cpp");
+        int screen = f3Hooks.IndexOf("extern \"C\" void RefiiF3PartnerScreen(int32_t on) {", StringComparison.Ordinal);
+        AssertThat(screen > 0).IsTrue();
+        string f3Body = f3Hooks.Substring(screen, f3Hooks.IndexOf("\n}\n", screen, StringComparison.Ordinal) - screen);
+        AssertThat(f3Body.Contains("const bool enter = refii::fable3::coopcam::SplitInEffect(GuestBase());", StringComparison.Ordinal)).IsTrue();
+        AssertThat(f3Body.Contains("if (enter) {\n        ++t_partner_depth;", StringComparison.Ordinal)).IsTrue();
+        string host = Read(root, "Godot", "src", "Engine", "mods", "Engine_RefiiHost.cs");
+        AssertThat(host.Contains("public bool camera_shake(int player, Variant values) => CameraCall(\"camera_shake\", player, null, Plain(values));", StringComparison.Ordinal)).IsTrue();
+    }
+
+    /// <summary>
+    /// Fable 3 answers what Fable 2 answers: camera_focus (the centre slid, as C.CamSlid), the ranged_* keys
+    /// (its RangedCombatCamera: AngleLimit, GetTightness, GetOffsetDegrees) and the held first-person view's
+    /// fp_* keys over its own FirstPersonCamera (only GAME_ACTION_CAMERA_ROTATION turns it).
+    /// </summary>
+    [TestCase]
+    public void Fable3AnswersFocusTheGunAimAndTheHeldFirstPersonView()
+    {
+        string? root = RepoRoot();
+        if (root == null)
+        {
+            return;
+        }
+
+        string f3 = Read(root, "Godot", "src", "Titles", "Fable3", "Fable3CoreLua.cs");
+        foreach (string line in new[]
+                 {
+                     "local focus = state ~= nil and state.focus or nil",
+                     "return slid(self, centre, slide), cage",
+                     "RangedCombatCamera.GetTightness = function(self, ...)",
+                     "self.AngleLimit = limit * math.pi / 180",
+                     "RangedCombatCamera.GetOffsetDegrees = function(self, ...)",
+                     "FirstPersonCamera.Activate = function(self, hero, camera, previous_camera, ...)",
+                     "if action == EGameAction.GAME_ACTION_CAMERA_ROTATION then",
+                     "FirstPersonCamera.VerticalAngularBound = tune.fp_pitch_limit or 75",
+                     "if tune ~= nil and tune.fp_scenes ~= nil and tune.fp_scenes ~= 0 then",
+                 })
+        {
+            AssertThat(f3.Contains(line, StringComparison.Ordinal)).OverrideFailureMessage("Fable 3 lacks " + line).IsTrue();
+        }
+
+        AssertThat(ModApi.CameraShapeMeaning.Contains("does not answer", StringComparison.Ordinal)).IsFalse();
+    }
+
+    /// <summary>
+    /// A camera_override hold never leaves its mode in the pair the hero's Player component saves
+    /// (OverrideCameraModeNormal / OverrideCameraModeLookAt): each of the hold's own SetCameraOverride
+    /// calls is bracketed by a read of the pair and a write of it back, on both titles.
+    /// </summary>
+    [TestCase]
+    public void TheHoldNeverLeavesItsModeInTheSavedPair()
+    {
+        string? root = RepoRoot();
+        if (root == null)
+        {
+            return;
+        }
+
+        string f2 = Read(root, "Godot", "src", "Titles", "Fable2", "host", "CoopHeroLua.cs");
+        AssertThat(Regex.Matches(f2, @"local normal, look_at = C\.CameraNative\(hero\)\s*\n\s*CameraManager\.SetCameraOverride\(hero, [^\n]*\)\s*\n\s*C\.CameraNativeRestore\(hero, normal, look_at\)").Count).IsEqual(2);
+        AssertThat(f2.Contains("Player.SetOverrideCameraMode(hero, normal, scope.CUTSCENE_RULE_SCOPE_NORMAL)", StringComparison.Ordinal)).IsTrue();
+        AssertThat(f2.Contains("Player.SetOverrideCameraMode(hero, look_at, scope.CUTSCENE_RULE_SCOPE_LOOK_AT)", StringComparison.Ordinal)).IsTrue();
+        AssertThat(f2.Contains("Player.GetOverrideCameraMode = C.GetOverrideCameraMode", StringComparison.Ordinal)).IsTrue();
+
+        string f3 = Read(root, "Godot", "src", "Titles", "Fable3", "Fable3CoreLua.cs");
+        AssertThat(Regex.Matches(f3, @"local kept, normal, look_at = pcall\(CameraNative, hero\)\s*\n\s*CameraManager\.SetCameraOverride\(hero, [^\n]*\)\s*\n\s*if kept and Refii\._camera_native_restore ~= nil then Refii\._camera_native_restore\(hero, normal, look_at\) end").Count).IsEqual(2);
+
+        // Fable 3's setter also sends the override to the peer, so the pair is stored back natively: both
+        // words of the Player component, the offsets of both builds.
+        string natives = Read(root, "Fable3", "src", "hooks", "src", "mod_lua_hooks.cpp");
+        AssertThat(natives.Contains("{\"_camera_native_restore\", &NativeCameraNativeRestore, 0u}", StringComparison.Ordinal)).IsTrue();
+        string combat = Read(root, "Fable3", "src", "hooks", "src", "mod_combat_hooks.cpp");
+        AssertThat(combat.Contains("constexpr uint32_t kPlayerNormalCamera = 0xC0u;", StringComparison.Ordinal)).IsTrue();
+        AssertThat(combat.Contains("StoreU32(base, component + kPlayerNormalCamera, normal);", StringComparison.Ordinal)).IsTrue();
+        AssertThat(combat.Contains("StoreU32(base, component + kPlayerLookAtCamera, look_at);", StringComparison.Ordinal)).IsTrue();
+    }
+
+    /// <summary>
+    /// THE READ CALLS AND THE CAMERA EVENTS on every surface: Lua (the preamble over each title's
+    /// Refii._camera_read), Godot (RefiiHost), native (refii_mod_requests.h), the catalog, the docs; the
+    /// events in both titles' buses; the views and statements in the shared runtime; ABI 272 both ways.
+    /// </summary>
+    [TestCase]
+    public void TheReadCallsAndEventsAreOnEverySurface()
+    {
+        string runtime = ModLuaCamera.Runtime;
+        foreach (string read in ModLuaCamera.Reads)
+        {
+            AssertThat(runtime.Contains("function Refii." + read + "(", StringComparison.Ordinal)).OverrideFailureMessage("preamble " + read).IsTrue();
+            AssertThat(ModApi.LuaHelpers.Any(h => h.Signature.Contains("Refii." + read + "(", StringComparison.Ordinal))).OverrideFailureMessage("Lua " + read).IsTrue();
+            AssertThat(ModApi.GodotHelpers.Any(h => h.Signature.Contains(read + "(", StringComparison.Ordinal))).OverrideFailureMessage("Godot " + read).IsTrue();
+            AssertThat(typeof(RefiiHost).GetMethods().Any(m => m.Name == read)).OverrideFailureMessage("RefiiHost." + read).IsTrue();
+        }
+
+        AssertThat(Regex.IsMatch(runtime, @"for\s+\w+\s+in\s+pairs\(")).IsFalse();
+        // The offset is a statement of the store and goes to the shell through the title's native.
+        AssertThat(runtime.Contains("s.offset = top.offset ~= nil and top.offset.value or nil", StringComparison.Ordinal)).IsTrue();
+        AssertThat(runtime.Contains("Refii._camera_offset_stated(p, true, o.right, o.up, o.back, o.yaw, o.pitch, o.roll, o.fov)", StringComparison.Ordinal)).IsTrue();
+
+        string[] kinds = { "camera_cut", "camera_blend", "camera_screen_changed", "camera_zoom_changed", "camera_tick" };
+        for (int i = 0; i < kinds.Length; i++)
+        {
+            ModApiEvent e = ModApi.Find(kinds[i])!;
+            AssertThat(e.Kind).IsEqual(164 + i);
+            AssertThat(e.Cancellable).IsFalse();
+            AssertThat(RefiiHost.SignalNames.Contains(kinds[i])).IsTrue();
+            AssertThat(ModApi.Fable3Raised.ContainsKey(e.Kind)).IsTrue();
+        }
+
+        string? root = RepoRoot();
+        if (root == null)
+        {
+            return;
+        }
+
+        string requests = Read(root, "src", "runtime", "include", "core", "refii_mod_requests.h");
+        foreach (string native in new[]
+                 {
+                     "extern \"C\" int32_t refii_mod_camera_pose(int32_t player, float* out12);",
+                     "extern \"C\" int32_t refii_mod_camera_stated(int32_t player, float* out11);",
+                     "extern \"C\" int32_t refii_mod_camera_view(int32_t player, float* out4);",
+                     "extern \"C\" int32_t refii_mod_camera_screen_mode(int32_t* split);",
+                     "extern \"C\" int32_t refii_mod_camera_ray(int32_t player, float x, float y, float* out6);",
+                 })
+        {
+            AssertThat(requests.Contains(native, StringComparison.Ordinal)).OverrideFailureMessage(native).IsTrue();
+        }
+
+        foreach (string title in new[] { Read(root, "Fable2", "src", "vfs", "src", "hooks", "mod_lua_natives.cpp"), Read(root, "Fable3", "src", "hooks", "src", "mod_lua_hooks.cpp") })
+        {
+            foreach (string native in new[] { "\"_camera_read\", &NativeCameraRead", "\"_camera_zoom_stated\", &NativeCameraZoomStated", "\"_camera_offset_stated\", &NativeCameraOffsetStated" })
+            {
+                AssertThat(title.Contains(native, StringComparison.Ordinal)).OverrideFailureMessage(native).IsTrue();
+            }
+        }
+
+        string f2bus = Read(root, "Fable2", "src", "vfs", "src", "hooks", "mod_events.cpp");
+        int dispatch = f2bus.IndexOf("  DispatchCameraEvents(ctx, base);", StringComparison.Ordinal);
+        int tick = f2bus.IndexOf("  TickEvent tick{};", StringComparison.Ordinal);
+        AssertThat(dispatch > 0 && tick > dispatch).OverrideFailureMessage("the camera events are raised before the Tick event").IsTrue();
+        string f3 = Read(root, "Fable3", "src", "hooks", "src", "mod_lua_hooks.cpp");
+        int raise = f3.IndexOf("  RaiseCameraEvents(lua);", StringComparison.Ordinal);
+        AssertThat(raise > 0 && f3.IndexOf("Raise(lua, kEventTick, fields);", raise, StringComparison.Ordinal) > raise).IsTrue();
+
+        // The shared runtime keys a block to its manager's push and reads the events off the records.
+        string view = Read(root, "src", "runtime", "src", "core", "stated_view.cpp");
+        AssertThat(view.Contains("TakeStatement(slot);", StringComparison.Ordinal)).IsTrue();
+        string layout = Read(root, "src", "runtime", "include", "core", "camera_views.h");
+        AssertThat(layout.Contains("constexpr uint32_t kViewWords = " + Engine_CameraViewsWords.View + "u;", StringComparison.Ordinal)).IsTrue();
+        AssertThat(layout.Contains("constexpr uint32_t kViewsWords = 2u + 2u * kViewWords;", StringComparison.Ordinal)).IsTrue();
+
+        string exports = Read(root, "src", "hostcore", "src", "host_exports.cpp");
+        AssertThat(exports.Contains("REFII_HOST_ABI_EXPORT void RefiiHostStateCameraViews(const float* words, uint32_t count)", StringComparison.Ordinal)).IsTrue();
+        AssertThat(exports.Contains("REFII_HOST_ABI_EXPORT int32_t RefiiHostGetCameraOffset(int32_t player, float* out7)", StringComparison.Ordinal)).IsTrue();
+        AssertThat(Refii.Host.HostBridge.ExpectedAbiVersion).IsGreaterEqual(273);
+
+        string chapter = Read(root, "Godot", "docs", "modding", "cutscenes.md");
+        AssertThat(chapter.Contains("## Reading the camera", StringComparison.Ordinal)).IsTrue();
+        string reference = Read(root, "Godot", "docs", "modding", "reference-calls.md");
+        foreach (string read in ModLuaCamera.Reads)
+        {
+            AssertThat(reference.Contains("`Refii." + read + "(", StringComparison.Ordinal)).OverrideFailureMessage("reference-calls.md lacks Refii." + read).IsTrue();
+        }
+
+    }
+
+    private static class Engine_CameraViewsWords
+    {
+        public const int View = Refii.Camera.Engine_CameraViews.ViewWords;
     }
 }

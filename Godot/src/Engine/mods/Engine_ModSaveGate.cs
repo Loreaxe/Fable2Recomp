@@ -529,7 +529,10 @@ public static class ModSaveGate
 
 	// ---------------------------------------------------------------- the stamp
 
-	/// <summary>A written package (`player=N,name='X'`): the sidecar beside it re-stamped with the running set.</summary>
+	/// <summary>
+	/// A written package (`player=N,name='X'`): the sidecar beside it re-stamped with the running set and
+	/// the hero it now holds (player N's).
+	/// </summary>
 	public static void OnSaveWritten(string fields)
 	{
 		string name = string.Empty;
@@ -546,7 +549,8 @@ public static class ModSaveGate
 			return;
 		}
 
-		string? directory = Engine_SaveDirectory.Find(UserDataRoot, name);
+		// A hero package alone (player two's new save in Fable 3 holds no world) is still the hero's save.
+		string? directory = Engine_SaveDirectory.Find(UserDataRoot, name) ?? Engine_SaveDirectory.FindPackage(UserDataRoot, name);
 		if (directory is null)
 		{
 			GD.PushWarning($"[mod-save] save '{name}' (player {player}) written but no folder found under {UserDataRoot}; not stamped");
@@ -555,7 +559,7 @@ public static class ModSaveGate
 
 		try
 		{
-			Stamp(directory);
+			Stamp(directory, player, name);
 			GD.Print($"[mod-save] '{name}' (player {player}) stamped");
 		}
 		catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
@@ -564,15 +568,26 @@ public static class ModSaveGate
 		}
 	}
 
-	/// <summary>Writes the sidecar for the save in <paramref name="directory"/> under the running set.</summary>
-	public static SaveSidecar Stamp(string directory)
+	/// <summary>
+	/// Writes the sidecar for the save in <paramref name="directory"/> under the running set; with a
+	/// player, the save now holds that player's hero (its character and unlocks,
+	/// <see cref="Refii.Achievements.Engine_Achievements.StampSave"/>).
+	/// </summary>
+	public static SaveSidecar Stamp(string directory, int player = 0, string save = "")
 	{
 		SaveSidecar sidecar = SaveSidecar.Read(directory);
+		SaveSidecar.CharacterLayer? held = sidecar.Refii?.Character;
 		sidecar.Refii = new SaveSidecar.RefiiLayer
 		{
 			Build = ModApi.Version.ToString(System.Globalization.CultureInfo.InvariantCulture),
 			Written = SaveSidecar.Now(),
+			Character = held,
 		};
+		if (player is 1 or 2)
+		{
+			Refii.Achievements.Engine_Achievements.StampSave(sidecar, player,
+				save.Length != 0 ? save : Path.GetFileName(directory));
+		}
 		SaveSidecar.ModsLayer current = ModSaveStamp.Restamp(sidecar.Mods, ModSaveStamp.Current());
 		sidecar.Mods = current.Set.Count != 0 || current.Held.Count != 0 ? current : null;
 		// The title's external mod manager, as applied to the install now: present or not,

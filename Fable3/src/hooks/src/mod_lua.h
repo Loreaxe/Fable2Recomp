@@ -190,6 +190,10 @@ class ContextScope {
 namespace refii::fable3::modlua {
 /// The halves of player's camera override record the mods' camera hold stands on (1 Normal, 2 LookAt).
 void NoteCameraHeld(int32_t player, int32_t bits);
+/// The two override-camera words of hero's Player component (+0xC0 Normal, +0xC4 LookAt, both builds)
+/// stored as given: what the mods' camera hold puts back after each of its own
+/// CameraManager.SetCameraOverride calls, so the pair the component saves is never the hold's.
+void RestoreCameraModes(uint8_t* base, uint32_t hero, uint32_t normal, uint32_t look_at);
 }  // namespace refii::fable3::modlua
 namespace refii::fable3::mouselook {
 /// A mod's wheel statement for `hero`: 0 off (sticky cleared), 1 this frame, 2 sticky.

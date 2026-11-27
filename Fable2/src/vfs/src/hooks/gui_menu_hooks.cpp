@@ -95,10 +95,6 @@ constexpr int32_t kSubmenuType = 301;
 /// Upgrade furniture's in-game screen id (TU1 numbering, as `CurrentScreen` answers).
 constexpr uint32_t kUpgradeFurnitureScreen = 26u;
 
-/// The list screens whose rows are keyed in the shared row-id map by a population TICKET: items
-/// (15), clothing (16), gift (25). Godot states their rows by the item's record hash.
-bool KeysRowsByTicket(uint32_t screen) { return screen == 15u || screen == 16u || screen == 25u; }
-
 /// The row whose MenuEvent the pump is dispatching right now; guest thread only.
 struct DispatchedRow {
     bool active = false;
@@ -190,6 +186,17 @@ REX_EXTERN(rex_lhGuiMenu_GetHighlightedItemData) {
             row.event_type = kSubmenuType;
         }
 
+        // THE SHOP BEFORE GODOT'S FIRST STATEMENT. The guest's list opens with its cursor on the
+        // first row, a category header (type 301, id 0: PopulateMenu's first spawn). The front
+        // page's edge `sub_82991720` (disc `sub_828E30D0`) shows the page on type 301 and hides it
+        // on any other (`li r5,1` / `li r5,2` → `sub_82426D18`, 0x829917b8..0x829917d4), and the
+        // shop's edge `sub_826B13B8` runs it only when the ID changes (0x826b13d8) — the no-row
+        // id 0 is the header's id too, so a no-row type 0 on the opening tick hid the front page
+        // for the whole first visit.
+        if (screen == 22u) {
+            row.event_type = kSubmenuType;
+        }
+
         // UPGRADE FURNITURE BEFORE GODOT'S FIRST STATEMENT. The screen's Update `sub_826B64D8`
         // (disc `sub_8259B6C8`) reads the highlight on the tick the screen opens (0x826b655c /
         // 0x8259b74c), before its list is spawned, and with an id unlike its cache +348
@@ -207,17 +214,10 @@ REX_EXTERN(rex_lhGuiMenu_GetHighlightedItemData) {
         }
     }
 
-    // Items, clothing and gift: the stated record answered as the guest's own ticket for it, so
-    // the Update's lookup (`sub_82880BC0` at 0x826D1754 / 0x826D2EDC / gift 0x826C46CC) fills
-    // the cached handle (`+396` / `+244`) the commit acts on. A stated id that is no item's
-    // record (a dye slot, a None row) is answered as stated.
-    uint32_t ticket = 0u;
-    if (stated && KeysRowsByTicket(screen) && row.id != 0) {
-        ticket = refii::vfs::MenuTicketForRecord(static_cast<uint32_t>(row.id));
-        if (ticket != 0u) {
-            row.id = static_cast<int32_t>(ticket);
-        }
-    }
+    // Items, clothing and gift (15 / 16 / 25) state the guest's own rows (item_rows_stated.cpp): the
+    // id IS the population ticket the row was spawned with, which the Update's lookup
+    // (`sub_82880BC0` at 0x826D1754 / 0x826D2EDC / gift 0x826C46CC) turns into the cached handle
+    // (`+396` / `+244`) the commit acts on. Answered as stated.
 
     // Change-keyed: the item and clothing screens' Update asks every frame.
     {
@@ -227,10 +227,9 @@ REX_EXTERN(rex_lhGuiMenu_GetHighlightedItemData) {
         if (key != said) {
             said = std::move(key);
             REXLOG_INFO("Refii menu: GetHighlightedMenuItemData on screen {} answered natively — "
-                        "'{}' type {} id 0x{:08X} ({}{})",
+                        "'{}' type {} id 0x{:08X} ({})",
                         screen, row.name, row.event_type, static_cast<uint32_t>(row.id),
-                        stated ? "Godot's row" : "no row stated",
-                        ticket != 0u ? ", the record's ticket" : "");
+                        stated ? "Godot's row" : "no row stated");
         }
     }
 

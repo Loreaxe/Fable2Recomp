@@ -576,23 +576,29 @@ public sealed partial class Engine_WaterReflection : Node
     }
 
     /// <summary>
-    /// Builds player two's mirror on every body when the screen splits and frees it when the
-    /// screen rejoins. A water.gdshader material takes it as its second mirror and picks by eye;
-    /// a classic water material takes it as its reflection sampler's second-view twin, which its
-    /// composition fetches in player two's view (Engine_ClassicWater).
+    /// Builds player two's mirror on every body while the two views are open (Engine_Views.Open)
+    /// and frees it when they close; binds it while they are drawn and unbinds it while the window
+    /// draws, so a split or rejoin builds nothing. A water.gdshader material takes it as its second
+    /// mirror and picks by eye; a classic water material takes it as its reflection sampler's
+    /// second-view twin, which its composition fetches in player two's view (Engine_ClassicWater).
     /// </summary>
     private void SyncViews()
     {
-        bool split = Refii.Core.Engine_Views.Split && _view is not null && GodotObject.IsInstanceValid(_view);
+        bool open = Refii.Core.Engine_Views.Open && _view is not null && GodotObject.IsInstanceValid(_view);
+        bool split = open && Refii.Core.Engine_Views.Split;
         foreach (Body body in _bodies)
         {
             WaterMirrorSpec spec = SpecFor(body.IsClassicOrGuest);
             bool allowMirror = spec.Enabled && (body.IsClassicOrGuest || body.EligibleForModernMirror);
             MirrorRig? second = body.Mirrors[1];
-            if (split && allowMirror && second is null)
+            if (open && allowMirror && second is null)
             {
                 second = NewMirror(_view!, spec);
                 body.Mirrors[1] = second;
+            }
+
+            if (split && allowMirror && second is not null)
+            {
                 foreach (ShaderMaterial reader in body.Readers)
                 {
                     if (!GodotObject.IsInstanceValid(reader))
@@ -610,7 +616,7 @@ public sealed partial class Engine_WaterReflection : Node
                     }
                 }
             }
-            else if ((!split || !allowMirror) && second is not null)
+            else if (second is not null)
             {
                 foreach (ShaderMaterial reader in body.Readers)
                 {
@@ -629,12 +635,15 @@ public sealed partial class Engine_WaterReflection : Node
                     }
                 }
 
-                if (GodotObject.IsInstanceValid(second.Viewport))
+                if (!open || !allowMirror)
                 {
-                    second.Viewport.QueueFree();
-                }
+                    if (GodotObject.IsInstanceValid(second.Viewport))
+                    {
+                        second.Viewport.QueueFree();
+                    }
 
-                body.Mirrors[1] = null;
+                    body.Mirrors[1] = null;
+                }
             }
         }
     }
@@ -718,7 +727,8 @@ public sealed partial class Engine_WaterReflection : Node
         screen = new Vector2(TileSize, TileSize);
         if (view == 0)
         {
-            if (Refii.Core.Engine_Views.FirstViewport is { } first && first.GetCamera3D() is { } own)
+            if (Refii.Core.Engine_Views.Split && Refii.Core.Engine_Views.FirstViewport is { } first &&
+                first.GetCamera3D() is { } own)
             {
                 camera = own;
                 screen = first.Size;
@@ -730,7 +740,8 @@ public sealed partial class Engine_WaterReflection : Node
             return true;
         }
 
-        if (Refii.Core.Engine_Views.Second is not { } second || !GodotObject.IsInstanceValid(second) ||
+        if (!Refii.Core.Engine_Views.Split ||
+            Refii.Core.Engine_Views.Second is not { } second || !GodotObject.IsInstanceValid(second) ||
             Refii.Core.Engine_Views.SecondViewport is not { } secondView)
         {
             return false;

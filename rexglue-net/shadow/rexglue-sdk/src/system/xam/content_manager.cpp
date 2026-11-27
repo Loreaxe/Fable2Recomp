@@ -58,6 +58,13 @@ static int content_device_id_ = 0;
 static const char* kPendingDirName = "refii-pending";
 static const char* kCreatedMarkerName = ".refii-created";
 
+// REFII SHADOW: ONE PACKAGE LEFT OUT OF THE LISTINGS ON THIS THREAD. A title's own list is what the
+// enumeration hands it (Fable 2's co-op picker pushes each entry straight into its vectors), so a
+// package the host must keep off one list is left out here, for the listings made on the thread that
+// set it and only until it is cleared (RefiiContentListingOmit). User content only: the device's
+// marketplace listing is never touched.
+static thread_local std::string t_listing_omit;
+
 static std::filesystem::path PendingPath(const std::filesystem::path& package_path) {
   const auto type_dir = package_path.parent_path();
   return type_dir.parent_path() / kPendingDirName / type_dir.filename() / package_path.filename();
@@ -310,6 +317,11 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(uint32_t device
   for (const auto& file_info : file_infos) {
     if (file_info.type != rex::filesystem::FileInfo::Type::kDirectory) {
       // Directories only.
+      continue;
+    }
+    if (content_type != XContentType::kMarketplaceContent && !t_listing_omit.empty() &&
+        rex::path_to_utf8(file_info.name) == t_listing_omit) {
+      REXSYS_INFO("Content listing: '{}' left out of this listing (the host's omission)", t_listing_omit);
       continue;
     }
 
@@ -835,3 +847,9 @@ X_RESULT ContentManager::InstallContent(const std::filesystem::path& package_pat
 }  // namespace xam
 }  // namespace system
 }  // namespace rex
+
+// REFII SHADOW: the package named `file_name` is left out of every user-content listing this thread
+// makes until it is called again with null or "" (ContentManager::ListContent).
+extern "C" void RefiiContentListingOmit(const char* file_name) {
+  rex::system::xam::t_listing_omit = file_name != nullptr ? file_name : "";
+}

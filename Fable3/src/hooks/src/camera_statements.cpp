@@ -33,6 +33,7 @@
 
 #include <rex/ppc.h>
 
+#include "coop_camera.h"
 #include "core/camera_statements.h"
 #include "core/payload_bridge.h"
 
@@ -65,6 +66,7 @@ REX_EXTERN(__imp__rex_CameraManager_Block);
 REX_EXTERN(__imp__rex_CameraManager_Push);
 REX_EXTERN(__imp__rex_CameraManager_Snap);
 REX_EXTERN(__imp__rex_CameraManager_ActivateCamera);
+REX_EXTERN(__imp__rex_CameraManager_Destroy);
 
 namespace refii::fable3::view {
 bool InPresentedPass();
@@ -300,13 +302,20 @@ REX_EXTERN(rex_CameraManager_Block) {
   State(statement);
 }
 
+// The push (r3 the manager). Player two's manager in a couch game (coop_camera_hooks.cpp) sends no camera
+// packet and posts no depth of field: the push's every-second-tick block to the session (`bl sub_82382F60`
+// TU3 0x8225288C) and its post (`bl sub_82293D80` 0x822528A4) are player one's camera's, as the one camera
+// of the shipped couch screen; it is stated as key 2's.
 REX_EXTERN(rex_CameraManager_Push) {
   const Depth depth;
   const uint32_t manager = ctx.r3.u32;
-  __imp__rex_CameraManager_Push(ctx, base);
+  const bool partner = manager != 0u && manager == refii::fable3::coopcam::PartnerManagerTicking();
+  if (!partner) {
+    __imp__rex_CameraManager_Push(ctx, base);
+  }
   const bool presented = manager == g_presented_manager.load(std::memory_order_relaxed);
   cam::Statement statement(cam::kPush, depth.at);
-  statement.Manager(manager).Player(presented ? 1u : 0u, presented ? cam::kFlagDrawn : 0u);
+  statement.Manager(manager).Player(presented ? 1u : partner ? 2u : 0u, presented ? cam::kFlagDrawn : 0u);
   State(statement);
 }
 
@@ -320,6 +329,36 @@ REX_EXTERN(rex_CameraManager_Snap) {
   cam::Statement end(cam::kSnapEnd, depth.at);
   end.Manager(manager);
   State(end);
+}
+
+// A CAMERA MANAGER'S END. The Player holds its manager through a holder (Player+4; vtable off_8209BC74 /
+// disc off_82098328, the manager at holder+4). The holder's slot 0 (TU3 sub_8256CBD8 / disc sub_8253CBD0)
+// runs `lwz r30,4(r31)` .. `mr r3,r30; bl sub_8256EBB0` then frees it (`bl sub_8221E388`; TU3
+// 0x8256CBF4..0x8256CC0C, disc 0x8253CBEC..0x8253CC04, `bl sub_8253E9B8`). That call and the holder
+// ctor's reset of a manager it never holds (0x8256CAD4 / 0x8253CB1C, holder+4 stored 0 just before) are
+// the manager destructor's only callers. Hooked before its body: the manager's Player (manager+0,
+// lhCameraManager_Create `stw r4,0(r3)` TU3 0x8256A9C4 / disc 0x8253A9FC) is told to the couch camera,
+// its last block and the presented mark are freed (a new manager at the same address starts clean) and
+// the shell drops it (kDestroy), so nothing answers a dead manager as a player's camera.
+REX_EXTERN(rex_CameraManager_Destroy) {
+  const uint32_t manager = ctx.r3.u32;
+  if (Plausible(manager)) {
+    refii::fable3::coopcam::ManagerDestroyed(base, manager);
+    {
+      std::lock_guard<std::mutex> lock(g_block_mutex);
+      for (LastBlock& last : g_last_blocks) {
+        if (last.manager == manager) {
+          last = LastBlock{};
+        }
+      }
+    }
+    uint32_t presented = manager;
+    g_presented_manager.compare_exchange_strong(presented, 0u, std::memory_order_relaxed);
+    cam::Statement statement(cam::kDestroy, 0u);
+    statement.Manager(manager);
+    State(statement);
+  }
+  __imp__rex_CameraManager_Destroy(ctx, base);
 }
 
 // ActivateCamera (manager, Lua camera): the wrappers it left at +0x2C (primary) and +0x3C (override).

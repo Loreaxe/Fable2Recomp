@@ -6,14 +6,18 @@
 // AN ICON is stated by its Init (CWorldIconBase sub_82B87938), each Update the registry's tick runs
 // on it (CWorldIcon3D sub_82225AC8, the HUD-element icon's sub_82B866C8: `visible` is that call's
 // argument, sub_8222FA78) and the emotion icon's ring tick (sub_829C2F98); it leaves when the
-// registry erases it (sub_82615CD8) or it is destroyed (sub_82B878A8). Only the icons the last
-// Update drew are exported: the guest hides the rest (`vt+60` at 0x82225B10, its element through
-// `vt+24` at 0x82B86AC8).
+// registry erases it (sub_82615CD8) or it is destroyed (sub_82B878A8). Only the icons an Update drew
+// in the guest's latest HF step or the one before are exported (the table's VISIBLE, stamped by the
+// step game_tick_pump.cpp states): the guest draws an icon only inside a visible Update (the draw
+// `vt+64` at 0x822261B0), hides the rest (`vt+60` at 0x82225B10, its element through `vt+24` at
+// 0x82B86AC8), and runs no Update at all while a GUI screen is over the game (the tick's
+// sub_821F7F98 at 0x826138C0) — the Sanctuary, the pause and save screens.
 //
 // A CHOICE is stated by the list add every creator reaches (sub_8260FF38), restated after the
 // press/release handler (sub_826103E8) and leaves at its deleter (sub_826131F0). Its icon is the
 // stated emotion icon the guest's own lookup sub_82615168(R, Name, entity) would return: the same
-// name and, when the record names an entity, the same entity (sub_82265BC0).
+// name and, when the record names an entity, the same entity (sub_82265BC0) — while it is drawn, as
+// above; a record whose icon is not drawn is exported with none.
 
 #include <cstdint>
 #include <cstring>
@@ -220,8 +224,8 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetFable3EmotionChoices(uint32_t* words,
     const uint32_t entity = cw[3];
     const StatedIcon* icon = nullptr;
     for (const StatedIcon& candidate : icons.rows) {
-      if (candidate.Kind() == REFII_WORLD_ICON_CLASS_EMOTION && std::strcmp(candidate.name, name) == 0 &&
-          (entity == 0u || candidate.words[4] == entity)) {
+      if (candidate.Kind() == REFII_WORLD_ICON_CLASS_EMOTION && candidate.Visible() &&
+          std::strcmp(candidate.name, name) == 0 && (entity == 0u || candidate.words[4] == entity)) {
         icon = &candidate;
         break;
       }

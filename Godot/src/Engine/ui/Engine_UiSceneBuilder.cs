@@ -787,6 +787,10 @@ public sealed class Engine_UiSceneBuilder
 		{
 			mat.SetShaderParameter(KeycapTexName, keycapTex);
 			mat.SetShaderParameter(HasKeycapName, true);
+			if (Engine_UiKeyGlyphs.SurfacePlayer == 2)
+			{
+				mat.SetShaderParameter(Engine_UiKeyGlyphs.PlayerTwoParameter, true);
+			}
 		}
 		else if (Engine_UiKeyGlyphs.OrbFor(q.TexturePath, q.UMin, q.UMax, q.VMin, q.VMax) is { } orb)
 		{
@@ -861,6 +865,23 @@ public sealed class Engine_UiSceneBuilder
 
 	internal static void MarkOwnedMaterial(MeshInstance3D mesh, ShaderMaterial material) =>
 		OwnedMaterialMeshes.AddOrUpdate(material, mesh);
+
+	/// <summary>
+	/// <paramref name="material"/> when it is marked as <paramref name="mesh"/>'s own, else a private copy
+	/// assigned to the mesh: a write through it never reaches a shared or unmarked material.
+	/// </summary>
+	internal static ShaderMaterial PrivateMaterial(MeshInstance3D mesh, ShaderMaterial material)
+	{
+		if (OwnedMaterialMeshes.TryGetValue(material, out MeshInstance3D? owner) && ReferenceEquals(owner, mesh))
+		{
+			return material;
+		}
+
+		ShaderMaterial copy = Refii.Models.Engine_MaterialCopy.Shallow(material);
+		mesh.MaterialOverride = copy;
+		MarkOwnedMaterial(mesh, copy);
+		return copy;
+	}
 
 	/// <summary>
 	/// Copy-on-write material ownership for cloned UI meshes: returns <paramref name="mesh"/>'s private

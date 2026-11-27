@@ -49,7 +49,7 @@ public static class AndroidSettingNames
         ["vibration_strength"] = ("Vibration strength", "How strong the rumble is, as a percentage of what the game asks for."),
         ["rexnet"] = ("Online play (RexNet)", "Lets you play with friends over the internet and see them online."),
         ["rexnet_display_name"] = ("Online name", "The name your friends see. Up to 32 letters."),
-        ["coop_split_screen"] = ("Split-screen co-op", "A second player with a controller gets half the screen."),
+        ["coop_screen_mode"] = ("Co-op screen", "Shared, split, or split when the players move apart."),
         ["coop_split_screen_orientation"] = ("Split-screen layout", "Side by side or one above the other."),
 
         // The settings the graphics presets decide (Advanced).

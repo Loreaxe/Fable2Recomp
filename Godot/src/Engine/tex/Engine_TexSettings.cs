@@ -425,11 +425,8 @@ public static class Engine_TexSettings
 	/// Remembers the player's answer to the upscaling switch.
 	/// </summary>
 	/// <remarks>
-	/// READ THE WHOLE FILE, CHANGE ONE KEY, WRITE IT BACK. <c>WriteValues</c> emits the entire
-	/// file from the values it is handed, so handing it anything less than everything currently
-	/// in there is a truncation wearing a save's clothes — the same failure that made this
-	/// setting unsafe to keep in refii.toml in the first place, and it would be careless to
-	/// reproduce it from the other side.
+	/// ONLY THIS KEY'S LINE CHANGES (<c>RuntimeConfig.EditValues</c>): every other line of the
+	/// player's file — another title's keys and unknown keys included — stays as it stands.
 	/// </remarks>
 	public static void PersistUpscaleEnabled(bool enabled)
 	{
@@ -445,13 +442,10 @@ public static class Engine_TexSettings
 			return;
 		}
 
-		// READ, CHANGE ONE KEY, WRITE. WriteValues emits the whole file from the values it is
-		// handed, so passing anything less than everything currently in it is a truncation
-		// wearing a save's clothes.
-		SortedDictionary<string, string> values = RuntimeConfig.ReadValues(path);
-		values["texture_upscaling_enabled"] = enabled ? "true" : "false";
-
-		if (!RuntimeConfig.WriteValues(path, values, out string error))
+		// ONE KEY'S LINE CHANGES (RuntimeConfig.EditValues): a whole-file write from the title's
+		// table would drop every key of another title's and reorder the player's file.
+		var set = new Dictionary<string, string> { ["texture_upscaling_enabled"] = enabled ? "true" : "false" };
+		if (!RuntimeConfig.EditValues(path, set, System.Array.Empty<string>(), out string error))
 		{
 			GD.PushWarning($"[tex] could not save {path}: {error}");
 		}

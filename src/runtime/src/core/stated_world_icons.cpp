@@ -2,6 +2,15 @@
 // its own Init, Update and ring tick leave it, until the registry erases it or it is destroyed;
 // each choice record from its creation to its deleter.
 //
+// DRAWN IS AN UPDATE OF THE GUEST'S LATEST STEP. Both titles draw an icon only inside an Update the
+// registry's tick gives it with `visible` set (Fable 3 CWorldIcon3D's vt+64 at 0x822261B0; Fable 2's
+// lhWorldIcon_Update draws at TU1 0x82242040), and both ticks give no Update at all while a GUI is up
+// (Fable 3 sub_82613890 re-tests sub_821F7F98 at 0x826138C0; Fable 2 lhPromptManager_Update tests
+// lhGameFlow_IsGuiActive at TU1 0x821C5BE8). So an icon is read back as visible only when an Update
+// with `visible` set ran in the step the title last stated or the one before it: the title's pump
+// states each step before that step's tick runs, so the one before covers the stretch of a step
+// ahead of its tick. A latched `visible` outliving the Updates is not the guest's drawing.
+//
 // It crosses from a title's hooks (the payload, on the guest's game thread) to its host bridge
 // (on Godot's), which live in different modules; this is the one table both link. A statement
 // replaces the entry whole under the lock, so a read never sees half of one. Reads come back in
@@ -23,6 +32,8 @@ namespace {
 struct Icon {
   uint64_t sequence = 0u;
   bool visible = false;
+  /// The step stated when its last Update ran.
+  uint64_t updated_step = 0u;
   uint32_t words[REFII_WORLD_ICON_WORDS]{};
   float values[REFII_WORLD_ICON_VALUES]{};
   std::string text;
@@ -45,6 +56,8 @@ std::mutex g_lock;
 std::unordered_map<uint32_t, Icon>* g_icons = nullptr;
 std::unordered_map<uint32_t, Choice>* g_choices = nullptr;
 uint64_t g_sequence = 0u;
+/// The step the title stated last (refii_bridge_world_icons_step).
+uint64_t g_step = 0u;
 
 std::unordered_map<uint32_t, Icon>& Icons() {
   if (g_icons == nullptr) {
@@ -127,10 +140,16 @@ void refii_bridge_world_icon_stated(uint32_t icon, int32_t visible, const uint32
   Icon& entry = it->second;
   if (visible >= 0) {
     entry.visible = visible != 0;
+    entry.updated_step = g_step;
   }
   std::memcpy(entry.words, words, sizeof(entry.words));
   std::memcpy(entry.values, values, sizeof(entry.values));
   entry.text = Text(text, text_length);
+}
+
+void refii_bridge_world_icons_step(uint64_t step) {
+  std::lock_guard<std::mutex> guard(g_lock);
+  g_step = step;
 }
 
 void refii_bridge_world_icon_removed(uint32_t icon) {
@@ -154,10 +173,11 @@ uint32_t refii_bridge_world_icons_read(uint32_t* out_icons, uint32_t* out_words,
       out_icons[written] = icon;
     }
     if (out_words != nullptr) {
+      const bool drawn = entry->visible && entry->updated_step + 1u >= g_step;
       uint32_t* w = out_words + (written * REFII_WORLD_ICON_WORDS);
       std::memcpy(w, entry->words, sizeof(entry->words));
       w[REFII_WORLD_ICON_FLAGS_WORD] = (w[REFII_WORLD_ICON_FLAGS_WORD] & ~REFII_WORLD_ICON_VISIBLE) |
-                                       (entry->visible ? REFII_WORLD_ICON_VISIBLE : 0u);
+                                       (drawn ? REFII_WORLD_ICON_VISIBLE : 0u);
     }
     if (out_values != nullptr) {
       std::memcpy(out_values + (written * REFII_WORLD_ICON_VALUES), entry->values, sizeof(entry->values));

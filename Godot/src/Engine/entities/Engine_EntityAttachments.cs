@@ -117,6 +117,91 @@ public sealed class Engine_EntityAttachments
 
 		public double SwitchTick;
 
+		/// <summary>Where <see cref="ResolveDummy"/> found <see cref="Mount"/>: one of the Mount* names.</summary>
+		public string MountSource = string.Empty;
+
+		/// <summary>The exit the last placement took: one of the Exit* names.</summary>
+		public string Exit = string.Empty;
+
+		/// <summary>Exit changes logged for this record; see <see cref="Took"/>.</summary>
+		public int ExitReports;
+	}
+
+	// WHERE ResolveDummy FOUND THE MOUNT. The guest has one source, the part gmd chain to a live
+	// bone or the identity (`sub_82237490` TU1 / `sub_822374D0` disc); the others are ours.
+	public const string MountGmdBone = "gmd-bone";
+	public const string MountGmdRoot = "gmd-root";
+	public const string MountGmdFocal = "gmd-focal";
+	public const string MountLevelFx = "levelfx-model-space";
+	public const string MountFocalName = "focal-name";
+	public const string MountIdentity = "identity";
+
+	// THE EXIT A PLACEMENT TOOK. "composed-*" is the guest's composition W . bone . mount . grip
+	// (TU1 `sub_825ED2A0`, disc `sub_8250F5F0`) with the mount from that source; "stated-*" left
+	// the child on the guest's placement, which is on the guest's pose of the parent, not ours.
+	public const string ExitComposedGmdBone = "composed-gmd-bone";
+	public const string ExitComposedGmdRoot = "composed-gmd-root";
+	public const string ExitComposedGmdFocal = "composed-gmd-focal";
+	public const string ExitComposedLevelFx = "composed-levelfx-model-space";
+	public const string ExitComposedFocalName = "composed-focal-name";
+	public const string ExitComposedIdentity = "composed-identity";
+	public const string ExitStatedDummyUnresolved = "stated-dummy-unresolved";
+	public const string ExitStatedHandWithoutGrip = "stated-hand-dummy-without-grip";
+	public const string ExitStatedCharacterNoBone = "stated-character-dummy-no-bone";
+	public const string ExitStatedNoGripNoRig = "stated-no-grip-no-rig";
+	public const string ExitStatedSolvePending = "stated-solve-pending";
+	public const string ExitStatedSolveExhausted = "stated-solve-exhausted";
+	public const string ExitStatedNoBone = "stated-no-bone";
+	public const string ExitSolvedOffset = "solved-offset";
+	public const string ExitStatedFurniture = "stated-furniture";
+	public const string ExitStatedParentNotDrawn = "stated-parent-not-drawn";
+	public const string ExitStatedParentNoRig = "stated-parent-no-rig";
+
+	/// <summary>The composed exit for a mount source.</summary>
+	public static string ComposedExit(string mountSource) => mountSource switch
+	{
+		MountGmdBone => ExitComposedGmdBone,
+		MountGmdRoot => ExitComposedGmdRoot,
+		MountGmdFocal => ExitComposedGmdFocal,
+		MountLevelFx => ExitComposedLevelFx,
+		MountFocalName => ExitComposedFocalName,
+		_ => ExitComposedIdentity,
+	};
+
+	/// <summary>How many exit changes one record logs; the first is the one a run asks about.</summary>
+	private const int ExitReportsLogged = 4;
+
+	/// <summary>
+	/// Records the exit and logs it when it changed, up to <see cref="ExitReportsLogged"/> times
+	/// per record. Not a frequency.
+	/// </summary>
+	private static void Took(Record record, string exit)
+	{
+		if (ReferenceEquals(record.Exit, exit))
+		{
+			return;
+		}
+
+		record.Exit = exit;
+		if (record.ExitReports >= ExitReportsLogged)
+		{
+			return;
+		}
+
+		++record.ExitReports;
+		GD.Print($"[attach] {record.Child:X8} on {record.Parent:X8} '{record.Dummy}'[{record.Index}] " +
+			$"exit {exit}: mount {(record.MountSource.Length != 0 ? record.MountSource : "unresolved")}, " +
+			$"bone {record.Bone}, grip {record.HaveGrip}, dummyFound {record.DummyFound}, " +
+			$"focal {record.FocalFallback}, mount at {record.Mount.Origin}");
+	}
+
+	/// <summary>The caller left a child on its stated placement without asking TryPlace.</summary>
+	public void NoteStated(uint child, string exit)
+	{
+		if (_byChild.TryGetValue(child, out Record? record))
+		{
+			Took(record, exit);
+		}
 	}
 
 
@@ -346,6 +431,13 @@ public sealed class Engine_EntityAttachments
 				["offsetMetres"] = float.IsFinite(record.Offset.Origin.Length()) ? record.Offset.Origin.Length() : null,
 				["residual"] = float.IsFinite(record.LastResidual) ? record.LastResidual : null,
 				["scored"] = record.Solves,
+				["exit"] = record.Exit,
+				["mountSource"] = record.MountSource,
+				["dummyFound"] = record.DummyFound,
+				["focalFallback"] = record.FocalFallback,
+				["haveGrip"] = record.HaveGrip,
+				["mount"] = new[] { record.Mount.Origin.X, record.Mount.Origin.Y, record.Mount.Origin.Z },
+				["grip"] = new[] { record.Grip.Origin.X, record.Grip.Origin.Y, record.Grip.Origin.Z },
 			});
 		}
 
@@ -446,6 +538,7 @@ public sealed class Engine_EntityAttachments
 			if (!use.DummyFound && use.Dummy.Length != 0)
 			{
 				++Unresolved;
+				Took(record, ExitStatedDummyUnresolved);
 				return false;
 			}
 
@@ -454,12 +547,14 @@ public sealed class Engine_EntityAttachments
 			// mount cleanly to the character's hand bone dummy (Carry_Hand_DummyObject1).
 			if (IsHandDummyWithoutGrip(use.Dummy, use.Grip, childModelPath, isFurniture))
 			{
+				Took(record, ExitStatedHandWithoutGrip);
 				return false;
 			}
 
 			if (use.Bone < 0 && parentRig is not null &&
 			    use.Dummy.StartsWith("Character.", System.StringComparison.OrdinalIgnoreCase))
 			{
+				Took(record, ExitStatedCharacterNoBone);
 				return false;
 			}
 
@@ -490,6 +585,7 @@ public sealed class Engine_EntityAttachments
 				Compare(record, childStated, parentStated, parentRig, parentParts, mount);
 			}
 
+			Took(record, ComposedExit(use.MountSource));
 			++Placed;
 			++PlacedStated;
 			return true;
@@ -497,6 +593,7 @@ public sealed class Engine_EntityAttachments
 
 		if (parentRig is null)
 		{
+			Took(record, ExitStatedNoGripNoRig);
 			return false;
 		}
 
@@ -504,12 +601,14 @@ public sealed class Engine_EntityAttachments
 		{
 			if (record.Attempts >= MaxAttempts)
 			{
+				Took(record, ExitStatedSolveExhausted);
 				return false;
 			}
 
 			++record.Attempts;
 			if (!Solve(record, childStated, parentStated, parentRig, parentParts))
 			{
+				Took(record, record.Attempts == MaxAttempts ? ExitStatedSolveExhausted : ExitStatedSolvePending);
 				if (record.Attempts == MaxAttempts)
 				{
 					++Unresolved;
@@ -578,10 +677,12 @@ public sealed class Engine_EntityAttachments
 
 		if (record.Bone < 0 || record.Bone >= parentRig.BoneCount)
 		{
+			Took(record, ExitStatedNoBone);
 			return false;
 		}
 
 		placed = parentPlacement * parentRig.Node.GetBoneGlobalPose(record.Bone) * record.Offset;
+		Took(record, ExitSolvedOffset);
 		++Placed;
 		return true;
 	}
@@ -819,6 +920,7 @@ public sealed class Engine_EntityAttachments
 		record.FocalFallback = false;
 		record.Bone = -1;
 		record.Mount = Transform3D.Identity;
+		record.MountSource = MountIdentity;
 		foreach (string part in parentParts)
 		{
 			Refii.Models.Engine_GmdSkeleton? gmd = Gmd(part);
@@ -846,11 +948,13 @@ public sealed class Engine_EntityAttachments
 				record.FocalFallback = true;
 				record.Mount = ComputeFocalMount(chain, rig.Node.GetBoneGlobalRest(focalBone));
 				record.DummyFound = true;
+				record.MountSource = MountGmdFocal;
 				return;
 			}
 
 			record.Mount = chain;
 			record.DummyFound = true;
+			record.MountSource = record.Bone >= 0 ? MountGmdBone : MountGmdRoot;
 			return;
 		}
 
@@ -864,6 +968,7 @@ public sealed class Engine_EntityAttachments
 				{
 					record.Mount = fallbackMount;
 					record.DummyFound = true;
+					record.MountSource = MountLevelFx;
 					return;
 				}
 			}
@@ -875,6 +980,7 @@ public sealed class Engine_EntityAttachments
 			record.Mount = Transform3D.Identity;
 			record.DummyFound = true;
 			record.FocalFallback = true;
+			record.MountSource = MountFocalName;
 		}
 	}
 

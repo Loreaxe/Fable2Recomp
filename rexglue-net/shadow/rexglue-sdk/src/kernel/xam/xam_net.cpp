@@ -2197,9 +2197,28 @@ extern "C" {
 
 uint16_t RefiiCoopChannelPort(void) { return rex::kRefiiCoopPort; }
 
-/// The co-op peer's virtual IP, or 0 before any guest traffic has arrived.
+/// The co-op peer's virtual IP, or 0 before any guest traffic has arrived (or since it left).
 uint32_t RefiiCoopChannelPeer(void) {
   return rex::g_refii_coop_peer_vip.load(std::memory_order_relaxed);
+}
+
+/// The co-op peer has left the title's session: forget it, and drop what it queued.
+///
+/// The address is learned from inbound game traffic and nothing else ends it, so a host back at
+/// Hosting kept restating to the departed joiner's address. Every datagram it opens marks a
+/// game in progress for RexNet (TITLE_TRAFFIC_WINDOW), which defers shard placement; a joiner
+/// restarted under that stream never entered the shard, so its join found no session to arm.
+/// The next joiner's first session packet teaches the address again.
+void RefiiCoopChannelForget(void) {
+  const uint32_t was = rex::g_refii_coop_peer_vip.exchange(0, std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> lock(rex::g_refii_coop_mutex);
+    rex::g_refii_coop_inbox.clear();
+  }
+  if (was != 0) {
+    REXLOG_INFO("Refii co-op channel: peer 10.77.{}.{} forgotten (it left the session)",
+                (was >> 8) & 0xFF, was & 0xFF);
+  }
 }
 
 /// Takes the oldest queued message, NUL-terminated, and returns its byte count.

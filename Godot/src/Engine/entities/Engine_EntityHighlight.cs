@@ -24,8 +24,19 @@ namespace Refii.Entities;
 /// </remarks>
 public static class Engine_EntityHighlight
 {
-    /// <summary>A highlighted entity: its node, the stated word, and the slot its proxies draw.</summary>
-    public readonly record struct Lit(Node3D Node, uint Word, int Slot);
+    /// <summary>A highlighted entity: its node, the stated word, the slot its proxies draw, and the
+    /// guest entity it stands for (0 for a title's own stand-in).</summary>
+    public readonly record struct Lit(Node3D Node, uint Word, int Slot, uint Entity = 0u);
+
+    /// <summary>
+    /// Whether view <paramref name="view"/> (0 the window or player one's, 1 player two's) draws a
+    /// highlight targeted by <paramref name="targetedBy"/> (bit 0 player one, bit 1 player two).
+    /// The guest raises ONE highlight per target for whichever player targets it
+    /// (lhECTargeted_SetTargetedByPlayer): split, each view keeps its own player's; on one screen,
+    /// or for a highlight no player's targeting states (0), every view draws it.
+    /// </summary>
+    public static bool DrawnInView(int view, bool split, int targetedBy) =>
+        !split || (targetedBy & 3) == 0 || view is < 0 or > 1 || (targetedBy & (1 << view)) != 0;
 
     /// <summary>Marks the proxies we add, so they are never mistaken for the entity's own.</summary>
     private static StringName? _madeMeta;
@@ -35,6 +46,10 @@ public static class Engine_EntityHighlight
     private static StringName? _slotMeta;
     private static StringName SlotMeta => _slotMeta ??= new StringName("refii_highlight_slot");
 
+    /// <summary>The instance id of the Skeleton3D a proxy was bound to; 0 for none.</summary>
+    private static StringName? _bonesMeta;
+    private static StringName BonesMeta => _bonesMeta ??= new StringName("refii_highlight_bones");
+
     private const string ShaderPath = "res://src/Engine/entities/entity_highlight_silhouette.gdshader";
 
     /// <summary>Entities the guest is highlighting. Reset by the walk that feeds this.</summary>
@@ -42,6 +57,12 @@ public static class Engine_EntityHighlight
 
     /// <summary>Proxies created, shown or hidden; a run total.</summary>
     public static long PassChanges;
+
+    /// <summary>
+    /// Lit proxies re-bound because the body's mesh, skin or skeleton changed under an unchanged
+    /// slot (a re-rig); a run total, on the debug channel.
+    /// </summary>
+    public static long Rebinds;
 
     /// <summary>
     /// Every distinct highlight word the walk has seen. `000000FF` is the OFF colour; anything
@@ -109,7 +130,7 @@ public static class Engine_EntityHighlight
     /// Puts the silhouette on every mesh under <paramref name="node"/>, or takes it off.
     /// Idempotent: the slot is stored per mesh and a proxy is only touched when it changes.
     /// </summary>
-    public static void Apply(Node node, bool highlighted, Color colour, uint word = 0u)
+    public static void Apply(Node node, bool highlighted, Color colour, uint word = 0u, uint entity = 0u)
     {
         if (SeenWords.Count < 32)
         {
@@ -149,7 +170,7 @@ public static class Engine_EntityHighlight
             return;
         }
 
-        Lits[id] = new Lit(body, word, slot);
+        Lits[id] = new Lit(body, word, slot, entity);
         LitNodes.Add(node);
 
         // Walked on every statement, not only the first: a mesh change re-rigs the body and the
@@ -198,6 +219,16 @@ public static class Engine_EntityHighlight
         int have = mesh.HasMeta(SlotMeta) ? (int)mesh.GetMeta(SlotMeta) : 0;
         if (have == slot)
         {
+            // The guest draws the outline in the model's own draw (`sub_82572C18` posts it with
+            // the model command, 0x82572d28), so the proxy must stay on what the body draws. A
+            // re-rig frees the body's Skeleton3D, builds another under the same name and hands
+            // the body a new Skin; the proxy bound at Create would keep the old pair.
+            if (slot != 0 && Existing(mesh) is { } bound && BindingStale(bound, mesh))
+            {
+                ++Rebinds;
+                Fit(mesh, slot);
+            }
+
             return;
         }
 
@@ -231,6 +262,8 @@ public static class Engine_EntityHighlight
         {
             proxy.Mesh = mesh.Mesh;
         }
+
+        Bind(proxy, mesh);
 
         int surfaceCount = mesh.Mesh?.GetSurfaceCount() ?? 0;
         bool hasCutout = false;
@@ -348,17 +381,48 @@ public static class Engine_EntityHighlight
         // A child of the body: it dies with the body on a re-rig, inherits its transform, and is
         // hidden with it, so a garment `Engine_HiddenClusters` has taken away stops drawing too.
         mesh.AddChild(proxy);
+        return proxy;
+    }
 
-        // The same skeleton and skin, or the silhouette stands in the bind pose. The path is
-        // resolved from the proxy once it is in the tree; a prop has none.
-        if (!mesh.Skeleton.IsEmpty && mesh.GetNodeOrNull(mesh.Skeleton) is Skeleton3D bones)
+    /// <summary>
+    /// The body's skeleton and skin on the proxy, or the silhouette stands in the bind pose. The
+    /// path is resolved from the proxy, which is in the tree; a prop has none. Setting the path
+    /// re-resolves it even when it reads the same (`MeshInstance3D::set_skeleton_path`), which
+    /// is what binds a new skeleton that took the old one's name.
+    /// </summary>
+    private static void Bind(MeshInstance3D proxy, MeshInstance3D mesh)
+    {
+        if (BodyBones(mesh) is { } bones)
         {
             proxy.Skeleton = proxy.GetPathTo(bones);
             proxy.Skin = mesh.Skin;
+            proxy.SetMeta(BonesMeta, (long)bones.GetInstanceId());
         }
-
-        return proxy;
+        else if (!proxy.Skeleton.IsEmpty || proxy.Skin is not null)
+        {
+            proxy.Skeleton = new NodePath();
+            proxy.Skin = null;
+            proxy.SetMeta(BonesMeta, 0L);
+        }
     }
+
+    private static Skeleton3D? BodyBones(MeshInstance3D mesh) =>
+        !mesh.Skeleton.IsEmpty && mesh.GetNodeOrNull(mesh.Skeleton) is Skeleton3D bones ? bones : null;
+
+    private static bool BindingStale(MeshInstance3D proxy, MeshInstance3D mesh) =>
+        BindingStale(
+            proxy.Mesh?.GetInstanceId() ?? 0ul, mesh.Mesh?.GetInstanceId() ?? 0ul,
+            proxy.Skin?.GetInstanceId() ?? 0ul, mesh.Skin?.GetInstanceId() ?? 0ul,
+            proxy.HasMeta(BonesMeta) ? (ulong)proxy.GetMeta(BonesMeta).AsInt64() : 0ul,
+            BodyBones(mesh)?.GetInstanceId() ?? 0ul);
+
+    /// <summary>
+    /// Whether a proxy bound to (<paramref name="boundMesh"/>, <paramref name="boundSkin"/>,
+    /// <paramref name="boundBones"/>) no longer draws what the body draws. Instance ids, 0 for none.
+    /// </summary>
+    public static bool BindingStale(ulong boundMesh, ulong bodyMesh, ulong boundSkin, ulong bodySkin,
+        ulong boundBones, ulong bodyBones) =>
+        boundMesh != bodyMesh || boundSkin != bodySkin || boundBones != bodyBones;
 
     /// <summary>One shared material per slot; every proxy of an entity draws the same one.</summary>
     private static ShaderMaterial SlotMaterial(int slot)

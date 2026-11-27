@@ -1,4 +1,5 @@
 #include "core/gui_native_calls.h"
+#include "core/queue_put_back.h"
 
 #include <atomic>
 #include <mutex>
@@ -228,6 +229,11 @@ std::vector<GuiNativeCall> TakeGuiNativeCalls() {
     std::lock_guard<std::mutex> lock(PendingMutex());
     taken.swap(Pending());
     return taken;
+}
+
+void PutBackGuiNativeCalls(std::vector<GuiNativeCall>& taken, std::size_t from) {
+    std::lock_guard<std::mutex> lock(PendingMutex());
+    PutBackFront(Pending(), taken, from);
 }
 
 void GuiNativeCounters(uint64_t* out_intercepted, uint32_t* out_pending, uint32_t* out_named) {

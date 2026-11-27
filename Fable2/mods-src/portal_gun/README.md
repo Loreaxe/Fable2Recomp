@@ -37,7 +37,9 @@ stays over the shoulder however long you hold; the gun goes off when you let go.
 `mod/camera.lua` keeps the camera where the mouse puts it while portal mode is on. `mod/init.lua`
 cancels the gun's shot on `ranged_shot`, finds where it lands with `Refii.line_of_sight`, slides the
 portal to fit and moves the hero with `Refii.set_position`. `godot/portal_gun.gd` aims along the
-camera and draws each portal: a quad showing what a second camera sees through its partner.
+portal player's own view (`camera_ray`, their half on a split screen) and draws each portal: a quad
+showing what a second camera, placed from that player's drawn camera (`camera_pose`), sees through its
+partner.
 
 The model is `art/inventory/weapons/portal_gun/portal_gun.mdl`, built by `source/make_model.py` and
 compiled against the game's Master Flintlock Rifle, whose grip points it keeps. `godot/portal_gun.gd`

@@ -65,6 +65,7 @@ enum Call : uint32_t {
                           // machine draws it
   kSnapBegin = 32,        // the manager's settle pass (a load, a level change)
   kSnapEnd = 33,
+  kDestroy = 34,          // the manager's destructor, before its body: the manager is gone after it
 };
 
 constexpr uint32_t kFlagDrawn = 1u;

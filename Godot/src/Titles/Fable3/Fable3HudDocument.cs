@@ -77,6 +77,19 @@ public sealed partial class Fable3HudDocument
 	/// <summary>The view, once the document is read.</summary>
 	public Engine_HudView? View { get; private set; }
 
+	/// <summary>
+	/// PLAYER TWO'S HALF of the HUD (`hud.bgf` only) while each couch player has their own view
+	/// (<see cref="Refii.Core.Engine_Views.Split"/>: split, and hybrid while split): the same pieces, art,
+	/// layout and element feed as <see cref="View"/>, seated <see cref="Engine_UiSeats.Seat.PlayerTwo"/>, so
+	/// the shared view draws player one's widgets keyed to player two's copies (<see cref="Fable3HudLayout"/>)
+	/// and the TopBox wraps inside the half (Engine_UiTopBoxLayout.WrapWidthIn). Built the first time the
+	/// screen splits; suppressed while it is whole. <see cref="View"/> takes player one's half meanwhile.
+	/// </summary>
+	public Engine_HudView? ViewTwo { get; private set; }
+
+	private Node? _parent;
+	private Fable3Presentations? _host;
+
 	private readonly bool _layouts;
 	private readonly bool _groupsOnly;
 	private Engine_UiScreen? _screen;
@@ -175,6 +188,8 @@ public sealed partial class Fable3HudDocument
 		};
 		View.Values.Strings = host.Strings ?? Fable3Strings.Current;
 		parent.AddChild(View);
+		_parent = parent;
+		_host = host;
 
 		// The title's arrangement files (Engine_HudLayout.FolderFor): shipped < mods < the player's,
 		// the snapshot written beneath the player's file for the player's tool and modders.
@@ -247,6 +262,34 @@ public sealed partial class Fable3HudDocument
 
 	/// <summary>The documents standing, for the debug channel (`f3ui`).</summary>
 	public static readonly List<Fable3HudDocument> Live = new();
+
+	/// <summary>
+	/// Where this document's file authors the element at <paramref name="path"/> on the canvas — its
+	/// position summed up the chain (sub_82818760), the widescreen adapters' writes taken as the frame
+	/// takes them (<see cref="WidescreenStated"/>) — and, for a text, its horizontal alignment (the
+	/// .fac's: 0 left, 1 centred, 2 right). With <paramref name="slideOwner"/> and <paramref name="slide"/>, as
+	/// that owner's slide stands it (its position writes taken, <see cref="Engine_UiTextBoxFit.SlideStated"/>;
+	/// the slide numbered from 1 past the master, as the guest enters it). Null until the document stands,
+	/// or for a path it does not hold.
+	/// </summary>
+	public (float X, float Y, int HorzAlign)? Authored(string path, string? slideOwner = null, int slide = 0)
+	{
+		if (_screen is null || _statements is null || _statements.Resolve(path) is not { Count: > 0 } found)
+		{
+			return null;
+		}
+
+		int ordinal = found[0];
+		System.Func<int, (float? X, float? Y)> stated = WidescreenStated;
+		if (slideOwner is not null && slide > 0 && _statements.Resolve(slideOwner) is { Count: > 0 } owner)
+		{
+			stated = Engine_UiTextBoxFit.SlideStated(Engine_UiElementResolve.SlideOf(_screen.Document, owner[0], slide), WidescreenStated);
+		}
+
+		(float x, float y) = Engine_UiTextBoxFit.ChainPosition(_screen.Document, ordinal, stated);
+		int align = ordinal >= 0 && ordinal < _screen.Nodes.Length ? _screen.Nodes[ordinal].Text?.HorzAlign ?? 0 : 0;
+		return (x, y, align);
+	}
 
 	/// <summary>
 	/// For the debug channel: every element whose path contains <paramref name="match"/> — what the
@@ -350,6 +393,7 @@ public sealed partial class Fable3HudDocument
 		}
 
 		View.Window = window;
+		SeatPlayers(window);
 
 		// The mini-game bar's cloned segments (minigamebarcontrol.lua `clone`), only once its script ran here.
 		if (Fable3LuaContracts.BarOf(Document) is { Elements.Count: > 0 } bar)
@@ -477,6 +521,99 @@ public sealed partial class Fable3HudDocument
 		View.LiveTextures = _textures;
 		View.LiveColours = _colours;
 		View.ElementActive = _active;
+		ShareFeed();
+	}
+
+	/// <summary>
+	/// Each couch player's HUD in their own half while the views are split: player one's view in player
+	/// one's seat, player two's (built once) in theirs; the whole window otherwise, player two's held hidden.
+	/// Only `hud.bgf` is seated — the interaction mode, the end screens and the box frames are the menus
+	/// of the one screen, drawn whole as the original draws them.
+	/// </summary>
+	private void SeatPlayers(Vector2 window)
+	{
+		if (View is null || Document != Fable3Elements.HudDocument)
+		{
+			return;
+		}
+
+		bool split = Refii.Core.Engine_Views.Split;
+		View.Seat = split ? Engine_UiSeats.Seat.PlayerOne : Engine_UiSeats.Seat.Whole;
+		if (split && ViewTwo is null)
+		{
+			BuildViewTwo();
+		}
+
+		if (ViewTwo is null || !GodotObject.IsInstanceValid(ViewTwo))
+		{
+			return;
+		}
+
+		ViewTwo.Window = window;
+		ViewTwo.Suppressed = !split;
+		ViewTwo.Visible = split;
+		Node.ProcessModeEnum mode = split ? Node.ProcessModeEnum.Inherit : Node.ProcessModeEnum.Disabled;
+		if (ViewTwo.ProcessMode != mode)
+		{
+			ViewTwo.ProcessMode = mode;
+		}
+	}
+
+	private void BuildViewTwo()
+	{
+		if (View is null || _parent is null || _host is null || !GodotObject.IsInstanceValid(_parent))
+		{
+			return;
+		}
+
+		ViewTwo = new Engine_HudView
+		{
+			Name = "Hud_" + Document + "_PlayerTwo",
+			Theme = View.Theme,
+			Screen = View.Screen,
+			Art = View.Art,
+			ResolveTexture = View.ResolveTexture,
+			Layout = View.Layout,
+			StatesTimes = true,
+			TopBoxWrapWidth = TopBoxWrapWidth,
+			TopBoxHeightRange = TopBoxHeightRange,
+			TopBoxHeightPad = TopBoxHeightPad,
+			AuthoredTextBoxPanels = true,
+			// The mods' pieces are drawn once, on player one's view.
+			HostsMods = false,
+			// Player one's registry values; the view's own statements (its TopBox height) over them.
+			Values = new Engine_HudValues { Under = View.Values },
+			ReadsValues = false,
+			Seat = Engine_UiSeats.Seat.PlayerTwo,
+			Suppressed = true,
+			Visible = false,
+			ProcessMode = Node.ProcessModeEnum.Disabled,
+		};
+		ViewTwo.Values.Strings = View.Values.Strings;
+		_parent.AddChild(ViewTwo);
+		ViewTwo.Build();
+		ShareFeed();
+		GD.Print($"[fable3-hud] '{Document}' player two's half built: player one's widgets keyed to player two's");
+	}
+
+	/// <summary>Player two's half takes the element feed player one's view was just given: one document, one read, two views.</summary>
+	private void ShareFeed()
+	{
+		if (View is null || ViewTwo is null || !GodotObject.IsInstanceValid(ViewTwo))
+		{
+			return;
+		}
+
+		ViewTwo.Resolve = View.Resolve;
+		ViewTwo.LiveSlides = View.LiveSlides;
+		ViewTwo.ActiveInputs = View.ActiveInputs;
+		ViewTwo.StatedOpacity = View.StatedOpacity;
+		ViewTwo.LiveTexts = View.LiveTexts;
+		ViewTwo.LiveTimes = View.LiveTimes;
+		ViewTwo.LiveTransform = View.LiveTransform;
+		ViewTwo.LiveTextures = View.LiveTextures;
+		ViewTwo.LiveColours = View.LiveColours;
+		ViewTwo.ElementActive = View.ElementActive;
 	}
 
 	/// <summary>

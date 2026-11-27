@@ -202,6 +202,33 @@ public static class Engine_ControllerFamily
 	};
 
 	/// <summary>
+	/// The player whose device the shared prompts follow: the open menu's owner on a split screen;
+	/// with no menu open on a split screen, player one (each half is its player's, and player two's
+	/// half takes player two's own set); on one screen, the player whose controller was used last.
+	/// </summary>
+	public static int PromptPlayer(bool split, int menuOwner, int lastUsedPlayer)
+	{
+		if (split)
+		{
+			return menuOwner is 1 or 2 ? menuOwner : 1;
+		}
+
+		return lastUsedPlayer is 1 or 2 ? lastUsedPlayer : 1;
+	}
+
+	/// <summary>The glyph set a surface for <paramref name="player"/> takes: 2 for player two's own, else the shared 1.</summary>
+	public static int SurfaceSet(int player) => player == 2 ? 2 : 1;
+
+	/// <summary>
+	/// The glyph set a prompt takes whose guest record states its owner as a hero's 64-bit uid
+	/// (<paramref name="ownerUid"/>, 0 for any player): player two's own set exactly when that owner is this
+	/// machine's local player two (<paramref name="localTwoUid"/>, 0 when there is none), else the shared set.
+	/// Only that player can answer such a prompt, so it reads in their controller on any screen layout.
+	/// </summary>
+	public static int OwnerSet(ulong ownerUid, ulong localTwoUid) =>
+		SurfaceSet(ownerUid != 0ul && ownerUid == localTwoUid ? 2 : 1);
+
+	/// <summary>
 	/// The style a setting draws for a family: <c>auto</c> (or anything unrecognised) follows the
 	/// device; <c>xbox</c>, <c>playstation</c> and <c>switch</c> force one.
 	/// </summary>

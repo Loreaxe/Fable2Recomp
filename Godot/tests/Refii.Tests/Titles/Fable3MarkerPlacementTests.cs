@@ -18,6 +18,25 @@ public class Fable3MarkerPlacementTests
 	/// [138, 1154.8] x [112, 655.2]. A point inside stays put.
 	/// </summary>
 	[TestCase]
+	public void ASplitHalfPlacesItsMarkersInsideItself()
+	{
+		// Side by side at 2560x1440: player two's half stands at (1280, 0), 1280x1440. Its camera's centre lands
+		// at the half's centre, not on the divider; a viewport rendered at another size is scaled onto the half.
+		var half = new Vector2(1280f, 1440f);
+		Vector2 centre = Fable3MarkerPlacement.OnWindow(new Vector2(640f, 720f), half, new Vector2(1280f, 0f), half);
+		AssertThat(centre.X).IsEqualApprox(1920f, 0.001f);
+		AssertThat(centre.Y).IsEqualApprox(720f, 0.001f);
+		Vector2 scaled = Fable3MarkerPlacement.OnWindow(new Vector2(320f, 360f), new Vector2(640f, 720f), new Vector2(1280f, 0f), half);
+		AssertThat(scaled.X).IsEqualApprox(1920f, 0.001f);
+		AssertThat(scaled.Y).IsEqualApprox(720f, 0.001f);
+		// One screen: the window, unchanged.
+		var window = new Vector2(2560f, 1440f);
+		Vector2 same = Fable3MarkerPlacement.OnWindow(new Vector2(1280f, 550f), window, Vector2.Zero, window);
+		AssertThat(same.X).IsEqualApprox(1280f, 0.001f);
+		AssertThat(same.Y).IsEqualApprox(550f, 0.001f);
+	}
+
+	[TestCase]
 	public void TheClampHoldsTheGuestsMarginsAt720()
 	{
 		var window = new Vector2(1280f, 720f);

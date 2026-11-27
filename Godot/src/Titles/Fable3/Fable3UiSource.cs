@@ -35,8 +35,10 @@ public sealed class Fable3UiSource : Engine_UiSource
 
 	public override byte[]? GetTitleXdbf() => HostBridge.GetTitleXdbf();
 
-	public override void SetAchievementUnlocks(uint[] ids, ulong[] unlockFiletimes) =>
-		HostBridge.SetAchievementUnlocks(ids, unlockFiletimes);
+	public override void SetSaveAchievementUnlocks(string table) => HostBridge.SetSaveAchievementUnlocks(table);
+
+	public override System.Collections.Generic.List<Engine_UiModel.AchievementBinding> GetAchievementBindings(ulong afterSerial) =>
+		HostBridge.GetAchievementBindings(afterSerial);
 
 	public override uint GetAchievementsUiRequests() => HostBridge.GetAchievementsUiRequests();
 

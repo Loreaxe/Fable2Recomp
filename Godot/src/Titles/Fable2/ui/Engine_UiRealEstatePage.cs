@@ -8,6 +8,15 @@ namespace Refii.Titles.Fable2;
 using Refii.Ui;
 
 /// <summary>
+/// SCREEN 28'S PAGES AS THEIR FILLS WROTE THEM (<see cref="Engine_UiPageFills"/>): page 1
+/// `sub_82998FB0` and page 2 `sub_8299B068` at the open, page 1's tick `sub_8299A728` over them —
+/// every text as the guest composed it, a row the fill hid blanked (the template blanks by value), the
+/// star slide `sub_8299AF88` gave. <see cref="StatedValues"/> and <see cref="StatedSlides"/>.
+///
+/// The rest of this class is the WORLD MAP'S PROPERTY ROW (Engine_UiPropertySource): the remaster's
+/// map properties have no guest page, so their numbers arrive from the guest's providers
+/// (`Fable2Bridge.GetPropertyEstate`) and are captioned here under the sign's own tags.
+///
 /// Screen 28's two detail pages — the property Godot draws for the building the guest resolved.
 ///
 /// THE SHAPE IS NOT THE ITEM BOOK'S, which is why no existing provider fitted. The screen's left
@@ -49,7 +58,6 @@ public static class Engine_UiRealEstatePage
 	// `Foreground.Book.Pages.Page1.Contents.Title` at 0x820EB14C, and so on.
 	private const string Title = "Page1.Contents.Title";
 	private const string Type = "Page1.Contents.Type";
-	private const string Star = "Page1.Contents.star";
 	private const string OwnerLabel = "Page1.Group.Owner";
 	private const string OwnerName = "Page1.Group.OwnerName";
 	private const string BaseValue = "Page1.Group.BaseValueAmount";
@@ -124,7 +132,60 @@ public static class Engine_UiRealEstatePage
 	/// <summary>`L"- "` at 0x820EB5E8, and the line break at 0x820ADF4C.</summary>
 	private const string BonusBullet = "- ";
 
-	/// <summary>Both pages' text. Empty everywhere when no building has been resolved.</summary>
+	private const uint ScreenId = 28;
+
+	/// <summary>Both pages' texts as the fills wrote them, page 1's tick over page 1; a row a fill hid
+	/// is blank. Empty before the screen's pages have been filled.</summary>
+	public static IReadOnlyDictionary<string, string> StatedValues()
+	{
+		var values = new Dictionary<string, string>(32);
+		foreach (string scope in new[] { "page1", "page2", Engine_UiPageFills.Tick })
+		{
+			if (Engine_UiPageFills.Of(ScreenId, scope) is not { } fill)
+			{
+				continue;
+			}
+
+			foreach ((string path, string text) in fill.Texts)
+			{
+				values[path] = text;
+			}
+
+			foreach ((string path, bool shown) in fill.Shown)
+			{
+				if (!shown)
+				{
+					values[path] = string.Empty;
+				}
+				else if (!fill.Texts.ContainsKey(path) && values.TryGetValue(path, out string? hidden) && hidden.Length == 0)
+				{
+					values.Remove(path);
+				}
+			}
+		}
+
+		return values;
+	}
+
+	/// <summary>The slides the fills gave (the star strip, `sub_8299AF88`).</summary>
+	public static IReadOnlyDictionary<string, int> StatedSlides()
+	{
+		var slides = new Dictionary<string, int>(2);
+		foreach (string scope in new[] { "page1", "page2", Engine_UiPageFills.Tick })
+		{
+			if (Engine_UiPageFills.Of(ScreenId, scope) is { } fill)
+			{
+				foreach ((string path, int slide) in fill.Slides)
+				{
+					slides[path] = slide;
+				}
+			}
+		}
+
+		return slides.Count == 0 ? Engine_UiPageProviders.NoSlides : slides;
+	}
+
+	/// <summary>Both pages' text for a property the map names. Empty everywhere when no building has been resolved.</summary>
 	public static IReadOnlyDictionary<string, string> Values(
 		Fable2Bridge.RealEstate estate,
 		Refii.Text.Engine_BabelDatabase? strings)
@@ -290,20 +351,6 @@ public static class Engine_UiRealEstatePage
 		Row(2, OwnerKilledTag, estate.OwnerKilled);
 		Row(3, HeroOpinionTag, estate.HeroOpinion);
 		return rows;
-	}
-
-	/// <summary>
-	/// The star strip. `sub_8299AF88` bins the building's VALUE and sets that slide; the element
-	/// is shown either way, so a zero value simply leaves the authored slide standing.
-	/// </summary>
-	public static IReadOnlyDictionary<string, int> Slides(Fable2Bridge.RealEstate estate)
-	{
-		if (!estate.Known || estate.Stars <= 0)
-		{
-			return Engine_UiPageProviders.NoSlides;
-		}
-
-		return new Dictionary<string, int>(1) { [Star] = estate.Stars };
 	}
 
 	/// <summary>`&lt;gold_img&gt;` then a plain decimal — `sub_8230AE78` is `%d`, no separators.</summary>

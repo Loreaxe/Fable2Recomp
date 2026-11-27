@@ -94,6 +94,10 @@ ui_keyboard_mode={
 "type": "bool",
 "value": false
 }
+ui_keyboard_mode_two={
+"type": "bool",
+"value": false
+}
 fx_scene_depth={
 "type": "sampler2D",
 "value": ""

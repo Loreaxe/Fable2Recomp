@@ -120,7 +120,10 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 		public string Target => target;
 		public override string Label => label;
 		public override int Choices => 2;
-		public override string Caption(int index) => index == 0 ? "-" : "Reset (A saves, B keeps)";
+		public override string Caption(int index) => Caption(index, "A");
+
+		/// <summary>The caption where the page's commit is the button named <paramref name="commitButton"/>.</summary>
+		public static string Caption(int index, string commitButton) => index == 0 ? "-" : "Reset (" + commitButton + " saves, B keeps)";
 	}
 
 	/// <summary>
@@ -531,6 +534,9 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 	/// <summary>The row whose capture is armed, −1 for none.</summary>
 	private int _captureRow = -1;
 
+	/// <summary>The row A armed and the index it held: where a cancelled or unusable capture puts it back.</summary>
+	private (int Row, int Index)? _captureRestore;
+
 	/// <summary>The packs on offer, re-scanned at most this often while the page is previewed.</summary>
 	private const ulong PackScanMs = 5000;
 
@@ -566,6 +572,36 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 		string caption = line.Caption(index);
 		return Conflicts(row, index) is { Length: > 0 } also ? caption + "  (also " + also + ")" : caption;
 	}
+
+	public override string Caption(int row, int index, string commitButton) =>
+		row < _lines.Count && _lines[row] is ResetLine ? ResetLine.Caption(index, commitButton) : Caption(row, index);
+
+	/// <summary>A acts on the row: a rebind row arms its capture, a reset row flips, a choice steps on.</summary>
+	public override bool RowsTakeAccept => true;
+
+	public override int Accepted(int row, int index)
+	{
+		if (row < 0 || row >= _lines.Count)
+		{
+			return index;
+		}
+
+		Line line = _lines[row];
+		int at = AcceptedIndex(line, index);
+		_captureRestore = line.Captures is not null && index != at ? (row, index) : null;
+		return at;
+	}
+
+	/// <summary>
+	/// The index A puts <paramref name="line"/> at from <paramref name="index"/>: a capturing row
+	/// goes to 0, its "press an input" (PadLine / KeyLine / PadActionLine CaptureIndex, a mod row's
+	/// 0), where <see cref="Changed"/> arms the capture; a reset row flips; a choice steps on and
+	/// wraps; a heading stays. Pure.
+	/// </summary>
+	public static int AcceptedIndex(Line line, int index) =>
+		line.Captures is not null ? 0 :
+		line is ResetLine ? (index == 0 ? 1 : 0) :
+		line.Choices > 1 ? (index + 1) % line.Choices : index;
 
 	/// <summary>The other rows binding any input <paramref name="row"/> binds at <paramref name="index"/>, by label.</summary>
 	private string Conflicts(int row, int index)
@@ -798,6 +834,9 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 
 		if (line.Captures is { } kind && index == 0)
 		{
+			// A capture A armed goes back to what the row held; one a step armed, to the row's default.
+			int back = _captureRestore is { } held && held.Row == row ? held.Index : line.DefaultIndex;
+			_captureRestore = null;
 			_captureRow = row;
 			Engine_UiInputCapture.Begin(kind,
 				name =>
@@ -806,7 +845,12 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 					if (Current == this)
 					{
 						int at = line.IndexOfCaptured(name);
-						Engine_TitleGame.Active.SetOptionsCursorIndex(row, at >= 0 ? at : line.DefaultIndex);
+						if (at < 0)
+						{
+							Engine_UiInputCapture.Log($"[input-capture] '{line.Label}' cannot take '{name}': back to '{line.Caption(back)}'");
+						}
+
+						Engine_TitleGame.Active.SetOptionsCursorIndex(row, at >= 0 ? at : back);
 					}
 				},
 				() =>
@@ -814,20 +858,29 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 					_captureRow = -1;
 					if (Current == this)
 					{
-						Engine_TitleGame.Active.SetOptionsCursorIndex(row, line.DefaultIndex);
+						Engine_TitleGame.Active.SetOptionsCursorIndex(row, back);
 					}
 				});
 		}
 	}
 
-	/// <summary>A: every row to refii.toml as one write, and the bindings in force at once.</summary>
+	/// <summary>
+	/// A: the rows the player changed on this page since it was read, as one write, and the bindings
+	/// in force at once. A row left as it opened writes nothing, so its key keeps exactly what the
+	/// file held (a value the page cannot show opens as Default and stays in the file).
+	/// </summary>
 	public override bool Commit(Func<int, int> index)
 	{
 		Engine_UiInputCapture.Cancel();
 		var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+		var now = new int[_lines.Count];
 		for (int row = 0; row < _lines.Count; row++)
 		{
-			_lines[row].Store(index(row), values);
+			now[row] = index(row);
+			if (row >= _committed.Length || now[row] != _committed[row])
+			{
+				_lines[row].Store(now[row], values);
+			}
 		}
 
 		var write = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -844,11 +897,12 @@ public sealed class Engine_UiControlsPage : Engine_UiHostOptionsPage
 			}
 		}
 
-		if (!Engine_UiScreenActions.WriteSettings(write, remove))
+		if (values.Count > 0 && !Engine_UiScreenActions.WriteSettings(write, remove))
 		{
 			return false;
 		}
 
+		_committed = now;
 		Refii.Game.GameInput.RereadControlSettings();
 		return true;
 	}

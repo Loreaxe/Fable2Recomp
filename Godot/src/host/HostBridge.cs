@@ -23,7 +23,7 @@ public static partial class HostBridge
 	/// ABI this binding expects; bump together with the native `RefiiHostBridgeAbiVersion`.
 	/// The check is exact and `GameSession` treats a mismatch as fatal before the guest initialises.
 	/// </summary>
-	public const int ExpectedAbiVersion = 259;
+	public const int ExpectedAbiVersion = 277;
 
 	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
 	private static extern uint RefiiHostGetSaveRoot(byte[] output, uint capacity);
@@ -1863,6 +1863,16 @@ public static partial class HostBridge
 		public const uint NoAlphaDepthFlag = 4u;
 		public const uint DeadCreatureFlag = 8u;
 
+		/// <summary>
+		/// Bit 4 (`16u`, hostcore `kAppearanceGuestCorpse`): <c>CECCreature_FinishDeath</c> ran on
+		/// the entity's CECCreature since it was constructed — the guest leaves the body lying.
+		/// Stated by the Fable 2 bridge only (see Engine_CorpsePolicy.LeavesCorpse).
+		/// </summary>
+		public const uint GuestCorpseFlag = 16u;
+
+		/// <summary>The liveness bits: what <see cref="VisualOnly"/> strips.</summary>
+		private const uint LivenessFlags = DeadCreatureFlag | GuestCorpseFlag;
+
 		/// <summary>SetAsDrawable (+197). Clear: the guest releases the proxies — no draw, no shadow.</summary>
 		public bool Drawable => (Flags & DrawableFlag) != 0u;
 
@@ -1879,9 +1889,12 @@ public static partial class HostBridge
 		/// <summary>Entity carries a <c>CECCreature</c> component whose <c>alive</c> byte (<c>+0x18</c>) is 0.</summary>
 		public bool IsDeadCreature => (Flags & DeadCreatureFlag) != 0u;
 
-		/// <summary>Appearance stripped of <see cref="DeadCreatureFlag"/> so shader/tint caches ignore liveness flips.</summary>
+		/// <summary>See <see cref="GuestCorpseFlag"/>.</summary>
+		public bool IsGuestCorpse => (Flags & GuestCorpseFlag) != 0u;
+
+		/// <summary>Appearance stripped of the liveness bits so shader/tint caches ignore liveness flips.</summary>
 		public EntityAppearance VisualOnly =>
-			(Flags & DeadCreatureFlag) == 0u ? this : this with { Flags = Flags & ~DeadCreatureFlag };
+			(Flags & LivenessFlags) == 0u ? this : this with { Flags = Flags & ~LivenessFlags };
 
 		/// <summary>The opacity the guest blends by: `+116 * +112` (`sub_82572A58`).</summary>
 		public float Opacity => Alpha * CameraAlpha;
@@ -1906,7 +1919,7 @@ public static partial class HostBridge
 		/// field, and every entity the walk does not skip asks this several times.
 		/// </summary>
 		public bool IsConstructed =>
-			Alpha == 1f && CameraAlpha == 1f && Scale == 1f && (Flags & ~DeadCreatureFlag) == DrawableFlag &&
+			Alpha == 1f && CameraAlpha == 1f && Scale == 1f && (Flags & ~LivenessFlags) == DrawableFlag &&
 			TintLanes.X == 1f && TintLanes.Y == 1f && TintLanes.Z == 1f && TintLanes.W == 1f;
 	}
 
@@ -2435,6 +2448,11 @@ public static partial class HostBridge
 		FrontEndMode = 18,
 		WorldHeld = 19,
 		AbilityDiscardGate = 20,
+		CoopTetherDistance = 21,
+		CoopTetherSeparation = 22,
+		CoopTetherSerial = 23,
+		CoopLocalPartner = 24,
+		PartnerPlayerIcons = 25,
 	}
 
 	/// <summary>The word the guest's own call last stated under <paramref name="key"/>; 0 until one is.</summary>
@@ -2861,6 +2879,37 @@ public static partial class HostBridge
 	}
 
 	/// <summary>
+	/// States the screen and the views drawn this frame to the title's bridge
+	/// (<see cref="Refii.Camera.Engine_CameraViews.Words"/>, src/runtime/include/core/camera_views.h), for the
+	/// camera mod API's read calls on the guest thread.
+	/// </summary>
+	public static void StateCameraViews(float[] words)
+	{
+		if (TryGetAbiVersion() is null)
+		{
+			return;
+		}
+
+		RefiiHostStateCameraViews(words, (uint)words.Length);
+	}
+
+	private static readonly float[] _cameraOffset = new float[7];
+
+	/// <summary>
+	/// The display offset a mod stated for <paramref name="player"/> (camera_offset): right, up, back in
+	/// metres along the drawn camera's axes, then yaw, pitch, roll and fov in degrees; null with none.
+	/// </summary>
+	public static float[]? GetCameraOffset(int player)
+	{
+		if (TryGetAbiVersion() is null || RefiiHostGetCameraOffset(player, _cameraOffset) == 0)
+		{
+			return null;
+		}
+
+		return _cameraOffset;
+	}
+
+	/// <summary>
 	/// The camera statements after sequence <paramref name="after"/>, oldest first, into
 	/// <paramref name="words"/> (<see cref="Refii.Camera.Engine_CameraStatements.RecordWords"/> words
 	/// each); returns how many records were written. 0 without a bridge.
@@ -3002,6 +3051,24 @@ public static partial class HostBridge
 		catch (EntryPointNotFoundException)
 		{
 			return null;
+		}
+	}
+
+	/// <summary>Writes a player's session TEXT (never saved; the same on both co-op machines).</summary>
+	public static bool SetPlayerText(int player, string key, string text)
+	{
+		if (TryGetAbiVersion() is null)
+		{
+			return false;
+		}
+
+		try
+		{
+			return RefiiHostSetPlayerText(player, key, text) != 0;
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return false;
 		}
 	}
 
@@ -4942,6 +5009,41 @@ public static partial class HostBridge
 			return calls;
 		}
 
+		// The export hands over what fits and puts the rest back at the front of its queue: drain
+		// until none waits. A first record that fits no buffer makes these grow (to the native
+		// ceiling, where the export drops that one record by name).
+		for (int pass = 0; pass < DrainPasses; ++pass)
+		{
+			uint taken = TakeGuiNativeCallsOnce(calls);
+			if (GuiNativeCounters().Pending == 0 || (taken == 0 && !GrowDrain(ref _guiText, ref _guiKinds)))
+			{
+				break;
+			}
+		}
+
+		return calls;
+	}
+
+	private const int DrainPasses = 64;
+	private const int DrainTextCeiling = 16 * 1024 * 1024;
+	private const int DrainKindCeiling = 1024 * 1024;
+
+	/// <summary>Quadruples a drain's buffers up to the native ceilings; false when both are there.</summary>
+	private static bool GrowDrain(ref byte[]? text, ref byte[]? kinds)
+	{
+		if (text is null || kinds is null ||
+			(text.Length >= DrainTextCeiling && kinds.Length >= DrainKindCeiling))
+		{
+			return false;
+		}
+
+		text = new byte[System.Math.Min(text.Length * 4, DrainTextCeiling)];
+		kinds = new byte[System.Math.Min(kinds.Length * 4, DrainKindCeiling)];
+		return true;
+	}
+
+	private static uint TakeGuiNativeCallsOnce(System.Collections.Generic.List<Engine_UiModel.GuiNativeCall> calls)
+	{
 		byte[] text = _guiText ??= new byte[64 * 1024];
 		byte[] kinds = _guiKinds ??= new byte[4096];
 		System.Array.Clear(text);
@@ -4954,7 +5056,7 @@ public static partial class HostBridge
 		}
 		catch (EntryPointNotFoundException)
 		{
-			return calls;
+			return 0;
 		}
 
 		int at = 0;
@@ -5010,7 +5112,7 @@ public static partial class HostBridge
 			calls.Add(new Engine_UiModel.GuiNativeCall(name, arguments));
 		}
 
-		return calls;
+		return count;
 	}
 
 	/// <summary>
@@ -5105,6 +5207,21 @@ public static partial class HostBridge
 			return chunks;
 		}
 
+		// As TakeGuiNativeCalls: drained until none waits, the buffers grown for a record that fits none.
+		for (int pass = 0; pass < DrainPasses; ++pass)
+		{
+			uint taken = TakeMenuChunksOnce(chunks);
+			if (MenuChunkCounters().Pending == 0 || (taken == 0 && !GrowDrain(ref _menuText, ref _menuKinds)))
+			{
+				break;
+			}
+		}
+
+		return chunks;
+	}
+
+	private static uint TakeMenuChunksOnce(System.Collections.Generic.List<Engine_UiModel.MenuChunk> chunks)
+	{
 		byte[] text = _menuText ??= new byte[128 * 1024];
 		byte[] kinds = _menuKinds ??= new byte[8192];
 		System.Array.Clear(text);
@@ -5116,7 +5233,7 @@ public static partial class HostBridge
 		}
 		catch (EntryPointNotFoundException)
 		{
-			return chunks;
+			return 0;
 		}
 
 		int at = 0;
@@ -5154,7 +5271,7 @@ public static partial class HostBridge
 			chunks.Add(new Engine_UiModel.MenuChunk(presentation, chunk, attributes));
 		}
 
-		return chunks;
+		return count;
 	}
 
 	/// <summary>
@@ -5374,7 +5491,7 @@ public static partial class HostBridge
 	private static uint[]? _unlockIds, _unlockUsers;
 
 	[ThreadStatic]
-	private static ulong[]? _unlockSequences;
+	private static ulong[]? _unlockSequences, _unlockBindings;
 
 	/// <summary>The guest's achievement writes newer than <paramref name="afterSequence"/>, oldest first.</summary>
 	public static AchievementUnlock[] GetAchievementUnlocks(ulong afterSequence, int max = 16)
@@ -5390,12 +5507,14 @@ public static partial class HostBridge
 			_unlockIds = new uint[max];
 			_unlockUsers = new uint[max];
 			_unlockSequences = new ulong[max];
+			_unlockBindings = new ulong[max];
 		}
 
 		uint[] ids = _unlockIds;
 		uint[] users = _unlockUsers!;
 		ulong[] sequences = _unlockSequences!;
-		uint count = RefiiHostGetAchievementUnlocks(afterSequence, ids, users, sequences, (uint)max);
+		ulong[] bindings = _unlockBindings!;
+		uint count = RefiiHostGetAchievementUnlocks(afterSequence, ids, users, sequences, bindings, (uint)max);
 		if (count == 0)
 		{
 			return System.Array.Empty<AchievementUnlock>();
@@ -5404,7 +5523,7 @@ public static partial class HostBridge
 		var unlocks = new AchievementUnlock[System.Math.Min(count, (uint)max)];
 		for (int i = 0; i < unlocks.Length; ++i)
 		{
-			unlocks[i] = new AchievementUnlock(users[i], ids[i], sequences[i]);
+			unlocks[i] = new AchievementUnlock(users[i], ids[i], sequences[i], bindings[i]);
 		}
 
 		return unlocks;
@@ -5429,15 +5548,54 @@ public static partial class HostBridge
 		return written == 0 ? null : bytes;
 	}
 
-	/// <summary>States the unlocked set for the guest's own achievement enumerator.</summary>
-	public static void SetAchievementUnlocks(uint[] ids, ulong[] unlockFiletimes)
+	/// <summary>
+	/// States every save's unlocked set for the guest's per-user achievement enumerator: one save per
+	/// line, <c>save\tid:filetime,...</c> (<see cref="Refii.Achievements.Engine_AchievementCharacters.SaveTable"/>).
+	/// </summary>
+	public static void SetSaveAchievementUnlocks(string table)
 	{
 		if (TryGetAbiVersion() is null)
 		{
 			return;
 		}
 
-		RefiiHostSetAchievementUnlocks(ids, unlockFiletimes, (uint)System.Math.Min(ids.Length, unlockFiletimes.Length));
+		RefiiHostSetSaveAchievementUnlocks(table);
+	}
+
+	/// <summary>
+	/// The guest's adoption points' bindings newer than <paramref name="afterSerial"/>: <c>(serial, user,
+	/// save)</c>, save empty for a hero no save holds yet.
+	/// </summary>
+	public static List<Engine_UiModel.AchievementBinding> GetAchievementBindings(ulong afterSerial)
+	{
+		var bindings = new List<Engine_UiModel.AchievementBinding>();
+		if (TryGetAbiVersion() is null)
+		{
+			return bindings;
+		}
+
+		uint size = RefiiHostGetAchievementBindings(afterSerial, null, 0);
+		if (size == 0)
+		{
+			return bindings;
+		}
+
+		var text = new byte[size + 1];
+		if (RefiiHostGetAchievementBindings(afterSerial, text, (uint)text.Length) == 0)
+		{
+			return bindings;
+		}
+
+		foreach (string line in System.Text.Encoding.UTF8.GetString(text, 0, (int)size).Split('\n'))
+		{
+			string[] fields = line.Split('\t');
+			if (fields.Length == 3 && ulong.TryParse(fields[0], out ulong serial) && uint.TryParse(fields[1], out uint user))
+			{
+				bindings.Add(new Engine_UiModel.AchievementBinding(serial, user, fields[2]));
+			}
+		}
+
+		return bindings;
 	}
 
 	/// <summary>How many times the guest has called `XamShowAchievementsUI` this session.</summary>
@@ -6244,6 +6402,8 @@ public static partial class HostBridge
 		byte[] name = new byte[128];
 		byte[] parent = new byte[128];
 		byte[] label = new byte[192];
+		byte[] icon = new byte[160];
+		uint[] words = new uint[5];
 		uint total;
 		try
 		{
@@ -6257,14 +6417,14 @@ public static partial class HostBridge
 			}
 
 			RefiiHostGetMenuRowLabel(0, label, (uint)label.Length);
-			rows.Add(new MenuRow(
-				Text(name), Text(parent), firstId, firstType, firstRating, Text(label)));
+			rows.Add(WithItem(0, new MenuRow(
+				Text(name), Text(parent), firstId, firstType, firstRating, Text(label))));
 			for (uint i = 1; i < total; ++i)
 			{
 				RefiiHostGetMenuRow(i, name, (uint)name.Length, parent, (uint)parent.Length,
 					out uint id, out int type, out _, out int rating);
 				RefiiHostGetMenuRowLabel(i, label, (uint)label.Length);
-				rows.Add(new MenuRow(Text(name), Text(parent), id, type, rating, Text(label)));
+				rows.Add(WithItem(i, new MenuRow(Text(name), Text(parent), id, type, rating, Text(label))));
 			}
 		}
 		catch (EntryPointNotFoundException)
@@ -6273,6 +6433,22 @@ public static partial class HostBridge
 		}
 
 		return rows;
+
+		// The row's icon, mark and item (RefiiHostGetMenuRowItem); a title that states none answers no row.
+		MenuRow WithItem(uint index, MenuRow row)
+		{
+			if (RefiiHostGetMenuRowItem(index, icon, (uint)icon.Length, out int emphasis, words, (uint)words.Length) <= index)
+			{
+				return row;
+			}
+
+			return row with
+			{
+				Icon = Text(icon),
+				Emphasis = emphasis,
+				Item = Refii.Ui.Engine_UiModel.MenuRowItem.FromWords(words[0], words[1], words[2], words[3], words[4]),
+			};
+		}
 
 		static string Text(byte[] buffer)
 		{
@@ -6850,13 +7026,12 @@ public static partial class HostBridge
 	}
 
 	/// <summary>
-	/// One world-map region's info page. Every field is already worded by the guest.
+	/// One world-map region's minimap keys (SampleWorldMapRegion): the region the host named by the row's
+	/// own id less 999, its name, and what the minimap keys its `MinimapInfo` record and art on. The
+	/// region info page is its fill's statement, not this. Fable 3 answers no region.
 	/// </summary>
 	public readonly record struct WorldMapRegion(
-		uint Count, uint Index, string Name, string Distance, string Travel,
-		string Fine, string Owned, string Chests, string Digspots,
-		string Divespots, string Gargoyles, string SilverKeys, string Merchants,
-		int Stars,
+		uint Count, uint Index, string Name,
 
 		/// <summary>The region's first level, the `MinimapInfo` key — see the sampler.</summary>
 		string LevelName = "",
@@ -6885,22 +7060,15 @@ public static partial class HostBridge
 		}
 
 		var name = new byte[64];
-		var distance = new byte[64];
-		var travel = new byte[64];
-		var counts = new byte[256];
-		var merchants = new byte[512];
 		var levelName = new byte[64];
 		var scenario = new byte[64];
 		uint total;
 		uint index;
-		int stars;
 		uint levelKey;
 		try
 		{
 			total = RefiiHostGetWorldMapRegion(
-				out index, name, (uint)name.Length, distance, (uint)distance.Length,
-				travel, (uint)travel.Length, counts, (uint)counts.Length,
-				merchants, (uint)merchants.Length, out stars,
+				out index, name, (uint)name.Length,
 				levelName, (uint)levelName.Length, out levelKey, scenario, (uint)scenario.Length);
 		}
 		catch (EntryPointNotFoundException)
@@ -6908,14 +7076,7 @@ public static partial class HostBridge
 			return default;
 		}
 
-		// Seven tab-separated counts in the page's own order — see the export.
-		string[] parts = Utf8(counts).Split('\t');
-		string Part(int at) => at < parts.Length ? parts[at] : string.Empty;
-
-		return new WorldMapRegion(
-			total, index, Utf8(name), Utf8(distance), Utf8(travel),
-			Part(0), Part(1), Part(2), Part(3), Part(4), Part(5), Part(6),
-			Utf8(merchants), stars, Utf8(levelName), levelKey, Utf8(scenario));
+		return new WorldMapRegion(total, index, Utf8(name), Utf8(levelName), levelKey, Utf8(scenario));
 	}
 
 
@@ -7472,36 +7633,6 @@ public static partial class HostBridge
 	/// whenever the first still holds instance data.
 	/// </summary>
 	/// <summary>
-	/// The active sales and shortages — the world map's `Sales`. `NameKey` is FNV-1 of the
-	/// event's text tag, taken from the record as a raw hash, so nothing but numbers crosses.
-	/// </summary>
-	/// <summary>
-	/// One sale or shortage, as its page needs it. The three keys are Babel key HASHES, not
-	/// tags — the guest hashed them when the sale activated — so they resolve through the book
-	/// by key rather than by name. <paramref name="DaysLeft"/> is the guest's own
-	/// `Duration - today + activationDay`, and <paramref name="Multiplier"/> is signed against
-	/// 1.0: below is a sale, above a shortage, and the page shows `(m - 1) * 100` as a percent.
-	/// </summary>
-	public readonly record struct Sale(
-		uint NameKey, uint DescriptionKey, uint RegionKey, int DaysLeft, float Multiplier)
-	{
-		public bool IsShortage => Multiplier > 1f;
-	}
-
-	/// <summary>
-	/// The fast-travel regions that have at least one active stop — the world map's `Regions`.
-	/// Each is FNV-1 of the region's NAME, which is its own Babel key, so no string crosses the
-	/// boundary and a misread name resolves to nothing rather than to rubbish.
-	/// </summary>
-	/// <summary>
-	/// The fast-travel regions with an active stop, each with the ORDINAL that identifies it.
-	///
-	/// The ordinal, not the name, is the identity: event 41's handler `sub_826C7E90` takes the
-	/// row's `Float1`, subtracts the 999 the spawner added, and indexes the guest's own walk of
-	/// the region container with it. That walk counts every non-null entry, so a region with no
-	/// active stop still consumes an ordinal even though no row is ever spawned for it.
-	/// </summary>
-	/// <summary>
 	/// The inventory screen's mode — 1 Items, 3 Weapons, 0 when unknown.
 	///
 	/// Screen 15 is one screen with two lists. Its enter shows the tab strip on the tab of the
@@ -7511,46 +7642,8 @@ public static partial class HostBridge
 	public static uint GetInventoryScreenMode() =>
 		GetPauseState() is { } pause ? pause.CurrentTab switch { 4u => 1u, 5u => 3u, _ => 0u } : 0u;
 
-	/// <summary>
-	/// The upgrade-furniture screen's targeted piece (screen 26) — its component 68 as the page
-	/// fillers read it, and the building's value multiplier. See <c>Furniture</c> in hero_derived.h.
-	/// </summary>
-	public readonly record struct Furniture(
-		bool Known, bool Gate, int Installed, int Kind, int Type, int[] Values, float Multiplier);
 
 
-
-	public static List<(uint RecordId, int Category)> GetWornItems()
-	{
-		var worn = new List<(uint, int)>();
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return worn;
-		}
-
-		const int max = 64;
-		uint[] words = new uint[max * 2];
-		uint found;
-		try
-		{
-			found = RefiiHostGetWornItems(words, (uint)words.Length);
-		}
-		catch (System.DllNotFoundException)
-		{
-			return worn;
-		}
-		catch (System.EntryPointNotFoundException)
-		{
-			return worn;
-		}
-
-		for (uint i = 0; i < found && i < max; ++i)
-		{
-			worn.Add((words[i * 2], (int)words[(i * 2) + 1]));
-		}
-
-		return worn;
-	}
 
 	/// <summary>Reads the live fade. See <see cref="ScreenFade"/>.</summary>
 	public static ScreenFade GetScreenFade()
@@ -8149,6 +8242,12 @@ public static partial class HostBridge
 	private static extern void RefiiHostStateCamera(float[] eleven);
 
 	[DllImport(Library)]
+	private static extern void RefiiHostStateCameraViews(float[] words, uint count);
+
+	[DllImport(Library)]
+	private static extern int RefiiHostGetCameraOffset(int player, [Out] float[] seven);
+
+	[DllImport(Library)]
 	private static extern int RefiiHostGetPlayerTwoHoldPrompt([Out] float[] at, [Out] byte[] title, uint capacity);
 
 	[DllImport(Library)]
@@ -8285,9 +8384,6 @@ public static partial class HostBridge
 	private static extern uint RefiiHostTakeMenuChunks(
 		byte[] outUtf8, uint utf8Capacity, byte[] outKinds, uint kindsCapacity, uint maxRecords);
 
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetWornItems(uint[] outWords, uint wordCapacity);
-
 
 	[DllImport(Library)]
 	private static extern void RefiiHostMenuChunkCounters(
@@ -8307,6 +8403,11 @@ public static partial class HostBridge
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetMenuRowLabel(
 		uint index, [Out] byte[]? outLabel, uint labelCapacity);
+
+	/// <summary>RefiiHostGetMenuRowItem (ABI 270): row `index`'s icon, mark and five item words; the row count.</summary>
+	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+	private static extern uint RefiiHostGetMenuRowItem(
+		uint index, byte[] outIcon, uint iconCapacity, out int outEmphasis, uint[] outWords, uint wordCapacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetMenuScreenId();
@@ -8891,9 +8992,7 @@ public static partial class HostBridge
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetWorldMapRegion(
-		out uint outIndex, byte[] name, uint nameCapacity, byte[] distance, uint distanceCapacity,
-		byte[] travel, uint travelCapacity, byte[] counts, uint countsCapacity,
-		byte[] merchants, uint merchantsCapacity, out int outStars,
+		out uint outIndex, byte[] name, uint nameCapacity,
 		byte[] levelName, uint levelCapacity, out uint outLevelKey, byte[] scenario, uint scenarioCapacity);
 
 	[DllImport(Library)]
@@ -8951,6 +9050,10 @@ public static partial class HostBridge
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostUiDataGeneration();
+
+	[DllImport(Library)]
+	private static extern int RefiiHostSetPlayerText(int player, [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+		[MarshalAs(UnmanagedType.LPUTF8Str)] string text);
 
 	[DllImport(Library)]
 	private static extern int RefiiHostSetPlayerValue(
@@ -9145,14 +9248,17 @@ public static partial class HostBridge
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetAchievementUnlocks(
 		ulong afterSequence, [Out] uint[] ids, [Out] uint[] users, [Out] ulong[] sequences,
-		uint maxUnlocks);
+		[Out] ulong[] bindings, uint maxUnlocks);
+
+	[DllImport(Library)]
+	private static extern uint RefiiHostGetAchievementBindings(ulong afterSerial, [Out] byte[]? text, uint capacity);
+
+	[DllImport(Library)]
+	private static extern void RefiiHostSetSaveAchievementUnlocks([MarshalAs(UnmanagedType.LPUTF8Str)] string table);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetTitleXdbf([Out] byte[]? bytes, uint capacity);
 
-	[DllImport(Library)]
-	private static extern void RefiiHostSetAchievementUnlocks(
-		uint[] ids, ulong[] unlockFiletimes, uint count);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetAchievementsUiRequests();

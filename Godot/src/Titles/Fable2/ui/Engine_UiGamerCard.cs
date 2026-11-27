@@ -11,80 +11,45 @@ using Refii.Ui;
 /// question box asking whichever of the two applies (<c>GameUi</c> raises it).
 /// </summary>
 /// <remarks>
-/// PURE: what to offer and what to say, from the card the node resolved
-/// (<see cref="NetBridge.LatestGamerCard"/>) and whether this game has a seat to offer.
+/// PURE: what to say for the offer the shared rule picks (<see cref="Engine_UiCardOffer"/>, which Fable 3's
+/// card asks too), from the card the node resolved (<see cref="NetBridge.LatestGamerCard"/>).
 /// </remarks>
 public static class Engine_UiGamerCard
 {
-	public enum Offer
+	/// <summary>The question's or notice's text, in our own words (Refii.Text.Engine_OwnWords).</summary>
+	public static string Text(Engine_UiCardOffer.Offer offer, string name) => offer switch
 	{
-		/// <summary>The XUID matched no player the node knows (they left, or the link is down).</summary>
-		Unknown,
-
-		/// <summary>They are already in this game.</summary>
-		Partner,
-
-		/// <summary>They are hosting: join their game.</summary>
-		Join,
-
-		/// <summary>They are not hosting and this game has a seat: invite them into it.</summary>
-		Invite,
-
-		/// <summary>Neither side has a game for the other.</summary>
-		Nothing,
-	}
-
-	/// <summary>
-	/// What the card offers. <paramref name="canInvite"/> is whether this game would take them: we
-	/// host it and nobody else is in it.
-	/// </summary>
-	public static Offer Decide(NetBridge.GamerCard card, bool canInvite)
-	{
-		if (!card.Known)
-		{
-			return Offer.Unknown;
-		}
-
-		if (card.Partner)
-		{
-			return Offer.Partner;
-		}
-
-		if (card.Hosting)
-		{
-			return Offer.Join;
-		}
-
-		return canInvite ? Offer.Invite : Offer.Nothing;
-	}
-
-	/// <summary>Whether the offer is a question (A acts) rather than a notice.</summary>
-	public static bool Asks(Offer offer) => offer is Offer.Join or Offer.Invite;
-
-	/// <summary>The question's or notice's text.</summary>
-	public static string Text(Offer offer, string name) => offer switch
-	{
-		Offer.Join => $"Join {name}'s game?\n\nJoining leaves this one, and anything you have not saved is lost.",
-		Offer.Invite => $"{name} is not hosting a game. Invite them to join yours?",
-		Offer.Partner => $"{name} is already playing in your game.",
-		Offer.Nothing => $"{name} is not hosting a game you can join right now.",
-		_ => "That player cannot be reached right now.",
+		Engine_UiCardOffer.Offer.Join => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_JOIN", name),
+		Engine_UiCardOffer.Offer.Invite => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_INVITE", name),
+		Engine_UiCardOffer.Offer.Partner => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_PARTNER", name),
+		Engine_UiCardOffer.Offer.Nothing => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_NOTHING", name),
+		_ => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_UNREACHABLE"),
 	};
 
+	/// <summary>
+	/// The card's achievements line: the viewed player's hero and profile total as their own machine
+	/// states them (<see cref="Refii.Achievements.Engine_Achievements.PeerView"/>), out of
+	/// <paramref name="total"/>; null when nothing was stated or the title's list is not read yet.
+	/// </summary>
+	public static string? Achievements(Refii.Achievements.Engine_AchievementWire.View? view, System.Func<System.Func<uint, bool>, int> count, int total) =>
+		view is null || total <= 0
+			? null
+			: Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_ACHIEVEMENTS", count(view.Hero.Contains), total, count(view.Profile.Contains));
+
 	/// <summary>The question's A caption.</summary>
-	public static string? Accept(Offer offer) => offer switch
+	public static string? Accept(Engine_UiCardOffer.Offer offer) => offer switch
 	{
-		Offer.Join => "Join Game",
-		Offer.Invite => "Invite to Game",
+		Engine_UiCardOffer.Offer.Join => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_JOIN_GAME"),
+		Engine_UiCardOffer.Offer.Invite => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_INVITE_TO_GAME"),
 		_ => null,
 	};
 
 	/// <summary>What is told once A was pressed and the node took (or refused) the action.</summary>
-	public static string Outcome(Offer offer, string name, bool sent) => (offer, sent) switch
+	public static string Outcome(Engine_UiCardOffer.Offer offer, string name, bool sent) => (offer, sent) switch
 	{
-		(Offer.Join, true) => $"Joining {name}'s game. It loads when the host answers.",
-		(Offer.Join, false) => $"{name} is not hosting a game you can join right now.",
-		(Offer.Invite, true) => $"Invitation sent to {name}.",
-		_ => $"{name} could not be invited right now.",
+		(Engine_UiCardOffer.Offer.Join, true) => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_JOINING", name),
+		(Engine_UiCardOffer.Offer.Join, false) => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_NOTHING", name),
+		(Engine_UiCardOffer.Offer.Invite, true) => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_INVITED", name),
+		_ => Refii.Text.Engine_OwnWords.Say("REFII_F2_CARD_NOT_INVITED", name),
 	};
 }

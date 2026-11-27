@@ -55,10 +55,18 @@ uniform bool outline = false;
 
 varying vec2 clip_world;
 
+// The seat a HUD view is drawn in on split screen (Engine_HudView.KeepToSeat): min.xy, max.xy in
+// WORLD space, the real canvas the camera draws. A half is a screen of its own, so what a seated
+// view places outside its half is off its screen, as it would be past a window edge. Unbounded
+// everywhere else, so nothing that is not seated is affected.
+uniform vec4 seat_rect = vec4(-1e9, -1e9, 1e9, 1e9);
+varying vec2 seat_world;
+
 #include "res://src/Engine/ui/ui_text_outline.gdshaderinc"
 
 void vertex() {
 	clip_world = ((MODEL_MATRIX * vec4(VERTEX, 1.0)).xy - clip_seat.zw) / clip_seat.xy;
+	seat_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xy;
 
 	// SNAPPED, GLYPHS SIT ON WHOLE PIXELS, as the 360 drew them: a 2-texel stem is two solid pixels.
 	// The canvas camera frames 712.1 units in a 720-pixel viewport and elements sit at fractional
@@ -85,6 +93,8 @@ void vertex() {
 void fragment() {
 	bool clipped = clip_world.x < clip_rect.x || clip_world.x > clip_rect.z ||
 		clip_world.y < clip_rect.y || clip_world.y > clip_rect.w;
+	clipped = clipped || seat_world.x < seat_rect.x || seat_world.x > seat_rect.z ||
+		seat_world.y < seat_rect.y || seat_world.y > seat_rect.w;
 
 	vec4 texel = texture(atlas, UV);
 	vec2 uv_dx = dFdx(UV);

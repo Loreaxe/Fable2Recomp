@@ -28,6 +28,14 @@ using Refii.Models;
 /// The input is the guest's: the map's Lua (WorldMap:ProcessGameAction) moves the camera and the
 /// pieces, and this view follows. The keyboard and mouse reach it as the pad does, by the PC
 /// build's map bindings (<see cref="Fable3Input.MapUp"/>).
+///
+/// THE CLOSE IS THE GUEST'S TOO. B (the right button, Escape) is the map's cancel: its Lua steps
+/// out one view at a time, asks its own questions and at the top calls WorldMap.Exit; START is its
+/// exit to the game. Both stand behind the map's own gates (the back-out ability among them). The
+/// host's own close request is the guest tick action `world-map:close:&lt;p&gt;`
+/// (Fable3/src/hooks/src/world_map_close.cpp), that same WorldMap.Exit on the map's mode. Never
+/// GUI.ToggleWorldMap: with the map up it only pops the mode, and the scene stays presented with
+/// no input left to reach it.
 /// </remarks>
 public partial class Fable3MapTable : SubViewportContainer
 {
@@ -61,6 +69,13 @@ public partial class Fable3MapTable : SubViewportContainer
 	/// the map has the pad — B backs out (GAME_ACTION_WORLD_MAP_CANCEL), so the keys take their menu meanings.
 	/// </summary>
 	public static bool Presented { get; private set; }
+
+	/// <summary>
+	/// A world map scene still presented after its game mode left (<see cref="Fable3WorldMapMode.Stranded"/>):
+	/// nothing of the guest's reads the map's input any more, so the keys go back to the game under it.
+	/// </summary>
+	public static bool Stranded => Fable3WorldMapMode.Stranded(Presented);
+
 	private uint _serial = uint.MaxValue;
 	private long _frames;
 	private bool _bridgeMissing;
@@ -200,6 +215,7 @@ public partial class Fable3MapTable : SubViewportContainer
 		}
 		Visible = on;
 		Presented = on;
+		Fable3WorldMapMode.ScenePresented(on);
 		_viewport.RenderTargetUpdateMode = on ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
 		GD.Print(on ? $"[map-table] holder {_holder:X8} presented" : $"[map-table] holder {_holder:X8} no longer presented");
 	}

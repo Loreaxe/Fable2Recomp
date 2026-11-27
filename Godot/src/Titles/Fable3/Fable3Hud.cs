@@ -180,6 +180,25 @@ public partial class Fable3Hud : Fable3Canvas
 	public static Engine_UiTheme? Book(string document) =>
 		_standing is { _stood: true, _host: { } host } ? host.PatternBookFor(document) : null;
 
+	/// <summary>The standing view of <paramref name="document"/> (a box screen's frame, <see cref="Fable3ScreenFrames"/>), or null.</summary>
+	public static Fable3HudDocument? Standing(string document)
+	{
+		if (_standing is not { _stood: true } hud)
+		{
+			return null;
+		}
+
+		foreach (Fable3HudDocument stood in hud._documents)
+		{
+			if (stood.Document == document && stood.View is not null)
+			{
+				return stood;
+			}
+		}
+
+		return null;
+	}
+
 	/// <summary>Builds every document's view once the banks are indexed.</summary>
 	private void Stand()
 	{

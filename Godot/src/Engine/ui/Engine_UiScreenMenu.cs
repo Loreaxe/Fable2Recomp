@@ -161,25 +161,6 @@ public sealed class Engine_UiScreenMenu
 	/// A row here IS committable: see <see cref="Engine_UiMenuTemplate.BuildInto"/>.
 	/// </remarks>
 	/// <summary>
-	/// Shows the list the dye flow calls for, NOW: the dye list while a dye is held, the
-	/// screen's own list once it is put away. The sampled rebuild runs when the guest's screen
-	/// changes, and choosing a dye changes nothing of the guest's.
-	/// </summary>
-	public bool FollowDyeFlow()
-	{
-		string script = Refii.Core.Engine_TitleGame.Active.HeldMenuScript ?? _boundScript;
-		if (script.Length == 0 || Engine_UiTemplates.Menu(script) is not { } template)
-		{
-			return false;
-		}
-
-		PopulationScript = script;
-		bool changed = RebuildFromTemplate(template);
-		GD.Print($"[screen-menu] the dye flow shows '{script}' — {Script.Visible.Count} row(s)");
-		return changed;
-	}
-
-	/// <summary>
 	/// Re-reads the bound template's sources NOW, in place (fold and cursor kept): what the guest's
 	/// own handler does after a purchase or a use (`sub_829A5568` restates every ability row and
 	/// the category counts after `sub_8246C970`), which our pump's direct call never runs. The
@@ -399,10 +380,20 @@ public sealed class Engine_UiScreenMenu
 				continue;
 			}
 
-			// A category the template says carries no count — the clothing screen's `Outfits`,
-			// whose header the guest spawns through the countless `sub_826CF020`.
-			if (template.Entry(row.Name) is { Counted: false })
+			// A category the template says carries no count of ours — the clothing screen's
+			// `Outfits`, whose header the guest spawns through the countless `sub_826CF020`; the world
+			// map's five, whose guest header carries its own (Fable2UiTemplates.WorldMapCategory). A
+			// category whose rows are its own population's takes that population's caption for it.
+			if (template.Entry(row.Name) is { Counted: false } uncounted)
 			{
+				if (Engine_UiMenuSources.CapturesFor(uncounted.Source, row.Name) &&
+					Engine_UiMenuSources.CapturedCaption(row.Name) is { Length: > 0 } guest &&
+					!string.Equals(row.StatedLabel, guest, System.StringComparison.Ordinal))
+				{
+					row.StatedLabel = guest;
+					moved = true;
+				}
+
 				continue;
 			}
 
@@ -859,7 +850,17 @@ public sealed class Engine_UiScreenMenu
 
 		// AND THE GIFT FAMILY STATES IT NEITHER WAY. `sub_82430468` spawns screen 15's rows from
 		// native C++ and issues no `RepopulateMenuFromPopulationScript` at all, so the screen's
-		// own template names the list instead.
+		// own template names the list instead. A screen whose template names its lists BY MODE takes
+		// the mode's list over a stated script whose shipped table authors no row (a runtime list):
+		// the items book's attach and strip repopulate from 'EquipmentMenu' (`dword_8349B29C`,
+		// `sub_826D1800` 0x826D2040 / 0x826D22F4) before spawning the items rows natively.
+		if (PopulationScript.Length != 0 && ScreenId != 0 &&
+			Engine_UiTemplates.Screen(ScreenId) is { MenuScriptByMode.Count: > 0 } &&
+			Refii.Core.Engine_TitleGame.Active.PopulationTable(PopulationScript) is { Entries.Count: 0 })
+		{
+			PopulationScript = string.Empty;
+		}
+
 		if (PopulationScript.Length == 0 && ScreenId != 0 &&
 			Engine_UiTemplates.Screen(ScreenId) is { } screenTemplate)
 		{
@@ -891,14 +892,6 @@ public sealed class Engine_UiScreenMenu
 			}
 
 			PopulationScript = bound;
-		}
-
-		// A MENU THE TITLE HOLDS replaces the screen's own (Fable 2's dye list over the items
-		// screen), and leaving that screen puts it away — the guest's own state lives on the screen
-		// it leaves too.
-		if (Refii.Core.Engine_TitleGame.Active.OverrideMenuScript(ScreenId) is { } held)
-		{
-			PopulationScript = held;
 		}
 
 		Presentation = presentation;

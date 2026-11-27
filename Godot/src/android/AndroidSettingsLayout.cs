@@ -40,7 +40,7 @@ public static class AndroidSettingsLayout
         [AndroidStartup.SkipVideosKey] = (SettingsTab.Gameplay, "Features & Media", 21),
         // After vibration on or off (controller_vibration, 110).
         [AndroidQuickSettings.VibrationStrengthKey] = (SettingsTab.Controls, "Controller & Prompts", 111),
-        // After split-screen co-op (coop_split_screen, 110).
+        // After the local co-op screen (coop_screen_mode, 110).
         [Refii.Game.GameSplitView.OrientationKey] = (SettingsTab.Gameplay, "Co-op & Online Multiplayer", 111),
     };
 

@@ -9,8 +9,10 @@
 // The host reaches these as ordinary C++ symbols; the PAYLOAD reaches them through the C entries
 // in core/payload_bridge.h. See that header for the contract.
 
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 
 #include "core/payload_bridge_fable2.h"
 
@@ -82,6 +84,25 @@ uint32_t StatedHighlightFor(uint32_t component) {
 
   return 0u;
 }
+
+namespace {
+
+/// WHO TARGETS WHAT: one row per thing some player targets, as the setter left its two bytes.
+/// Rows go when the setter leaves neither set; a thing destroyed while targeted keeps its row
+/// until the table needs the room, which is harmless — the highlight and the "Interact" icon are
+/// raised only through the setter, so a reused address is restated before either shows.
+struct TargetedRow {
+  uint32_t thing = 0u;
+  uint8_t mask = 0u;
+  bool interact = false;
+};
+
+constexpr int32_t kTargetedRows = 64;
+std::mutex g_targeted_mutex;
+std::array<TargetedRow, kTargetedRows> g_targeted{};
+int32_t g_targeted_count = 0;
+
+}  // namespace
 }  // namespace refii::vfs
 
 // --- The payload's side. C only; see core/payload_bridge.h. --------------------------------
@@ -101,5 +122,53 @@ void refii_bridge_note_highlight_colour(uint32_t component, uint32_t rgba) {
 
 void refii_bridge_note_highlight_target(void) {
   refii::vfs::g_target_calls.fetch_add(1u, std::memory_order_relaxed);
+}
+
+void refii_bridge_note_targeted_by(uint32_t thing, uint32_t mask, int32_t interact) {
+  using refii::vfs::g_targeted;
+  using refii::vfs::g_targeted_count;
+  if (thing == 0u) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(refii::vfs::g_targeted_mutex);
+  int32_t at = 0;
+  while (at < g_targeted_count && g_targeted[static_cast<std::size_t>(at)].thing != thing) {
+    ++at;
+  }
+  if ((mask & 3u) == 0u) {
+    if (at < g_targeted_count) {
+      g_targeted[static_cast<std::size_t>(at)] = g_targeted[static_cast<std::size_t>(--g_targeted_count)];
+    }
+    return;
+  }
+  if (at == g_targeted_count) {
+    if (g_targeted_count == refii::vfs::kTargetedRows) {
+      // Full: the oldest row gives way (rows are appended, so it is the first).
+      for (int32_t i = 1; i < g_targeted_count; ++i) {
+        g_targeted[static_cast<std::size_t>(i - 1)] = g_targeted[static_cast<std::size_t>(i)];
+      }
+      at = --g_targeted_count;
+    }
+    ++g_targeted_count;
+  }
+  g_targeted[static_cast<std::size_t>(at)] = {thing, static_cast<uint8_t>(mask & 3u), interact != 0};
+}
+
+int32_t refii_bridge_targeted_by(uint32_t* out_pairs, int32_t capacity_pairs, int32_t interact_only) {
+  if (out_pairs == nullptr || capacity_pairs <= 0) {
+    return 0;
+  }
+  std::lock_guard<std::mutex> lock(refii::vfs::g_targeted_mutex);
+  int32_t written = 0;
+  for (int32_t i = 0; i < refii::vfs::g_targeted_count && written < capacity_pairs; ++i) {
+    const refii::vfs::TargetedRow& row = refii::vfs::g_targeted[static_cast<std::size_t>(i)];
+    if (interact_only != 0 && !row.interact) {
+      continue;
+    }
+    out_pairs[written * 2] = row.thing;
+    out_pairs[written * 2 + 1] = row.mask;
+    ++written;
+  }
+  return written;
 }
 }  // extern "C"

@@ -212,9 +212,10 @@ public partial class Engine_FxDisplacement : Node
     }
 
     /// <summary>
-    /// View 0's: draws over player one's view and builds view 1's while the screen is split; back
-    /// over the window, and view 1's freed, when it rejoins. The re-host happens before the split
-    /// view frees its viewports, so the apply layer never points at a freed one.
+    /// View 0's: builds view 1's while the two views are open (Engine_Views.Open) and frees it when they
+    /// close; draws over player one's view while they are drawn and over the window while it draws, so a
+    /// split or rejoin re-hosts and builds nothing. The re-host happens before the split view frees its
+    /// viewports, so the apply layer never points at a freed one.
     /// </summary>
     private void FollowViews()
     {
@@ -223,11 +224,19 @@ public partial class Engine_FxDisplacement : Node
             return;
         }
 
-        if (Refii.Core.Engine_Views.Split &&
+        if (Refii.Core.Engine_Views.Open &&
             Refii.Core.Engine_Views.FirstViewport is { } first && GodotObject.IsInstanceValid(first) &&
             Refii.Core.Engine_Views.SecondViewport is { } second && GodotObject.IsInstanceValid(second))
         {
-            Host(first);
+            if (Refii.Core.Engine_Views.Split || _windowHost is null || !GodotObject.IsInstanceValid(_windowHost))
+            {
+                Host(first);
+            }
+            else
+            {
+                Host(_windowHost);
+            }
+
             if (_second is null || !GodotObject.IsInstanceValid(_second))
             {
                 _second = new Engine_FxDisplacement

@@ -56,6 +56,7 @@ public static class Engine_CameraStatements
 		Push = 31,
 		SnapBegin = 32,
 		SnapEnd = 33,
+		Destroy = 34,
 	}
 
 	/// <summary>The Push flag: this machine draws the pushed manager's camera.</summary>

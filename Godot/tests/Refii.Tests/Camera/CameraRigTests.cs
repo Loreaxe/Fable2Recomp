@@ -78,7 +78,7 @@ public class CameraRigTests
 			stated[m.Groups[1].Value] = int.Parse(m.Groups[2].Value);
 		}
 
-		AssertThat(stated.Count).IsEqual(33);
+		AssertThat(stated.Count).IsEqual(34);
 		foreach ((string name, int id) in stated)
 		{
 			AssertThat(System.Enum.TryParse(name, out Call call) && (int)call == id)
@@ -155,6 +155,27 @@ public class CameraRigTests
 		AssertThat(gate.Reads.Rows).IsEqual(1);
 		AssertThat(gate.Reads.Passed).IsEqual(1);
 		AssertThat(gate.Pushes.Passed).IsEqual(1);
+	}
+
+	[TestCase]
+	public void ADestroyedManagerIsNoPlayersCamera()
+	{
+		var rig = new Engine_CameraRig();
+		Run(rig,
+			S(Call.MoveToCut, values: new[] { 1f, 2f, 3f }),
+			S(Call.SetFovCut, values: new[] { 60f }),
+			Ease(1f, cut: true), End(), Push());
+		AssertThat(rig.Managers.ContainsKey(Manager)).IsTrue();
+		AssertThat(rig.Components.ContainsKey(Comp)).IsTrue();
+
+		// The guest's manager destructor (Call.Destroy): the manager and the components it showed go.
+		Run(rig, new Statement { Sequence = ++_sequence, Call = Call.Destroy, Manager = Manager });
+		AssertThat(rig.Managers.ContainsKey(Manager)).IsFalse();
+		AssertThat(rig.Components.ContainsKey(Comp)).IsFalse();
+
+		// A manager built later at the same address starts with nothing known.
+		Run(rig, Push());
+		AssertThat(rig.Managers[Manager].Live is null).IsTrue();
 	}
 
 	[TestCase]

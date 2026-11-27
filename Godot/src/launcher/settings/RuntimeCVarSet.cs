@@ -56,9 +56,8 @@ public static class RuntimeCVarsGodot
     private static readonly string Fable2PubGames = Refii.Core.Engine_Title.Fable2.Folder;
 
     /// <summary>
-    /// Local co-op is Fable 2's: split screen takes its second camera only when
-    /// <c>Engine_TitleGame.Active.LocalCoop</c>, which only Fable 2 states, and its screen is
-    /// <c>Titles/Fable2/game/GameUiCoopScreen.cs</c>.
+    /// Player two's controller bindings are Fable 2's: its local co-op reads them (the couch screen
+    /// settings, coop_screen_mode and its orientation, are both titles').
     /// </summary>
     private static readonly string Fable2LocalCoop = Refii.Core.Engine_Title.Fable2.Folder;
 
@@ -805,18 +804,20 @@ public static class RuntimeCVarsGodot
             new("mouse_lock", ControlsCategory, RuntimeCVarType.Bool, "true",
                 "Lock the mouse cursor inside the game window during play. Off keeps the cursor visible " +
                 "and free to move outside the window (convenient for multi-monitor setups or while developing)."),
-            new(Refii.Game.GameSplitView.SwitchKey, MultiplayerCategory, RuntimeCVarType.Bool, "true",
-                "Local co-op on split screen: each player gets their own camera and their own half "
-                + "of the screen and HUD; menus open over the whole screen and name their player. "
-                + "Off shares one screen and one camera, as the original game does. Changing it to "
-                + "split takes effect when player two next joins.",
-                OwnerTitle: Fable2LocalCoop),
+            new(Refii.Camera.Engine_CameraScreens.ModeKey, MultiplayerCategory, RuntimeCVarType.String, "split",
+                "The local co-op screen. Shared: one screen and one camera, and the players stay within "
+                + "the camera's reach of each other, as the original game does. Split: each player gets "
+                + "their own camera and their own half of the screen and HUD for the whole game, and both "
+                + "roam freely. Split when apart: one shared screen while the players are close, a half "
+                + "each as soon as they move past the shared camera's reach, and shared again when they "
+                + "come back; both roam freely. Menus open over the whole screen and name their player. "
+                + "Takes effect at once.",
+                "shared|Shared screen,split|Split screen,hybrid|Split when apart"),
             new(Refii.Game.GameSplitView.OrientationKey, MultiplayerCategory, RuntimeCVarType.String, "vertical",
-                "How split screen divides the window. Vertical puts player one on the left and "
-                + "player two on the right; horizontal puts player one on top and player two "
-                + "below. Takes effect at once.",
-                "vertical|Vertical (side by side),horizontal|Horizontal (top and bottom)",
-                OwnerTitle: Fable2LocalCoop),
+                "How a split screen divides the window, split or split when apart. Vertical puts player "
+                + "one on the left and player two on the right; horizontal puts player one on top and "
+                + "player two below. Takes effect at once.",
+                "vertical|Vertical (side by side),horizontal|Horizontal (top and bottom)"),
             new("discord_presence", PresenceCategory, RuntimeCVarType.Bool, "true",
                 "Show the game you are playing and the level you are in on your "
                 + "Discord profile while Discord is running."),
@@ -865,10 +866,54 @@ public static class RuntimeCVarsGodot
     /// in one place: a comma list of key names, or MouseLeft / MouseRight / MouseMiddle /
     /// Mouse4 / Mouse5.
     /// </summary>
-    private static IEnumerable<RuntimeCVarDefinition> KeyBindings() =>
-        Refii.Game.GameInput.KeyActions.Select(action => new RuntimeCVarDefinition(
+    private static IEnumerable<RuntimeCVarDefinition> KeyBindings() => KeyBindingsOf(Refii.Game.GameInput.KeyActions);
+
+    private static IEnumerable<RuntimeCVarDefinition> KeyBindingsOf(IEnumerable<Refii.Game.GameInput.KeyAction> actions) =>
+        actions.Select(action => new RuntimeCVarDefinition(
             "key_" + action.Name, ControlsCategory, RuntimeCVarType.String, action.Defaults,
             action.Description + " Default: " + action.Defaults + "."));
+
+    /// <summary>
+    /// <paramref name="title"/>'s own keyboard table as settings: its names, descriptions and
+    /// defaults (Fable 3's <c>key_pause</c> is "Escape", Fable 2's "Escape,Tab"). <see cref="Definitions"/>
+    /// holds the table of the title active when it was built — in the launcher, Fable 2's — so a
+    /// title's file is written from this, never from that.
+    /// </summary>
+    public static IReadOnlyList<RuntimeCVarDefinition> KeyBindingsOf(Refii.Core.Engine_Title title) =>
+        KeyBindingsOf(Refii.Core.Engine_TitleGame.For(title).Input.KeyActions).ToList();
+
+    /// <summary>Whether <paramref name="name"/> is a key of a title's keyboard table (not a mod's dotted binding).</summary>
+    public static bool IsKeyBinding(string name) => KeyBindingNames.Contains(name);
+
+    private static HashSet<string>? _keyBindingNames;
+
+    /// <summary>Every title's keyboard table as setting names; the tables are fixed, so built once.</summary>
+    private static HashSet<string> KeyBindingNames
+    {
+        get
+        {
+            if (_keyBindingNames is { } built)
+            {
+                return built;
+            }
+
+            var names = new HashSet<string>(System.StringComparer.Ordinal);
+            foreach (Refii.Game.GameInput.KeyAction action in Refii.Game.GameInput.DefaultKeyActions)
+            {
+                names.Add("key_" + action.Name);
+            }
+
+            foreach (Refii.Core.Engine_Title title in Refii.Core.Engine_Title.All)
+            {
+                foreach (Refii.Game.GameInput.KeyAction action in Refii.Core.Engine_TitleGame.For(title).Input.KeyActions)
+                {
+                    names.Add("key_" + action.Name);
+                }
+            }
+
+            return _keyBindingNames = names;
+        }
+    }
 
     /// <summary>The group a mod's rebindable actions sit under: the Controls group, titled by the mod.</summary>
     public static string ModControlsCategory(string title) => ControlsCategory + ": " + title;
@@ -1000,9 +1045,44 @@ public static class RuntimeCVarSet
     /// <summary>Every title's settings: shared CVars, title-owned CVars, and per-title mod bindings.</summary>
     public static IReadOnlyList<RuntimeCVarDefinition> All => _all ??= Build();
 
-    /// <summary>The settings <paramref name="title"/> reads, in <see cref="All"/>'s order.</summary>
-    public static IReadOnlyList<RuntimeCVarDefinition> For(Refii.Core.Engine_Title title) =>
-        All.Where(definition => definition.AppliesTo(title)).ToList();
+    /// <summary>
+    /// The settings <paramref name="title"/> reads, in <see cref="All"/>'s order, its keyboard rows
+    /// from its own table (<see cref="RuntimeCVarsGodot.KeyBindingsOf(Refii.Core.Engine_Title)"/>) in
+    /// the place the built table's rows stood.
+    /// </summary>
+    public static IReadOnlyList<RuntimeCVarDefinition> For(Refii.Core.Engine_Title title)
+    {
+        IReadOnlyList<RuntimeCVarDefinition> keys = RuntimeCVarsGodot.KeyBindingsOf(title);
+        var result = new List<RuntimeCVarDefinition>();
+        bool placed = false;
+        foreach (RuntimeCVarDefinition definition in All)
+        {
+            if (!definition.AppliesTo(title))
+            {
+                continue;
+            }
+
+            if (RuntimeCVarsGodot.IsKeyBinding(definition.Name))
+            {
+                if (!placed)
+                {
+                    result.AddRange(keys);
+                    placed = true;
+                }
+
+                continue;
+            }
+
+            result.Add(definition);
+        }
+
+        if (!placed)
+        {
+            result.AddRange(keys);
+        }
+
+        return result;
+    }
 
     /// <summary>The active title's settings (<see cref="Refii.Core.Engine_Title.Active"/>).</summary>
     public static IReadOnlyList<RuntimeCVarDefinition> Active => For(Refii.Core.Engine_Title.Active);

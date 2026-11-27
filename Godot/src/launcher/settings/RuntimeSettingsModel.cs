@@ -16,6 +16,12 @@ public sealed partial class RuntimeSettingsModel
 
     private SortedDictionary<string, string> _fable2StoredValues = new(StringComparer.Ordinal);
     private SortedDictionary<string, string> _fable3StoredValues = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// <see cref="Values"/> as the last load or save left them: what <see cref="Save"/> compares
+    /// against, so only the settings the player changed since are written.
+    /// </summary>
+    private SortedDictionary<string, string> _loadedValues = new(StringComparer.Ordinal);
     private IReadOnlyDictionary<string, string>? _modsRootsOverride;
 
     private const string PanelSection = "Settings";
@@ -358,18 +364,18 @@ public sealed partial class RuntimeSettingsModel
             RuntimeCVarSet.Refresh(modsRootsByTitleKey);
         }
 
+        // THE ACTIVE TITLE'S FILE ONLY: loading the panel prepares the file of the game the launcher
+        // is on (a Fable 3 start never touches refii.toml); the other title's file is read as it
+        // stands and prepared when that title is launched (LaunchController.Launch). The pass edits
+        // only its own keys (RuntimeConfig.EnsureDefaultsForTitle).
         if (ensureDefaults)
         {
-            if (!RuntimeConfig.EnsureDefaultsForTitle(Refii.Core.Engine_Title.Fable2, ConfigPath, out string error))
+            bool fable3 = Refii.Core.Engine_Title.Active == Refii.Core.Engine_Title.Fable3;
+            string path = fable3 ? SecondaryConfigPath : ConfigPath;
+            if ((!fable3 || System.IO.File.Exists(path)) &&
+                !RuntimeConfig.EnsureDefaultsForTitle(Refii.Core.Engine_Title.Active, path, out string error))
             {
-                StatusMessage = "Failed to prepare " + System.IO.Path.GetFileName(ConfigPath) + ": " + error;
-            }
-
-            if (System.IO.File.Exists(SecondaryConfigPath) &&
-                !RuntimeConfig.EnsureDefaultsForTitle(Refii.Core.Engine_Title.Fable3, SecondaryConfigPath, out string error3) &&
-                StatusMessage.Length == 0)
-            {
-                StatusMessage = "Failed to prepare " + System.IO.Path.GetFileName(SecondaryConfigPath) + ": " + error3;
+                StatusMessage = "Failed to prepare " + System.IO.Path.GetFileName(path) + ": " + error;
             }
         }
 
@@ -391,6 +397,7 @@ public sealed partial class RuntimeSettingsModel
             }
             else if (definition.OwnerTitle is null &&
                      !IsPerTitleIsolatedRoot(definition.Name) &&
+                     !RuntimeCVarsGodot.IsKeyBinding(definition.Name) &&
                      !Values.ContainsKey(definition.Name) &&
                      _fable3StoredValues.TryGetValue(definition.Name, out string? sharedFallback))
             {
@@ -417,14 +424,23 @@ public sealed partial class RuntimeSettingsModel
         Values["lighting_preset"] = CurrentLightingPreset();
         ReadDesktopPreset();
         ReadGraphicsPreset();  // the phone's, RuntimeSettingsModel.GraphicsPreset.cs
+        _loadedValues = new SortedDictionary<string, string>(Values, StringComparer.Ordinal);
     }
 
     private static bool IsPerTitleIsolatedRoot(string key) =>
         key is "game_data_root" or "cache_root" or "user_data_root";
 
     /// <summary>
-    /// Atomically saves shared engine settings to both <c>refii.toml</c> and <c>refiii.toml</c> while
-    /// routing title-owned CVars strictly to their owning title's file and preserving per-title roots.
+    /// Writes the settings the player CHANGED since the last load or save, each into the file of every
+    /// title it applies to, as an in-place edit of that key's line (<see cref="RuntimeConfig.EditValuesForTitle"/>):
+    /// no other line of either file changes, no key is dropped, nothing is reworded. A save with nothing
+    /// changed writes nothing — the Play button, a rebuild and closing the drawer all save, so a start
+    /// never rewrites a file. Where a setting goes: a shared one to both files; a title's own (its table
+    /// alone holds it) to that title's file; the keyboard rows and the per-title roots the panel holds
+    /// are <c>refii.toml</c>'s, so to that file only (Fable 3's keys share their names, not their
+    /// meaning); a key no table defines, or one <see cref="RuntimeConfig.ShouldWriteCVar"/> declines, to
+    /// neither (its line stays as it stands). A file that does not exist yet is written whole from its
+    /// title's table (nothing in it to keep).
     /// </summary>
     public void Save()
     {
@@ -438,45 +454,138 @@ public sealed partial class RuntimeSettingsModel
             SecondaryConfigPath = Installer.GetRuntimeConfigPath(Refii.Core.Engine_Title.Fable3);
         }
 
-        // 1. Prepare and write Fable 2's config (refii.toml)
+        (Dictionary<string, string> fable2Set, Dictionary<string, string> fable3Set) = Route(Changed(_loadedValues, Values));
+        // A root the panel cleared keeps the file's (the panel shows an empty root as "default").
+        foreach (string rootKey in new[] { "game_data_root", "cache_root" })
+        {
+            if (fable2Set.TryGetValue(rootKey, out string? root) && string.IsNullOrEmpty(root) &&
+                _fable2StoredValues.TryGetValue(rootKey, out string? stored) && !string.IsNullOrEmpty(stored))
+            {
+                fable2Set.Remove(rootKey);
+            }
+        }
+        if (fable2Set.Count == 0 && fable3Set.Count == 0)
+        {
+            StatusMessage = "No settings changed";
+            return;
+        }
+
+        if (fable2Set.Count != 0 && !SaveFable2(fable2Set, out string error2))
+        {
+            StatusMessage = "Failed to save " + System.IO.Path.GetFileName(ConfigPath) + ": " + error2;
+            return;
+        }
+
+        if (fable3Set.Count != 0 && !SaveFable3(fable3Set, out string error3))
+        {
+            StatusMessage = "Failed to save " + System.IO.Path.GetFileName(SecondaryConfigPath) + ": " + error3;
+            return;
+        }
+
+        _fable2StoredValues = RuntimeConfig.ReadValues(ConfigPath);
+        _fable3StoredValues = RuntimeConfig.ReadValues(SecondaryConfigPath);
+        _loadedValues = new SortedDictionary<string, string>(Values, StringComparer.Ordinal);
+        List<string> saved = fable2Set.Keys.Union(fable3Set.Keys).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        string files = string.Join(" & ", new[]
+        {
+            fable2Set.Count != 0 ? System.IO.Path.GetFileName(ConfigPath) : null,
+            fable3Set.Count != 0 ? System.IO.Path.GetFileName(SecondaryConfigPath) : null,
+        }.Where(name => name is not null));
+        StatusMessage = (saved.Count <= 4 ? "Saved " + string.Join(", ", saved) : $"Saved {saved.Count} settings") +
+                        " (" + files + ")";
+        Refii.Core.Engine_Switches.Invalidate();
+    }
+
+    /// <summary>The keys <paramref name="now"/> holds with a value <paramref name="loaded"/> did not, and their values.</summary>
+    internal static Dictionary<string, string> Changed(
+        IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> now)
+    {
+        var changed = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach ((string key, string value) in now)
+        {
+            if (!loaded.TryGetValue(key, out string? was) || was != value)
+            {
+                changed[key] = value;
+            }
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// Which file each changed setting goes to (see <see cref="Save"/>): Fable 2's table,
+    /// <c>refii.toml</c>; Fable 3's table, <c>refiii.toml</c>, but for the keyboard rows and the roots.
+    /// A setting in no table (the pad maps, the trace switches) is the launcher's own and goes to
+    /// <c>refii.toml</c>, the file the panel reads its values from; only a setting that is Fable 3's
+    /// alone stays out of it.
+    /// </summary>
+    internal static (Dictionary<string, string> Fable2, Dictionary<string, string> Fable3) Route(
+        IReadOnlyDictionary<string, string> changed)
+    {
+        var fable2Table = new HashSet<string>(
+            RuntimeCVarSet.For(Refii.Core.Engine_Title.Fable2).Select(d => d.Name), StringComparer.Ordinal);
+        var fable2Names = new HashSet<string>(
+            RuntimeCVarSet.For(Refii.Core.Engine_Title.Fable2).Where(RuntimeConfig.ShouldWriteCVar).Select(d => d.Name),
+            StringComparer.Ordinal);
+        var fable3Names = new HashSet<string>(
+            RuntimeCVarSet.For(Refii.Core.Engine_Title.Fable3).Where(RuntimeConfig.ShouldWriteCVar).Select(d => d.Name),
+            StringComparer.Ordinal);
+        var fable3Table = new HashSet<string>(
+            RuntimeCVarSet.For(Refii.Core.Engine_Title.Fable3).Select(d => d.Name), StringComparer.Ordinal);
+        var fable2 = new Dictionary<string, string>(StringComparer.Ordinal);
+        var fable3 = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach ((string key, string value) in changed)
+        {
+            if (fable2Names.Contains(key) || (!fable2Table.Contains(key) && !fable3Table.Contains(key)))
+            {
+                fable2[key] = value;
+            }
+
+            if (fable3Names.Contains(key) && !IsPerTitleIsolatedRoot(key) && !RuntimeCVarsGodot.IsKeyBinding(key))
+            {
+                fable3[key] = value;
+            }
+        }
+
+        return (fable2, fable3);
+    }
+
+    /// <summary><paramref name="set"/> into <c>refii.toml</c>: edited in place, or written whole when there is none yet.</summary>
+    private bool SaveFable2(Dictionary<string, string> set, out string error)
+    {
+        if (System.IO.File.Exists(ConfigPath))
+        {
+            return RuntimeConfig.EditValuesForTitle(Refii.Core.Engine_Title.Fable2, ConfigPath, set,
+                Array.Empty<string>(), out error);
+        }
+
         var fable2Out = new SortedDictionary<string, string>(_fable2StoredValues, StringComparer.Ordinal);
         foreach ((string key, string val) in Values)
         {
             fable2Out[key] = val;
         }
-        // Preserve Fable 2's stored root if Values had it cleared
-        foreach (string rootKey in new[] { "game_data_root", "cache_root" })
+
+        return RuntimeConfig.WriteValuesForTitle(Refii.Core.Engine_Title.Fable2, ConfigPath, fable2Out, out error);
+    }
+
+    /// <summary>
+    /// <paramref name="set"/> into <c>refiii.toml</c>: edited in place, or written whole when there is
+    /// none yet — with Fable 3's own roots, never Fable 2's, and Fable 3's keyboard rows at their defaults.
+    /// </summary>
+    private bool SaveFable3(Dictionary<string, string> set, out string error)
+    {
+        if (System.IO.File.Exists(SecondaryConfigPath))
         {
-            if (_fable2StoredValues.TryGetValue(rootKey, out string? existingRoot) && !string.IsNullOrEmpty(existingRoot) &&
-                (!Values.TryGetValue(rootKey, out string? curRoot) || string.IsNullOrEmpty(curRoot)))
-            {
-                fable2Out[rootKey] = existingRoot;
-            }
+            return RuntimeConfig.EditValuesForTitle(Refii.Core.Engine_Title.Fable3, SecondaryConfigPath, set,
+                Array.Empty<string>(), out error);
         }
 
-        if (!RuntimeConfig.WriteValuesForTitle(Refii.Core.Engine_Title.Fable2, ConfigPath, fable2Out, out string error2))
-        {
-            StatusMessage = "Failed to save " + System.IO.Path.GetFileName(ConfigPath) + ": " + error2;
-            return;
-        }
-        _fable2StoredValues = fable2Out;
-
-        // 2. Prepare and write Fable 3's config (refiii.toml), keeping Fable 3's own roots & unknown keys isolated
         var fable3Out = new SortedDictionary<string, string>(_fable3StoredValues, StringComparer.Ordinal);
-        if (!fable3Out.ContainsKey("game_data_root") || !fable3Out.ContainsKey("cache_root"))
-        {
-            RuntimeConfig.PopulateDefaultRoots(fable3Out, SecondaryConfigPath);
-        }
-
+        RuntimeConfig.PopulateDefaultRoots(fable3Out, SecondaryConfigPath);
         foreach (RuntimeCVarDefinition definition in RuntimeCVarSet.For(Refii.Core.Engine_Title.Fable3))
         {
-            if (IsPerTitleIsolatedRoot(definition.Name))
+            if (IsPerTitleIsolatedRoot(definition.Name) || RuntimeCVarsGodot.IsKeyBinding(definition.Name))
             {
-                if (_fable3StoredValues.TryGetValue(definition.Name, out string? f3Root) &&
-                    !string.IsNullOrEmpty(f3Root))
-                {
-                    fable3Out[definition.Name] = f3Root;
-                }
                 continue;
             }
 
@@ -486,16 +595,7 @@ public sealed partial class RuntimeSettingsModel
             }
         }
 
-        if (!RuntimeConfig.WriteValuesForTitle(Refii.Core.Engine_Title.Fable3, SecondaryConfigPath, fable3Out, out string error3))
-        {
-            StatusMessage = "Failed to save " + System.IO.Path.GetFileName(SecondaryConfigPath) + ": " + error3;
-            return;
-        }
-        _fable3StoredValues = fable3Out;
-
-        StatusMessage = "Saved settings (" + System.IO.Path.GetFileName(ConfigPath) + " & " +
-                        System.IO.Path.GetFileName(SecondaryConfigPath) + ")";
-        Refii.Core.Engine_Switches.Invalidate();
+        return RuntimeConfig.WriteValuesForTitle(Refii.Core.Engine_Title.Fable3, SecondaryConfigPath, fable3Out, out error);
     }
 
     public void ResetAllToDefaults()

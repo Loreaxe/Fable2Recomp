@@ -584,9 +584,12 @@ public sealed class Fable2Input : GameTitleInput
 		}
 
 		Engine_CoopSavePicker.Press withheld = pad == CoopPickerPad ? CoopPickerWithheld : Engine_CoopSavePicker.Press.None;
+		// Local co-op with player two not signed in: player two's X is also the guest's sign-in ask.
+		bool askSignIn = player == 2 && codes.Contains(Fable2CoopScreenPresses.ButtonX) &&
+			Fable2Bridge.GetCoopState() is { Known: true, Session: 2, RightSignedIn: false };
 		foreach (int code in codes)
 		{
-			if (Fable2CoopScreenPresses.Forwarded(code, player, withheld))
+			if (Fable2CoopScreenPresses.Forwarded(code, player, withheld, askSignIn))
 			{
 				string lever = Fable2CoopScreenPresses.Lever(code, player);
 				HostBridge.PostFrontEndAction(lever);

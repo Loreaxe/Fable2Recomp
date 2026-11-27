@@ -207,7 +207,12 @@ enum refii_mod_event_kind : int32_t {
   REFII_EVENT_PUB_GAME_FINISHED = 161,
   REFII_EVENT_VILLAGE_WEALTH = 162,
   REFII_EVENT_GARGOYLE_DESTROYED = 163,
-  REFII_EVENT_COUNT = 164,
+  REFII_EVENT_CAMERA_CUT = 164,
+  REFII_EVENT_CAMERA_BLEND = 165,
+  REFII_EVENT_CAMERA_SCREEN_CHANGED = 166,
+  REFII_EVENT_CAMERA_ZOOM_CHANGED = 167,
+  REFII_EVENT_CAMERA_TICK = 168,
+  REFII_EVENT_COUNT = 169,
 };
 
 /// What took a hero's camera and controls away from free play (CutsceneEvent's `kind`, and the
@@ -2540,6 +2545,74 @@ struct GargoyleDestroyedEvent : Event {
   static constexpr int32_t kKind = REFII_EVENT_GARGOYLE_DESTROYED;
   const char* level;
   int32_t player;
+};
+
+// THE CAMERA EVENTS (164..168). camera_cut, camera_blend and camera_tick are read off the game's own
+// camera statements (src/runtime/src/core/stated_view.cpp): a cut where the block the manager's getter
+// built (rex_lhCameraManager_Block) carries the cut byte set and its previous block had it clear, a blend
+// where Camera.InterpolateFor (rex_Camera_InterpolateFor) was stated with ticks > 0, a tick per push
+// (rex_lhCameraManager_Push, the end of one manager's update); each is the player of that push, raised
+// from the guest tick (mod_events.cpp DispatchCameraEvents). camera_screen_changed is the shell's views
+// (RefiiHostStateCameraViews) differing from the last raised; camera_zoom_changed the core camera chunk's
+// statement after SACCamera:CalculateActiveZoomLevel (Refii._camera_zoom_stated). All read-only.
+
+/// The game cut player `player`'s camera.
+struct CameraCutEvent : Event {
+  static constexpr int32_t kKind = REFII_EVENT_CAMERA_CUT;
+  int32_t player;
+};
+
+/// Player `player`'s camera started a blend of `ticks` guest ticks (Camera.InterpolateFor).
+struct CameraBlendEvent : Event {
+  static constexpr int32_t kKind = REFII_EVENT_CAMERA_BLEND;
+  int32_t player;
+  int32_t ticks;
+};
+
+/// The co-op screen changed: mode REFII camera screen 0 shared, 1 split_vertical, 2 split_horizontal,
+/// 3 hybrid; split two views drawn; reason 0 the player's choice or a join / leave, 1 hybrid's distance.
+struct CameraScreenChangedEvent : Event {
+  static constexpr int32_t kKind = REFII_EVENT_CAMERA_SCREEN_CHANGED;
+  int32_t mode;
+  bool split;
+  int32_t previous;
+  int32_t reason;
+};
+
+/// Player `player`'s exploring camera changed zoom set or entered / left the combat blend; the level in
+/// force after the change (SACCamera's ScaledActiveZoomLevel).
+struct CameraZoomChangedEvent : Event {
+  static constexpr int32_t kKind = REFII_EVENT_CAMERA_ZOOM_CHANGED;
+  int32_t player;
+  const char* set;
+  const char* previous_set;
+  int32_t level;
+  float combat;
+  float string_length;
+  float cage_radius;
+  float max_cage_radius;
+  float height;
+  float focal_offset;
+  float fov;
+  float max_coop_distance;
+};
+
+/// Once per guest tick per player: the block player `player`'s readers see after the camera's update.
+struct CameraTickEvent : Event {
+  static constexpr int32_t kKind = REFII_EVENT_CAMERA_TICK;
+  int32_t player;
+  float x;
+  float y;
+  float z;
+  float fx;
+  float fy;
+  float fz;
+  float ux;
+  float uy;
+  float uz;
+  /// Degrees, horizontal.
+  float fov;
+  bool cut;
 };
 
 /// Subscribes a typed handler: `void fn(E&)`. Returns the subscription index.

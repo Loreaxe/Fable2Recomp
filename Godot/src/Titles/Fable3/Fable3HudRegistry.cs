@@ -216,8 +216,25 @@ public static class Fable3HudRegistry
 		}
 	}
 
-	public static void InteractionPanel(int panel) =>
-		SetPath(InteractionDocument, "LowerElements.InfoBox", ChannelState, state: panel);
+	public static void InteractionPanel(int panel)
+	{
+		StatedPanel = panel;
+		DrawPanel();
+	}
+
+	/// <summary>The info panel's id as the guest last stated it (`@Interaction.Panel`), 1 before any.</summary>
+	public static int StatedPanel { get; private set; } = 1;
+
+	/// <summary>
+	/// The info box's slide the document draws: the stated panel, except the shop page (2) while
+	/// <see cref="Fable3ShopPage"/> draws it itself — the document then rests it closed (1).
+	/// </summary>
+	public static int DrawnPanel(int stated, bool shopPageOwned) =>
+		stated == Fable3ShopPageRules.ShopPagePanel && shopPageOwned ? 1 : stated;
+
+	/// <summary>Writes the drawn panel to the document; again whenever the shop page's ownership changes.</summary>
+	public static void DrawPanel() =>
+		SetPath(InteractionDocument, "LowerElements.InfoBox", ChannelState, state: DrawnPanel(StatedPanel, Fable3ShopPageRules.Owned));
 
 	/// <summary>
 	/// A text the guest wrote under a text NAME through a call that carries it — the epilogue's
@@ -271,6 +288,7 @@ public static class Fable3HudRegistry
 	/// <summary>Forgets every statement (a new session).</summary>
 	public static void Clear()
 	{
+		StatedPanel = 1;
 		Texts.Clear();
 		Images.Clear();
 		LineTexts.Clear();

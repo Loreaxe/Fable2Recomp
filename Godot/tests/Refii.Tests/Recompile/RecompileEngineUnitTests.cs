@@ -329,7 +329,7 @@ public sealed class RecompileEngineUnitTests
             string salt = genDir + "\0" + recompileDir;
 
             // Generation 1: vanilla hook (no extra flags) + binary PCH stored.
-            var gen1 = new CompileCache(cacheDir, MakeRoots(), trackedRel, includes, "recipe-1");
+            var gen1 = new CompileCache(cacheDir, MakeRoots(), trackedRel, includes, "recipe-1", workDir);
             string pchOut = Path.Combine(workDir, "refii_pch.pch");
             string pchDep = pchOut + ".d";
             File.WriteAllText(pchOut, "PCH-BYTES-V1");
@@ -346,7 +346,7 @@ public sealed class RecompileEngineUnitTests
 
             // Generation 2: same hook compiled WITH chain define (-Drex_A=rex_A__refii) must miss vanilla and store separately.
             var chainFlags = new[] { "-Drex_A=rex_A__refii" };
-            var gen2 = new CompileCache(cacheDir, MakeRoots(), trackedRel, includes, "recipe-1");
+            var gen2 = new CompileCache(cacheDir, MakeRoots(), trackedRel, includes, "recipe-1", workDir);
             AssertThat(gen2.FindPchArtifact(pchHeader, salt)).IsEqual(storedPch);
             AssertThat(gen2.Find(hookCpp, chainFlags)).IsNull();
 
@@ -359,13 +359,13 @@ public sealed class RecompileEngineUnitTests
             gen2.KeepOnlyUsed(maxGenerations: 3, maxBytes: 1024 * 1024);
 
             // Generation 3: disabling the chain must still hit Generation 1's vanilla object!
-            var gen3 = new CompileCache(cacheDir, MakeRoots(), trackedRel, includes, "recipe-1");
+            var gen3 = new CompileCache(cacheDir, MakeRoots(), trackedRel, includes, "recipe-1", workDir);
             AssertThat(gen3.Find(hookCpp)).IsEqual(cachedVanilla);
             gen3.KeepOnlyUsed(maxGenerations: 3, maxBytes: 1024 * 1024);
 
             // Corrupting the cached binary PCH file on disk must force FindPchArtifact to return null.
             File.WriteAllText(storedPch, "CORRUPTED-PCH");
-            var gen4 = new CompileCache(cacheDir, MakeRoots(), trackedRel, includes, "recipe-1");
+            var gen4 = new CompileCache(cacheDir, MakeRoots(), trackedRel, includes, "recipe-1", workDir);
             AssertThat(gen4.FindPchArtifact(pchHeader, salt)).IsNull();
         }
         finally

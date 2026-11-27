@@ -241,8 +241,7 @@ public partial class GameUi
 			{
 				RefuseCoopForMods(
 					$"the {other}'s Refii does not state its mods",
-					$"Co-op refused: the {other}'s Refii does not state its mods, so it is an older build.\n\n" +
-					"Both players need the same Refii build.");
+					Engine_UiCoopModWords.Unstated(otherIsHost: role != 1u));
 			}
 
 			return;
@@ -257,7 +256,7 @@ public partial class GameUi
 					(ModSession.IsActive ? " — the host's set, held for this session" : string.Empty));
 				if (role == 1u && _modSyncPeerToldFetching)
 				{
-					_coopNotices.Tell("Your partner is running your mods.");
+					_coopNotices.Tell(Engine_UiCoopModWords.PartnerRunning());
 				}
 			}
 
@@ -294,27 +293,27 @@ public partial class GameUi
 					string diff = own.Describe(peer, "host", "joiner");
 					RefuseCoopForMods(
 						$"digest {own.Digest()} here, {peer.Digest()} on the joiner: {diff}; the joiner's Refii states no mod sync",
-						$"Co-op refused: your mods and the joiner's differ, and the joiner's Refii is an older build that cannot take yours on.\n\n{Capitalised(diff)}.");
+						Engine_UiCoopModWords.OldJoiner(diff));
 				}
 
 				return;
 
 			case ModSync.Phase.Declined:
 				RefuseCoopForMods("the joiner declined this game's mods",
-					"Co-op refused: the joiner declined to run your mods for this session.");
+					Engine_UiCoopModWords.JoinerDeclined());
 				return;
 
 			case ModSync.Phase.Blocked:
 			case ModSync.Phase.Failed:
 				RefuseCoopForMods($"the joiner's mod sync {_modSyncPeerPhase}: {_modSyncPeerDetail}",
-					$"Co-op refused: the joiner cannot run your mods.\n\n{Capitalised(_modSyncPeerDetail)}.");
+					Engine_UiCoopModWords.JoinerCannot(_modSyncPeerDetail));
 				return;
 
 			case ModSync.Phase.Fetching:
 				if (!_modSyncPeerToldFetching)
 				{
 					_modSyncPeerToldFetching = true;
-					_coopNotices.Tell("Your partner is receiving your mods.");
+					_coopNotices.Tell(Engine_UiCoopModWords.PartnerReceiving());
 				}
 
 				break;
@@ -323,7 +322,7 @@ public partial class GameUi
 		if (Time.GetTicksMsec() - _modSyncMismatchSinceMs > (ulong)(ModSyncHostWaitSeconds * 1000.0))
 		{
 			RefuseCoopForMods("the joiner's mod sync took too long",
-				$"Co-op refused: the joiner's mod sync did not finish in {ModSyncHostWaitSeconds / 60.0:0} minutes.");
+				Engine_UiCoopModWords.JoinerSlow(ModSyncHostWaitSeconds));
 		}
 	}
 
@@ -480,8 +479,7 @@ public partial class GameUi
 					_modSyncPhase = ModSync.Phase.Blocked;
 					_modSyncDetail = plan.Blocked;
 					RefuseCoopForMods($"digest {own.Digest()} here, {host.Digest()} on the host; cannot sync: {plan.Blocked}",
-						$"Co-op refused: the host's mods cannot be taken on for this session.\n\n{Capitalised(plan.Blocked)}.\n\n" +
-						"A hard mod must be installed and enabled on both machines before the join.");
+						Engine_UiCoopModWords.HostBlocked(plan.Blocked));
 					return;
 				}
 
@@ -556,7 +554,7 @@ public partial class GameUi
 					_modSyncPhase = ModSync.Phase.Declined;
 					_modSyncDetail = string.Empty;
 					RefuseCoopForMods("the player declined the host's mods",
-						"You declined the host's mods, so the session was left.\n\nJoin again to be asked again.");
+						Engine_UiCoopModWords.YouDeclined());
 					break;
 			}
 		}, ModSync.AcceptCaption, ModSync.DeclineCaption, ModSyncBoxKey);
@@ -759,9 +757,7 @@ public partial class GameUi
 				_coopModsOwn = null;
 				GD.Print($"[game-ui] co-op — mod sync: the host's set is mounted ({string.Join(", ", report.Mods)}); " +
 					$"Lua {(report.LuaQueued ? "queued" : "not run")}: {report.LuaNote}");
-				_coopNotices.Tell(set.Count == 0
-					? "Your mods are suspended for this session."
-					: $"Running {(PartnerName().Length == 0 ? "the host" : PartnerName())}'s mods for this session.");
+				_coopNotices.Tell(Engine_UiCoopModWords.SessionMounted(set.Count, PartnerName()));
 			}, out string error))
 		{
 			FailModSync("the host's mods could not be mounted: " + error);
@@ -777,7 +773,7 @@ public partial class GameUi
 		_modSyncPhase = ModSync.Phase.Failed;
 		_modSyncDetail = why;
 		RefuseCoopForMods("mod sync failed: " + why,
-			$"Co-op refused: the host's mods could not be taken on.\n\n{Capitalised(why)}.");
+			Engine_UiCoopModWords.SyncFailed(why));
 	}
 
 	private void TakeDownModSyncNotice()
@@ -790,7 +786,11 @@ public partial class GameUi
 		_modSyncNotice = string.Empty;
 	}
 
-	/// <summary>Says the refusal on the multiplayer row's page and leaves the session; once a session.</summary>
+	/// <summary>
+	/// Says the refusal on the multiplayer row's page and leaves the session; once a session.
+	/// <paramref name="logged"/> is the log's reason (English); <paramref name="said"/> is the player's line,
+	/// one of <see cref="Engine_UiCoopModWords"/>.
+	/// </summary>
 	private void RefuseCoopForMods(string logged, string said)
 	{
 		_coopModsRefused = true;
@@ -851,9 +851,6 @@ public partial class GameUi
 			GD.PushError("[game-ui] co-op — mod sync: your own mods could not be remounted now: " + error);
 		}
 	}
-
-	private static string Capitalised(string text) =>
-		text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
 	/// <summary>The joiner's transfer: the packages to fetch, in order, and the one in flight.</summary>
 	private sealed class ModSyncFetch

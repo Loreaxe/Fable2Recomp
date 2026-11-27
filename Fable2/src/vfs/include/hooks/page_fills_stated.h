@@ -1,0 +1,43 @@
+// A PAGE FILL'S ELEMENT WRITES, STATED (page_fills_stated.cpp). A book page's fill names each element
+// it writes (`sub_82426798(&name, pres)` — directly or through the name wrappers `sub_8246B888`,
+// `sub_82426D18`, `sub_82426328`, `sub_82426140`) and hands it its text, slide, shown flag, opacity or
+// text colour. While a fill is open on this thread those writes are collected by the name the fill
+// gave, and its close states them as one `@PageFill <screen> <scope> <key> (<kind> <path> <value>)…`
+// call. Only a name the fill looked up in the open scope is stated.
+#ifndef REFII_VFS_HOOKS_PAGE_FILLS_STATED_H
+#define REFII_VFS_HOOKS_PAGE_FILLS_STATED_H
+
+#include <cstdint>
+#include <vector>
+
+namespace refii::vfs {
+
+/// Opens a fill on this thread for `screen` under `scope` ("front", "row"). Fills do not nest: an open
+/// inside an open joins the outer one, and only the outer close states it.
+void OpenPageFill(uint32_t screen, const char* scope);
+
+/// States what the open fill wrote under `key` (the row the fill was run for, 0 for none) and closes
+/// it. A fill that wrote nothing states nothing. A `restated` fill is one the guest runs every tick (a
+/// book's page tick): it is stated only when it wrote something other than its last statement, and any
+/// other close on the same screen (a new open) forgets that last statement.
+void ClosePageFill(uint32_t key, bool restated = false);
+
+/// Forgets every restated statement made on `screen`, so the next restated close posts what it wrote
+/// even when that equals the last statement: a screen whose fills are all restated (the world map's
+/// rows) calls it when it opens, the opening Godot drops nothing it was told.
+void ForgetRestatedPageFills(uint32_t screen);
+
+/// True while a fill is open on this thread.
+bool PageFillOpen();
+
+/// A text written to `element` while a fill is open (SetText / SetTextFromTag, noted where the
+/// headless element is told: gui_headless_presentation.cpp).
+void NotePageFillText(uint32_t element, const std::vector<uint16_t>& units);
+
+/// A GDB record the open fill names under `what` ("preview": the record its preview was set to,
+/// preview_item_stated.cpp; "card": the furniture card it took), stated as kind `record`.
+void NotePageFillRecord(const char* what, uint32_t record);
+
+}  // namespace refii::vfs
+
+#endif  // REFII_VFS_HOOKS_PAGE_FILLS_STATED_H

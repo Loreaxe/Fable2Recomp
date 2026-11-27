@@ -65,6 +65,52 @@ bool DispatchPauseBack(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     REXLOG_INFO("Refii guest-tick pump: PauseBack — the orb logbook closed");
     return true;
   }
+  // THE ITEMS BOOK'S TARGET LIST (h+420, set by its own events 83 / 310, gui_screen_stub_items.cpp): B at the
+  // list's root is the guest's 37 arm with the highlight on a category (0x826D26AC..0x826D27D0 / disc
+  // 0x8257E0E4..): the rows again h+24 vf+4 (0x826D2764), `g_Menu:PopMenuState()` (0x826D278C), h+420 = 0
+  // (0x826D2798), the tab strip's title back `sub_826B8218(*(G+76))` (0x826D27A4 / 0x8240B0E8), the held
+  // handle h+380..+392 = 0 (0x826D27AC..0x826D27C0) and h+85 = 1 (0x826D27C4). A fold Godot holds open closes
+  // on Godot's own B before this is posted.
+  if (screen == 15u && LoadU32(base, h + 0x1A4u) != 0u) {
+    CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
+    RunMenuLua(ctx, base, s.frame, s.data, "g_Menu:PopMenuState()", BookPresentation(base));
+    StoreU32(base, h + 0x1A4u, 0u);
+    Call(ctx, base, s.frame, 0x826B8218u, {LoadU32(base, g + 76u)});
+    for (uint32_t i = 0; i < 16u; i += 4u) {
+      StoreU32(base, h + 0x17Cu + i, 0u);
+    }
+    base[h + 0x55u] = 1u;
+    REXLOG_INFO("Refii guest-tick pump: PauseBack — the items book's target list back to its rows");
+    return true;
+  }
+  // THE CLOTHING BOOK IN DYE MODE (h+220 == 5): B at the root is the guest's mode-5 arm (0x826D52F8..0x826D53A4
+  // / disc 0x82580E90..): the tab strip's title back (0x826D5314), the held dye h+228..+240 = 0, h+89 = 1, the
+  // mannequin's destroy `sub_826D7E90(SCENE, h+44)` (0x826D5344), the items book's mode 2 (`*sub_8243BD60(
+  // *(G+28)+68, &15) + 372 = 2` 0x826D5378) and its reopening — `SetScreen(QM, 15, 0)`, `SetActiveScreen(QM,
+  // 15)`, `EnterGuiMode(QM)` (0x826D5380 / 0x826D5390 / 0x826D53A4).
+  if (screen == 16u && LoadU32(base, h + 0xDCu) == 5u) {
+    if ((Call(ctx, base, s.frame, 0x826C1D98u, {LoadU32(base, qm + 60u)}) & 0xFFu) == 0u) {
+      REXLOG_INFO("Refii guest-tick pump: PauseBack on the dye targets off their root — nothing");
+      return true;
+    }
+    Call(ctx, base, s.frame, 0x826B8218u, {LoadU32(base, g + 76u)});
+    for (uint32_t i = 0; i < 16u; i += 4u) {
+      StoreU32(base, h + 0xE4u + i, 0u);
+    }
+    base[h + 0x59u] = 1u;
+    Call(ctx, base, s.frame, 0x826D7E90u, {LoadU32(base, g + 8u), h + 0x2Cu});
+    const uint32_t key = s.data + 0x40u;
+    StoreU32(base, key, refii::guest::ScreenId(15u));
+    const uint32_t items = LoadU32(base, Call(ctx, base, s.frame, 0x8243BD60u, {qm + 68u, key}));
+    if (Plausible(items)) {
+      StoreU32(base, items + 0x174u, 2u);
+    }
+    Call(ctx, base, s.frame, 0x8236E630u, {qm, refii::guest::ScreenId(15u), 0u});
+    Call(ctx, base, s.frame, 0x8236E388u, {qm, refii::guest::ScreenId(15u)});
+    Call(ctx, base, s.frame, 0x8236EB68u, {qm});
+    REXLOG_INFO("Refii guest-tick pump: PauseBack — the dye targets back to the items book");
+    return true;
+  }
   // The book's back at its root (logbook 0x826D9870..0x826D9890, abilities 0x826C2ADC..0x826C2AFC /
   // disc 0x8259EA8C..0x8259EAAC, items 0x826D27DC..0x826D2814, clothing 0x826D53A8..0x826D53D8, the world
   // map 0x826C6508..0x826C653C, options 0x826DA4B0..0x826DA4BC): the tab strip's hide `sub_826B8130(*(G+76))` (every book but options only

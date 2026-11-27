@@ -372,3 +372,23 @@ extern "C" void RefiiCameraActivated(uint8_t* base, uint32_t manager, uint32_t l
       .Bits(1, LoadGuestU32(base, manager + 0x3Cu));
   State(statement);
 }
+
+/// The manager's destructor is about to run (coop_hero_hooks.cpp owns the hook): the shell drops the
+/// manager, and its last block is forgotten, so a manager built later at the same address states its
+/// first block whatever it holds.
+extern "C" void RefiiCameraManagerDestroyed(uint32_t manager) {
+  if (!Plausible(manager)) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_block_mutex);
+    for (LastBlock& last : g_last_blocks) {
+      if (last.manager == manager) {
+        last = LastBlock{};
+      }
+    }
+  }
+  cam::Statement statement(cam::kDestroy, 0u);
+  statement.Manager(manager);
+  State(statement);
+}

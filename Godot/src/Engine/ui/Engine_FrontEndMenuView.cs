@@ -544,6 +544,31 @@ public partial class Engine_FrontEndMenuView : Node3D
 	/// </summary>
 	public bool OneArrangement { get; set; }
 
+	/// <summary>
+	/// STILL ROWS: the list is not a carousel. Its rows stand from the top slot down
+	/// (<see cref="Engine_UiExpandableMenu.StillTopSlot"/>, or the first slot inside the <see cref="ClipRect"/>
+	/// band, with as many rows as the band holds: <see cref="Engine_UiExpandableMenu.StillSlots"/>), every one in the highlight slot's style
+	/// with no end fade, and the cursor walks them; the window moves only to keep the cursor in it
+	/// (<see cref="Engine_UiExpandableMenu.StillTop"/>). A list that fits never moves, so the row under
+	/// a still pointer stays that row. For a title whose lists are plain lists (Fable 3's PC layout);
+	/// false keeps the carousel (Fable 2's book).
+	/// </summary>
+	public bool StillRows { get; set; }
+
+	/// <summary>The still window's first row (1-based), as the last refresh left it.</summary>
+	public int WindowTop { get; private set; } = 1;
+
+	/// <summary>
+	/// The slot the still window's top row stands in and how many rows the window holds, as the last
+	/// refresh fitted them to the <see cref="ClipRect"/> band (<see cref="Engine_UiExpandableMenu.StillSlots"/>):
+	/// a tab strip over the list starts the window below it, a description or the prompts under it end
+	/// the window above them.
+	/// </summary>
+	public int StillTopSlotShown { get; private set; } = Engine_UiExpandableMenu.StillTopSlot;
+
+	/// <inheritdoc cref="StillTopSlotShown"/>
+	public int StillRowsShown { get; private set; } = Engine_UiExpandableMenu.NumVisible;
+
 	/// <summary>Whether the cursor is drawn for a device: always under one arrangement, else for the pad and touch only.</summary>
 	public static bool CursorDrawnOn(bool oneArrangement, bool keycaps) => oneArrangement || !keycaps;
 
@@ -739,6 +764,9 @@ public partial class Engine_FrontEndMenuView : Node3D
 	/// </summary>
 	public bool PressGated => _animating;
 
+	/// <summary>Rows are mid-slide: what a screen draws beside a row (<see cref="BoundsOf"/>) must follow until this drops.</summary>
+	public bool Sliding => _sliding;
+
 	/// <summary>
 	/// The entry drawn under a canvas point (the UI camera is orthographic, so global X/Y are
 	/// canvas units), or null. Only rows that are drawn and not faded out count; the band clip
@@ -768,6 +796,24 @@ public partial class Engine_FrontEndMenuView : Node3D
 	}
 
 	/// <summary>
+	/// The canvas bounds of the drawn row named <paramref name="name"/>, or null while it is not drawn
+	/// (outside the window, faded out) — where a screen lays what it draws beside the row.
+	/// </summary>
+	public Rect2? BoundsOf(string name)
+	{
+		for (int r = 0; r < _rows.Length; ++r)
+		{
+			if (_rows[r] is { } row && row.IsVisibleInTree() && _rowItem[r] is { } item && item.Name == name &&
+				_to[r].Opacity > 0f)
+			{
+				return Engine_UiPointer.CanvasBounds(row);
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
 	/// Whether <paramref name="canvas"/> lies on the list's column: the span of its shown rows, gaps
 	/// between them included, widened by half a row above and below — where a wheel notch belongs
 	/// to this list even when the pointer is not on a row.
@@ -786,7 +832,7 @@ public partial class Engine_FrontEndMenuView : Node3D
 			column = column is { } held ? held.Merge(bounds) : bounds;
 		}
 
-		return column is { } span && span.Grow(RowPitch * 0.5f).HasPoint(canvas);
+		return column is { } span && span.Grow((SlotPitch ?? RowPitch) * 0.5f).HasPoint(canvas);
 	}
 
 	/// <summary>
@@ -1431,6 +1477,25 @@ public partial class Engine_FrontEndMenuView : Node3D
 	public float? LabelCanvasX { get; set; }
 
 	/// <summary>
+	/// Whether the labels stand CENTRED on <see cref="LabelCanvasX"/> (true) or start there, left-aligned
+	/// (false): for a list whose box authors its row texts halign 0 at an x of its own (Fable 3's hero
+	/// status, the king's schedule, the settings-like boxes). Read only with a <see cref="LabelCanvasX"/>.
+	/// </summary>
+	public bool LabelsCentred { get; set; } = true;
+
+	/// <summary>
+	/// The distance every slot stands from the next, about the highlight slot, for a list whose box
+	/// authors its rows that far apart (Fable 3's hero status, 30; the king's schedule, 102); null
+	/// keeps the slot table's own heights. The slots' sizes and fades are unchanged
+	/// (<see cref="SlotY"/>).
+	/// </summary>
+	public float? SlotPitch { get; set; }
+
+	/// <summary>Slot <paramref name="slot"/>'s (1-based) height: the table's, or <paramref name="pitch"/> apart about the highlight slot's.</summary>
+	public static float SlotY(int slot, float? pitch) =>
+		pitch is { } step ? Slots[HighlightSlot - 1].Y - ((slot - HighlightSlot) * step) : Slots[slot - 1].Y;
+
+	/// <summary>
 	/// The label's x inside a row resting at <paramref name="rowX"/> with <paramref name="rowScale"/>
 	/// that puts the label's origin on canvas x <paramref name="canvasX"/>, for a view anchored at
 	/// <paramref name="anchorX"/>.
@@ -1553,7 +1618,7 @@ public partial class Engine_FrontEndMenuView : Node3D
 		{
 			Transform3D placed = CursorOnRow(
 				at.X, at.Y, at.Scale, item.IsHeading ? HeadingLabelX : ChildLabelX, _labelLift,
-				Styles[Slots[slot - 1].StyleIndex - 1].FontSize / CursorLabelSize, onLabel);
+				Styles[Slots[(StillRows ? HighlightSlot : slot) - 1].StyleIndex - 1].FontSize / CursorLabelSize, onLabel);
 			_cursor.Transform = CursorCanvasX is { } canvasX ? CursorAtCanvasX(placed, onLabel, canvasX, Anchor.X) : placed;
 			return;
 		}
@@ -1597,10 +1662,25 @@ public partial class Engine_FrontEndMenuView : Node3D
 		_cursorPlaced = true;
 		ApplyCursorVisibility();
 
-		// The carousel: the window is centred on the highlight, which stands in slot 4.
+		// The carousel: the window is centred on the highlight, which stands in slot 4. Still rows: the
+		// window's top row stands in the top slot and the highlight walks the slots below it.
 		int highlight = Menu.HighlightIndex + 1;
 		int centre = highlight;
-		(int first, int last) = Window(centre, Menu.Visible.Count);
+		(int first, int last) = (0, -1);
+		if (StillRows)
+		{
+			(int topSlot, int rows) = Engine_UiExpandableMenu.StillSlots(slot => Position.Y + SlotY(slot, SlotPitch), Slots.Length,
+				ClipRect?.Position.Y, ClipRect?.End.Y);
+			StillTopSlotShown = topSlot;
+			StillRowsShown = rows;
+			WindowTop = Engine_UiExpandableMenu.StillTop(WindowTop, highlight, Menu.Visible.Count, rows);
+			centre = Engine_UiExpandableMenu.StillCentre(WindowTop, topSlot);
+			(first, last) = (WindowTop, System.Math.Min(Menu.Visible.Count, WindowTop + rows - 1));
+		}
+		else
+		{
+			(first, last) = Window(centre, Menu.Visible.Count);
+		}
 		PlaceCursor(highlight, centre);
 
 
@@ -1944,7 +2024,8 @@ public partial class Engine_FrontEndMenuView : Node3D
 	/// <summary>Where a given entry sits when it is resting in a given slot.</summary>
 	private RowPose PoseFor(int slot, Engine_UiExpandableMenu.Item item)
 	{
-		Slot placement = Slots[slot - 1];
+		// Still rows take the highlight slot's place and style in every slot; only the height is the slot's.
+		Slot placement = Slots[(StillRows ? HighlightSlot : slot) - 1];
 		Style style = Styles[placement.StyleIndex - 1];
 
 		// The end-slot fade, from `expandablemenuformatting.lua`:
@@ -1955,7 +2036,7 @@ public partial class Engine_FrontEndMenuView : Node3D
 		// Style 5 is the zero-opacity one. Both are called from a screen's POPULATE, so they are a
 		// standing property of the laid-out column, not a per-scroll condition. The list edge is an
 		// opacity treatment; the pools have no mask.
-		if ((slot == 2 && FadesTopEnd) || (slot == 11 && FadesBottomEnd))
+		if (!StillRows && ((slot == 2 && FadesTopEnd) || (slot == 11 && FadesBottomEnd)))
 		{
 			style = Styles[4];
 		}
@@ -1970,7 +2051,7 @@ public partial class Engine_FrontEndMenuView : Node3D
 
 		// `SetGhosting` — the label's colour and opacity, the visible cue that a category cannot
 		// be entered.
-		return new RowPose(placement.X + tab, placement.Y, scale, style.Opacity)
+		return new RowPose(placement.X + tab, SlotY(slot, SlotPitch), scale, style.Opacity)
 		{
 			LabelColour = item.IsGhosted && !heading
 				? Engine_UiMenuConstants.GhostedChildColour
@@ -2047,11 +2128,11 @@ public partial class Engine_FrontEndMenuView : Node3D
 		// The RESTING slot, not the animated one: the shipped code tweens `titletexttruncate`, but
 		// re-meshing the string every frame would cost more than the effect is worth. The point
 		// size is 18 in every style record; it is taken from the table anyway.
-		Style rowStyle = Styles[Slots[System.Math.Clamp(slot, 1, Slots.Length) - 1].StyleIndex - 1];
+		Style rowStyle = Styles[Slots[(StillRows ? HighlightSlot : System.Math.Clamp(slot, 1, Slots.Length)) - 1].StyleIndex - 1];
 		int size = rowStyle.FontSize;
 		float truncate = rowStyle.Truncate;
 
-		bool centred = LabelCanvasX is not null;
+		bool centred = LabelCanvasX is not null && LabelsCentred;
 		if (_labelText[row] == display && _labelSize[row] == size &&
 			_labelTruncate[row] == truncate && _labelCentred[row] == centred)
 		{

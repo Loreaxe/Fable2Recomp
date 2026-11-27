@@ -338,6 +338,21 @@ struct MenuRow {
   // 0..10, 11 meaning empty); 100 and above a five-digit base-10 pip word, each digit 1 for an
   // empty augment slot and 2 for a filled one.
   int32_t rating = 0;
+
+  // String3, the icon path (SpawnButton's r6).
+  std::string icon;
+
+  // The guest's mark: `SetItemEmphasisByIndex` for an item row (`sub_826D0890`), `SetItemEmphasis`
+  // by name (`sub_823DFA98`) for the rest. 0 none.
+  int32_t emphasis = 0;
+
+  // An item row's item (refii_bridge_menu_spawn_row_item): kMenuRow* flags, record, instance, count,
+  // category.
+  uint32_t item_flags = 0;
+  uint32_t record = 0;
+  uint32_t item = 0;
+  uint32_t count = 0;
+  uint32_t category = 0;
 };
 
 refii::TracedMutex g_menu_mutex{"guest menu state"};
@@ -385,33 +400,14 @@ HeroDerived g_hero;
 
 std::mutex g_region_mutex;
 WorldMapRegion g_region;
-std::mutex g_estate_mutex;
-RealEstate g_estate;
-std::mutex g_furniture_mutex;
-Furniture g_furniture;
 std::mutex g_coop_mutex;
 CoopScreen g_coop;
-std::mutex g_shop_front_mutex;
-ShopFront g_shop_front;
-std::mutex g_journey_mutex;
-QuestTravel g_journey;
-std::atomic<uint32_t> g_journey_wanted{0};
 
-std::mutex g_shop_price_mutex;
-ShopPrice g_shop_price;
-
-/// Ticket in the low 31 bits, the sell flag in the top — one atomic, so the pump can never
-/// read a ticket paired with the other operation's flag.
-std::atomic<uint32_t> g_shop_price_wanted{0};
 std::atomic<uint32_t> g_region_wanted{0};
 
 std::mutex g_quest_mutex;
 QuestEntry g_quests[kMaxCompletedQuests];
 uint32_t g_quest_count = 0;
-
-std::mutex g_family_mutex;
-FamilyMember g_family[kMaxFamilyMembers];
-uint32_t g_family_count = 0;
 
 }  // namespace
 
@@ -522,50 +518,6 @@ extern "C" uint32_t refii_bridge_player_inventory_snapshot(int32_t player, uint3
   return words / 4u;
 }
 
-void RequestQuestTravel(uint32_t record) { g_journey_wanted.store(record); }
-
-extern "C" uint32_t refii_bridge_requested_quest_travel() {
-  return g_journey_wanted.load();
-}
-
-extern "C" void refii_bridge_publish_quest_travel(const void* travel) {
-  if (travel == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(g_journey_mutex);
-  g_journey = *static_cast<const QuestTravel*>(travel);
-}
-
-QuestTravel QuestTravelSnapshot() {
-  std::lock_guard<std::mutex> lock(g_journey_mutex);
-  return g_journey;
-}
-
-void RequestShopPrice(uint32_t ticket, bool sell) {
-  g_shop_price_wanted.store((ticket & 0x7FFFFFFFu) | (sell ? 0x80000000u : 0u));
-}
-
-extern "C" uint32_t refii_bridge_requested_shop_price(int32_t* sell) {
-  const uint32_t wanted = g_shop_price_wanted.load();
-  if (sell != nullptr) {
-    *sell = (wanted & 0x80000000u) != 0u ? 1 : 0;
-  }
-  return wanted & 0x7FFFFFFFu;
-}
-
-extern "C" void refii_bridge_publish_shop_price(const void* price) {
-  if (price == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(g_shop_price_mutex);
-  g_shop_price = *static_cast<const ShopPrice*>(price);
-}
-
-ShopPrice ShopPriceSnapshot() {
-  std::lock_guard<std::mutex> lock(g_shop_price_mutex);
-  return g_shop_price;
-}
-
 void RequestWorldMapRegion(uint32_t index) { g_region_wanted.store(index); }
 
 extern "C" uint32_t refii_bridge_requested_world_map_region() {
@@ -583,32 +535,6 @@ extern "C" void refii_bridge_publish_world_map_region(const void* region) {
 WorldMapRegion WorldMapRegionSnapshot() {
   std::lock_guard<std::mutex> lock(g_region_mutex);
   return g_region;
-}
-
-extern "C" void refii_bridge_publish_real_estate(const void* estate) {
-  if (estate == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(g_estate_mutex);
-  g_estate = *static_cast<const RealEstate*>(estate);
-}
-
-RealEstate RealEstateSnapshot() {
-  std::lock_guard<std::mutex> lock(g_estate_mutex);
-  return g_estate;
-}
-
-extern "C" void refii_bridge_publish_furniture(const void* furniture) {
-  if (furniture == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(g_furniture_mutex);
-  g_furniture = *static_cast<const Furniture*>(furniture);
-}
-
-Furniture FurnitureSnapshot() {
-  std::lock_guard<std::mutex> lock(g_furniture_mutex);
-  return g_furniture;
 }
 
 extern "C" void refii_bridge_publish_coop_screen(const void* coop) {
@@ -695,19 +621,6 @@ extern "C" uint32_t refii_bridge_list_fold_depth(uint32_t screen) {
   return found == g_fold_depth.end() ? 0u : found->second;
 }
 
-extern "C" void refii_bridge_publish_shop_front(const void* front) {
-  if (front == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(g_shop_front_mutex);
-  g_shop_front = *static_cast<const ShopFront*>(front);
-}
-
-ShopFront ShopFrontSnapshot() {
-  std::lock_guard<std::mutex> lock(g_shop_front_mutex);
-  return g_shop_front;
-}
-
 namespace {
 std::atomic<uint64_t> g_property_estate_wanted{0};
 std::mutex g_property_estate_mutex;
@@ -760,36 +673,6 @@ uint32_t QuestSnapshot(QuestEntry* out, uint32_t capacity) {
   return g_quest_count;
 }
 
-extern "C" void refii_bridge_publish_family(const void* members, uint32_t count) {
-  const FamilyMember* typed = static_cast<const FamilyMember*>(members);
-  const uint32_t kept = typed == nullptr ? 0u : count < kMaxFamilyMembers ? count : kMaxFamilyMembers;
-  bool changed = false;
-  {
-    std::lock_guard<std::mutex> lock(g_family_mutex);
-    changed = kept != g_family_count ||
-              (kept != 0u && std::memcmp(g_family, typed, kept * sizeof(FamilyMember)) != 0);
-    g_family_count = kept;
-    for (uint32_t i = 0; i < kept; ++i) {
-      g_family[i] = typed[i];
-    }
-  }
-  // The world map's family list is built from this snapshot: a changed one moves the UI data
-  // generation, which is what the host's open list re-reads on.
-  if (changed) {
-    refii_bridge_ui_data_published();
-  }
-}
-
-uint32_t FamilySnapshot(FamilyMember* out, uint32_t capacity) {
-  std::lock_guard<std::mutex> lock(g_family_mutex);
-  const uint32_t copied = capacity < g_family_count ? capacity : g_family_count;
-  for (uint32_t i = 0; i < copied; ++i) {
-    out[i] = g_family[i];
-  }
-
-  return g_family_count;
-}
-
 /// The screen the published capture belongs to. See `g_menu_screen_id`.
 uint32_t MenuScreenId() {
   std::lock_guard lock(g_menu_mutex);
@@ -809,6 +692,43 @@ uint32_t MenuRowLabel(uint32_t index, char* out_label, size_t label_capacity) {
     }
   }
 
+  return static_cast<uint32_t>(g_menu_rows.size());
+}
+
+}  // namespace refii::vfs
+
+extern "C" int32_t refii_bridge_menu_rows_hold_item(uint32_t item) {
+  using namespace refii::vfs;
+  std::lock_guard lock(g_menu_mutex);
+  for (const MenuRow& row : g_menu_rows) {
+    if (row.item == item && (row.item_flags & kMenuRowItem) != 0u) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+namespace refii::vfs {
+
+uint32_t MenuRowItem(uint32_t index, char* out_icon, size_t icon_capacity, int32_t* out_emphasis,
+                     uint32_t* out_words, size_t word_capacity) {
+  std::lock_guard lock(g_menu_mutex);
+  if (index >= g_menu_rows.size()) {
+    return static_cast<uint32_t>(g_menu_rows.size());
+  }
+  const MenuRow& row = g_menu_rows[index];
+  if (out_icon != nullptr && icon_capacity > 0) {
+    const size_t take = row.icon.size() < icon_capacity - 1 ? row.icon.size() : icon_capacity - 1;
+    std::memcpy(out_icon, row.icon.data(), take);
+    out_icon[take] = '\0';
+  }
+  if (out_emphasis != nullptr) {
+    *out_emphasis = row.emphasis;
+  }
+  const uint32_t words[5] = {row.item_flags, row.record, row.item, row.count, row.category};
+  for (size_t i = 0; out_words != nullptr && i < word_capacity && i < 5u; ++i) {
+    out_words[i] = words[i];
+  }
   return static_cast<uint32_t>(g_menu_rows.size());
 }
 
@@ -1033,12 +953,40 @@ uint32_t refii_bridge_exit_request(float* out_xyz) {
 }
 
 namespace {
+/// The use prompts' masks with the targeted things' "Interact" icons folded in: that icon is one
+/// per target, raised for whichever player targets it (lhECTargeted_SetTargetedByPlayer, TU1
+/// 0x8242817C / disc 0x82397F54), so its players are the ones targeting it. A thing with both
+/// sees each player who sees either.
 int32_t PromptsWith(uint32_t* out, int32_t capacity, uint8_t want, uint8_t value) {
-  std::lock_guard<std::mutex> lock(g_prompts_two_mutex);
+  constexpr int32_t kTargeted = 64;
+  std::array<uint32_t, kPromptsTwo + kTargeted> things{};
+  std::array<uint8_t, kPromptsTwo + kTargeted> masks{};
+  int32_t count = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_prompts_two_mutex);
+    for (; count < g_prompts_two_count; ++count) {
+      things[static_cast<std::size_t>(count)] = g_prompts_two[static_cast<std::size_t>(count)];
+      masks[static_cast<std::size_t>(count)] = g_prompt_masks[static_cast<std::size_t>(count)];
+    }
+  }
+  std::array<uint32_t, kTargeted * 2> pairs{};
+  const int32_t targeted = refii_bridge_targeted_by(pairs.data(), kTargeted, 1);
+  for (int32_t t = 0; t < targeted; ++t) {
+    const uint32_t thing = pairs[static_cast<std::size_t>(t * 2)];
+    const uint8_t mask = static_cast<uint8_t>(pairs[static_cast<std::size_t>(t * 2 + 1)]);
+    int32_t at = 0;
+    while (at < count && things[static_cast<std::size_t>(at)] != thing) {
+      ++at;
+    }
+    if (at == count) {
+      things[static_cast<std::size_t>(count++)] = thing;
+    }
+    masks[static_cast<std::size_t>(at)] |= mask;
+  }
   int32_t written = 0;
-  for (int32_t i = 0; out != nullptr && i < g_prompts_two_count && written < capacity; ++i) {
-    if ((g_prompt_masks[static_cast<std::size_t>(i)] & want) == value) {
-      out[written++] = g_prompts_two[static_cast<std::size_t>(i)];
+  for (int32_t i = 0; out != nullptr && i < count && written < capacity; ++i) {
+    if ((masks[static_cast<std::size_t>(i)] & want) == value) {
+      out[written++] = things[static_cast<std::size_t>(i)];
     }
   }
   return written;
@@ -1198,6 +1146,56 @@ void refii_bridge_menu_spawn_row_labelled(const char* name, const char* parent, 
   refii::vfs::g_menu_rows.push_back(row);
   refii::vfs::g_menu_building.push_back(std::move(row));
   refii::vfs::g_menu_generation.fetch_add(1, std::memory_order_relaxed);
+}
+
+void refii_bridge_menu_spawn_row_item(const char* icon, uint32_t item_flags, uint32_t record,
+                                      uint32_t item, uint32_t count, uint32_t category) {
+  std::lock_guard lock(refii::vfs::g_menu_mutex);
+  for (std::vector<refii::vfs::MenuRow>* rows : {&refii::vfs::g_menu_building, &refii::vfs::g_menu_rows}) {
+    if (rows->empty()) {
+      continue;
+    }
+    refii::vfs::MenuRow& row = rows->back();
+    row.icon = icon != nullptr ? icon : "";
+    row.item_flags = item_flags;
+    row.record = record;
+    row.item = item;
+    row.count = count;
+    row.category = category;
+  }
+}
+
+void refii_bridge_menu_row_emphasis_last(int32_t level) {
+  std::lock_guard lock(refii::vfs::g_menu_mutex);
+  bool moved = false;
+  for (std::vector<refii::vfs::MenuRow>* rows : {&refii::vfs::g_menu_building, &refii::vfs::g_menu_rows}) {
+    if (!rows->empty() && rows->back().emphasis != level) {
+      rows->back().emphasis = level;
+      moved = true;
+    }
+  }
+  if (moved) {
+    refii::vfs::g_menu_generation.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+void refii_bridge_menu_row_emphasis_named(const char* name, int32_t level) {
+  if (name == nullptr || name[0] == '\0') {
+    return;
+  }
+  std::lock_guard lock(refii::vfs::g_menu_mutex);
+  bool moved = false;
+  for (std::vector<refii::vfs::MenuRow>* rows : {&refii::vfs::g_menu_building, &refii::vfs::g_menu_rows}) {
+    for (refii::vfs::MenuRow& row : *rows) {
+      if (row.name == name && row.emphasis != level) {
+        row.emphasis = level;
+        moved = true;
+      }
+    }
+  }
+  if (moved) {
+    refii::vfs::g_menu_generation.fetch_add(1, std::memory_order_relaxed);
+  }
 }
 
 // C++ linkage: this sits inside the file's `extern "C"` block, and its caller declares it mangled.

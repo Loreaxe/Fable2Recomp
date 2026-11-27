@@ -19,6 +19,8 @@
 #include "core/refii_mod.h"
 #include "hooks/gui_screen_stub_support.h"
 #include "hooks/gui_screen_stubs.h"
+#include "hooks/item_rows_stated.h"
+#include "hooks/page_fills_stated.h"
 #include "hooks/ppc_externs.h"
 #include "vfs_hooks_private.h"
 
@@ -32,8 +34,9 @@ using refii::mods::StoreU32;
 // h+4 the owner, h+24 the row list (vt 0x820EE0D4 / 0x820E1D88: +4 populate `sub_829B1E78` /
 // `sub_828CAF98`), h+44 the mannequin's preview-scene record id (-1: none), h+48 the book and h+72 its
 // page stack, h+89 "details dirty", pages h+92 (description) / h+188 (stats), h+220 the mode (4 clothing;
-// 5 dye mode, entered only by the items screen's events 80 / 81, which Godot never sends: its dye flow is
-// its own), h+244 the current item handle, h+292 the last highlighted row id. Same offsets on both builds.
+// 5 dye mode, entered by the items screen's events 80 / 81 on a dye row, gui_screen_stub_items.cpp), h+228
+// the held dye's handle, h+244 the current item handle, h+292 the last highlighted row id. Same offsets on
+// both builds.
 //
 // THE MANNEQUIN IS A PREVIEW BODY AND NOTHING ELSE. The guest's handlers apply every change twice, to
 // the player and to the mannequin (`sub_826D3608` 0x826D3800 / 0x826D39CC, `sub_826D3F40` 0x826D40E8 /
@@ -41,10 +44,10 @@ using refii::mods::StoreU32;
 // `sub_826D8008` 0x826D362C, `IsWearingItem` 0x826D374C): a remove that reached only the player left the
 // next wear of that piece refused. Here every decision is taken on the PLAYER's component 15 and every
 // consequence is applied to the player alone. The mannequin calls that are kept, none of which is read
-// back by a lever: its spawn `sub_826D7650` (OnEnter below), its destroy `sub_826D7E90` (the guest's own
+// back by a lever: its spawn `sub_826D7650` (OnEnter below), its destroy `sub_826D7E90` (the ported
 // OnExit, TU1 0x826D2DF8 / disc 0x8257E890, and B at the list's root, DispatchPauseBack), and the try-on
 // that dresses it for the highlighted outfit (`Inventory:tryon`, guest_tick_pump.cpp TryOnMannequin).
-// Godot draws it through the entity feed. OnModalAnswer (0x826D5480 / 0x82580F18) stays the guest's.
+// Godot draws it through the entity feed.
 
 namespace {
 
@@ -62,10 +65,15 @@ uint32_t PageTop(uint8_t* base, uint32_t h) {
 }
 
 /// The two page fills every consequence handler ends with (`sub_826D3608` 0x826D39FC / 0x826D3A04):
-/// the description `sub_829B6310(h+92)` / 0x828D0220 and the stats `sub_829B7368(h+188)` / 0x828D1208.
-void FillPages(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t h) {
+/// the description `sub_829B6310(h+92)` / 0x828D0220 and the stats `sub_829B7368(h+188)` / 0x828D1208 —
+/// stated as screen 16's "row" fill for the row `key` (page_fills_stated.cpp): the name, the picture's and
+/// the footer's shown / opacity / slide, the dye mode's apply / scrub wording and the held dye's swatch tint
+/// (`sub_829B5D68`, `sub_82425C58` 0x829B69D0), the value, the description, the worn Select's opacity.
+void FillPages(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t h, uint32_t key) {
+  refii::vfs::OpenPageFill(16u, "row");
   Call(ctx, base, frame, 0x829B6310u, {h + 0x5Cu});
   Call(ctx, base, frame, 0x829B7368u, {h + 0xBCu});
+  refii::vfs::ClosePageFill(key);
 }
 
 /// The row's item handle for `record`. Player one's is the handler's own cache h+244, filled by the
@@ -117,7 +125,8 @@ void ReleaseOwned(PPCContext& ctx, uint8_t* base, uint32_t frame, uint32_t handl
 namespace refii::vfs {
 
 // OnEnter TU1 0x826D2B88 / disc 0x8257E5C0, inside the co-op wrapper that lends hero two
-// (coop_hero_hooks.cpp). Kept, in the guest's order: the two pages pushed (`sub_82B49750` / 0x8228A900)
+// (coop_hero_hooks.cpp), and under the listed hero (ListedHeroScope: the hero of the player record the
+// populates pick — a joiner's own, item_rows_stated.cpp). Kept, in the guest's order: the two pages pushed (`sub_82B49750` / 0x8228A900)
 // and the book `sub_82990610(h+48, &pages, 0x8349B298, pres, 1)` (0x826D2C08 / 0x828CE060 with
 // 0x834988F4), which runs each page's +4; the mannequin — its anchor element (`sub_821F0240` +
 // `sub_82426798` on 0x8349B290, 0x826D2C24 / 0x826D2C2C; disc 0x834988EC), hero one's model
@@ -128,10 +137,15 @@ namespace refii::vfs {
 // pres)` (0x826D2CE0 / 0x8259D6C8; the text through `sub_8230E0E8` 0x826D2CC0 and `sub_82B3F898`
 // 0x826D2CCC / 0x82B398A8); the gold text `sub_8246B5E8(pres, 0x8349B28C, 1)` (0x826D2D54 / 0x82837218
 // with 0x834988E8); the rows, h+24 vf+4 (0x826D2D6C); the tab strip `sub_826B8348(*(G+76), 6)`
-// (0x826D2DC4 / 0x8240B218); h+292 = -1. Dropped: the open sound vf+4 (0x826D2BB4); the two footer
-// elements hidden by `sub_82426328` (0x826D2D30 / 0x826D2D40); the dye-mode arm (0x826D2D7C..0x826D2DB0).
+// (0x826D2DC4 / 0x8240B218), or in dye mode (`lwz r4,0xDC(r31) ; cmpwi cr6,r4,5` 0x826D2D70) the held dye's
+// item info `sub_82469230(&info)` / `sub_824698D8(&info, h+228)` (0x826D2D80 / 0x826D2D8C; disc
+// `sub_8257CA28` / `sub_82835508`) as the tab strip's title `sub_826B81C0(*(G+76), &info)` (0x826D2D9C / disc
+// 0x8240B090), the dye targets `sub_829B2168(h+24)` (0x826D2DA4 / 0x828CB288), h+89 = 0 (`stb r28,0x59(r31)`
+// 0x826D2DA8, r28 = 0) and the info's release `sub_82469878` (0x826D2DB0 / disc `sub_8257E830`); h+292 = -1. Dropped: the open sound
+// vf+4 (0x826D2BB4); the two footer elements hidden by `sub_82426328` (0x826D2D30 / 0x826D2D40).
 void ClothingScreenOnEnter(PPCContext& ctx, uint8_t* base) {
   const uint32_t h = ctx.r3.u32;
+  ListedHeroScope listed(base, 16u);
   const Scratch s = Claim(ctx);
   const uint32_t pages = s.data;          // {?, begin, end, capacity}
   const uint32_t item = s.data + 0x10u;   // the page pointer handed to the push
@@ -181,7 +195,17 @@ void ClothingScreenOnEnter(PPCContext& ctx, uint8_t* base) {
   Call(ctx, base, s.frame, 0x8246B5E8u, {pres, Address(0x8349B28Cu), 1u});
   RestatePurseForPlayerTwo(ctx, base, s.frame, pres, 0x8349B28Cu);
   CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
-  Call(ctx, base, s.frame, 0x826B8348u, {LoadU32(base, g + 76u), 6u});
+  if (LoadU32(base, h + 0xDCu) == 5u) {
+    const uint32_t info = s.data + 0x120u;  // the item info record, 0x48 bytes and its strings
+    Call(ctx, base, s.frame, 0x82469230u, {info});
+    Call(ctx, base, s.frame, 0x824698D8u, {info, h + 0xE4u});
+    Call(ctx, base, s.frame, 0x826B81C0u, {LoadU32(base, g + 76u), info});
+    Call(ctx, base, s.frame, 0x829B2168u, {h + 24u});
+    base[h + 0x59u] = 0u;
+    Call(ctx, base, s.frame, 0x82469878u, {info});
+  } else {
+    Call(ctx, base, s.frame, 0x826B8348u, {LoadU32(base, g + 76u), 6u});
+  }
   StoreU32(base, h + 0x124u, 0xFFFFFFFFu);
   const uint32_t storage = LoadU32(base, pages + 4u);
   if (storage != 0u) {
@@ -196,24 +220,46 @@ void ClothingScreenOnEnter(PPCContext& ctx, uint8_t* base) {
 // `sub_82880BC0(*(QM+60)+4, id, h+244)` (0x826D2EDC / 0x827BE1E8), h+89 = that handle is set
 // (0x826D2F1C / 0x826D2F50), the page fills `sub_829B6310(h+92)` and `sub_829B7368(h+188)` (0x826D2F58 /
 // 0x826D2F60: the description, the stats, and the item's "viewed" byte `stb r25, 0(r27)` 0x829B67D8),
-// h+292 = the id. Dropped: the child tick `sub_826D5D00` (0x826D2F90); the edge's page-stack return
-// `sub_82990FD8` (0x826D2F10: Godot owns the page level) and its dye-mode arms, which dress the
-// mannequin (`sub_826D5558`, `sub_826D31E0`, `sub_826D3358`); the delayed page refresh on the timer
+// h+292 = the id; in dye mode (h+220 == 5) the edge's own arms: the hair rows' ids 100086 / 100087 / 100088
+// (`cmpwi` 0x826D2E90..0x826D2EA0) take the worn hair, beard or moustache `sub_826D5558(h, 9 | 10 | 11)`
+// (0x826D2EA8..0x826D2EC8; disc `sub_82580FF0`) instead of the lookup, and the mannequin is dressed in the
+// highlighted garment `sub_826D31E0(h)` (0x826D2F44 / 0x8257EC78: `IsWearingItem`, the wear on the mannequin)
+// or undressed `sub_826D3358(h)` (0x826D2F2C / 0x8257EDF0) when the row holds none — the dyed picture is the
+// stated mannequin (entity feed); outside dye mode h+89 = 1 with an item (0x826D2F50). Dropped: the child tick
+// `sub_826D5D00` (0x826D2F90); the edge's page-stack return `sub_82990FD8` (0x826D2F10: Godot owns the page
+// level); the delayed page refresh on the timer
 // h+296 (0x826D3030); the book slide and tick `sub_82990A98` / `sub_82990730` (0x826D3074 / 0x826D307C);
 // the Live photo-upload dialog h+264 (0x826D3094..0x826D30DC).
 void ClothingScreenUpdate(PPCContext& ctx, uint8_t* base) {
   const uint32_t h = ctx.r3.u32;
+  ListedHeroScope listed(base, 16u);
   const Scratch s = Claim(ctx);
   uint32_t type = 0u;
   uint32_t id = 0u;
   HighlightedRow(ctx, base, s.frame, s.data, s.data + 0x40u, &type, &id);
   if (id != LoadU32(base, h + 0x124u)) {
     const uint32_t qm = LoadU32(base, Gui(base) + 28u);
-    Call(ctx, base, s.frame, 0x82880BC0u, {LoadU32(base, qm + 60u) + 4u, id, h + kCurrentItem});
+    const bool dyeing = LoadU32(base, h + 0xDCu) == 5u;
+    if (dyeing && id >= 100086u && id <= 100088u) {
+      Call(ctx, base, s.frame, 0x826D5558u, {h, id - 100086u + 9u});
+    } else {
+      Call(ctx, base, s.frame, 0x82880BC0u, {LoadU32(base, qm + 60u) + 4u, id, h + kCurrentItem});
+    }
     const uint32_t item = LoadU32(base, h + kCurrentItem);
-    base[h + 0x59u] = item != 0u ? 1u : 0u;
+    if (item != 0u) {
+      if (dyeing) {
+        Call(ctx, base, s.frame, 0x826D31E0u, {h});
+      } else {
+        base[h + 0x59u] = 1u;
+      }
+    } else {
+      base[h + 0x59u] = 0u;
+      if (dyeing) {
+        Call(ctx, base, s.frame, 0x826D3358u, {h});
+      }
+    }
     const bool unviewed = Plausible(item) && base[item + 0x14u] == 0u;
-    FillPages(ctx, base, s.frame, h);
+    FillPages(ctx, base, s.frame, h, id);
     StoreU32(base, h + 0x124u, id);
     if (unviewed && base[item + 0x14u] != 0u) {
       refii_bridge_ui_data_changed();  // the fill marked the item viewed: Godot restates its row
@@ -227,25 +273,86 @@ void ClothingScreenUpdate(PPCContext& ctx, uint8_t* base) {
 
 }  // namespace refii::vfs
 
-// OnMenuEvent TU1 0x826D4D58 / disc 0x825807F0 (jump table 0x826D4DAC / 0x82580844, index type − 3).
-// Every arm is a consequence Godot posts as a lever: 3 → `Clothing:<p>:wear` (the dog item's use, or the
-// wear handler `sub_826D3608`); 89 → `Clothing:<p>:outfit` (`sub_826D3A10`); 91..97 →
-// `Clothing:<p>:remove` (`sub_826D3F40`); 84 / 86 / 87 / 88 the dye `sub_826D3108(h, 0)`, which Godot's
-// dye flow runs as `Inventory:dye`; 90 strip-all (`sub_826D4118`), for which Godot lists no row; 140 /
-// 141 sounds. Nothing kept.
+// OnMenuEvent TU1 0x826D4D58 / disc 0x825807F0 (jump table 0x826D4DA8 / 0x82580840, index type − 3). KEPT,
+// the arms the guest's own rows send: the dye targets' rows (84, `sub_826CEEF0`'s `li r7,0x54` 0x829B25A8) and
+// the hair rows (86 / 87 / 88, `li r9,0x56..` 0x829B2810) — cases 81, 83..85 `li r4,0 ; mr r3,r30 ; bl
+// sub_826D3108` (0x826D5088..0x826D5090 / disc `sub_8257EBA0`): the held dye on the highlighted target's
+// first layer; and the Outfits' None row (90) — case 87 `bl sub_826D4118` (0x826D50B0 / disc `sub_8257FBB0`):
+// every garment off. The rest are consequences Godot posts as levers: 3 → `Clothing:<p>:wear` (the dog
+// item's use, or the wear handler `sub_826D3608`); 89 → `Clothing:<p>:outfit` (`sub_826D3A10`); 91..97 →
+// `Clothing:<p>:remove` (`sub_826D3F40`); 140 / 141 sounds. The slot runs with the hero-one slot holding the
+// listed hero (ListedHeroScope, item_rows_stated.cpp).
 REX_EXTERN(rex_lhGuiClothingScreen_OnMenuEvent) {
   REX_FUNC_PROLOGUE();
-  Said("clothing (16)", "OnMenuEvent", ctx.r3.u32, LoadU32(base, ctx.r4.u32 + 4u), LoadU32(base, ctx.r4.u32 + 8u));
+  const uint32_t h = ctx.r3.u32;
+  const uint32_t type = LoadU32(base, ctx.r4.u32 + 4u);
+  Said("clothing (16)", "OnMenuEvent", h, type, LoadU32(base, ctx.r4.u32 + 8u));
+  if (type != 84u && type != 86u && type != 87u && type != 88u && type != 90u) {
+    return;
+  }
+  refii::vfs::ListedHeroScope listed(base, 16u);
+  const Scratch s = Claim(ctx);
+  if (type == 90u) {
+    Call(ctx, base, s.frame, 0x826D4118u, {h});
+    REXLOG_INFO("Refii screen stub: clothing (16) — the Outfits' None row: every garment taken off");
+    return;
+  }
+  // The page the dye restates (its own fills) as the highlighted row's statement.
+  refii::vfs::OpenPageFill(16u, "row");
+  Call(ctx, base, s.frame, 0x826D3108u, {h, 0u});
+  refii::vfs::ClosePageFill(LoadU32(base, h + 0x124u));
+  REXLOG_INFO("Refii screen stub: clothing (16) — dye target (event {}): the held dye on its first layer", type);
 }
 
 // OnScreenAction TU1 0x826D5120 / disc 0x82580BB8 (jump table index code − 26): the upload dialog's
 // input (h+264 vf+4, 0x826D5148), 26 / 27 the book and the figure's spin, 36 Lua OnPressA + sound, 59
-// the zoom, 39 the second dye layer `sub_826D3108(h, 1)` (Godot's dye flow); B (37) and LB / RB (72 /
-// 73: clothing mode, player one, 0x826D5244..0x826D5250) are the spine calls Godot posts as `PauseBack`
-// / `PauseCycle:<p>:…`. Nothing kept.
+// the zoom; 39 the second dye layer — Godot's `Clothing:<p>:dye2` lever runs its call (DispatchClothing);
+// B (37: in dye mode back to the items book, DispatchPauseBack) and LB / RB (72 / 73: clothing mode, player
+// one, 0x826D5244..0x826D5250) are the spine calls Godot posts as `PauseBack` / `PauseCycle:<p>:…`. Nothing
+// kept.
 REX_EXTERN(rex_lhGuiClothingScreen_OnScreenAction) {
   REX_FUNC_PROLOGUE();
   Said("clothing (16)", "OnScreenAction", ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+}
+
+// OnModalAnswer(h, code) TU1 0x826D5480 / disc 0x82580F18, `mode = *(QM+40)`. Kept: mode 2 and code 36
+// → the box cleared (`sub_8236FEC8(QM, 2)` 0x826D54BC / disc `sub_823380C0`, without its sound:
+// AnswerBox). Dropped: that sound; and the arm for mode 2 and code 46 with the Live photo-upload dialog
+// idle (h+268 and h+269 clear, 0x826D54E8..0x826D5510) — "SE_GUI_MENU_BOX_SELECT" posted directly
+// (`sub_82371E80(&ev, G, 0x83497E50, 0)` 0x826D5524 / disc 0x82580FBC) and h+264 vf+16 (0x826D5540 /
+// 0x82580FD8) = `sub_8298FD48` (vtable 0x820E9E8C +16), the dialog's own result notice dismissed: with
+// `*(dlg+24)` (h+288, 1 for this screen: ctor `stb r29,0x120(r31)` 0x826D2A54) `sub_823A2478(*(QM+52),
+// 0x8349CCF8)`, else `ClearModalState` in mode 2 (0x8298FD48..0x8298FD80). That notice is queued only by
+// the upload itself (`sub_8298FE60` 0x8298FEBC), begun by vf+4 `sub_82990540` from the guest
+// OnScreenAction and ticked by the guest Update — both ported without it — so there is none to dismiss.
+REX_EXTERN(rex_lhGuiClothingScreen_OnModalAnswer) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  const uint32_t code = ctx.r4.u32;
+  const Scratch s = Claim(ctx);
+  const uint32_t qm = LoadU32(base, Gui(base) + 28u);
+  const uint32_t mode = LoadU32(base, qm + 40u);
+  if (mode == 2u && code == 36u) {
+    AnswerBox(ctx, base, s.frame, qm, 2u);
+  }
+  Said("clothing (16)", "OnModalAnswer", h, code, mode);
+}
+
+// OnExit TU1 0x826D2DF8 / disc 0x8257E890, kept whole in the guest's order: the base exit
+// `sub_826D5C30(h)` (0x826D2E0C / 0x82583490); the list's teardown `sub_829B2A20(h+24)` (0x826D2E14 /
+// 0x828CBB40: the population's tickets cleared `sub_82880CE0`, `lhGui_InGameMenu_DeleteAllSpawnedMenuItems`
+// and the chunk `g_Menu:RepopulateMenuFromPopulationScript( '%s' )`, the list boundary the RunLuaString
+// hook keys on); h+89 = 1 (0x826D2E20); the mannequin's destroy `sub_826D7E90(*(G+8), h+44)` (0x826D2E30
+// / disc `sub_823FDA78`).
+REX_EXTERN(rex_lhGuiClothingScreen_OnExit) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  const Scratch s = Claim(ctx);
+  Call(ctx, base, s.frame, 0x826D5C30u, {h});
+  Call(ctx, base, s.frame, 0x829B2A20u, {h + 24u});
+  base[h + 0x59u] = 1u;
+  Call(ctx, base, s.frame, 0x826D7E90u, {LoadU32(base, Gui(base) + 8u), h + 44u});
+  Said("clothing (16)", "OnExit", h);
 }
 
 // ---- THE LEVERS -----------------------------------------------------------------------------
@@ -268,6 +375,18 @@ bool DispatchClothing(PPCContext& ctx, uint8_t* base, uint32_t player, const std
     return false;
   }
   const uint32_t inv = LoadU32(base, g + 52u);
+  refii::vfs::ListedHeroScope listed(base, 16u);
+
+  if (verb == "dye2") {
+    // OnScreenAction 39 (0x826D52C0..0x826D52DC / disc 0x82580E58..): `sub_826D3108(h, 1)` (0x826D52D4 /
+    // 0x8257EBA0) — the held dye on the highlighted target's second layer. Dropped: its
+    // "SE_GUI_MENU_BOX_SELECT" (`sub_82371E80` with 0x83497E50, 0x826D52C0).
+    refii::vfs::OpenPageFill(16u, "row");
+    Call(ctx, base, s.frame, 0x826D3108u, {h, 1u});
+    refii::vfs::ClosePageFill(LoadU32(base, h + 0x124u));
+    REXLOG_INFO("Refii guest-tick pump: Clothing:{}:dye2 — the held dye on the second layer", player);
+    return true;
+  }
 
   if (verb == "remove") {
     // `sub_826D3F40(h, type)` / 0x8257F9D8 on the player alone: the category `sub_826CC340(type − 91)`
@@ -281,6 +400,10 @@ bool DispatchClothing(PPCContext& ctx, uint8_t* base, uint32_t player, const std
     const uint32_t category = Call(ctx, base, s.frame, 0x826CC340u, {value - 91u});
     const bool wearing = (Call(ctx, base, s.frame, 0x824C4418u, {worn_list, category}) & 0xFFu) != 0u;
     if (wearing) {
+      // The row marks restated first, as the guest's remove does (`bl sub_826D48F0` 0x826D40C4 / disc
+      // `sub_82580388`): `SetItemEmphasis` by name through `sub_826C1A50` for the slot's None row and the
+      // garment (item_rows_stated.cpp takes them onto the captured rows).
+      Call(ctx, base, s.frame, 0x826D48F0u, {h});
       Call(ctx, base, s.frame, 0x826CC430u, {inv, value, hero});
     }
     REXLOG_INFO("Refii guest-tick pump: Clothing:{}:remove:{} — category {} on hero 0x{:08X}: {}", player, value,
@@ -289,7 +412,7 @@ bool DispatchClothing(PPCContext& ctx, uint8_t* base, uint32_t player, const std
   }
 
   if (verb != "wear" && verb != "outfit") {
-    REXLOG_INFO("Refii guest-tick pump: Clothing:{}:{} is not wear, outfit or remove — dropped", player, verb);
+    REXLOG_INFO("Refii guest-tick pump: Clothing:{}:{} is not wear, outfit, remove or dye2 — dropped", player, verb);
     return true;
   }
   if (verb == "outfit" && player != 1u) {
@@ -312,7 +435,7 @@ bool DispatchClothing(PPCContext& ctx, uint8_t* base, uint32_t player, const std
     // &suit, hero)` (0x826D3F04; 0x826CBF10 / 0x825A7E98), each owned piece through `sub_826CB218`
     // (0x826CC2C0) on the body r5 names.
     const bool dressed = (Call(ctx, base, s.frame, 0x826CBF10u, {inv, handle, hero}) & 0xFFu) != 0u;
-    FillPages(ctx, base, s.frame, h);
+    FillPages(ctx, base, s.frame, h, LoadU32(base, h + 0x124u));
     ReleaseOwned(ctx, base, s.frame, handle, owned);
     REXLOG_INFO("Refii guest-tick pump: Clothing:{}:outfit 0x{:08X} on hero 0x{:08X} — {}", player, value, hero,
                 dressed ? "pieces put on" : "no piece put on");
@@ -351,8 +474,8 @@ bool DispatchClothing(PPCContext& ctx, uint8_t* base, uint32_t player, const std
   // `AddAndReplaceItem`), the body's texture morphs when the item's dye record says so (`sub_823A1E18` +
   // `sub_82608E40` | `sub_82608EC0`, then `UpdateTextureMorphs(comp17)` 0x826D39BC; disc 0x82577A30,
   // 0x826182A0, 0x82618320, 0x824686C8), and tutorial 229 (`lhTutorials_Display` 0x826D39F4). The two
-  // page fills end every path (0x826D39FC). Dropped: the row marks `sub_826D48F0` (0x826D37EC — Godot
-  // restates its rows from the worn list on `refii_bridge_ui_data_changed`).
+  // page fills end every path (0x826D39FC). The row marks `sub_826D48F0(h)` (0x826D37EC) run before the
+  // wear, as the guest's.
   const bool worn = (Call(ctx, base, s.frame, 0x824C4258u, {worn_list, handle}) & 0xFFu) != 0u;
   const bool hooded = worn && (Call(ctx, base, s.frame, 0x82764A28u, {item}) & 0xFFu) != 0u;
   const char* did = "already worn, nothing done";
@@ -363,6 +486,7 @@ bool DispatchClothing(PPCContext& ctx, uint8_t* base, uint32_t player, const std
       did = "worn with an open model: hood toggled";
     }
   } else if (!worn) {
+    Call(ctx, base, s.frame, 0x826D48F0u, {h});  // the row marks, `bl sub_826D48F0` 0x826D37EC / disc 0x82580388
     Call(ctx, base, s.frame, 0x826CB218u, {inv, handle, hero});
     const uint32_t now = LoadU32(base, handle);
     if ((Load8(base, hero + 0x90u) & 0x40u) != 0u && now != 0u) {
@@ -386,7 +510,7 @@ bool DispatchClothing(PPCContext& ctx, uint8_t* base, uint32_t player, const std
               ? "put on"
               : "refused by the guest's wear (swimming, or the piece it replaces stays)";
   }
-  FillPages(ctx, base, s.frame, h);
+  FillPages(ctx, base, s.frame, h, LoadU32(base, h + 0x124u));
   ReleaseOwned(ctx, base, s.frame, handle, owned);
   REXLOG_INFO("Refii guest-tick pump: Clothing:{}:wear ticket {} record 0x{:08X} on hero 0x{:08X} (item 0x{:08X}) — {}",
               player, ticket, value, hero, item, did);

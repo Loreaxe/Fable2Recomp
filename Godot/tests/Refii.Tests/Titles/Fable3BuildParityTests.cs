@@ -26,9 +26,15 @@ public class Fable3BuildParityTests
 		("rex_Splash_Accept", true,
 			"TU3 moved the START accept out of the input into sub_82319C38, also called by the Startup update (0x82319788); the disc's is inline"),
 		("RefiiF3TopBoxAnswered", true,
-			"TU3's TopBox answers post through the generic sub_824D1BC0 (0x824D1A0C, 0x824D1BA0); the disc has rex_TopBox_Answer"),
+			"TU3's TopBox press answer posts through the generic sub_824D1BC0 (0x824D1BA0); the disc has rex_TopBox_Answer"),
 		("rex_TopBox_Answer", false,
 			"disc sub_824B70E0(M, answer): TU3 has no counterpart (its callers call sub_824D1BC0 instead)"),
+		("RefiiF3BotFlushBlocks", false,
+			"disc 0x821AD4EC: TU3 already takes the blocking enter at these four sites (its own `bne loc_82460688`, 0x82460620)"),
+		("RefiiF3BotFlushLocked", false,
+			"disc 0x821AD540, the proof line of the forced flush; TU3 runs Lionhead's own code there"),
+		("RefiiF3PathfinderUnqueued", false,
+			"disc 0x8238FB94: TU3's worker has the live-queue test itself (0x823AE3A8..0x823AE3D8)"),
 	};
 
 	private static readonly string[] Native = { ".cpp", ".h", ".hpp", ".cc", ".c", ".inc" };

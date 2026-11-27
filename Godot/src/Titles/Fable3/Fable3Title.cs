@@ -26,8 +26,34 @@ public sealed class Fable3Title : Engine_TitleGame
 	/// <summary>Online, as the game answers it (Network.IsInLiveGame, stated by the payload each tick).</summary>
 	public override bool PeerJoined => Refii.Host.HostBridge.PlayerOwned() is 1u or 2u;
 
+	/// <summary>
+	/// A couch game with player two: the session's shared-screen mode with a key-2 Player, stated by the
+	/// payload each camera tick (Fable3/src/hooks/src/coop_camera_hooks.cpp), both players played here.
+	/// </summary>
+	public override bool LocalCoop =>
+		Refii.Host.HostBridge.Stated(Refii.Host.HostBridge.StatedValue.CoopLocalPartner) == 1u &&
+		Refii.Host.HostBridge.PlayerOwned() == 3u;
+
+	private int _coopSplitStated = -1;
+
+	/// <summary>Posts <c>CoopSplitScreen:&lt;0|1&gt;</c> to the payload when it changes (coop_camera_hooks.cpp).</summary>
+	public override void StateCoopSplit(bool split)
+	{
+		int want = split && LocalCoop ? 1 : 0;
+		if (want == _coopSplitStated)
+		{
+			return;
+		}
+
+		_coopSplitStated = want;
+		Refii.Host.HostBridge.PostFrontEndAction("CoopSplitScreen:" + want);
+		Godot.GD.Print($"[coop-camera] couch screen stated to the game: {(want == 1 ? "split" : "shared")}");
+	}
+
 	/// <summary>Fable3Boxes presents the host's questions and notices and a mod's menu box in Fable 3's own box look.</summary>
 	public override bool PresentsHostBoxes => true;
+
+	public override int TargetedBy(uint entity) => Fable3Targeting.TargetedBy(entity);
 
 	/// <summary>Whose menu a host menu or box is: this machine's player, 2 on an online joiner, else 1.</summary>
 	public override int MenuPlayer => Refii.Host.HostBridge.PlayerOwned() == 2u ? 2 : 1;
@@ -172,6 +198,13 @@ public sealed class Fable3Title : Engine_TitleGame
 		layer.AddChild(new Fable3Boxes(natives) { Name = "Boxes" });
 		// The console's keyboard, over every screen that asks for it.
 		layer.AddChild(new Fable3Keyboard { Name = "Keyboard" });
+		// The joining player's choice of the save their hero comes from, over everything the guest drew
+		// before its join began to wait on it.
+		layer.AddChild(new Fable3HeroSavePicker { Name = "HeroSavePicker" });
+		// Another player's card, wherever the guest shows one (XamShowGamerCardUIForXUID).
+		layer.AddChild(new Fable3GamerCard { Name = "GamerCard" });
+		// The host's achievements page, over the Options (its host row) and the card it is opened from.
+		layer.AddChild(new Fable3AchievementsPage { Name = "AchievementsPage" });
 		// Over the HUD, as Fable 2's toast stands above every presentation.
 		layer.AddChild(new Fable3Achievements { Name = "Achievements" });
 		// A mod's notices, as the game's own TopBox messages.
@@ -183,6 +216,8 @@ public sealed class Fable3Title : Engine_TitleGame
 		layer.AddChild(new Fable3Culture { Name = "Culture" });
 		// The interaction list in the PC arrangement, Godot's own drawing of the guest's stated rows.
 		layer.AddChild(new Fable3InteractionList { Name = "InteractionList" });
+		// The shop's page beside it, from the shop's stated state and panel texts.
+		layer.AddChild(new Fable3ShopPage { Name = "ShopPage" });
 		// After every screen has read the pointer: its leftovers are the pad's.
 		layer.AddChild(new Fable3PointerLeftovers { Name = "PointerLeftovers" });
 		// The PC's lite pause: the host's own, with its notice.
@@ -290,6 +325,9 @@ public sealed class Fable3Title : Engine_TitleGame
 
 	/// <summary>The `hud.bgf` widgets Fable 3's own surfaces draw rather than the shared HUD view (<see cref="Fable3Hud.Owned"/>).</summary>
 	public override System.Collections.Generic.IReadOnlyCollection<string> HudOwnedSubtrees => Fable3Hud.Owned;
+
+	/// <summary>`hud.bgf`'s seat rules: whose each widget is on a split couch screen (<see cref="Fable3HudLayout"/>).</summary>
+	public override Refii.Ui.Engine_HudTitleLayout HudLayout => Fable3HudLayout.Instance;
 
 	/// <summary>
 	/// Fable 3 rolls no weather. Precipitation is four floats of the evaluated theme block

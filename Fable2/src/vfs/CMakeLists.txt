@@ -39,6 +39,9 @@ set(REFII_VFS_RUNTIME_SOURCES
     # Each renderable's stated appearance (alpha, tint, scale, drawable): same rule, filled by
     # Fable2/src/vfs/src/hooks/entity_appearance.cpp.
     ${REFII_VFS_ROOT}/src/core/entity_appearance_state.cpp
+    # The dead creatures the guest leaves lying, filled by the CECCreature hooks
+    # (Fable2/src/vfs/src/hooks/mod_events.cpp FinishDeath, Fable2/src/vfs/src/hooks/creature_corpse.cpp).
+    ${REFII_VFS_ROOT}/src/core/creature_corpse_state.cpp
     # Each character's texture composites, filled by Fable2/src/vfs/src/hooks/texture_layers.cpp.
     ${REFII_VFS_ROOT}/src/core/texture_layer_state.cpp
     # The decals the guest states, filled by Fable2/src/vfs/src/hooks/decals.cpp.
@@ -49,7 +52,6 @@ set(REFII_VFS_RUNTIME_SOURCES
     ${REFII_VFS_ROOT}/src/core/item_dye_layer_state.cpp
     ${REFII_VFS_ROOT}/src/core/part_morph_state.cpp
     # Which of the hero's garments are dyed, sampled from the guest's own test.
-    ${REFII_VFS_ROOT}/src/core/dye_state.cpp
     # The pub-game seam: the host posts Godot's fscommands, the pump replacement drains them.
     ${REFII_VFS_ROOT}/src/core/pubgame_state.cpp
     # One-time collectables per player: silver keys each player takes for themselves.
@@ -138,6 +140,7 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_query.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_real_estate.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_receive_items.cpp
+    ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_shared.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_shop.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_small_screens.cpp
     ${REFII_VFS_ROOT}/src/hooks/gui_screen_stub_support.cpp
@@ -147,6 +150,8 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     # visibility, stated from the calls that set them.
     ${REFII_VFS_ROOT}/src/hooks/shop_keeper_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/preview_item_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/page_fills_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/item_rows_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/pending_weapons_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/experience_counter_stated.cpp
     # The list screens' row tickets, from their allocate and clear.
@@ -168,6 +173,9 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     # The mod event bus: typed events on the game's seams, and the mods' Lua handlers.
     ${REFII_VFS_ROOT}/src/hooks/mod_events.cpp
     ${REFII_VFS_ROOT}/src/hooks/household_persist.cpp
+    # Co-op property: who owns a building, and the host's buildings stated to an online joiner.
+    ${REFII_VFS_ROOT}/src/hooks/coop_estate_owner.cpp
+    ${REFII_VFS_ROOT}/src/hooks/coop_estate_statements.cpp
     # Player state's saves: a hero's saved mod values beside the save the game writes it into.
     ${REFII_VFS_ROOT}/src/hooks/player_state_hooks.cpp
     # The host's queued helper calls and queries (Godot scripts), run in the guest tick.
@@ -179,6 +187,8 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     # The Refii.* natives registered into the game VM for mods' Lua.
     ${REFII_VFS_ROOT}/src/hooks/mod_lua_natives.cpp
     ${REFII_VFS_ROOT}/src/hooks/lua_gc_slice.cpp
+    # The async pathfinder's batch on the real clock, and the world tick's wait for it.
+    ${REFII_VFS_ROOT}/src/hooks/pathfinder_batch.cpp
     ${REFII_VFS_ROOT}/src/hooks/frontend_video_handoff.cpp
     ${REFII_VFS_ROOT}/src/hooks/particle_transform.cpp
     # Which spell a spell's effects belong to, as its own update states it; plays ride that update.
@@ -194,6 +204,7 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/spell_fx_lifetime.cpp
     ${REFII_VFS_ROOT}/src/hooks/target_highlight.cpp
     ${REFII_VFS_ROOT}/src/hooks/entity_appearance.cpp
+    ${REFII_VFS_ROOT}/src/hooks/creature_corpse.cpp
     ${REFII_VFS_ROOT}/src/hooks/texture_layers.cpp
     ${REFII_VFS_ROOT}/src/hooks/decals.cpp
     # The mouse's turn handed to the active camera's own ProcessGameAction before each update.

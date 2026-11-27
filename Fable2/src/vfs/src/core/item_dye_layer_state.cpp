@@ -5,11 +5,12 @@
 // GUI-tick sampler in Fable2/src/vfs/src/hooks/guest_tick_pump.cpp, on the guest's thread) and the HOST reads
 // (the host bridge, on Godot's).
 //
-// One record per dyed inventory item INSTANCE (worn or carried), keyed by the item's guest
+// One record for the dyed inventory item INSTANCE the host's preview names (worn or carried), keyed by the item's guest
 // address — the dye is the instance's type-2 record, so two copies of one record hash are dyed
 // apart — holding the composites in the same words a character's texture layers use, so the
 // menu's preview of a dyed garment goes through the very compositor that dresses the hero.
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -27,6 +28,7 @@ struct ItemLayers {
 };
 
 std::mutex g_lock;
+std::atomic<uint32_t> g_wanted{0u};
 ItemLayers g_items[kItemDyeLayerItems];
 uint32_t g_used = 0u;
 
@@ -70,9 +72,12 @@ uint32_t StatedItemDyeLayers(uint32_t item_address, uint32_t* out, uint32_t capa
 
 extern "C" {
 
-// The sampler's whole answer for one sweep: `items` (guest addresses) with each item's words at
-// `offsets[i]..offsets[i] + counts[i]`. Items not in the sweep are dropped (they are no longer
-// dyed, or no longer owned).
+void refii_bridge_want_item_dye_layers(uint32_t item) { refii::vfs::g_wanted.store(item, std::memory_order_relaxed); }
+
+uint32_t refii_bridge_wanted_item_dye_layers(void) { return refii::vfs::g_wanted.load(std::memory_order_relaxed); }
+
+// The read's whole answer: `items` (guest addresses) with each item's words at
+// `offsets[i]..offsets[i] + counts[i]`. Items not in it are dropped (no longer asked, dyed or listed).
 void refii_bridge_set_item_dye_layers(const uint32_t* items, const uint32_t* offsets,
                                       const uint32_t* counts, uint32_t item_count,
                                       const uint32_t* words) {

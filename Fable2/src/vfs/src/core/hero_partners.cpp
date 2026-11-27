@@ -5,7 +5,10 @@
 // A HERO'S IDENTITY is a random 48-bit number made once for that hero and kept with its own save:
 // two saved player values (`refii.hero.idh` / `.idl`, 24 bits each, exact in a float), so it is the
 // same on both machines (the player store restates it) and comes back when the hero's save loads.
-// Only the machine that plays the hero makes it, and only once that hero is in the game.
+// Only the machine that plays the hero makes it, and only once that hero is in the game. THE PLAIN
+// HENCHMAN HAS NONE: player two is a hero with an identity only while they brought one (a character
+// from a save, refii_bridge_two_is_hero); the henchman is no one's partner, co-owns nothing and is owed
+// nothing, and nothing is made or saved for them.
 //
 // A PARTNERSHIP is a saved value in EACH partner's store, `refii.partner.<other's id>`: 1 business,
 // 2 married. Both are written together; it stands between the two heroes in the game only while
@@ -25,7 +28,12 @@
 
 #include "core/payload_bridge_fable2.h"
 
+#include <atomic>
+
 namespace {
+
+/// Player two brought a hero (payload_bridge_fable2.h refii_bridge_two_is_hero).
+std::atomic<bool> g_two_is_hero{false};
 
 constexpr char kIdHigh[] = "refii.hero.idh";
 constexpr char kIdLow[] = "refii.hero.idl";
@@ -63,7 +71,14 @@ uint64_t Join(uint32_t high, uint32_t low) { return (static_cast<uint64_t>(high 
 
 }  // namespace
 
+extern "C" int32_t refii_bridge_two_is_hero(void) { return g_two_is_hero.load(std::memory_order_relaxed) ? 1 : 0; }
+
+extern "C" void refii_bridge_two_is_hero_set(int32_t on) { g_two_is_hero.store(on != 0, std::memory_order_relaxed); }
+
 extern "C" uint64_t refii_bridge_hero_id(int32_t player) {
+  if (player == 2 && refii_bridge_two_is_hero() == 0) {
+    return 0u;
+  }
   float high = 0.0f;
   float low = 0.0f;
   if (!Read(player, kIdHigh, high) || !Read(player, kIdLow, low)) {
@@ -73,8 +88,8 @@ extern "C" uint64_t refii_bridge_hero_id(int32_t player) {
 }
 
 extern "C" void refii_bridge_hero_id_ensure(int32_t player) {
-  if ((player != 1 && player != 2) || ((refii_bridge_player_owned() >> (player - 1)) & 1u) == 0u ||
-      refii_bridge_hero_id(player) != 0u) {
+  if ((player != 1 && player != 2) || (player == 2 && refii_bridge_two_is_hero() == 0) ||
+      ((refii_bridge_player_owned() >> (player - 1)) & 1u) == 0u || refii_bridge_hero_id(player) != 0u) {
     return;
   }
   static std::mt19937_64 random{std::random_device{}()};

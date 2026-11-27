@@ -508,6 +508,9 @@ public static class Engine_LevelLighting
 			GD.Print($"[lighting] {Engine_PostFxParams.ModeEnvironment}=off; the post-process chain is not attached");
 		}
 
+		// Disabled until a co-op view asks it to start the temporal history over (GameSplitView).
+		effects.Add(new Engine_TemporalHistoryEffect());
+
 		var compositor = new Compositor { CompositorEffects = effects };
 		GC.KeepAlive(effects);
 		return compositor;

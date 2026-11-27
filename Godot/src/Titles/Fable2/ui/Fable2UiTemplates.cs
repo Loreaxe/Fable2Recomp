@@ -174,12 +174,6 @@ public static class Fable2UiTemplates
 		};
 
 	/// <summary>
-	/// The gift screen's gold row event — `sub_82430468` spawns it with 7 in both the packed
-	/// Float1/Float2 slot and the event type, and `sub_826C45C8` branches on the type alone.
-	/// </summary>
-	private const int GiftGoldEventType = 7;
-
-	/// <summary>
 	/// One shop group row — `sub_82994218` states this icon for all six
 	/// (`dword_8349D040`). Children come from the capture; see the call site.
 	/// </summary>
@@ -197,8 +191,10 @@ public static class Fable2UiTemplates
 		Source = Fable2MenuSources.ShopSource + ":" + name,
 	};
 
-	/// <summary>One weapons-screen category row, its half of the category from the data areas.</summary>
-	private static Engine_UiMenuEntry WeaponCategory(string name, string tag, string half) => new()
+	/// <summary>One weapons-screen category row: the rows the guest spawned under it (`sub_826CEB60` files a weapon
+	/// under "Melee" or "Ranged" by its `WeaponType`), their A the equip, the caption the guest's header
+	/// (`sub_829B1890`, 0x829B1900 / 0x829B195C).</summary>
+	private static Engine_UiMenuEntry WeaponCategory(string name, string tag) => new()
 	{
 		Name = name,
 		Tag = tag,
@@ -206,11 +202,19 @@ public static class Fable2UiTemplates
 		// `dword_8349D930` again — the shared category icon.
 		Icon = @"Art\GUI\WheelIcons\icon_world_map.tga",
 		EventType = (int)Engine_UiMenuConstants.EventType.Submenu,
-		Source = Engine_UiInventorySource.WeaponsSource + ":" + half,
+		Source = $"{Engine_UiItemRows.SourceName}:equip:{name}",
+		Counted = false,
 	};
 
-	/// <summary>One world-map category row — a submenu, its children from the named source.</summary>
-	private static Engine_UiMenuEntry WorldMapCategory(string name, string tag, string source) =>
+	/// <summary>
+	/// One of the world map's five guest categories — a submenu whose children are the rows the
+	/// guest's population spawned under it (`capture:&lt;name&gt;`), with the guest's own (type, id)
+	/// and its own caption: `sub_826CF098` spawns the header with the count of its list and the
+	/// unviewed mark appended (" (", the count, ")" and `&lt;exclamation.img&gt;`, 0x826CF0D8..0x826CF134),
+	/// so the template counts nothing (<see cref="Engine_UiMenuEntry.Counted"/> false) and the header
+	/// takes that caption from the same population.
+	/// </summary>
+	private static Engine_UiMenuEntry WorldMapCategory(string name, string tag) =>
 		new()
 		{
 			Name = name,
@@ -219,7 +223,8 @@ public static class Fable2UiTemplates
 			// `dword_8349D354` — every world-map child row states this icon.
 			Icon = @"Art\GUI\WheelIcons\icon_logbook.tga",
 			EventType = (int)Engine_UiMenuConstants.EventType.Submenu,
-			Source = source,
+			Source = "capture:" + name,
+			Counted = false,
 		};
 
 	/// <summary>The entry, with its caption's `" (N)"` suppressed — see `Engine_UiMenuEntry.Counted`.</summary>
@@ -237,15 +242,12 @@ public static class Fable2UiTemplates
 	/// </summary>
 	private const string CategoryTag = "GUI_SCREEN_INVENTORY_CATEGORIES_";
 
-	private static Engine_UiMenuEntry ItemCategory(string name, string tag, params int[] categories) =>
-		ItemCategory(name, tag, string.Empty, categories);
-
 	/// <summary>
-	/// One category row whose children are the data areas, and what activating one of them DOES.
-	/// The operation rides on the source because it needs each row's own record hash.
+	/// One category row of an item book: the rows the guest spawned under it, with the row's A stamped on as
+	/// <paramref name="operation"/> (empty: the rows commit as themselves), and the guest's own header caption
+	/// (`sub_826CF098`: the count and the new mark; `sub_826CF020` for the Outfits: none).
 	/// </summary>
-	private static Engine_UiMenuEntry ItemCategory(
-		string name, string tag, string operation, params int[] categories) =>
+	private static Engine_UiMenuEntry ItemCategory(string name, string tag, string operation) =>
 		new()
 		{
 			Name = name,
@@ -254,9 +256,8 @@ public static class Fable2UiTemplates
 			// `dword_8349D930` — every one of the nine states the same icon.
 			Icon = @"Art\GUI\WheelIcons\icon_world_map.tga",
 			EventType = (int)Engine_UiMenuConstants.EventType.Submenu,
-			Source = Engine_UiInventorySource.SourceName + ":" +
-				(operation.Length == 0 ? string.Empty : operation + ":") +
-				string.Join(",", categories),
+			Source = $"{Engine_UiItemRows.SourceName}:{operation}:{name}",
+			Counted = false,
 		};
 
 	/// <summary>
@@ -290,62 +291,39 @@ public static class Fable2UiTemplates
 		// TEMPLATE RECORD rather than a special case in the list builder, so any other row on any
 		// other guest menu can be dropped the same way — and put back, from
 		// `user://ui/templates.json`, without a rebuild.
-		// THE AUGMENT LIST IS THE HELD AUGMENT'S TARGETS. Its table authors no rows: every row is
-		// a carried item with a free augment slot (`Engine_UiInventorySource.AugmentTargets`), and
-		// the screen takes the title the guest's own mode gives it (`sub_826D1800` case 83).
-		if (menus.TryGetValue(Engine_UiAugmentFlow.MenuScript, out Engine_UiMenuTemplate? augments))
+		// THE AUGMENT AND REMOVER TARGETS: the items book's own lists (`sub_829B0BF0` / `sub_829B10A8`, entered by
+		// the augment's and the remover's own events 83 / 310), both under the script 'AugmentMenu'
+		// (`dword_8349D92C`, 0x829B0C58 / 0x829B1110) whose shipped table authors Ranged, Melee and Accessories;
+		// the guest files each target under its own category (`sub_826CEB60`). The tab strip's title is the
+		// guest's (`sub_826B81C0` "GUI_SCREEN_TITLE_AUGMENT" / "GUI_SCREEN_AUGMENT_REMOVAL_TITLE").
+		// THE DYE TARGETS: the clothing book in dye mode (`sub_829B2168`, the script 'DyeMenu' `dword_8349D928`,
+		// 0x829B2228), its seven shipped categories, and the `Dye Hero Hair` category it spawns itself under
+		// Root with the worn hair, beard and moustache (0x829B26B8 .. 0x829B2988).
+		foreach (string targets in new[] { "AugmentMenu", "DyeMenu" })
 		{
-			augments.Title = "GUI_SCREEN_TITLE_AUGMENT";
-			augments.Source = $"{Engine_UiInventorySource.SourceName}:{Engine_UiInventorySource.AugmentOperation}";
-		}
-
-		// The remover's list, the same way (`sub_826D1800` case 310 retitles the screen).
-		if (menus.TryGetValue(Engine_UiAugmentFlow.RemoveMenuScript, out Engine_UiMenuTemplate? strips))
-		{
-			strips.Title = "GUI_SCREEN_AUGMENT_REMOVAL_TITLE";
-			strips.Source = $"{Engine_UiInventorySource.SourceName}:{Engine_UiInventorySource.AugmentRemoveOperation}";
-		}
-
-		// THE DYE LIST'S CHILDREN ARE THE HERO'S CLOTHES. The population table authors the seven
-		// category rows; `sub_829B2168` fills them from the inventory (categories 17..24, worn or
-		// not) and adds `Dye Hero Hair` with the hair, beard and moustache that are on.
-		if (menus.TryGetValue(Engine_UiDyeFlow.MenuScript, out Engine_UiMenuTemplate? dyes))
-		{
-			foreach (Engine_UiMenuEntry entry in dyes.Entries)
+			if (!menus.TryGetValue(targets, out Engine_UiMenuTemplate? list))
 			{
-				int category = entry.Name switch
-				{
-					"Hats" => Engine_UiInventorySource.Category.Hats,
-					"Coats" => Engine_UiInventorySource.Category.Coats,
-					"Shirts" => Engine_UiInventorySource.Category.Shirts,
-					"Gloves" => Engine_UiInventorySource.Category.Gloves,
-					"Pants" => Engine_UiInventorySource.Category.Pants,
-					"Shoes" => Engine_UiInventorySource.Category.Shoes,
-					"Accessories" => Engine_UiInventorySource.Category.Accessories,
-					_ => 0,
-				};
-
-				if (category != 0)
-				{
-					// Masks and the dog's collar share the row, as on the clothing screen.
-					entry.Source = $"{Engine_UiInventorySource.SourceName}:dye:{category}" +
-						(category == Engine_UiInventorySource.Category.Accessories
-							? $",{Engine_UiInventorySource.Category.Dog}"
-							: string.Empty);
-				}
+				continue;
 			}
 
-			dyes.Entries.Add(new Engine_UiMenuEntry
+			foreach (Engine_UiMenuEntry entry in list.Entries)
 			{
-				Name = "Dye Hero Hair",
-				Tag = CategoryTag + "DYE_HERO_HAIR",
-				Icon = @"Art\GUI\WheelIcons\icon_world_map.tga",
-				EventType = (int)Engine_UiMenuConstants.EventType.Submenu,
-				Source = $"{Engine_UiInventorySource.SourceName}:dye:" +
-					$"{Engine_UiInventorySource.Category.Hair}," +
-					$"{Engine_UiInventorySource.Category.Beard}," +
-					$"{Engine_UiInventorySource.Category.Moustache}",
-			});
+				entry.Source = $"{Engine_UiItemRows.SourceName}::{entry.Name}";
+				entry.Counted = false;
+			}
+
+			if (targets == "DyeMenu")
+			{
+				list.Entries.Add(new Engine_UiMenuEntry
+				{
+					Name = "Dye Hero Hair",
+					Tag = CategoryTag + "DYE_HERO_HAIR",
+					Icon = @"Art\GUI\WheelIcons\icon_world_map.tga",
+					EventType = (int)Engine_UiMenuConstants.EventType.Submenu,
+					Source = $"{Engine_UiItemRows.SourceName}::Dye Hero Hair",
+					Counted = false,
+				});
+			}
 		}
 
 		if (menus.TryGetValue("OptionsMenu", out Engine_UiMenuTemplate? options) &&
@@ -474,6 +452,11 @@ public static class Fable2UiTemplates
 		// patches this one record and reaches both players.
 		const string hero = "!" + Engine_UiRowConditions.PlayerTwo;
 		const string playerTwo = Engine_UiRowConditions.PlayerTwo;
+
+		// A HERO'S PAGES ARE A HERO'S. Player two's Map, Items, Weapons, Clothing and Logbook stand only
+		// while player two brought a hero (`player-two-hero`); the plain henchman's book is the 360's
+		// henchman list (`sub_8298EDE0`): Abilities, Options and HenchmanQuit.
+		const string playerTwoHero = playerTwo + ", " + Engine_UiRowConditions.PlayerTwoHero;
 		menus["pause-root"] = new Engine_UiMenuTemplate
 		{
 			Name = "pause-root",
@@ -540,17 +523,17 @@ public static class Fable2UiTemplates
 				// `HostTab`): the guest's capture on that machine is the henchman list, and the
 				// stated-label pass would hand these rows its captions by ordinal.
 				Tab("Map", "GUI_SCREEN_PAUSE_WORLD_MAP", Engine_PauseMenu.TabMap, hero),
-				HostTab("Map", "GUI_SCREEN_PAUSE_WORLD_MAP", Engine_PauseMenu.TabMap, playerTwo),
+				HostTab("Map", "GUI_SCREEN_PAUSE_WORLD_MAP", Engine_PauseMenu.TabMap, playerTwoHero),
 				Tab("Abilities", "GUI_SCREEN_PAUSE_ABILITIES", Engine_PauseMenu.TabAbilities, hero),
 				HostTab("Abilities", "GUI_SCREEN_PAUSE_ABILITIES", Engine_PauseMenu.TabAbilities, playerTwo),
 				Tab("Items", "GUI_SCREEN_PAUSE_ITEMS", Engine_PauseMenu.TabItems, hero),
-				HostTab("Items", "GUI_SCREEN_PAUSE_ITEMS", Engine_PauseMenu.TabItems, playerTwo),
+				HostTab("Items", "GUI_SCREEN_PAUSE_ITEMS", Engine_PauseMenu.TabItems, playerTwoHero),
 				Tab("Weapons", "GUI_SCREEN_PAUSE_WEAPONS", Engine_PauseMenu.TabWeapons, hero),
-				HostTab("Weapons", "GUI_SCREEN_PAUSE_WEAPONS", Engine_PauseMenu.TabWeapons, playerTwo),
+				HostTab("Weapons", "GUI_SCREEN_PAUSE_WEAPONS", Engine_PauseMenu.TabWeapons, playerTwoHero),
 				Tab("Clothing", "GUI_SCREEN_PAUSE_CLOTHING", Engine_PauseMenu.TabClothing, hero),
-				HostTab("Clothing", "GUI_SCREEN_PAUSE_CLOTHING", Engine_PauseMenu.TabClothing, playerTwo),
+				HostTab("Clothing", "GUI_SCREEN_PAUSE_CLOTHING", Engine_PauseMenu.TabClothing, playerTwoHero),
 				Tab("Logbook", "GUI_SCREEN_PAUSE_LOGBOOK", Engine_PauseMenu.TabLogbook, hero),
-				HostTab("Logbook", "GUI_SCREEN_PAUSE_LOGBOOK", Engine_PauseMenu.TabLogbook, playerTwo),
+				HostTab("Logbook", "GUI_SCREEN_PAUSE_LOGBOOK", Engine_PauseMenu.TabLogbook, playerTwoHero),
 
 				// ACHIEVEMENTS — a host tab, sitting between Logbook and Options because THIS
 				// LIST IS THE ORDER. `HostOnly` keeps the entry out of the label join against the
@@ -676,33 +659,39 @@ public static class Fable2UiTemplates
 			},
 		};
 
-		// THE WORLD MAP'S FIVE CATEGORY ROWS — `sub_829A2F40`'s spawn order, with the internal
-		// names it files children under (`dword_8349D340..350`): Regions, Quests, Jobs, Sales,
-		// Family. Note the key is `Family` while the tag reads 'Families'.
+		// THE WORLD MAP'S FIVE CATEGORY ROWS — `sub_829A2F40`'s spawn order (0x829A30A0 ..
+		// 0x829A3220), each `sub_826CF098(list, name, tag, icon, counts)`, with the names its rows are
+		// filed under (TU1 `dword_8349D340..350`, disc `0x8349D2B4..2C4`: Regions, Quests, Jobs, Sales,
+		// Family). Note the key is `Family` while the tag reads 'Families'.
 		//
-		// All five now read the data areas — see Engine_UiQuestSource. Quests and Jobs are ONE
-		// list split by the definition's GDB `Type`; Sales, Regions and Family have their own.
+		// THEIR ROWS ARE THE GUEST'S POPULATION, spawned by the same function: regions
+		// `sub_829A3A30` (type 41, id index + 999), quests `sub_829A3BA0` (42, the ordinal in
+		// `lhWorldMap_BuildQuestList`), jobs `sub_829A3E98` (43, `BuildJobList`), sales
+		// `sub_829A40C0` (44, `BuildSalesList`), family `sub_829A42C8` (45, `BuildFamilyList`). A row
+		// commits as itself — `MenuEvent` with that (type, id) to the screen's own OnMenuEvent
+		// `sub_826C6110` — and its page is its own fill's statement (Engine_UiWorldMapPage). The
+		// trail marks `sub_829A3260` state each row's emphasis by its spawned name.
 		menus["WorldMapMenu"] = new Engine_UiMenuTemplate
 		{
 			Name = "WorldMapMenu",
 			Entries =
 			{
-				WorldMapCategory("Quests", "GUI_SCREEN_WORLD_MAP_QUESTS",
-					Engine_UiQuestSource.QuestsSource),
-				WorldMapCategory("Jobs", "GUI_SCREEN_WORLD_MAP_JOBS",
-					Engine_UiQuestSource.JobsSource),
+				WorldMapCategory("Quests", "GUI_SCREEN_WORLD_MAP_QUESTS"),
+				WorldMapCategory("Jobs", "GUI_SCREEN_WORLD_MAP_JOBS"),
+				WorldMapCategory("Sales", "GUI_SCREEN_WORLD_MAP_SALES"),
+				WorldMapCategory("Family", "GUI_SCREEN_WORLD_MAP_FAMILY"),
+				WorldMapCategory("Regions", "GUI_SCREEN_WORLD_MAP_REGIONS"),
 
-				// No source named: `SourceChildlessSubmenus` gives each of these
-				// `capture:<name>`, which is where their rows come from today.
-				WorldMapCategory("Sales", "GUI_SCREEN_WORLD_MAP_SALES",
-					Engine_UiQuestSource.SalesSource),
-				WorldMapCategory("Family", "GUI_SCREEN_WORLD_MAP_FAMILY",
-					Engine_UiQuestSource.FamilySource),
-				WorldMapCategory("Regions", "GUI_SCREEN_WORLD_MAP_REGIONS",
-					Engine_UiQuestSource.RegionsSource),
-
-				// The player's properties with Fable 3's condition and repair (no shipped tag).
-				WorldMapCategory("Properties", "Properties", Engine_UiPropertySource.SourceName),
+				// OUR OWN CATEGORY, not the guest's: the player's properties with Fable 3's condition
+				// and repair (no shipped tag). Counted by us; no guest row or page stands behind it.
+				new Engine_UiMenuEntry
+				{
+					Name = "Properties",
+					Tag = "Properties",
+					Icon = @"Art\GUI\WheelIcons\icon_logbook.tga",
+					EventType = (int)Engine_UiMenuConstants.EventType.Submenu,
+					Source = Engine_UiPropertySource.SourceName,
+				},
 			},
 		};
 
@@ -775,51 +764,23 @@ public static class Fable2UiTemplates
 			Entries =
 			{
 				// `sub_829B1890` spawns both through `sub_826CF098`, so both carry a count.
-				WeaponCategory("Melee", CategoryTag + "MELEE_WEAPONS", "melee"),
-				WeaponCategory("Ranged", CategoryTag + "RANGED_WEAPONS", "ranged"),
+				WeaponCategory("Melee", CategoryTag + "MELEE_WEAPONS"),
+				WeaponCategory("Ranged", CategoryTag + "RANGED_WEAPONS"),
 			},
 		};
 
-		// THE GIFT SCREEN IS THE INVENTORY, GROUPED, FILTERED BY `CanBeGift`.
-		//
-		// It has no population script of its own — screen 15 is built natively by `sub_82430468`,
-		// which is why this template names the rows rather than adopting a table. That builder
-		// walks 27 category slots and emits a header only where the count is non-zero
-		// (`sub_826CF098`), which is exactly what a null category list plus grouping does here.
-		//
-		// The filter is `sub_8242FB28`: `CanBeGift` off the item's own `GiftComponent`, category
-		// 25 rejected outright, and a worn or wielded item rejected when the stack holds only
-		// one. All three are gift rules and live behind the `gift` operation — see
-		// `Engine_UiInventorySource.Listable` for what happened when they were applied globally.
-		//
-		// THE GOLD ROW IS THE GUEST'S OWN, and it needs nothing of ours. `sub_82430468` appends
-		// it after the categories with `sub_826CE848(a1, "GUI_SCREEN_GIFT_GOLD", icon_gold_coin,
-		// "Root", 7, 7, lua, 0)` — an event type of 7 and no item behind it. Pressing it lands in
-		// `sub_826C45C8`, which latches the type at `guiMgr+84` and, because it is 7, opens the
-		// amount picker (`sub_8236FCA8` with `min(gold, 10)`) instead of the yes/no box; the
-		// answer is then spent by `sub_826C5258` -> `sub_8242E578`. All of that is the guest's,
-		// so the row is authored here and committed by its event type alone. The id it carries
-		// is never read on this path — only `*(msg + 4)`, the type, decides.
+		// THE GIFT SCREEN'S ROWS ARE THE GUEST'S. `lhGuiGiftGoldScreen_PopulateMenu` (0x82430468 / disc
+		// 0x823A45F8) spawns a category header only for a group it lists (`sub_826CF098` 0x82430778, the name
+		// and caption from `sub_82430B58`), each item that passes `sub_8242FB28`'s gift rules and the
+		// `VisibleInGUI` veto under it (`sub_826CE230` 0x82430960; on TU1 the ring rule `sub_824303E8`
+		// 0x82430888, which the disc build has not), and the Gold row on the root while the purse holds any
+		// (`sub_826CE848(…, "GUI_SCREEN_GIFT_GOLD", icon_gold_coin, "Root", 7, 7, …)` 0x82430AD0). The source
+		// takes them in that order, grouped under the guest's own headers. An item row's A is the gift lever;
+		// the Gold row commits as itself (its type 7 opens the amount picker, `sub_826C45C8`).
 		menus["GiftGivingMenu"] = new Engine_UiMenuTemplate
 		{
 			Name = "GiftGivingMenu",
-
-			// No categories named: every one, and the headers follow the data.
-			Source = Engine_UiInventorySource.SourceName + ":gift:",
-			Entries =
-			{
-				new Engine_UiMenuEntry
-				{
-					Name = "Gold",
-					Tag = "GUI_SCREEN_GIFT_GOLD",
-					Icon = @"Art\GUI\WheelIcons\icon_gold_coin.tga",
-					EventType = GiftGoldEventType,
-
-					// Spawned only while the giver has gold: `*(money + 12) > 0` (`ble` at
-					// 0x82430A80, disc 0x823A4BFC) — with none the amount picker has no range.
-					When = Engine_UiRowConditions.HasGold,
-				},
-			},
+			Source = $"{Engine_UiItemRows.SourceName}:gift:",
 		};
 
 		foreach (string itemScript in new[] { "ItemsMenu" })
@@ -829,25 +790,18 @@ public static class Fable2UiTemplates
 				Name = itemScript,
 				Entries =
 				{
-					ItemCategory("KeyItems", CategoryTag + "TOOLS", "use",
-						Engine_UiInventorySource.Category.KeyItemsFold),
-					ItemCategory("Books", CategoryTag + "BOOKS", "use",
-						Engine_UiInventorySource.Category.Books),
-					ItemCategory("Food and Drink", CategoryTag + "FOOD", "use",
-						Engine_UiInventorySource.Category.Food),
-					ItemCategory("Potions", CategoryTag + "POTIONS", "use",
-						Engine_UiInventorySource.Category.Potions),
-					ItemCategory("Gifts", CategoryTag + "GIFTS", "use",
-						Engine_UiInventorySource.Category.Gifts),
-					ItemCategory("Trophies", CategoryTag + "TROPHIES", "use",
-						Engine_UiInventorySource.Category.Trophies),
-					// An augment is CHOSEN, not used: the press holds it and the screen lists its targets.
-					ItemCategory("Augmentations", CategoryTag + "AUGMENTATIONS", Engine_UiInventorySource.AugmentSelectOperation,
-						Engine_UiInventorySource.Category.Augmentations),
-					ItemCategory("Dyes", CategoryTag + "DYES", "dyeselect",
-						Engine_UiInventorySource.Category.Dyes),
-					ItemCategory("Furniture", CategoryTag + "FURNITURE", "use",
-						Engine_UiInventorySource.Category.Furniture),
+					ItemCategory("KeyItems", CategoryTag + "TOOLS", "use"),
+					ItemCategory("Books", CategoryTag + "BOOKS", "use"),
+					ItemCategory("Food and Drink", CategoryTag + "FOOD", "use"),
+					ItemCategory("Potions", CategoryTag + "POTIONS", "use"),
+					ItemCategory("Gifts", CategoryTag + "GIFTS", "use"),
+					ItemCategory("Trophies", CategoryTag + "TROPHIES", "use"),
+
+					// An augment, a remover and a dye commit as themselves: their own events 83 / 310 / 80
+					// (`sub_826CEEF0`) open the guest's target lists.
+					ItemCategory("Augmentations", CategoryTag + "AUGMENTATIONS", string.Empty),
+					ItemCategory("Dyes", CategoryTag + "DYES", string.Empty),
+					ItemCategory("Furniture", CategoryTag + "FURNITURE", "use"),
 				},
 			};
 		}
@@ -869,26 +823,17 @@ public static class Fable2UiTemplates
 			{
 				// `sub_829B2D58` spawns this header through `sub_826CF020`, which takes no count
 				// — the only one of the eight that does.
-				Uncounted(ItemCategory("Suits", CategoryTag + "SUITS", "wear",
-					Engine_UiInventorySource.Category.Suits)),
-				ItemCategory("Hats", CategoryTag + "HATS", "wear",
-					Engine_UiInventorySource.Category.Hats),
-				ItemCategory("Coats", CategoryTag + "COATS", "wear",
-					Engine_UiInventorySource.Category.Coats),
-				ItemCategory("Shirts", CategoryTag + "SHIRTS", "wear",
-					Engine_UiInventorySource.Category.Shirts),
-				ItemCategory("Gloves", CategoryTag + "GLOVES", "wear",
-					Engine_UiInventorySource.Category.Gloves),
-				ItemCategory("Pants", CategoryTag + "PANTS", "wear",
-					Engine_UiInventorySource.Category.Pants),
-				ItemCategory("Shoes", CategoryTag + "SHOES", "wear",
-					Engine_UiInventorySource.Category.Shoes),
+				Uncounted(ItemCategory("Suits", CategoryTag + "SUITS", "wear")),
+				ItemCategory("Hats", CategoryTag + "HATS", "wear"),
+				ItemCategory("Coats", CategoryTag + "COATS", "wear"),
+				ItemCategory("Shirts", CategoryTag + "SHIRTS", "wear"),
+				ItemCategory("Gloves", CategoryTag + "GLOVES", "wear"),
+				ItemCategory("Pants", CategoryTag + "PANTS", "wear"),
+				ItemCategory("Shoes", CategoryTag + "SHOES", "wear"),
 
 				// Internal name `Accessories`, Babel tag `..._MASKS` — the two disagree and the
-				// tag is the one that draws.
-				ItemCategory("Accessories", CategoryTag + "MASKS", "wear",
-					Engine_UiInventorySource.Category.Accessories,
-					Engine_UiInventorySource.Category.Dog),
+				// tag is the one that draws. The dog's items are filed here too (`sub_826CEB60`).
+				ItemCategory("Accessories", CategoryTag + "MASKS", "wear"),
 			},
 		};
 
@@ -1498,8 +1443,8 @@ public static class Fable2UiTemplates
 			ScrollBar = "Foreground.Book.Pages.Page2.Contents.Scrollbar|",
 
 			// The front page (name, anecdote, keeper, owner, opinions, sale, discount, wealth) is
-			// composed from the guest's own helpers' answers (Engine_UiShopFrontPage), sampled
-			// while the screen stands — nothing is read back from the page `sub_82991800` fills.
+			// what its fill `sub_82991800` wrote at the open, as the fill states it
+			// (Engine_UiShopFrontPage, Engine_UiPageFills).
 			PreviewAnchor = "Foreground.Book.Pages.Page1.Contents.ModelHider.model_proxy.model",
 		});
 

@@ -27,6 +27,10 @@
 // PROPERTY: the real-estate screen resolves its buyer as hero one (`sub_826B1A08`, stored at
 // screen+144, 0x826b1a6c); opened from a sale sign player two used, it is player two.
 //
+// THE WHEEL'S BOOK, JOBS, PROPERTY AND ORBS ARE A HERO'S: each answers player two only while player two
+// brought a hero (RefiiCoopGetOwnHero). The plain henchman keeps the shipped reads — hero one's
+// expression book, player one's job pad, hero one buying, the orbs flying to hero one.
+//
 // NAMES: the game shows another player by the name that player's machine sent (the co-op join
 // messages, the orb presence channel). Each machine now sends its pseudonym (the kernel's profile
 // name), and every on-screen name answers RexNet's rule instead (RexNet §17.3.8): a friend's
@@ -59,6 +63,8 @@
 
 extern "C" uint8_t* RefiiGuestBase(void);
 extern "C" int RefiiCoopJobWorker(void);
+/// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
+extern "C" int RefiiCoopGetOwnHero(void);
 extern "C" int RefiiCoopTakeEstateBuyer(void);
 extern "C" uint32_t RefiiCoopPlayerWithId(uint8_t* base, uint32_t id);
 
@@ -91,7 +97,8 @@ uint32_t HeroTwoWith(uint8_t* base, uint32_t component) {
 // when player two owns the open wheel.
 void RefiiCoopWheelHero(PPCRegister& hero, PPCRegister& wheel) {
   uint8_t* base = RefiiGuestBase();
-  if (base == nullptr || !Plausible(wheel.u32) || refii::vfs::LoadGuestU32(base, wheel.u32 + 24u) != 2u) {
+  if (base == nullptr || RefiiCoopGetOwnHero() == 0 || !Plausible(wheel.u32) ||
+      refii::vfs::LoadGuestU32(base, wheel.u32 + 24u) != 2u) {
     return;
   }
   const uint32_t two = refii_mod_player_hero(base, 2);
@@ -123,7 +130,7 @@ void RefiiCoopTutorialHero(PPCRegister& r3) {
 // The job meter's Player (`r3`, Player 1): player two's while player two works the job.
 void RefiiCoopJobMeterPlayer(PPCRegister& r3) {
   uint8_t* base = RefiiGuestBase();
-  if (base == nullptr || RefiiCoopJobWorker() != 2) {
+  if (base == nullptr || RefiiCoopJobWorker() != 2 || RefiiCoopGetOwnHero() == 0) {
     return;
   }
   const uint32_t two = PlayerWithId(base, 2u);
@@ -136,7 +143,7 @@ void RefiiCoopJobMeterPlayer(PPCRegister& r3) {
 // when the sale sign was player two's.
 void RefiiCoopEstateBuyer(PPCRegister& r6) {
   uint8_t* base = RefiiGuestBase();
-  if (base == nullptr || RefiiCoopTakeEstateBuyer() != 2) {
+  if (base == nullptr || RefiiCoopTakeEstateBuyer() != 2 || RefiiCoopGetOwnHero() == 0) {
     return;
   }
   // The screen reads the buyer's properties (69), use target (77) and purse (81).
@@ -205,7 +212,7 @@ void RefiiCoopOrbTarget(PPCRegister& r31, PPCRegister& r30, PPCRegister& orb) {
   }
   const uint32_t one = refii_mod_player_hero(base, 1);
   const uint32_t two = refii_mod_player_hero(base, 2);
-  if (two != 0u && (r31.u32 == one || r31.u32 == two)) {
+  if (two != 0u && RefiiCoopGetOwnHero() != 0 && (r31.u32 == one || r31.u32 == two)) {
     uint32_t earner = 0u;
     {
       std::lock_guard<std::mutex> lock(g_orb_mutex);

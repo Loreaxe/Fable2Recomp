@@ -12,6 +12,7 @@ to the game while it has.
 - [Co-op](#co-op)
 - [The look-at button](#the-look-at-button)
 - [The camera](#the-camera)
+- [Shaping the camera](#shaping-the-camera)
 - [Hidden parts](#hidden-parts)
 
 ## Three statements
@@ -146,6 +147,114 @@ end)
 **The field of view** is the player's live camera's, read where their view is drawn from. Every
 camera writes its own field of view each update, so there is no per-player field of view to set:
 a hold's `fov` is the way to state one.
+
+## Shaping the camera
+
+A mod does not wrap the game's camera scripts. It **states values** for a player's camera and the
+engine applies them where the camera reads its own, on both titles; the same mod code keeps working
+when the camera's implementation changes. Lua and a Godot script make the same calls with the same
+keys (`host.camera_tune(p, {...})`); a native mod makes them through `refii_mod_camera_state`.
+
+| Call | What it states |
+|---|---|
+| `Refii.camera_tune(p, {key = number})` | tunables by name. The orbit: `pitch_speed`, `pitch_min`, `pitch_max`, `move_damping`, `lock_strength`, `lock_turn_speed`. The gun aim: `ranged_tightness`, `ranged_offset`, `ranged_pitch_limit`. The held first-person view: `fp_view`, `fp_fov`, `fp_pitch_limit`, `fp_eye_forward`, `fp_eye_height`, `fp_face`, `fp_scenes` |
+| `Refii.camera_frame(p, {distance, interior_scale, height, focus_height, slot, track, levels})` | the exploring camera's framing: one orbit distance, the focus pinned (`slot = 0`) and not carried (`track = 0`), the camera's and the focus's heights; `levels = "all"` for every explore zoom level, the first of each otherwise |
+| `Refii.camera_focus(p, {right, up, ease})` | the focus slid over the shoulder, eased in and out |
+| `Refii.camera_combat_blend(p, weight)` | the weight toward the game's combat camera; 0 is none |
+| `Refii.camera_interest(p, {foes, passers})` | whether foes and passers-by pull the frame |
+| `Refii.camera_pitch_hold(p, on, {min, max, shared})` | the manual pitch stays where the stick or mouse put it |
+| `Refii.camera_lock_frame(p, on, {strength, tilt})` | the hero's lock target is framed without the look-at button held |
+| `Refii.camera_mode_allow(p, mode, allow)` | whether the game may pick a camera mode by itself |
+| `Refii.camera_offset(p, {right, up, back, yaw, pitch, roll, fov})` | a display-only offset of the picture (see [Reading the camera](#reading-the-camera)) |
+| `Refii.camera_shake(p, {kind, level, attack, decay, seconds, add, open})` | the game's own screen shake on player p's camera (see [Shaking the camera](#shaking-the-camera)) |
+
+The rules every one of them keeps:
+
+- **Per player.** Every call takes the player (1 or 2). State both when the mod serves both.
+- **Per mod, stacked.** A statement belongs to the mod that made it. The value in force is the one
+  stated last among the mods still stating it; letting yours go (`nil`, or `false` for one tune
+  key) gives the slot back to the mod under you. A Godot script names its mod with the last
+  argument (`owner`).
+- **One hero.** Frame, focus, combat blend, interest, lock frame and mode allow apply to a camera
+  that frames one hero (single player, online co-op, split screen). A shared couch screen keeps
+  the game's own camera. The pitch hold does too unless stated `shared = true`. The tune applies
+  to every camera of that player.
+- **Never saved.** The values live beside `Refii` in the game VM, outside every table the save
+  writes. A `camera_override` hold is not saved either: neither the save's camera record nor the
+  hero's saved camera-override pair ever holds a mod's camera.
+- **Stated when the mod loads.** The values are made new when the mods' Lua loads (each session,
+  each reload): state them from `init.lua`, `camera.lua` or on `lua_ready`, and again when one of
+  your settings changes.
+- **Fable 3** answers every shape call and `camera_tune` key as Fable 2 does; its held first-person
+  view (`fp_*`) turns with the camera stick only, as Fable 2's.
+
+```lua
+-- A fixed orbit with no combat camera and a pitch that stays put, for both players.
+for p = 1, 2 do
+	Refii.camera_frame(p, { distance = 4, interior_scale = 0.85, height = 0.9, focus_height = 1.6, slot = 0, track = 0 })
+	Refii.camera_combat_blend(p, 0)
+	Refii.camera_interest(p, { foes = false, passers = false })
+	Refii.camera_pitch_hold(p, true, { shared = true })
+end
+```
+
+```gdscript
+# The same from a Godot script (mods-src/first_person/godot/first_person.gd states its view this way).
+host.camera_tune(1, { "fp_view": 1, "fp_fov": 80.0, "fp_pitch_limit": 75.0 }, "first_person")
+```
+
+## Reading the camera
+
+The same reads on every surface (Lua `Refii.*`, Godot `host.*`, native `refii_mod_camera_*`), both
+titles, guest axes, angles in degrees:
+
+| Call | Answers |
+|---|---|
+| `Refii.camera_pose(p)` | the pose player p's picture is DRAWN with this frame: `x y z`, `fx fy fz`, `ux uy uz`, `fov` (the horizontal angle the game states), `vfov` (the drawn view's vertical angle), `cut`. Eased between the game's ticks, with any `camera_offset`. On a shared couch screen both players' is the one picture; nothing for a player not drawn on this machine |
+| `Refii.camera_stated(p)` | the block the GAME'S READERS see for player p at its last tick (movement, aim, the AI and the save read this one): the block its own camera getter built for that player's camera manager; a shared screen's is the shared camera's |
+| `Refii.camera_zoom(p)` | the exploring camera's zoom level in force: `set` (the game's name: Exterior, Interior, Vanity; Fable 3 also Sprint, Vault, Falling ...), `level`, `combat` (the weight toward the combat camera), `string_length`, `cage_radius`, `max_cage_radius`, `height`, `focal_offset`, `fov`, `max_coop_distance` |
+| `Refii.camera_screen_mode()` · `Refii.camera_split()` | the co-op screen chosen (`"shared"`, `"split_vertical"`, `"split_horizontal"`, `"hybrid"`) and whether two views are drawn now. Both titles (Fable 3: couch co-op) |
+| `Refii.camera_view(p)` | the part of the window p's picture fills: `x, y, w, h`, 0..1 from the top left |
+| `Refii.camera_ray(p [, x, y])` | the line through point (x, y) of p's view (0..1 from its top left, the centre when left out): `ox, oy, oz, dx, dy, dz`, through the picture exactly as drawn |
+
+The events: `camera_cut` (the game cut p's camera), `camera_blend` (an `InterpolateFor` started a
+blend of `ticks` guest ticks), `camera_tick` (once per guest tick per player, the block the readers
+see), `camera_zoom_changed` (another zoom set, or into or out of the combat blend),
+`camera_screen_changed` (the co-op screen or the split changed). All are read off the game's own
+camera statements and raised at the guest tick, for a player whose picture is drawn on this machine:
+on a shared couch screen the one camera, player 1's.
+
+`Refii.camera_offset(p, {right, up, back, yaw, pitch, roll, fov})` moves the PICTURE only: the
+game's camera, everything that reads it and the save never see it. It stacks per mod as the shape
+calls do; `nil` lets it go.
+
+```gdscript
+# Aim along the player's own view, their half on a split screen (portal_gun does).
+var line: Dictionary = host.camera_ray(player)
+if not line.is_empty():
+	var from: Vector3 = line["origin"]       # guest axes
+	var along: Vector3 = line["direction"]
+```
+
+## Shaking the camera
+
+`Refii.camera_shake(p, {kind, level, attack, decay, seconds, add, open})` gives player p's camera a
+shake through the game's own screen shake (`Player.AddScreenShake`): a timed source of its `kind`
+(`banshee`, `troll`, `explosion`, `quake` — the default — `magic_charge`, `magic_cast`, `combat`, or
+the game's number) that rises over `attack` seconds to `level`, holds, and dies over `decay` before
+`seconds` are up; the camera shakes by the largest source of each kind in force. `add = true` adds
+to that kind's level instead of replacing it, `open = true` holds it until
+`Refii.camera_shake(p, {kind = ..., fade = seconds})` fades it out.
+
+The game gives every shake to player one's camera. For player two the call runs inside player two's
+camera bracket, so on a split screen player two's own camera shakes and on a shared screen the one
+shared camera does. It is the game's shake: the camera's readers and the save see it as they see the
+game's own. `false` when player p's picture is not drawn on this machine.
+
+```lua
+-- A heavy landing, felt by the player who landed only.
+Refii.camera_shake(p, { kind = "quake", level = 0.6, attack = 0, decay = 0.3, seconds = 0.4 })
+```
 
 ## Hidden parts
 

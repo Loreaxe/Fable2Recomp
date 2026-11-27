@@ -18,9 +18,11 @@
 // THE HOST MAKES IT, as Fable 3 does (`sub_8243A190` → `sub_823A0AF8(mgr, 1)` when the remote
 // hero is created), through the game's own CreateEntityFromIDAtPosition in game Lua: the breed,
 // both levels and the tricks come from player two's HeroState (the dog they were playing with),
-// the plain CreatureDogHero when it states none; its collar is worn and its name restated. It exists while player two does and hero one
-// has a dog; the host destroys it when player two leaves (`entity:Destroy()`, `sub_8238D828`,
-// which sends DestroyEntity to the joiner). A joiner never creates or destroys one.
+// the plain CreatureDogHero when it states none; its collar is worn and its name restated. It exists
+// while player two stands as a HERO they brought (RefiiCoopGetOwnHero) and hero one has a dog. The
+// plain henchman has none, as shipped; the host destroys it when player two leaves or becomes the
+// henchman (`entity:Destroy()`, `sub_8238D828`, which sends DestroyEntity to the joiner). A joiner
+// never creates or destroys one. The rule is core/coop_partner_dog_rule.h.
 
 #include <array>
 #include <atomic>
@@ -32,11 +34,14 @@
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 
+#include "core/coop_partner_dog_rule.h"
 #include "core/guest_build.h"
 #include "core/guest_state.h"
 #include "core/refii_mod.h"
 
 extern "C" uint8_t* RefiiGuestBase(void);
+/// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
+extern "C" int RefiiCoopGetOwnHero(void);
 extern "C" uint32_t RefiiCoopPlayerDog(uint8_t* base, int player);
 extern "C" void RefiiCoopSetPartnerDog(uint32_t dog);
 extern "C" int RefiiCoopPartnerDogRole(uint32_t dog);
@@ -92,8 +97,10 @@ uint32_t MasterFor(uint32_t dog_comp, uint32_t hero_one) {
   const uint32_t dog = refii::vfs::LoadGuestU32(base, dog_comp + 4u);
   switch (RefiiCoopPartnerDogRole(dog)) {
     case 1: {
+      // The henchman has no dog: one left from player two's time as a hero follows hero one until
+      // the tick destroys it.
       const uint32_t hero_two = refii_mod_player_hero(base, 2);
-      if (hero_two == 0u || refii_mod_entity_alive(base, hero_two) == 0) {
+      if (hero_two == 0u || refii_mod_entity_alive(base, hero_two) == 0 || RefiiCoopGetOwnHero() == 0) {
         return hero_one;
       }
       if (!g_said_bind.exchange(true)) {
@@ -231,38 +238,48 @@ void Tick(PPCContext* ctx, uint8_t* base, float) {
   }
 
   const uint32_t hero_two = refii_mod_player_hero(base, 2);
-  const bool partner_here = hero_two != 0u && refii_mod_entity_alive(base, hero_two) != 0;
+  refii::coop::PartnerDogFacts facts;
+  facts.partner_here = hero_two != 0u && refii_mod_entity_alive(base, hero_two) != 0;
+  facts.partner_is_hero = RefiiCoopGetOwnHero() != 0;
   const uint32_t dog = RefiiCoopPlayerDog(base, 2);
+  facts.has_dog = dog != 0u;
 
-  if (!partner_here) {
+  if (!facts.partner_here) {
     hero_two_ticks = 0u;
     gone_ticks += kCadence;
-    if (dog != 0u && gone_ticks >= kGoneTicks) {
-      REXLOG_INFO("coop dogs: player two left; their dog goes with them");
+  } else {
+    gone_ticks = 0u;
+    hero_two_ticks = facts.partner_is_hero ? hero_two_ticks + kCadence : 0u;
+  }
+  facts.gone_ticks = gone_ticks;
+  facts.hero_ticks = hero_two_ticks;
+  facts.attempt_due = tick >= next_attempt;
+  if (facts.partner_here && facts.partner_is_hero && !facts.has_dog) {
+    facts.hero_one_has_dog = RefiiCoopPlayerDog(base, 1) != 0u;
+    uint32_t definition = 0u;
+    facts.kit_stated = RefiiCoopPartnerDogKit(&definition, nullptr, nullptr, nullptr, 0u) != 0u;
+  }
+
+  switch (refii::coop::NextPartnerDogStep(facts, kGoneTicks, kKitWaitTicks)) {
+    case refii::coop::PartnerDogStep::kDestroy:
+      if (facts.partner_here) {
+        REXLOG_INFO("coop dogs: player two is the henchman now; the dog of their hero goes");
+      } else {
+        REXLOG_INFO("coop dogs: player two left; their dog goes with them");
+      }
       Destroy(ctx, base, dog);
       RefiiCoopSetPartnerDog(0u);
-    }
-    return;
+      return;
+    case refii::coop::PartnerDogStep::kDress:
+      RefiiCoopDressPartnerDog(ctx, base, dog);
+      return;
+    case refii::coop::PartnerDogStep::kSpawn:
+      next_attempt = tick + kRetryTicks;
+      Spawn(ctx, base);
+      return;
+    case refii::coop::PartnerDogStep::kNone:
+      return;
   }
-
-  gone_ticks = 0u;
-  hero_two_ticks += kCadence;
-  if (dog != 0u) {
-    RefiiCoopDressPartnerDog(ctx, base, dog);
-    return;
-  }
-  if (RefiiCoopPlayerDog(base, 1) == 0u || tick < next_attempt) {
-    return;
-  }
-
-  uint32_t definition = 0u;
-  const uint32_t version = RefiiCoopPartnerDogKit(&definition, nullptr, nullptr, nullptr, 0u);
-  if (version == 0u && hero_two_ticks < kKitWaitTicks) {
-    return;
-  }
-
-  next_attempt = tick + kRetryTicks;
-  Spawn(ctx, base);
 }
 
 REFII_MOD_ON_TICK(Tick);

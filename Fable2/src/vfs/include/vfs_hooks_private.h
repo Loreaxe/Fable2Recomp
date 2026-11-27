@@ -221,9 +221,6 @@ bool StatedInGameScreen(uint32_t* out_screen_id);
 /// against, never one to read. Defined in hooks/guest_tick_pump.cpp.
 uint32_t InGameScreenHandler(PPCContext& ctx, uint8_t* base, uint32_t screen_id);
 
-/// The keeper the shop screen's opener was last handed (hooks/shop_keeper_stated.cpp); 0 before.
-uint32_t StatedShopkeeper();
-
 /// Whether the pause root handler's player, as its setter last stated it, is player two
 /// (hooks/gui_stated_screens.cpp).
 bool StatedPausePlayerTwo();
@@ -260,6 +257,11 @@ uint32_t MenuTicketForRecord(uint32_t record);
 uint32_t MenuRecordForTicket(uint32_t ticket);
 uint32_t MenuTicketRegistry();
 
+/// The item (the handle's first word) a ticket was filed against, 0 for none; and the last ticket the
+/// allocate handed out with its record and item, false since a clear.
+uint32_t MenuItemForTicket(uint32_t ticket);
+bool LastMenuTicket(uint32_t* ticket, uint32_t* record, uint32_t* item);
+
 /// Posts one presentation event the host's slide playback stated (`PresentationEvent:` action,
 /// `<presentation>:<parent element>:<EVENT>`) to the callback the guest registered for it, on the
 /// guest thread. False leaves the action queued (the event ids not interned yet). Defined in
@@ -269,6 +271,13 @@ bool PostPresentationEvent(PPCContext& ctx, uint8_t* base, const std::string& sp
 /// States a menu box's close (`@MenuBox.Close <box> <answer>`); called by the one hook on the
 /// close (mod_events.cpp) before the guest's body runs. display_box_hooks.cpp.
 void StateMenuBoxClose(uint8_t* base, uint32_t box);
+/// The captured row `index`'s String3 icon, its stated mark and, for an item row, five words {kMenuRow*
+/// flags, record, item, count, category}; returns the row count (guest_tick_pump_state.cpp).
+uint32_t MenuRowItem(uint32_t index, char* out_icon, size_t icon_capacity, int32_t* out_emphasis,
+                     uint32_t* out_words, size_t word_capacity);
+
+/// True while a captured row stands for the inventory item `item` (its guest address).
+inline bool MenuRowsHoldItem(uint32_t item) { return refii_bridge_menu_rows_hold_item(item) != 0; }
 uint32_t MenuRows(uint32_t index, char* out_name, size_t name_capacity, char* out_parent,
                   size_t parent_capacity, uint32_t* out_id, int32_t* out_event_type,
                   uint64_t* out_generation, int32_t* out_rating);
@@ -328,6 +337,12 @@ inline void NoteHighlightColour(uint32_t component, uint32_t rgba) {
 /// An entity became or stopped being a target. Counted only.
 inline void NoteHighlightTarget() { refii_bridge_note_highlight_target(); }
 
+/// The players who target `thing` as its targeted component's setter just left them (bit 0
+/// player one, bit 1 player two; 0 none), and whether it raises the "Interact" icon (+0x27).
+inline void NoteTargetedBy(uint32_t thing, uint32_t mask, bool interact) {
+  refii_bridge_note_targeted_by(thing, mask, interact ? 1 : 0);
+}
+
 /// One renderable's appearance as the guest just stated it; `words` per core/payload_bridge.h.
 inline void NoteAppearance(uint32_t component, const uint32_t* words) {
   refii_bridge_note_appearance(component, words);
@@ -336,6 +351,12 @@ inline void NoteAppearance(uint32_t component, const uint32_t* words) {
 /// The renderable is being constructed or destroyed: whatever was stated for its address is
 /// not its own.
 inline void ForgetAppearance(uint32_t component) { refii_bridge_forget_appearance(component); }
+
+/// `CECCreature_FinishDeath` ran on this creature component: the guest leaves its body lying.
+inline void NoteCreatureCorpse(uint32_t creature) { refii_bridge_note_creature_corpse(creature); }
+
+/// A CECCreature is being constructed at this address: no corpse stated for it yet.
+inline void ForgetCreatureCorpse(uint32_t creature) { refii_bridge_forget_creature_corpse(creature); }
 
 /// Whether `hit` (the record the hit receiver was handed) is one the mod API built itself —
 /// refii_mod_knockback / refii_mod_stagger, in flight on this thread. The HitResponse event is
@@ -442,6 +463,61 @@ void HouseholdChanged();
 /// A joiner's estate intent (`<action>:<sign uid hex>:<value>`) run on the host for hero two.
 /// Defined in hooks/mod_events.cpp.
 bool ReplayEstateIntent(PPCContext& ctx, uint8_t* base, const std::string& text);
+/// The player (1 or 2) whose hero owns `building` (an entity with comp67) by the guest's owned test
+/// on that hero's properties, 0 when no hero does (a plain henchman owns nothing). Defined in
+/// hooks/coop_estate_owner.cpp.
+int32_t EstateOwnerPlayer(const PPCContext& ctx, uint8_t* base, uint32_t building);
+/// THE PROPERTY SCREEN'S SESSION (hooks/coop_estate_owner.cpp): who views it, whose hero it acts for,
+/// and what the viewer may do (core/estate_owner_rule.h EstateAccess), decided when the screen is
+/// asked for (mod_events.cpp RefiiEstateBuyerOpens) and kept from its OnEnter to its OnExit.
+struct EstateSession {
+  int32_t viewer = 0;      // the player at the sale sign
+  int32_t acts_for = 0;    // the player whose hero the screen is bound to
+  int32_t owner = 0;       // the player whose hero owns the building, 0 none
+  uint8_t access = 0u;     // refii::coop::EstateAccess
+  uint32_t target = 0u;    // the sale sign the viewer used
+  uint32_t owner_use = 0u; // a partner's screen: the bound owner's comp77, answered as `target`
+};
+void EstateSessionPending(const EstateSession& facts);
+void EstateSessionBegin(uint32_t screen);
+void EstateSessionEnd(uint32_t screen);
+/// The session of the open property screen `screen`, or null.
+const EstateSession* EstateSessionOf(uint32_t screen);
+/// While alive, inside a partner's screen `screen`: the owner's use target answers the viewer's sign.
+class EstateTargetScope {
+public:
+  explicit EstateTargetScope(uint32_t screen);
+  ~EstateTargetScope();
+  EstateTargetScope(const EstateTargetScope&) = delete;
+  EstateTargetScope& operator=(const EstateTargetScope&) = delete;
+
+private:
+  uint32_t use_;
+  uint32_t target_;
+};
+/// The building getters the host states to an online joiner (hooks/coop_estate_statements.cpp), in
+/// the statement's order: base value, economy bonus, rent, the not-for-sale, hero-opinion and
+/// owner-killed adjustments, buy price, sale price.
+enum class EstateValue : uint32_t { kBaseValue, kEconomy, kRent, kNotForSale, kOpinion, kOwnerKilled, kBuy, kSale, kCount };
+/// Host: restates the buildings' book once a second when it changed; joiner: takes the statement.
+/// Called with DriveHouseholds.
+void DriveEstateStatements(PPCContext& ctx, uint8_t* base, float seconds);
+/// Host: an estate action ran; restate at the next tick.
+void EstateStatementsChanged();
+/// Host: the joiner is about to open the sale sign `sign_uid`; its building is stated from now on.
+void EstateLook(PPCContext& ctx, uint8_t* base, uint64_t sign_uid);
+/// Joiner: the host's answer of a getter for a CECBuilding; false when the host stated none.
+bool EstateStatedValue(uint8_t* base, uint32_t building, EstateValue value, int32_t* out);
+/// Joiner: the host's occupant of a CECBuilding (this machine's entity for it, 0 none); false when
+/// the host stated nothing for the building.
+bool EstateStatedOccupant(PPCContext& ctx, uint8_t* base, uint32_t building, uint32_t* out);
+/// Joiner: the host has stated the building of this sale sign (an entity with comp142).
+bool EstateStatedSign(PPCContext& ctx, uint8_t* base, uint32_t sign);
+/// Joiner: the host's own copy of hero two holds CUTSCENE_RULE_NO_PROPERTY_SCREEN (a cutscene there bars
+/// the property screen for this machine's hero); false when the host states it does not, or stated nothing.
+bool EstateBlockedForTwo();
+/// Online: this machine's own hero's title, stated to the other machine (coop_estate_owner.cpp), once a second.
+void StateOwnTitle(const PPCContext& ctx, uint8_t* base);
 /// The DynamicWeather mod event, from the host's "ModWeather:" pump action (the body after the
 /// prefix: `<from_host 0|1>|<seconds>|<level>|<weather>|<previous>`). Defined in hooks/mod_events.cpp.
 void RaiseDynamicWeather(PPCContext& ctx, uint8_t* base, const std::string& body);

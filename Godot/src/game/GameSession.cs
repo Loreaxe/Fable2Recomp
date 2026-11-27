@@ -279,6 +279,9 @@ public partial class GameSession : Node
 		// The mods' settings, abilities and errors, and their godot/*.gd scripts under this node.
 		Refii.Mods.ModFrame.Pump(this, Refii.Host.HostBridge.IsGuestUp, _driving);
 
+		// A system message box the guest waits on (XamShowMessageBoxUI), asked of the player.
+		Refii.Ui.Engine_UiSystemBoxes.Pump(Refii.Host.HostBridge.IsGuestUp);
+
 		// The views drawn this frame (split screen's two cameras), for the feeds that follow a camera.
 		Refii.Models.Engine_ClassicViews.Begin(GetViewport()?.GetCamera3D());
 

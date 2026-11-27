@@ -77,9 +77,10 @@ public static class CoopSession
 	private static bool _managerWas;
 
 	/// <summary>
-	/// States the local co-op screen mode to the guest (<c>CoopSplitScreen:</c>), on every game
-	/// start and whenever it changes (<see cref="Refii.Game.GameSplitView.Wanted"/>): the guest gives
-	/// local player two a camera of their own on it, read when their Player is built.
+	/// States the local co-op split to the guest (<c>CoopSplitScreen:</c>), on every game start and
+	/// whenever it changes (<see cref="Refii.Game.GameSplitView.GuestSplit"/>: split mode, or hybrid while
+	/// split): each player's own camera, readers and free roam follow it at once (player two's camera
+	/// manager stands in every local co-op game, coop_hero_hooks.cpp).
 	/// </summary>
 	private static void StateSplitScreen(bool managerPresent)
 	{
@@ -94,7 +95,7 @@ public static class CoopSession
 			return;
 		}
 
-		int want = Refii.Game.GameSplitView.Wanted ? 1 : 0;
+		int want = Refii.Game.GameSplitView.GuestSplit ? 1 : 0;
 		if (want == _splitStated)
 		{
 			return;

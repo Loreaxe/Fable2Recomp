@@ -53,6 +53,8 @@
 #include "core/refii_mod.h"
 
 extern "C" uint8_t* RefiiGuestBase(void);
+/// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
+extern "C" int RefiiCoopGetOwnHero(void);
 // The mod API's property events (mod_events.cpp).
 extern "C" int32_t refii_mod_raise_property_trade(PPCContext* ctx, uint8_t* base, int32_t sold, uint32_t hero,
                                                   uint32_t building, int32_t* price_out);
@@ -61,11 +63,16 @@ extern "C" void refii_mod_raise_rent_paid(PPCContext* ctx, uint8_t* base, uint32
 extern "C" void refii_mod_raise_property_condition(PPCContext* ctx, uint8_t* base, uint64_t uid, int32_t player,
                                                    float condition, float previous, int32_t repaired);
 
+/// On an online joiner, the host's value of a building getter (coop_estate_statements.cpp; 6 the buy
+/// price, 7 the sale price): 1 and `out` set when the host stated it.
+extern "C" int32_t refii_estate_stated_value(uint8_t* base, uint32_t building, int32_t value, int32_t* out);
+
 extern "C" REX_FUNC(__imp__rex_CECPlayerProperties_PayIncome);
 extern "C" REX_FUNC(__imp__rex_CECPlayerProperties_RecordIncome);
 extern "C" REX_FUNC(__imp__rex_CECBuilding_BuyPrice);
 extern "C" REX_FUNC(__imp__rex_CECBuilding_SalePrice);
 extern "C" REX_FUNC(__imp__rex_CECPlayerProperties_Buy);
+extern "C" REX_FUNC(__imp__rex_CECPlayerProperties_BuyQuietly);
 extern "C" REX_FUNC(__imp__rex_CECPlayerProperties_Sell);
 
 namespace {
@@ -179,10 +186,9 @@ REX_EXTERN(rex_CECPlayerProperties_PayIncome) {
   const int32_t drops = static_cast<int32_t>(ctx.r4.u32);
   const bool out_of_game = ctx.r5.u8 != 0;
   const PPCContext entry = ctx;
-  if (!KeepsBooks() && refii_mod_player_here(2) != 0 && Heap(props) &&
-      Load32(base, props + 4u) == refii_mod_player_hero(base, 2)) {
-    // An online joiner's hero two mirrors the host's properties; the host's copy pays (its money
-    // reaches the joiner as the guest's own message 47).
+  if (!KeepsBooks() && refii_mod_player_here(2) != 0 && Heap(props)) {
+    // On an online joiner both heroes' properties mirror the host's (household_persist.cpp); the
+    // host's copies pay (the money reaches the joiner as the guest's own message 47).
     ctx.r3.u64 = 0u;
     return;
   }
@@ -269,8 +275,18 @@ REX_EXTERN(rex_CECPlayerProperties_RecordIncome) {
 
 // The buy price and the sale price (`sub_8282BA48` / `sub_8282BCA0`: r3 the CECBuilding, the price
 // in r3) scale with the building's condition, as Fable 3's value does. TU1 0x8282BA48 / 0x8282BCA0.
+// On an online joiner they are the host's, as the host states them (its copy of the building lacks
+// the host's economy, decoration and occupants).
+constexpr int32_t kStatedBuy = 6;
+constexpr int32_t kStatedSale = 7;
+
 REX_EXTERN(rex_CECBuilding_BuyPrice) {
   const uint32_t building = ctx.r3.u32;
+  int32_t stated = 0;
+  if (refii_estate_stated_value(base, building, kStatedBuy, &stated) != 0) {
+    ctx.r3.u64 = static_cast<uint32_t>(stated);
+    return;
+  }
   __imp__rex_CECBuilding_BuyPrice(ctx, base);
   const uint64_t uid = BuildingUid(base, building);
   if (uid != 0u) {
@@ -283,6 +299,11 @@ REX_EXTERN(rex_CECBuilding_BuyPrice) {
 
 REX_EXTERN(rex_CECBuilding_SalePrice) {
   const uint32_t building = ctx.r3.u32;
+  int32_t stated = 0;
+  if (refii_estate_stated_value(base, building, kStatedSale, &stated) != 0) {
+    ctx.r3.u64 = static_cast<uint32_t>(stated);
+    return;
+  }
   __imp__rex_CECBuilding_SalePrice(ctx, base);
   const uint64_t uid = BuildingUid(base, building);
   if (uid != 0u) {
@@ -295,10 +316,11 @@ REX_EXTERN(rex_CECBuilding_SalePrice) {
 
 // The rent payout's and the sale's money changes (0x828CFC90, 0x828D0DE4: `bl sub_8242E578` with r3
 // the owner's CECMoney and r5 = 0): for hero two's r5 = 1, so the co-op rule does not hand their
-// rent or sale price to hero one.
+// rent or sale price to hero one. The plain henchman owns nothing of their own: their money takes the
+// shipped rule.
 void RefiiPropertyPayee(PPCRegister& r3, PPCRegister& r5) {
   uint8_t* base = RefiiGuestBase();
-  if (base == nullptr || !Heap(r3.u32)) {
+  if (base == nullptr || !Heap(r3.u32) || RefiiCoopGetOwnHero() == 0) {
     return;
   }
   const uint32_t owner = Load32(base, r3.u32 + 4u);
@@ -308,10 +330,13 @@ void RefiiPropertyPayee(PPCRegister& r3, PPCRegister& r5) {
   }
 }
 
-// A purchase (`sub_828D0080`: r3 the buyer's CECPlayerProperties, r4 the building's entity, its UID
-// at +20; nothing when already owned, `sub_828D14E8`). Bought while partnered with the other hero in
-// the game, it is shared with them. TU1 0x828D0080.
-REX_EXTERN(rex_CECPlayerProperties_Buy) {
+namespace {
+
+/// A purchase by either of the guest's two adds: the mod API's `property_trade` (kind 0) before it — a mod
+/// may keep it unbought or set its price — and, once the record is on the buyer's list, the partnership's
+/// share. `buy` is the guest's body.
+template <typename Body>
+void Purchase(PPCContext& ctx, uint8_t* base, Body buy) {
   const uint32_t props = ctx.r3.u32;
   const uint32_t building = ctx.r4.u32;
   const uint64_t uid = Heap(building) ? Uid(base, building + 20u) : 0u;
@@ -321,7 +346,7 @@ REX_EXTERN(rex_CECPlayerProperties_Buy) {
     return;  // a mod kept it unbought
   }
   PriceOverride override_price(price);
-  __imp__rex_CECPlayerProperties_Buy(ctx, base);
+  buy(ctx, base);
   if (uid == 0u || owned || RecordOf(base, props, uid) == 0u || !KeepsBooks()) {
     return;
   }
@@ -334,6 +359,21 @@ REX_EXTERN(rex_CECPlayerProperties_Buy) {
     refii_bridge_coowner_set(uid, 0u);
   }
 }
+
+}  // namespace
+
+// A purchase (`sub_828D0080`: r3 the buyer's CECPlayerProperties, r4 the building's entity, its UID
+// at +20; nothing when already owned, `sub_828D14E8`). Bought while partnered with the other hero in
+// the game, it is shared with them. TU1 0x828D0080.
+REX_EXTERN(rex_CECPlayerProperties_Buy) { Purchase(ctx, base, __imp__rex_CECPlayerProperties_Buy); }
+
+// THE SCRIPT'S GRANT, `Lua_PlayerProperties_PurchasePropertyQuietly` (TU1 0x828D0568 / disc 0x828AFBB8, 202
+// instructions, identical; the script method "PurchasePropertyQuietly" registered by `sub_828D4BF8`, data ref
+// 0x828D4DE4, no code caller): r3 the buyer's CECPlayerProperties (`mr r28,r3` 0x828D0574), r4 the building
+// (`mr r29,r4` 0x828D0578); the same ownership test (`bl sub_828D14E8` 0x828D057C), the record from the building
+// (`sub_828CD2F0` 0x828D05A4) on the list (0x828D05F0) and its BoughtFor from `CECBuilding_BuyPrice`
+// (0x828D0748), with no gold taken and no value walk. The same mod event and partner share as a purchase.
+REX_EXTERN(rex_CECPlayerProperties_BuyQuietly) { Purchase(ctx, base, __imp__rex_CECPlayerProperties_BuyQuietly); }
 
 // A sale (`sub_828D0B78`: r3 the seller's CECPlayerProperties, r4 the building's entity): the guest
 // pays the seller its sale price (`sub_8282BCA0`); a shared building's half goes to the partner.

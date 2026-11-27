@@ -51,6 +51,14 @@ public static class Engine_UiPointer
 	private static Vector2 _window;
 	private static bool _motion;
 
+	/// <summary>
+	/// The pointer in <paramref name="item"/>'s drawing space, from the last mouse event fed here.
+	/// Not <c>GetLocalMousePosition</c>: the root viewport's mouse position is the OS cursor
+	/// (DisplayServer), which an event posted through <c>Input.ParseInputEvent</c> does not move, so
+	/// a hit test on it disagrees with <see cref="Canvas"/> for the same click.
+	/// </summary>
+	public static Vector2 LocalTo(CanvasItem item) => item.GetGlobalTransformWithCanvas().AffineInverse() * _window;
+
 	/// <summary>One input event. Mouse events only; the rest are ignored.</summary>
 	public static void Feed(InputEvent @event)
 	{

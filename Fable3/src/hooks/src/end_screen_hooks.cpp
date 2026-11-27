@@ -3,14 +3,22 @@
 // screen-manager screens (SM = *(GUI+0x1C), GUI = *0x83596F84), keyed in SM+64 by the .bgf id
 // (6 questcompletion, 8 creditsscreen; built in sub_825F8F60 at disc 0x825CE2A0 / disc 0x825CE330), so no
 // @Box.Open names them. Their texts and positions are element writes the element hooks already
-// state; what only these calls state is that the screen is up, which presentation is it, and the
-// epilogue's image.
+// state; what only these calls state is that the screen is up, which document it is, and the
+// epilogue's image. Godot owns their pad: the guest's reaches neither handler, Godot's press comes
+// back as a tick action and runs the handler itself (AnswerEndScreen).
 //
 // EPILOGUE E = SM[6] (28 bytes; vtable TU3 off_820A0BE0, stored by the SM ctor sub_825F8F60 at
 // 0x825F9318, disc off_8209D2FC, stored by sub_825CDEE0 at 0x825CE294 — 0x820A0BE0 is string data
-// in the disc image). Its pad is slot 5, Input(E, action, player) (TU3 sub_827A2480 / disc
-// 0x8276B410), called for the open screen object by sub_826019F0 (`lwz r10,0x14(r11)` / `bctrl`,
-// TU3 0x82601C58..0x82601C60 / disc 0x825D6C70..0x825D6C78), not by the modal input sub_825F9408.
+// in the disc image). Its pad is slot 5, Input(E, action, player) (TU3 0x827A2480 / disc
+// 0x8276B410, 0x50 bytes each, one vtable word each, a function in neither IDB), called for the open
+// screen object by sub_826019F0 (`lwz r10,0x14(r11)` / `bctrl`, TU3 0x82601C58..0x82601C60 / disc
+// 0x825D6C70..0x825D6C78), not by the modal input sub_825F9408. Its whole body: only action 13
+// (INTERACT: `cmpwi cr6,r4,0xD` / `bnelr` 0x827A2480 / 0x8276B410); player one always (`cmpwi cr6,r5,
+// 1` / `beq` 0x827A2488 / 0x8276B418); any other player only on a machine that is not the session's
+// server (N = *(NET+0x10), NET = *0x835979F8 / disc *0x83556EF8: `lbz r10,0x1C(r11)` and `lbz r11,
+// 0x1D(r11)` both set returns, 0x827A249C..0x827A24C4 / 0x8276B42C..0x8276B454; N+0x1C && N+0x1D is
+// the guest's Network.IsServer, see THE SESSION'S FLAGS below); then `b Epilogue_Hide`
+// (0x827A24C8 / 0x8276B458) with E still in r3. `epilogue:<p>:close` is that body with 13 and p.
 // Show sub_827A24D0(E, title, description,
 // renown, image, flag) — QuestTracker.ShowEpilogueScreen through sub_82511020 (0x825111C4) and the
 // co-op net handler sub_82377E80 (disc 0x82373E54) — returns at once unless E+0x14 is clear
@@ -28,17 +36,53 @@
 // *(*(GUI+0x38)+0x9C) (`lwz r6,0x38(r11)` / `lwz r28,0x9C(r6)` 0x82B74D34..0x82B74D40). End
 // sub_825FA2F8(SM) — the roll running out (0x82B75170), GUI_SELECT / GUI_CANCEL (0x82B751F8,
 // 0x82B75244) and the net handler (disc 0x823741A4) — closes the screen and, with SM+0x23 set
-// (0x825FA36C), pops the credits component.
+// (0x825FA36C), pops the credits component. The credits screen's pad is its slot 5 (vtable TU3
+// 0x820D6464 / disc 0x820D3AE4, sub_82B75188 / sub_82B3FF60, one vtable word each): only 72 and 73
+// (`cmpwi cr6,r4,0x48` / `blt`, `cmpwi cr6,r4,0x49` / `bgt` 0x82B75198..0x82B751A4 / 0x82B3FF70..
+// 0x82B3FF7C); with the shared-screen word set (`lwz r10,0x80(r31)` 0x82B751B4, DISC `lwz r10,
+// 0x7C(r31)` 0x82B3FF8C; written by the local join, `stw r17,0x80(r11)` TU3 0x8245A478) EndCredits
+// alone (0x82B75244 / 0x82B4001C); else on the session's SERVER (N+0x1C and N+0x1D) EndCredits and
+// the end packet (0x82B751F8..0x82B75220 / 0x82B3FFD0..0x82B3FFF8); else (an online client) NOTHING.
+// A solo game is its own session's server, so alone the credits DO skip, as on the 360. It reads
+// neither r3 nor r5. `credits:<p>:skip` is that body with 72.
+// THE SESSION'S FLAGS (N bytes, both builds), read from the guest's own Network natives: IsServer =
+// +0x1C && +0x1D (TU3 0x82252FA0 / disc 0x82253D60), IsClient = +0x1C && +0x1E (0x82209428 /
+// 0x82209E50), IsInLiveGame = IsClient || N+0x5C (disc N+0x58) (0x82209460 / 0x82209E88),
+// IsInCouchGame = N+0x80 (disc +0x7C) == 1 (0x82244790 / 0x822455C0). The server's state is set at
+// every game start by sub_82374CE8 / disc sub_8236D480 (`stb r28,0x1C` / `stb r28,0x1D` = 1, `stb
+// r27,0x1E` = 0, TU3 0x82374D70..0x82374D7C / disc 0x8236D508..0x8236D514; callers include
+// CGUIGameComponent's ctor, TU3 0x82712F7C / disc 0x826E9620); only joining an online host turns
+// it into a client (+0x1C = +0x1E = 1, +0x1D = 0: TU3 sub_82375C78 0x82376148..0x82376164 / disc
+// sub_8236E560 0x8236E7BC..0x8236E7C4).
+// THE SHARED-SCREEN WORD N+0x80 (disc N+0x7C) is the local co-op seat: a second pad's START raw record
+// (type 13, button 5) from a user who is no player yet joins player two while it is not 1 and the game
+// is not live (CGUIInput_vf6 TU3 sub_82601318: `*(N+128) != 1` at 0x826013D0, then sub_824598D0
+// 0x8260142C, whose hero setup sub_82459A80 stores it `stw r17,0x80(r11)` 0x8245A478; disc
+// sub_825D6330, setup sub_8243A190 `stw r9,0x7C(r8)` 0x8243ABDC); only the shared-screen setter (TU3
+// 0x82382330, stores 0x823823E4 / 0x82382408 / 0x82382610; disc 0x823799A4 / 0x823799C8 / 0x82379BDC)
+// writes it otherwise. Which branch ended them is the End's own caller (its return address): TU3
+// 0x82B75248 / disc 0x82B40020 the seat, 0x82B751FC / 0x82B3FFD4 the server's skip (a solo game's
+// A), 0x82B75174 / 0x82B3FF4C the roll running out,
+// 0x82377234 and 0x8237C414 / disc 0x823741A8 the net handlers — logged at each End.
 
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 
+#include <rex/logging.h>
 #include <rex/ppc.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 
+#include "box_answers.h"
 #include "gui_statements.h"
+#include "mod_seam.h"
 #include "../../vfs/include/fable3_guest_build.h"
 
+REX_EXTERN(__imp__rex_Epilogue_HandleInput);
+REX_EXTERN(__imp__rex_CreditsScreen_HandleInput);
+REX_EXTERN(rex_Epilogue_HandleInput);
+REX_EXTERN(rex_CreditsScreen_HandleInput);
 REX_EXTERN(__imp__rex_Epilogue_Show);
 REX_EXTERN(__imp__rex_Epilogue_Hide);
 REX_EXTERN(__imp__rex_ScreenManager_StartCredits);
@@ -48,15 +92,10 @@ namespace {
 
 using namespace refii::fable3;
 
-const refii::guest::Addr kGuiManager{0x83596F84u};
-/// GUI+0x38: the screen loader. sub_825F26E8(loader, id) keeps a screen in slot `4 * (id + 2)`
-/// (0x825F277C), or — for the ids sub_825F2CD8 picks — in the one exclusive slot +0x9C with the id
-/// at +0x98 (0x825F271C..0x825F2724). The credits (id 8) load just before the start
-/// (ShowCreditsScreen 0x8254CF68), so at the start +0x9C is theirs.
-constexpr uint32_t kGuiScreenLoader = 0x38u;
-/// The loader's epilogue slot (id 6, disc 0x8276B4B4) and its exclusive slot (0x82B74D40).
-constexpr uint32_t kEpiloguePresentation = 0x20u;
-constexpr uint32_t kCreditsPresentation = 0x9Cu;
+/// The documents the two screens load: screen 6 and screen 8 of the loader's table (the show's
+/// sub_825F26E8(loader, 6) at 0x827A2518, ShowCreditsScreen's (loader, 8) at 0x8254CF68).
+constexpr char kEpilogueDocument[] = "questcompletion";
+constexpr char kCreditsDocument[] = "creditsscreen";
 constexpr uint32_t kEpilogueOpen = 0x14u;
 constexpr uint32_t kCreditsRunning = 0x23u;
 /// The epilogue's title and description text names, FNV-1 words (0x827A2570 / 0x827A2594).
@@ -65,19 +104,94 @@ const refii::guest::Addr kEpilogueDescriptionName{0x8359B9A8u};
 /// The screenshot's ImageName registry name, an FNV-1 word (0x827A2808).
 const refii::guest::Addr kEpilogueImageName{0x8359B9C4u};
 
-uint32_t LoaderWord(const uint8_t* base, uint32_t offset) {
-  const uint32_t gui = LoadGuestU32(base, kGuiManager);
-  if (!Plausible(gui)) {
-    return 0u;
+/// The epilogue screen the show last opened (its r3), 0 once hidden: the close lever's object.
+std::atomic<uint32_t> g_epilogue{0u};
+/// The credits roll, between its start and its end.
+std::atomic<bool> g_credits{false};
+
+/// Set while this file runs a handler with Godot's press, so the stub lets it through.
+thread_local bool t_host_input = false;
+
+constexpr uint32_t kActionInteract = 13u;
+constexpr uint32_t kActionSelect = 72u;
+
+/// The pad handler of a screen Godot owns: Godot's press runs the body, the guest's pad is dropped
+/// (sub_826019F0 answers 1 for the open screen whatever its slot 5 did, TU3 0x82601C60).
+template <typename Original>
+void OwnedInput(PPCContext& ctx, uint8_t* base, Original original, std::atomic<bool>& said, const char* what) {
+  if (!said.exchange(true)) {
+    REXLOG_INFO("[fable3-endscreens] {}: its pad is Godot's (the guest's input no longer reaches its handler)", what);
   }
-  const uint32_t loader = LoadGuestU32(base, gui + kGuiScreenLoader);
-  return Plausible(loader) ? LoadGuestU32(base, loader + offset) : 0u;
+  if (t_host_input) {
+    original(ctx, base);
+  }
 }
 
 }  // namespace
 
-/// `@Epilogue.Open(presentation, image, title, description, renown, titleName, descriptionName)`
-/// when the show took (E+0x14 clear before, set after). The show keeps its arguments (`mr r28,r4;
+namespace refii::fable3 {
+
+bool AnswerEndScreen(PPCContext& ctx, uint8_t* base, const char* action) {
+  if (base == nullptr || action == nullptr) {
+    return false;
+  }
+  const bool epilogue = std::strncmp(action, kEpilogueAction, sizeof(kEpilogueAction) - 1u) == 0;
+  const bool credits = !epilogue && std::strncmp(action, kCreditsAction, sizeof(kCreditsAction) - 1u) == 0;
+  if (!epilogue && !credits) {
+    return false;
+  }
+  const char* at = action + (epilogue ? sizeof(kEpilogueAction) : sizeof(kCreditsAction)) - 1u;
+  if ((at[0] != '1' && at[0] != '2') || at[1] != ':') {
+    REXLOG_WARN("[fable3-endscreens] '{}' names no player; dropped", action);
+    return false;
+  }
+  const uint32_t player = static_cast<uint32_t>(at[0] - '0');
+  PPCContext work = refii::fable3::seam::Frame(ctx);
+  work.r5.u64 = player;
+  if (epilogue) {
+    const uint32_t screen = g_epilogue.load();
+    if (std::strcmp(at + 2, "close") != 0 || screen == 0u) {
+      REXLOG_WARN("[fable3-endscreens] '{}' with no epilogue up; dropped", action);
+      return false;
+    }
+    REXLOG_INFO("[fable3-endscreens] '{}': the epilogue's input with INTERACT as player {}", action, player);
+    work.r3.u64 = screen;
+    work.r4.u64 = kActionInteract;
+    t_host_input = true;
+    rex_Epilogue_HandleInput(work, base);
+    t_host_input = false;
+    return true;
+  }
+  if (std::strcmp(at + 2, "skip") != 0 || !g_credits.load()) {
+    REXLOG_WARN("[fable3-endscreens] '{}' with no credits rolling; dropped", action);
+    return false;
+  }
+  REXLOG_INFO("[fable3-endscreens] '{}': the credits' input with GUI_SELECT as player {}", action, player);
+  work.r3.u64 = 0u;
+  work.r4.u64 = kActionSelect;
+  t_host_input = true;
+  rex_CreditsScreen_HandleInput(work, base);
+  t_host_input = false;
+  return true;
+}
+
+}  // namespace refii::fable3
+
+/// The epilogue's slot 5 (E, action, player).
+REX_EXTERN(rex_Epilogue_HandleInput) {
+  static std::atomic<bool> said{false};
+  OwnedInput(ctx, base, __imp__rex_Epilogue_HandleInput, said, "epilogue");
+}
+
+/// The credits screen's slot 5 (screen, action, player).
+REX_EXTERN(rex_CreditsScreen_HandleInput) {
+  static std::atomic<bool> said{false};
+  OwnedInput(ctx, base, __imp__rex_CreditsScreen_HandleInput, said, "credits");
+}
+
+/// `@Epilogue.Open(document, image, title, description, renown, titleName, descriptionName)`
+/// when the show takes: it returns at once unless E+0x14 is clear (`lbz r11,0x14(r3)` 0x827A24DC /
+/// 0x8276B46C) and then sets it unconditionally (0x827A2508). The show keeps its arguments (`mr r28,r4;
 /// mr r27,r5; mr r29,r6; mr r26,r7` 0x827A24E0..disc 0x8276B47C) and writes them only behind the
 /// screen's presentation (`lwz r30,0x20(r10)` disc 0x8276B4B4 / beq disc 0x8276B4BC): the title into the
 /// text registry under `*disc dword_8355AC24` (r5 = r28, 0x827A2568..0x827A2580), the description
@@ -92,9 +206,10 @@ REX_EXTERN(rex_Epilogue_Show) {
   const std::string description = closed ? ReadLhString(base, ctx.r5.u32) : std::string();
   const int32_t renown = static_cast<int32_t>(ctx.r6.u32);
   __imp__rex_Epilogue_Show(ctx, base);
-  if (closed && base[epilogue + kEpilogueOpen] != 0u) {
+  if (closed) {
+    g_epilogue.store(epilogue);
     Statement("@Epilogue.Open")
-        .Add(Text(Hex(LoaderWord(base, kEpiloguePresentation))))
+        .Add(Text(kEpilogueDocument))
         .Add(Text(image))
         .Add(Text(title))
         .Add(Text(description))
@@ -131,17 +246,19 @@ REX_EXTERN(rex_Epilogue_Hide) {
   const bool open = base != nullptr && Plausible(epilogue) && base[epilogue + kEpilogueOpen] != 0u;
   __imp__rex_Epilogue_Hide(ctx, base);
   if (open) {
+    g_epilogue.store(0u);
     Statement("@Epilogue.Close").Post();
   }
 }
 
-/// `@Credits.Open(presentation)` when the start ran the roll's init (SM+0x23 clear before).
+/// `@Credits.Open(document)` when the start ran the roll's init (SM+0x23 clear before).
 REX_EXTERN(rex_ScreenManager_StartCredits) {
   const uint32_t manager = ctx.r3.u32;
   const bool idle = base != nullptr && Plausible(manager) && base[manager + kCreditsRunning] == 0u;
   __imp__rex_ScreenManager_StartCredits(ctx, base);
   if (idle) {
-    Statement("@Credits.Open").Add(Text(Hex(LoaderWord(base, kCreditsPresentation)))).Post();
+    g_credits.store(true);
+    Statement("@Credits.Open").Add(Text(kCreditsDocument)).Post();
   }
 }
 
@@ -149,10 +266,19 @@ REX_EXTERN(rex_ScreenManager_StartCredits) {
 REX_EXTERN(rex_ScreenManager_EndCredits) {
   const uint32_t manager = ctx.r3.u32;
   const bool running = base != nullptr && Plausible(manager) && base[manager + kCreditsRunning] != 0u;
+  const uint32_t from = static_cast<uint32_t>(ctx.lr);
+  // Return addresses of the three `bl ScreenManager_EndCredits` (TU3 / disc rows in guest_addresses.inc).
+  const char* branch = from == refii::guest::Address(0x82B75248u)   ? "the skip with a second player seated"
+                       : from == refii::guest::Address(0x82B751FCu) ? "the skip on the session's server (solo or host)"
+                       : from == refii::guest::Address(0x82B75174u) ? "the roll ran out"
+                                                                    : "a net handler";
+  REXLOG_INFO("[fable3-endscreens] the credits end from {:08X} ({}); the roll {}", from, branch,
+              running ? "was running: @Credits.Close" : "was not running (SM+0x23 clear): no close stated");
   __imp__rex_ScreenManager_EndCredits(ctx, base);
   // Its stores to the GUI screen id (0x825FA3D4, 0x825FA4E4), stated as it returns.
   refii::fable3::StateGuiScreen(base);
   if (running) {
+    g_credits.store(false);
     Statement("@Credits.Close").Post();
   }
 }

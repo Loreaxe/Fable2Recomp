@@ -425,8 +425,7 @@ public partial class GameUi
 		}
 
 		_coopModeRow.Visible = true;
-		int mode = CoopScreenMode();
-		_coopModeRow.Show(mode, mode != 0 && Fable2Bridge.CoopSessionRaw() is { LocalCoop: true, SplitInEffect: false });
+		_coopModeRow.Show(CoopScreenMode());
 
 		bool locked = _coopScreen is { LeftAccepted: true } or { PickerOpen: true };
 		int sideways = Fable2Input.MenuHorizontal;
@@ -438,24 +437,24 @@ public partial class GameUi
 		_coopModeHeld = sideways;
 	}
 
-	/// <summary>0 shared, 1 side by side, 2 top and bottom — from the two split-screen settings.</summary>
+	/// <summary>The row (Engine_CameraScreens.Row): the screen mode and the orientation settings.</summary>
 	private static int CoopScreenMode() =>
-		!GameSplitView.Wanted ? 0 : GameSplitView.WantsStacked ? 2 : 1;
+		Refii.Camera.Engine_CameraScreens.Row(Refii.Camera.Engine_CameraScreens.Chosen, GameSplitView.WantsStacked);
 
 	private void StepCoopScreenMode(int direction)
 	{
-		int mode = (CoopScreenMode() + direction + 3) % 3;
+		int row = CoopScreenMode() + direction;
+		(Refii.Camera.Engine_CameraScreens.Mode mode, bool stacked) =
+			Refii.Camera.Engine_CameraScreens.FromRow(row, GameSplitView.WantsStacked);
 		var settings = new Dictionary<string, string>
 		{
-			[GameSplitView.SwitchKey] = mode == 0 ? "false" : "true",
+			[Refii.Camera.Engine_CameraScreens.ModeKey] = Refii.Camera.Engine_CameraScreens.Name(mode),
+			[GameSplitView.OrientationKey] = stacked ? "horizontal" : "vertical",
 		};
-		if (mode != 0)
-		{
-			settings[GameSplitView.OrientationKey] = mode == 2 ? "horizontal" : "vertical";
-		}
 
-		bool written = Engine_UiScreenActions.WriteSettings(settings);
-		GD.Print($"[game-ui] co-op screen row: {Engine_UiCoopModeRow.Labels[mode]}" +
+		// The old switch goes with the first choice made here: the mode setting replaces it.
+		bool written = Engine_UiScreenActions.WriteSettings(settings, new[] { Refii.Camera.Engine_CameraScreens.LegacySplitKey });
+		GD.Print($"[game-ui] co-op screen row: {Engine_UiCoopModeRow.Labels[Refii.Camera.Engine_CameraScreens.Row(mode, stacked)]}" +
 			(written ? string.Empty : " (the setting could not be written)"));
 	}
 
@@ -553,6 +552,12 @@ public partial class GameUi
 	private string _coopFiguresSaid = string.Empty;
 
 	/// <summary>
+	/// Per page, the figure the guest last filed there, when it reached this screen
+	/// (`Time.GetTicksMsec`), and whether its wait for a body has been printed.
+	/// </summary>
+	private readonly (uint Entity, ulong At, bool Said)[] _coopFigureFiled = new (uint, ulong, bool)[2];
+
+	/// <summary>
 	/// THE CO-OP SCREEN'S FIGURES, AS THE ORIGINAL STANDS THEM. Each page has a `model_proxy.model`
 	/// node and a guest-spawned creature for it: player two's henchman (`sub_82438818`) on the
 	/// right, and on the left a `CreatureHeroMannequin*` the guest dresses as player one
@@ -580,6 +585,7 @@ public partial class GameUi
 		{
 			feed?.Watch(0u, 0u);
 			_coopStage?.HideAll();
+			System.Array.Clear(_coopFigureFiled);
 			return;
 		}
 
@@ -610,6 +616,11 @@ public partial class GameUi
 		{
 			Node3D? anchor = FindAnchor(book, path);
 			MeshInstance3D? body = entity == 0u ? null : feed?.NodeFor(entity);
+			if (_coopFigureFiled[slot].Entity != entity)
+			{
+				_coopFigureFiled[slot] = (entity, Time.GetTicksMsec(), false);
+			}
+
 			if (anchor is null || entity == 0u)
 			{
 				_coopStage.Hide(slot);
@@ -654,11 +665,21 @@ public partial class GameUi
 				_coopHeroPickedAt = 0UL;
 			}
 
+			// HOW LONG A FILED FIGURE WAITS FOR ITS BODY: the guest files it (`@Preview.Add`) in the
+			// tick it makes it; the feed assembles the body off-thread from the parts it states.
+			if (shown && !_coopFigureFiled[slot].Said)
+			{
+				_coopFigureFiled[slot].Said = true;
+				GD.Print($"[game-ui] co-op figures — slot {slot} entity 0x{entity:X8} on the page " +
+					$"{Time.GetTicksMsec() - _coopFigureFiled[slot].At} ms after the guest filed it");
+			}
+
 			return shown
 				? $"slot {slot} entity 0x{entity:X8} at ({canvas.Origin.X:F0},{canvas.Origin.Y:F0}), " +
 					$"{CoopFigureDistance(placed.Z):F1} m out " +
 					$"heading {heading:F2} scale {(stated is { } s ? s.ToString("F0") : "authored")}"
-				: $"slot {slot} entity 0x{entity:X8} NOT in the entity feed";
+				: $"slot {slot} entity 0x{entity:X8} " + Refii.Entities.Engine_FigureBody.Describe(
+					feed?.BodyStateOf(entity) ?? Refii.Entities.Engine_FigureBody.State.NotWalked);
 		}
 	}
 }

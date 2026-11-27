@@ -56,4 +56,36 @@ public class EngineUiHoldMeterTests
 		meter.Reset();
 		AssertThat(meter.Progress).IsEqual(0f);
 	}
+
+	[TestCase]
+	public void StatedRatesFillAndDrainAtTheirOwnSpeeds()
+	{
+		var meter = new Engine_UiHoldMeter(1.0);
+		int accepts = 0;
+		// 2 per second held: full in half a second.
+		for (int i = 0; i < 4; ++i)
+		{
+			accepts += meter.Step(0.1, held: true, fillPerSecond: 2.0, drainPerSecond: 0.5) ? 1 : 0;
+		}
+
+		AssertThat(accepts).IsEqual(0);
+		AssertThat(meter.Progress).IsBetween(0.79f, 0.81f);
+		accepts += meter.Step(0.1, held: true, fillPerSecond: 2.0, drainPerSecond: 0.5) ? 1 : 0;
+		accepts += meter.Step(0.1, held: true, fillPerSecond: 2.0, drainPerSecond: 0.5) ? 1 : 0;
+		AssertThat(accepts).IsEqual(1);
+		// 0.5 per second let go.
+		meter.Step(1.0, held: false, fillPerSecond: 2.0, drainPerSecond: 0.5);
+		AssertThat(meter.Progress).IsBetween(0.49f, 0.51f);
+	}
+
+	[TestCase]
+	public void ARateNotYetStatedLeavesTheFillWhereItIs()
+	{
+		var meter = new Engine_UiHoldMeter(1.0);
+		AssertThat(meter.Step(5.0, held: true, fillPerSecond: 0.0, drainPerSecond: 0.0)).IsFalse();
+		AssertThat(meter.Progress).IsEqual(0f);
+		meter.Step(0.25, held: true, fillPerSecond: 1.0, drainPerSecond: 0.0);
+		meter.Step(5.0, held: false, fillPerSecond: 1.0, drainPerSecond: 0.0);
+		AssertThat(meter.Progress).IsBetween(0.24f, 0.26f);
+	}
 }

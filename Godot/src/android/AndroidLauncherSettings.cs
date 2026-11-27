@@ -33,7 +33,7 @@ public static class AndroidLauncherSettings
     {
         GraphicsPresets.Key, "max_fps", "fps_counter", "render_scale_percent", AndroidBakedShadows.Key, AndroidStartup.SkipVideosKey,
         "camera_invert_x", "camera_invert_y", "controller_vibration", AndroidQuickSettings.VibrationStrengthKey,
-        "rexnet", "rexnet_display_name", Refii.Game.GameSplitView.SwitchKey, Refii.Game.GameSplitView.OrientationKey,
+        "rexnet", "rexnet_display_name", Refii.Camera.Engine_CameraScreens.ModeKey, Refii.Game.GameSplitView.OrientationKey,
     };
 
     /// <summary>On a phone, whether <paramref name="name"/> waits for Advanced (anything a player does not

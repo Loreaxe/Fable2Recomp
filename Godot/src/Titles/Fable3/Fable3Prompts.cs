@@ -93,7 +93,7 @@ public static class Fable3Prompts
 
 			rects.Clear();
 			rects.Add((spot.Rect, spot.Button));
-			if (ButtonAt(rects, spot.Item.GetLocalMousePosition()) is { } button && PadBit(button) is var bit && bit != 0u)
+			if (ButtonAt(rects, Engine_UiPointer.LocalTo(spot.Item)) is { } button && PadBit(button) is var bit && bit != 0u)
 			{
 				Engine_UiPointer.TakeLeft();
 				GameInput.QueuePointerPress(bit);

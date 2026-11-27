@@ -7,8 +7,8 @@ namespace Refii.Titles.Fable2;
 /// Whose menu it is, in local co-op (<see cref="Engine_UiMenuOwnerTag"/>): the pause book and every
 /// screen opened from it, a screen a player opened in the world (shop, gift, real estate, map), and a
 /// box built for one player. The owner is the one the guest's input routing serves
-/// (<see cref="Fable2Input.MenuOwner"/>), kept through a box over that player's menu, when the
-/// stated owner drops to none.
+/// (<see cref="Fable2Input.MenuOwner"/>), followed while it is stated and kept through a box over that
+/// player's menu, when the stated owner drops to none (<see cref="Fable2ActingPlayer.TagOwner"/>).
 /// </summary>
 public partial class GameUi
 {
@@ -49,18 +49,11 @@ public partial class GameUi
 		bool menuUp = bannerUp || (screen != 0 && screen != CoopScreenId) || ownerStated;
 
 		// The co-op screen names both players on its own pages; solo and online have one player here.
-		if (!CoopSession.LocalCoop || !menuUp || screen == CoopScreenId)
-		{
-			_menuOwnerShown = 0;
-		}
-		else if (ownerStated)
-		{
-			_menuOwnerShown = Fable2Input.MenuOwner;
-		}
-		else if (_menuOwnerShown == 0)
-		{
-			_menuOwnerShown = Fable2Bridge.GetMenuOwner();
-		}
+		_menuOwnerShown = Fable2ActingPlayer.TagOwner(
+			_menuOwnerShown,
+			CoopSession.LocalCoop && menuUp && screen != CoopScreenId,
+			_spells.WheelPlayer == 0 ? Fable2Input.MenuOwner : 0,
+			Fable2Bridge.GetMenuOwner());
 
 		if (_menuOwnerShown == 0)
 		{

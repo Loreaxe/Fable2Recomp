@@ -42,6 +42,8 @@
 #include "core/guest_build.h"
 #include "core/refii_mod.h"
 
+#include "coop_held_attach_rule.h"
+
 extern "C" REX_FUNC(__imp__rex_lhPlayer_ScalarDeletingDtor);
 extern "C" REX_FUNC(__imp__rex_lhGui_RegisterPlayer);
 extern "C" REX_FUNC(__imp__rex_lhNetManager_ProcessInboundSessionPacket);
@@ -461,7 +463,26 @@ REX_EXTERN(rex_lhNetManager_GetHenchmanRangedWeaponName) {
 // `sub_8232E398`, `sub_824AAF10`. A hero body is armed by RECORD (the pump's EquipRecord and
 // CoopAttachHeld), and a record with no def name cannot be answered by the tables, so for a
 // hero body the routine is a no-op.
+//
+// ON THE HOST THE PAIR IT MAKES IS TRACKED, BY UID. The host branch creates both items through
+// `sub_8238B9C8(table, name, -1)` (0x82315E84 / 0x82315F28; disc `sub_82391198`, 0x823521E4 /
+// 0x82352288), which takes the uid from the EntityManager's counter — `**(*(game+0x58)+4)` + 4,
+// post-incremented (0x8238BA60..0x8238BA78; disc 0x82391230..0x82391248), the field the save
+// writes as "CurrentUniqueID" (`sub_82366EE8`; disc `sub_82362588`) — and `sub_8238B860` stores
+// it at entity+0x14, low word 0 at +0x18 (0x8238B8CC / 0x8238B8D4). So the pair is the weapon
+// entities whose uid lies between the counter before and after the call. The joiner sheathes it
+// (only it is authoritative for the body, see coop_held_attach_rule.h); a joiner that leaves or
+// is killed before its attach lands leaves the pair held by no one on the host, where nothing
+// destroys it. A pair the next arm replaces, and any pair still loose when the partner goes
+// (RefiiCoopDropLooseHenchmanPair, the pump's partner-gone edge), is destroyed here.
+namespace {
+uint32_t EntityUidCounter(uint8_t* base);
+bool TrackHenchmanPair(const PPCContext& saved, uint8_t* base, uint32_t first, uint32_t end);
+}  // namespace
+
 REX_EXTERN(rex_lhCoop_ArmHenchmanWeapons) {
+  using refii::vfs::LoadGuestU32;
+  using refii::vfs::LoadGuestU8;
   if (RefiiCoopGetOwnHero() != 0) {
     static bool said = false;
     if (!said) {
@@ -473,7 +494,16 @@ REX_EXTERN(rex_lhCoop_ArmHenchmanWeapons) {
     return;
   }
 
+  const uint32_t cm = CoopManager(base);
+  const bool host = Plausible(cm) && LoadGuestU8(base, cm + 52u) != 0u &&
+                    LoadGuestU8(base, cm + 53u) != 0u;
+  const uint32_t counter = host ? EntityUidCounter(base) : 0u;
+  const PPCContext saved = ctx;
+  const uint32_t first = counter != 0u ? LoadGuestU32(base, counter) : 0u;
   __imp__rex_lhCoop_ArmHenchmanWeapons(ctx, base);
+  if (counter != 0u) {
+    TrackHenchmanPair(saved, base, first, LoadGuestU32(base, counter));
+  }
 }
 
 namespace {
@@ -566,7 +596,107 @@ uint32_t DestroyLocalHeldItems(const PPCContext& saved, uint8_t* base, uint32_t 
   }
   return destroyed;
 }
+/// The EntityManager's uid counter ("CurrentUniqueID"): `**(*(game+0x58)+4)` + 4, as
+/// `sub_8238B9C8` reads it (0x8238BA5C..0x8238BA6C; disc 0x8239122C..0x8239123C). Address or 0.
+uint32_t EntityUidCounter(uint8_t* base) {
+  using refii::vfs::LoadGuestU32;
+  const uint32_t root = LoadGuestU32(base, kGameRoot);
+  const uint32_t game = Plausible(root) ? LoadGuestU32(base, root + 12u) : 0u;
+  const uint32_t players = Plausible(game) ? LoadGuestU32(base, game + 0x58u) : 0u;
+  const uint32_t slot = Plausible(players) ? LoadGuestU32(base, players + 4u) : 0u;
+  const uint32_t manager = Plausible(slot) ? LoadGuestU32(base, slot) : 0u;
+  return Plausible(manager) ? manager + 4u : 0u;
+}
+
+/// The weapon class the guest gives an item (`sub_824AD108` at 0x824AD254): component 179's
+/// `+12`, 2..4 melee (1), 5..8 ranged (2), anything else 0. The pump's WeaponClassOf.
+uint32_t WeaponClass(uint8_t* base, uint32_t item) {
+  const uint32_t kind = ComponentOf(base, item, 179u);
+  const uint32_t type = kind != 0u ? refii::vfs::LoadGuestU32(base, kind + 12u) : 0u;
+  return type >= 2u && type <= 4u ? 1u : type >= 5u && type <= 8u ? 2u : 0u;
+}
+
+/// The entity the host's net manager answers for a uid {high, 0}, or 0.
+uint32_t EntityByUid(const PPCContext& saved, uint8_t* base, uint32_t high) {
+  const uint32_t cm = CoopManager(base);
+  if (high == 0u || !Plausible(cm)) return 0u;
+  PPCContext find = saved;
+  find.r3.u32 = cm;
+  find.r4.u64 = static_cast<uint64_t>(high) << 32;
+  __imp__rex_lhNetManager_FindEntityByNetId(find, base);
+  return Plausible(find.r3.u32) ? find.r3.u32 : 0u;
+}
+
+/// The henchman pair the host's arm made last, as uid high words ([0] melee, [1] ranged), 0 when
+/// none. Guest thread only (the arm and the pump's partner-gone edge both run there).
+uint32_t g_henchman_pair[2] = {0u, 0u};
+
+/// Destroys each tracked henchman weapon that is loose (coop_held_attach_rule.h): alive, and its
+/// carrier — the item's component 83 (`sub_824FB5D8` reads it, 0x824FB744..0x824FB840; disc
+/// 0x82500F0C..0x82501004), a weak ref at +12 whose block is at +16
+/// (`Lua_Carried_GetCarrierEntity` → `sub_82915080`, `lhSmartPtr_Deref`) — is not a live entity
+/// whose component 24 holds it. Forgets the pair. Returns how many were destroyed.
+uint32_t DropLooseHenchmanPair(const PPCContext& saved, uint8_t* base, const char* why) {
+  using refii::vfs::LoadGuestU32;
+  using refii::vfs::LoadGuestU8;
+  uint32_t destroyed = 0u;
+  for (uint32_t& high : g_henchman_pair) {
+    const uint32_t item = EntityByUid(saved, base, high);
+    high = 0u;
+    if (item == 0u) continue;
+    const bool alive = (LoadGuestU8(base, item + 144u) & 0x40u) != 0u;
+    const uint32_t carried = ComponentOf(base, item, 83u);
+    const uint32_t block = carried != 0u ? LoadGuestU32(base, carried + 16u) : 0u;
+    const uint32_t carrier = Plausible(block) ? LoadGuestU32(base, block) : 0u;
+    const bool carrier_alive = Plausible(carrier) && (LoadGuestU8(base, carrier + 144u) & 0x40u) != 0u;
+    bool holds = false;
+    if (carrier_alive) {
+      const uint32_t carrying = ComponentOf(base, carrier, 24u);
+      std::array<uint32_t, 16> held{};
+      const std::size_t count = carrying != 0u ? HeldItems(base, carrying, held) : 0u;
+      for (std::size_t i = 0; i < count; ++i) holds = holds || held[i] == item;
+    }
+    if (!refii::coop::HenchmanItemIsLoose(alive, carrier_alive, holds)) continue;
+    PPCContext destroy = saved;
+    destroy.r3.u32 = item;
+    __imp__rex_lhEntity_Destroy(destroy, base);
+    ++destroyed;
+    REXLOG_INFO("coop hooks: henchman weapon 0x{:08X} (record {:08X}) held by no one — destroyed "
+                "({})", item, LoadGuestU32(base, item + 28u), why);
+  }
+  return destroyed;
+}
+
+/// After the host's arm: the weapons it made are the entities with a uid in [first, end) and a
+/// weapon class. A new pair replaces the tracked one, whose loose items are destroyed first.
+bool TrackHenchmanPair(const PPCContext& saved, uint8_t* base, uint32_t first, uint32_t end) {
+  using refii::vfs::LoadGuestU32;
+  uint32_t made[2] = {0u, 0u};
+  for (uint32_t high = first; high != end && high - first < 16u; ++high) {
+    const uint32_t item = EntityByUid(saved, base, high);
+    if (item == 0u || (refii::vfs::LoadGuestU8(base, item + 144u) & 0x40u) == 0u ||
+        LoadGuestU32(base, item + 20u) != high) {
+      continue;
+    }
+    const uint32_t kind = WeaponClass(base, item);
+    if (kind != 0u && made[kind - 1u] == 0u) made[kind - 1u] = high;
+  }
+  if (made[0] == 0u && made[1] == 0u) return false;
+  DropLooseHenchmanPair(saved, base, "replaced by the next arm");
+  g_henchman_pair[0] = made[0];
+  g_henchman_pair[1] = made[1];
+  REXLOG_INFO("coop hooks: the host's henchman arm made melee uid {:08X}, ranged uid {:08X} — "
+              "tracked until the joiner holds them or leaves", made[0], made[1]);
+  return true;
+}
 }  // namespace
+
+/// The partner is gone (the pump's partner-gone edge, CoopRedress): the henchman pair the host
+/// made and no one holds is destroyed. Guest tick thread.
+extern "C" void RefiiCoopDropLooseHenchmanPair(void* ctx, uint8_t* base) {
+  if (ctx == nullptr || base == nullptr) return;
+  DropLooseHenchmanPair(*static_cast<const PPCContext*>(ctx), base, "the partner is gone");
+}
 
 // `sub_824FEC48(carrying, msg)` — the held-items message off the net dispatcher
 // (`sub_82392250`): type 1 resolves the u64 net id at msg+0x48 (`sub_82334A60`) and attaches
@@ -617,12 +747,24 @@ REX_EXTERN(rex_CECHeldItems_OnNetMessage) {
                     "body 0x{:08X}", type, owner);
       }
 
-      // AN ATTACH OF SOMETHING THAT IS NOT PLAYER TWO'S WEAPON IS REFUSED. The joiner's own
-      // items carry ids from the JOINER's counter; resolved on the host (`sub_82334A60`) such an
-      // id can name an unrelated host entity, which the attach would then take into player two's
-      // hand — destroying the weapon in the slot (`sub_824FDB70`) and tearing the entity off its
-      // owner. Only the weapons the host itself armed player two with (EquipRecord's list,
-      // RefiiCoopIsHostWeapon) are attached; the host re-arms a loose one (CoopKeepHostWeapons).
+      // THE JOINER ARMS PLAYER TWO'S BODY; the host follows its attach (coop_held_attach_rule.h).
+      //
+      // A HENCHMAN'S PAIR IS THE GUEST'S OWN. `sub_82315AD0` (disc `sub_82351E30`) creates
+      // "DefaultWeaponHenchman" / "DefaultRangedWeaponHenchman" on the host (0x82315DE0..0x82315F98,
+      // disc 0x82352140..0x823522F8) and sheathes them only where `sub_82214AF8(comp91)` holds
+      // (0x8231614C → 0x8231626C, disc 0x823524AC → 0x823525CC): on the joiner, not the host. The
+      // joiner's attach is this message, and the guest's handler attaches it (0x824FECCC, disc
+      // 0x82504494). Refusing it left a longsword (1A01F786) and a flintlock (7706C9BF) on the
+      // host's floor at every henchman join (run 2026-11-27, six pairs).
+      //
+      // A HERO'S BODY IS ARMED BY RECORD on the host (EquipRecord, RefiiCoopIsHostWeapon), and the
+      // joiner's own items carry ids from the JOINER's counter; resolved on the host
+      // (`sub_82334A60`) such an id can name an unrelated host entity, which the attach would take
+      // into player two's hand — destroying the weapon in the slot (`sub_824FDB70`) and tearing
+      // the entity off its owner. For a hero, only the host's own weapons are attached; the host
+      // re-arms a loose one (CoopKeepHostWeapons). A henchman holds no joiner-local item: the
+      // guest's arm releases and destroys every held item on both machines first (0x82315D8C /
+      // 0x82315DB8, disc 0x823520EC / 0x82352118) and the joiner then attaches replicas only.
       //
       // AN ATTACH OF WHAT THE SLOT ALREADY HOLDS IS ALREADY TRUE. `sub_824FB5D8` empties an
       // occupied slot first (`sub_824F9AC8` false → `sub_824FDB70`, 0x824FB860..0x824FB878),
@@ -642,18 +784,23 @@ REX_EXTERN(rex_CECHeldItems_OnNetMessage) {
         const uint32_t item = find.r3.u32;
         std::array<uint32_t, 16> held{};
         const std::size_t count = HeldItems(base, carrying, held);
+        bool already_held = false;
         for (std::size_t i = 0; Plausible(item) && i < count; ++i) {
-          if (held[i] == item) {
-            static uint32_t skipped = 0u;
-            if (skipped < 16u) {
-              ++skipped;
-              REXLOG_INFO("coop hooks: the joiner's attach of item 0x{:08X} to player two's body "
-                          "is already true — not re-attached (re-attaching destroys it)", item);
-            }
-            return;
-          }
+          already_held = already_held || held[i] == item;
         }
-        if (RefiiCoopIsHostWeapon(owner, item) == 0) {
+        const bool own_hero = RefiiCoopGetOwnHero() != 0;
+        const auto answer = refii::coop::JoinerAttachToPlayerTwo(
+            already_held, own_hero, own_hero && RefiiCoopIsHostWeapon(owner, item) != 0);
+        if (answer == refii::coop::JoinerAttach::kAlreadyTrue) {
+          static uint32_t skipped = 0u;
+          if (skipped < 16u) {
+            ++skipped;
+            REXLOG_INFO("coop hooks: the joiner's attach of item 0x{:08X} to player two's body "
+                        "is already true — not re-attached (re-attaching destroys it)", item);
+          }
+          return;
+        }
+        if (answer == refii::coop::JoinerAttach::kRefuse) {
           static uint32_t refused = 0u;
           if (refused < 16u) {
             ++refused;
@@ -664,6 +811,14 @@ REX_EXTERN(rex_CECHeldItems_OnNetMessage) {
                         Plausible(item) && (LoadGuestU8(base, item + 144u) & 0x40u) != 0u);
           }
           return;
+        }
+        static uint32_t followed = 0u;
+        if (followed < 16u) {
+          ++followed;
+          REXLOG_INFO("coop hooks: the joiner's attach to player two's {} body names net id "
+                      "{:016X} → entity 0x{:08X} (record {:08X}) — attached, as the guest does",
+                      own_hero ? "hero" : "henchman", id, item,
+                      Plausible(item) ? LoadGuestU32(base, item + 28u) : 0u);
         }
       }
     }

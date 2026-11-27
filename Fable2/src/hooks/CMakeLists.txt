@@ -9,15 +9,24 @@ set(REFII_HOOK_SOURCES
     ${REFII_VFS_HOOK_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/xstorage_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/unlock_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_held_attach_rule.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_player_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_hero_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_achievement_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/player_mode_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_camera_readers.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_particle_view.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_player_icons.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/camera_statements.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_dog_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_ui_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/xsession_leave_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/lua_binding_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/property_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/character_morph_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_world_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_chest_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_client_components_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/firearm_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/exp_orb_hooks.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/exp_orb_hooks.cpp

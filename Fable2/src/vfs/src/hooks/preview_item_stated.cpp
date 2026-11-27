@@ -15,6 +15,7 @@
 
 #include "vfs_hooks_private.h"
 #include "core/gui_native_calls.h"
+#include "hooks/page_fills_stated.h"
 #include "hooks/ppc_externs.h"
 
 namespace {
@@ -70,6 +71,7 @@ REX_EXTERN(rex_lhGuiPreviewObject_Set) {
     const uint32_t record = ref >= 0x10000u && ref < 0xC0000000u ? refii::vfs::LoadGuestU32(base, ref) : 0u;
     const uint32_t screen = ScreenOfPreview(ctx, base, preview);
     __imp__rex_lhGuiPreviewObject_Set(ctx, base);
+    refii::vfs::NotePageFillRecord("preview", record);
 
     if (screen == 0u) {
         static uint32_t s_unplaced = 0u;

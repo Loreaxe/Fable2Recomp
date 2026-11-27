@@ -2555,7 +2555,7 @@
 0x8244FDF0 = { size = 0x58 }
 0x8244FE48 = { size = 0xD0 }
 0x8244FF18 = { size = 0x7C }
-0x824510D0 = { size = 0xEC }
+0x824510D0 = { name = "rex_CECRewardGiver_GiveQuestReward", size = 0xEC }
 0x82451538 = { size = 0x1A8 }
 0x824516E0 = { size = 0x160 }
 0x82451840 = { size = 0x108 }
@@ -3837,7 +3837,7 @@
 0x82793A38 = { size = 0x188 }
 0x82189F68 = { size = 0x174 }
 0x82569F90 = { size = 0x98 }
-0x822BF168 = { size = 0x68 }
+0x822BF168 = { name = "rex_lhLuaBind_EntityVector", size = 0x68 }
 0x823EDC50 = { size = 0xA0 }
 0x82794058 = { size = 0x94 }
 0x82793E38 = { size = 0xC4 }
@@ -4171,7 +4171,7 @@
 0x82794EF0 = { size = 0x8 }
 0x828B7580 = { size = 0x8 }
 0x828AFB80 = { size = 0x30 }
-0x828AFBB8 = { size = 0x328 }
+0x828AFBB8 = { name = "rex_CECPlayerProperties_BuyQuietly", size = 0x328 }
 0x828B0C30 = { size = 0x104 }
 0x828B3360 = { size = 0x400 }
 0x828B3760 = { size = 0xFC }
@@ -4544,6 +4544,16 @@
 0x82945E30 = { size = 0x40 }
 0x82945E78 = { size = 0x1D0 }
 0x82941128 = { name = "rex_CECPlayerDrunkenness_Drink", size = 0x1C }
+0x821A95E0 = { name = "rex_Targeting_SearchContext" }
+0x821F8760 = { name = "rex_lhPlayers_Camera" }
+0x8227D400 = { name = "rex_CECProbeSet_Probe" }
+0x823C38F0 = { name = "rex_Lua_Player_GetPositionOfCameraAssociatedWithPlayer" }
+0x823C3948 = { name = "rex_Lua_Player_GetForwardOfCameraAssociatedWithPlayer" }
+0x823CD340 = { name = "rex_CECPlayer_LookAtUpdate" }
+0x8263B110 = { name = "rex_Kaim_CEntityInfoFilterF2Visibility_Filter" }
+0x8263B360 = { name = "rex_Kaim_CEntityInfoFilterF2Sight_Filter" }
+0x82743E48 = { name = "rex_CInputProcessCharacterMovement_ProcessInput" }
+0x82746328 = { name = "rex_CInputProcessStickJabDetection_ProcessInput" }
 # Wave 3 mod events (Sanctuary, weapons, social, dog, jobs, guild, titles, scars, age, clothing, pub games,
 # village wealth, gargoyles): the seams' comments in mod_events_hooks.cpp / mod_events.cpp state each.
 0x82992850 = { name = "rex_CECDiveSpot_Use" }
@@ -10763,6 +10773,7 @@
 0x8233A198 = { name = "rex_GameFlow_QueueCommand" }
 0x8233A280 = { name = "rex_GameFlow_PopCommand" }
 0x82275F00 = { name = "rex_lhWorld_SimTick" }
+0x8262DE70 = { name = "rex_AIAsyncPathfinder_RunBatch" }
 0x825AD498 = { name = "rex_lhLuaScriptSystem_LoadStartupScripts" }
 0x825AE828 = { name = "rex_lhLuaScriptSystem_RunCameraScripts" }
 0x8273DA00 = { name = "rex_CECAbilities_PerformRequest" }
@@ -11355,11 +11366,28 @@
 0x8238A628 = { name = "rex_CECNetwork_ApplyReplicaTarget" }
 0x826CC768 = { name = "rex_ActionKnockdownStabResponse_Start" }
 0x821DCF10 = { name = "rex_lhCamera_ScreenBlock" }
+0x822A88C0 = { name = "rex_lhAudio_SetListener" }
+# The particle systems' level of detail answers either split-screen player's camera
+# (Fable2/src/hooks/src/coop_particle_view.cpp): the world frame (world, frame, step), a particle
+# view's camera setter (view, position, front, field of view) and one system's level of detail
+# (holder, view).
+0x821DF990 = { name = "rex_lhWorld_Frame" }
+0x8322B050 = { name = "rex_ParticleView_SetCamera" }
+0x8322D678 = { name = "rex_ParticleSystem_LevelOfDetail" }
+# Each split-screen half's offscreen hero / henchman marker (Fable2/src/hooks/src/coop_player_icons.cpp):
+# the view node's camera setter (node, block), one player-icon record's update (record, switch) and
+# the view node's constructor (node), called for player two's node.
+0x822933D8 = { name = "rex_lhSceneView_SetCamera" }
+0x822B2D70 = { name = "rex_lhPlayerIcons_UpdateRecord" }
+0x8238DE58 = { name = "rex_lhSceneView_Construct" }
 0x822AE048 = { name = "rex_CECDog_Update" }
+0x822D1CB8 = { name = "rex_CECDog_IsTreasureForMaster" }
 0x82788E68 = { name = "rex_CECDog_IsMasterInsideBuilding" }
 0x82608518 = { name = "rex_lhRegionManager_FindRegionOwningLevel" }
 0x824028C8 = { name = "rex_lhGuiReceiveItemsScreen_OnScreenAction" }
 0x8242C970 = { name = "rex_CECSpellManager_SetSpellSlot" }
+# CECCreature constructor: forgets the corpse stated for its address (hooks/creature_corpse.cpp).
+0x82431700 = { name = "rex_CECCreature_Ctor", size = 0x158 }
 0x82546AA0 = { name = "rex_CECGraphicAppearance_Ctor" }
 0x82546C98 = { name = "rex_CECGraphicAppearance_ScalarDtor" }
 0x82546D50 = { name = "rex_CECGraphicAppearance_ApplyDefinition" }
@@ -11452,6 +11480,25 @@
 0x8259E358 = { name = "rex_lhGuiAbilitiesScreen_Update", size = 0xD4 }
 0x8259EB08 = { name = "rex_lhGuiAbilitiesScreen_OnModalAnswer", size = 0x130 }
 0x8259E2B8 = { name = "rex_lhGuiAbilitiesScreen_OnExit", size = 0xA0 }
+0x82583428 = { name = "rex_lhGuiScreen_OpenSound", size = 0x54 }
+0x8259B380 = { name = "rex_lhGuiPreviewScreen_OnExit", size = 0x34 }
+0x82583938 = { name = "rex_lhGuiQueryScreen_Close", size = 0x74 }
+0x8257D008 = { name = "rex_lhGuiItemsScreen_OnExit", size = 0x80 }
+0x82580F18 = { name = "rex_lhGuiClothingScreen_OnModalAnswer", size = 0xD8 }
+0x8257E890 = { name = "rex_lhGuiClothingScreen_OnExit", size = 0x50 }
+0x825836D0 = { name = "rex_lhGuiQueryScreen_Update", size = 0x1FC }
+0x82592340 = { name = "rex_lhGuiShopScreen_OnEnter", size = 0x2CC }
+0x82592D08 = { name = "rex_lhGuiShopScreen_OnModalAnswer", size = 0xEC }
+0x825A02B8 = { name = "rex_lhGuiGiftGivingScreen_OnEnter", size = 0x150 }
+0x825A0C58 = { name = "rex_lhGuiGiftGivingScreen_OnModalAnswer", size = 0x140 }
+0x825A1A98 = { name = "rex_lhGuiWorldMapScreen_OnEnter", size = 0x36C }
+0x825A2518 = { name = "rex_lhGuiWorldMapScreen_OnModalAnswer", size = 0x114 }
+0x825A1A60 = { name = "rex_lhGuiWorldMapScreen_OnExit", size = 0x38 }
+0x8259B288 = { name = "rex_lhGuiSelectionScreen_OnEnter", size = 0xF8 }
+0x8259C200 = { name = "rex_lhGuiDecorationScreen_OnEnter", size = 0x140 }
+0x82596B80 = { name = "rex_lhGuiRealEstateScreen_OnEnter", size = 0xFC }
+0x82596C80 = { name = "rex_lhGuiRealEstateScreen_OnExit", size = 0x34 }
+0x825914F0 = { name = "rex_lhGuiCrimeScreen_OnEnter", size = 0x1B0 }
 0x826C72A8 = { name = "rex_lhGui_FrontendRoot_OnScreenAction", size = 0xEF8 }
 0x826CA388 = { name = "rex_lhGui_FrontendRoot_PopulateMainMenu", size = 0x354 }
 0x826C61B8 = { name = "rex_lhGui_FrontendTitle_OnScreenAction", size = 0x1C8 }
@@ -11814,7 +11861,7 @@
 0x82560D00 = { size = 0x8 }
 0x8256A028 = { size = 0x8 }
 0x8257C9B8 = { size = 0x10 }
-0x8257E2F0 = { size = 0x28 }
+0x8257E2F0 = { name = "rex_lhGuiItemsScreen_OnModalAnswer", size = 0x28 }
 0x82581460 = { size = 0x4 }
 0x825814C8 = { size = 0x28 }
 0x82581570 = { size = 0x10 }
@@ -15144,6 +15191,7 @@
 0x827A8120 = { name = "rex_CECVillager_OnUse" }
 0x82422FA0 = { name = "rex_lhCameraManager_ActivateCamera" }
 0x82422EB0 = { name = "rex_lhCameraManager_SpawnCameraEntities" }
+0x82424CF0 = { name = "rex_lhCameraManager_Destroy" }
 0x822116D0 = { name = "rex_lhCamera_CurrentBlock" }
 0x822142E0 = { name = "rex_lhVisibility_Refresh" }
 0x822A14D0 = { name = "rex_lhCreature_LodTier" }
@@ -15195,6 +15243,16 @@
 0x8274DFD0 = { name = "rex_CECBuilding_SalePrice" }
 0x828AF6D0 = { name = "rex_CECPlayerProperties_Buy" }
 0x828B01C8 = { name = "rex_CECPlayerProperties_Sell" }
+0x8274F740 = { name = "rex_CECBuilding_Owner" }
+0x8274F908 = { name = "rex_CECBuilding_Occupant" }
+0x8274D1E0 = { name = "rex_CECBuilding_BaseValue" }
+0x8274E4F0 = { name = "rex_CECBuilding_EconomyBonus" }
+0x8274E440 = { name = "rex_CECBuilding_Rent" }
+0x8274E7A0 = { name = "rex_CECBuilding_NotForSaleAdjustment" }
+0x8274E940 = { name = "rex_CECBuilding_OpinionAdjustment" }
+0x8274EBA0 = { name = "rex_CECBuilding_OwnerKilledAdjustment" }
+0x821E62B0 = { name = "rex_CECUseTarget_Target" }
+0x828C8440 = { name = "rex_lhEntity_DisplayName" }
 0x82754F18 = { name = "rex_CECOnActionUse_Hide" }
 0x823B7128 = { name = "rex_lhPromptManager_Witnessed" }
 0x821B5478 = { name = "rex_lhTutorials_Display" }
@@ -15207,6 +15265,7 @@
 0x82456568 = { name = "rex_CECFollow_Start" }
 0x82456800 = { name = "rex_CECFollow_Stop" }
 0x82450DF0 = { name = "rex_CECRewardGiver_GiveReward" }
+0x82452F38 = { name = "rex_CECRewardGiver_TryGiveReward" }
 0x827AF5A0 = { name = "rex_CECShopkeeper_BuyPrice" }
 0x827AF6F8 = { name = "rex_CECShopkeeper_SellPrice" }
 # Shared mod events (mod_events.cpp): the chest's Open and its open action's update, the shopkeeper's buy and sell.
@@ -15291,6 +15350,17 @@
 0x824F9290 = { name = "rex_lhGuiShopScreen_Open" }
 0x828348F8 = { name = "rex_lhGuiPreviewObject_Set" }
 0x82834DA0 = { name = "rex_lhGuiPreviewObject_Hide" }
+# A page fill's element writes, stated by the names it gave (page_fills_stated.cpp): the name
+# lookup, shown, opacity, text colour, the shop's front page fill, upgrade furniture's card, real estate's two page fills.
+0x823F8C30 = { name = "rex_lhGuiElement_FindByName" }
+0x823F86F8 = { name = "rex_lhGuiElement_SetShown" }
+0x823F8510 = { name = "rex_lhGuiElement_SetOpacity" }
+0x823F82F0 = { name = "rex_lhGuiElement_SetTextColour" }
+0x823F80F0 = { name = "rex_lhGuiElement_SetQuadColour", size = 0x68 }
+0x828E31B0 = { name = "rex_lhGuiShopFrontPage_Fill" }
+0x825623C8 = { name = "rex_lhUpgradeableFurniture_Card" }
+0x828ED8C0 = { name = "rex_lhGuiRealEstatePage1_Fill" }
+0x828EF980 = { name = "rex_lhGuiRealEstatePage2_Fill" }
 0x823350E0 = { name = "rex_lhGuiPendingWeapons_Clear" }
 0x824196D0 = { name = "rex_lhHudExperienceCounter_ShowHeroOne" }
 0x82419768 = { name = "rex_lhHudExperienceCounter_ShowHeroTwo" }
@@ -15301,6 +15371,9 @@
 # profile's subtitles setter (r5 on); the front-end game-flow mode's enter and exit.
 0x827BE0F0 = { name = "rex_lhGuiRowTickets_Allocate" }
 0x827BE308 = { name = "rex_lhGuiRowTickets_Clear" }
+# The item books' row builder (item_rows_stated.cpp): r4 &item handle, r7 the ticket, r8 the type, r9 the
+# screen — the row it spawns carries that item and the mark it states.
+0x82407D20 = { name = "rex_lhGuiItemRow_Build", size = 0x614 }
 0x824E6E18 = { name = "rex_lhProfile_SetSubtitlesEnabled" }
 0x82354BB8 = { name = "rex_lhFrontEndMode_Enter" }
 0x823552B8 = { name = "rex_lhFrontEndMode_Exit" }
@@ -15327,6 +15400,12 @@
 0x8247C1B0 = { name = "rex_lhGuiCoopScreen_CommitPickedSave" }
 0x8247C648 = { name = "rex_lhGuiCoopScreen_ClosePicker" }
 0x8247A828 = { name = "rex_lhGuiCoopScreen_OwnSaveIndex" }
+# Player two's sign-in ask on the co-op screen (r3 the user): answered signed in to the shared profile,
+# hero two's achievements are read again (player_state_hooks.cpp).
+0x828867C0 = { name = "rex_lhGuiCoopScreen_SignInPlayerTwo" }
+# Player two's save list on the co-op screen: in local co-op the save player one plays is left out
+# of the listing it is made from (player_state_hooks.cpp).
+0x8247C000 = { name = "rex_lhGuiCoopScreen_ListPickerSaves" }
 0x823B4590 = { name = "rex_lhGuiInput_RawPass" }
 0x823B56F8 = { name = "rex_lhGuiInput_PlayAPress" }
 0x823B5948 = { name = "rex_lhGuiInput_PostExpressionMenuOpened" }
@@ -15380,12 +15459,121 @@
 [[midasm_hook]]
 name = "RefiiCoopUseByRealUser"
 address = 0x82753608
-jump_address = 0x82753774
+registers = ["r27", "r3"]
+jump_address_on_true = 0x82753774
+
+# Before `cmplwi cr6,r11,0` on the use routine's icon byte (`lbz r11,0x18(r24)`): for the host's run of
+# the joiner's use, the joiner's own icon byte (mod_events.cpp RefiiCoopUseIconOfUser).
+[[midasm_hook]]
+name = "RefiiCoopUseIconOfUser"
+address = 0x827534B0
+registers = ["r11", "r24", "r27"]
 
 [[midasm_hook]]
 name = "RefiiCoopShopForLocalPlayerTwo"
 address = 0x827A8298
 jump_address_on_true = 0x827A82CC
+
+# A travel agent (coach driver 14, ship captain 29) serves a player two who brought a hero; the plain
+# henchman keeps the reject line: before `clrlwi r11,r27,24` (r27 = the user is player two), true runs
+# the agent's script for the user r24 (coop_hero_hooks.cpp RefiiCoopTravelAgentForHero).
+[[midasm_hook]]
+name = "RefiiCoopTravelAgentForHero"
+address = 0x827A84E8
+registers = ["r24"]
+jump_address_on_true = 0x827A851C
+
+# An online joiner also builds the household (69, 136), the sale sign's link (142), every use (78) and a
+# hero's guild messages (189) and drunkenness (157), which the client build loop drops
+# (Fable2/src/hooks/src/coop_client_components_hooks.cpp).
+[[midasm_hook]]
+name = "RefiiCoopClientKeepsComponent"
+address = 0x823936EC
+registers = ["r11", "r1"]
+jump_address_on_true = 0x82393AC8
+
+# The shopkeeper path's statement of the GUI's owner, the pause root's vf+32 with `li r4, 0` (0x827A8424,
+# the call 0x827A8430): local player two's shop states player two (coop_hero_hooks.cpp RefiiCoopShopOwner).
+[[midasm_hook]]
+name = "RefiiCoopShopOwner"
+address = 0x827A8428
+registers = ["r4"]
+
+# The local player's pick inlined (`li r4, 1` / `li r4, 2` by the session bytes, then the lookup) where a
+# player-two gift / furniture / decoration screen reaches it: player two while a call is made for them
+# (coop_hero_hooks.cpp RefiiCoopInlineLocalPlayer).
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x823031EC
+registers = ["r4"]
+# gift recipient sub_82303198
+
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x8259B41C
+registers = ["r4"]
+# furniture piece sub_8259B3B8
+
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x8259B844
+registers = ["r4"]
+# furniture label sub_8259B7E0
+
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x8259C3A4
+registers = ["r4"]
+# decoration mount sub_8259C340
+
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x828F12A8
+registers = ["r4"]
+# furniture page sub_828F1200
+
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x828F2328
+registers = ["r4"]
+# furniture page sub_828F22B8
+
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x828F1C5C
+registers = ["r4"]
+# decoration page sub_828F1BB8
+
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x828F2B94
+registers = ["r4"]
+# decoration page sub_828F2B28
+
+# The expression wheel's owner read before its close, and noted as the gift's opener when the gift opens
+# (gui_screen_stub_shared.cpp RefiiWheelGiftOwner / RefiiWheelGiftOpens).
+[[midasm_hook]]
+name = "RefiiWheelGiftOwner"
+address = 0x8258E360
+registers = ["r24"]
+
+[[midasm_hook]]
+name = "RefiiWheelGiftOpens"
+address = 0x8258E390
+
+# The player-interact ability's actor noted as the opener of the screen it sets (gui_screen_stub_shared.cpp
+# RefiiInteractScreenOwner).
+[[midasm_hook]]
+name = "RefiiInteractScreenOwner"
+address = 0x829A6C6C
+registers = ["r22"]
+# furniture, SetScreen 0x19
+
+[[midasm_hook]]
+name = "RefiiInteractScreenOwner"
+address = 0x829A6DBC
+registers = ["r22"]
+# decoration, SetScreen 0x1A
 
 [[midasm_hook]]
 name = "RefiiCoopCrimeIsTheirs"
@@ -15402,6 +15590,26 @@ registers = ["r1", "r3"]
 name = "RefiiCoopAudibleToBoth"
 address = 0x82C55920
 registers = ["r4"]
+
+# The hero marker's record update asks player two's view node's camera while split, before `lwz
+# r4,0x7C(r26)` (r24 the record, r30 the scene camera; coop_player_icons.cpp).
+[[midasm_hook]]
+name = "RefiiCoopPlayerIconCamera"
+address = 0x822B311C
+registers = ["r24", "r30"]
+
+# Lua_GUI_SetShouldDrawPlayerIcons's send to the session's partner: skipped for a camera's statement
+# (coop_player_icons.cpp).
+[[midasm_hook]]
+name = "RefiiPlayerIconsStayHere"
+address = 0x82907EE8
+jump_address_on_true = 0x82907F08
+
+[[midasm_hook]]
+name = "RefiiCoopListenerForSound"
+address = 0x82C52DD4
+registers = ["r4", "r5", "r11"]
+jump_address_on_true = 0x82C52DD8
 
 [[midasm_hook]]
 name = "RefiiCoopShopPlayer"
@@ -15421,22 +15629,22 @@ registers = ["r3"]
 [[midasm_hook]]
 name = "RefiiCoopExperienceOwnPool"
 address = 0x8251C2EC
-jump_address = 0x8251C498
+jump_address_on_true = 0x8251C498
 
 [[midasm_hook]]
 name = "RefiiCoopGoldOwnPurse"
 address = 0x8239E85C
-jump_address = 0x8239EA5C
+jump_address_on_true = 0x8239EA5C
 
 [[midasm_hook]]
 name = "RefiiCoopRenownOwnPool"
 address = 0x8249D5C0
-jump_address = 0x8249D7A0
+jump_address_on_true = 0x8249D7A0
 
 [[midasm_hook]]
 name = "RefiiCoopReactToPlayerTwo"
 address = 0x8275FFA8
-jump_address = 0x8275FFB0
+jump_address_on_true = 0x8275FFB0
 
 # Each online player their own camera; the world alive around both (coop_hero_hooks.cpp).
 [[midasm_hook]]
@@ -15489,6 +15697,7 @@ registers = ["v11", "v12"]
 [[midasm_hook]]
 name = "RefiiCoopLodCamera"
 address = 0x82290260
+registers = ["v0"]
 
 [[midasm_hook]]
 name = "RefiiCoopLodNearer"
@@ -15508,6 +15717,38 @@ name = "RefiiCoopSplitPlayerCameraEntities"
 address = 0x8238F73C
 registers = ["r27"]
 jump_address_on_true = 0x8238F774
+
+# Player two's camera manager runs no camera script at its construction (coop_hero_hooks.cpp).
+[[midasm_hook]]
+name = "RefiiCoopPartnerCameraScripts"
+address = 0x82422D48
+registers = ["r31"]
+jump_address_on_true = 0x82422D4C
+
+# An achievement is written only for a hero with a Player bound (coop_achievement_hooks.cpp). Before
+# `lwz r11,0x14(r10)` in the per-hero write (r10 = the hero's component 33); true = the body's exit.
+[[midasm_hook]]
+name = "RefiiAchievementNoPlayer"
+address = 0x824A0A70
+registers = ["r10"]
+jump_address_on_true = 0x824A0C3C
+
+# The rumble fade matches a hero's user index through its Player handle; a hero with no Player bound
+# has no rumble (coop_achievement_hooks.cpp). Before `lwz r9,0x28(r10)`; true = the epilogue.
+[[midasm_hook]]
+name = "RefiiRumbleFadeNoPlayer"
+address = 0x823C95D4
+registers = ["r10"]
+jump_address_on_true = 0x823C9644
+
+# The play-game mode's resume enters a player's top mode only when it is not entered already (its
+# suspend's own test of the mode's +0x10); before `lwz r11,0(r30)`, true = past the enter call
+# (player_mode_hooks.cpp).
+[[midasm_hook]]
+name = "RefiiPlayerModeEnteredOnce"
+address = 0x824609F0
+registers = ["r30"]
+jump_address_on_true = 0x82460A04
 
 [[midasm_hook]]
 name = "RefiiCoopNoCameraPostSend"
@@ -15644,17 +15885,12 @@ address = 0x82596D1C
 registers = ["r6"]
 
 # The crime screen (gui_screen_stub_crime.cpp): the arrest's statement of whose screen it opens, r4 =
-# the criminal is hero two (the pause root's owner call in VillageCrimeManager.DisplayCrimeScreen), and
-# the sender of the choice's world message, r6, just after it is taken from the local player's hero.
+# the criminal is hero two (the pause root's owner call in VillageCrimeManager.DisplayCrimeScreen). The
+# sender of the choice's world message is chosen inside the ported OnMenuEvent.
 [[midasm_hook]]
 name = "RefiiCrimeArrested"
 address = 0x82855960
 registers = ["r4"]
-
-[[midasm_hook]]
-name = "RefiiCrimeSender"
-address = 0x82591D5C
-registers = ["r6"]
 
 # The numeric adjuster's hold acceleration writes its value with no test against the limits
 # (display_box_hooks.cpp, GitHub #57): r3 the value about to be stored, r31 the widget.
@@ -15710,10 +15946,67 @@ name = "RefiiCoopMenuPlayer"
 address = 0x8240B304
 registers = ["r4"]
 
+# The world map's family list is the family of the player whose map is open (guest_tick_pump.cpp).
 [[midasm_hook]]
-name = "RefiiCoopMenuPlayer"
+name = "RefiiCoopFamilyListPlayer"
 address = 0x8283ACA0
 registers = ["r4"]
+
+# The inventory lists' player-record pick (`li r4, 1` / `li r4, 2` by the session bytes, then the
+# lookup): local player two's book lists player two (guest_tick_pump.cpp RefiiCoopInventoryListPlayer).
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x828CAB0C
+registers = ["r4"]
+# items
+
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x828CCEC0
+registers = ["r4"]
+# clothing
+
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x828CB3D4
+registers = ["r4"]
+# dye targets
+
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x828C9E10
+registers = ["r4"]
+# augment targets
+
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x828CA2C8
+registers = ["r4"]
+# remover targets
+
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x823A4690
+registers = ["r4"]
+# gift
+
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x824091F8
+registers = ["r4"]
+# category counts
+
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x82408D08
+registers = ["r4"]
+# best ratings
+
+[[midasm_hook]]
+name = "RefiiCoopInventoryListPlayer"
+address = 0x82836DE4
+registers = ["r4"]
+# page info
 
 # Player two's dog binds to player two and leaves GetDog() to hero one's (coop_dog_hooks.cpp).
 [[midasm_hook]]
@@ -15871,12 +16164,12 @@ after_instruction = true
 [[midasm_hook]]
 name = "RefiiMirrorMorphForPlayerTwo"
 address = 0x82360BDC
-jump_address = 0x82360BE4
+jump_address_on_true = 0x82360BE4
 
 [[midasm_hook]]
 name = "RefiiMirrorTextureMorphsForPlayerTwo"
 address = 0x8220ECF4
-jump_address = 0x8220ECF8
+jump_address_on_true = 0x8220ECF8
 
 # A headless presentation's texts, stated at the writers' entries (gui_headless_presentation.cpp):
 # SetText r3 element, r4 presentation, r5 the text's handle; SetTextFromTag r3 element, r4 the tag.

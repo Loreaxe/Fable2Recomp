@@ -49,6 +49,11 @@ public sealed class Engine_CorpseManager
             return;
         }
 
+        // The retired entity leaves the walk, and the walk is what takes an outline off
+        // (GameEntities' Engine_EntityHighlight.Apply per entity): off now, or the kill frame's
+        // target outline stays on the body for its whole retention.
+        Engine_EntityHighlight.Apply(node, false, default);
+
         HostBridge.EntityAppearance clean = heldLook.VisualOnly;
         Vector4 tint = clean.TintLanes;
         if (!tint.IsFinite() || (tint.X == 0f && tint.Y == 0f && tint.Z == 0f && tint.W == 0f))

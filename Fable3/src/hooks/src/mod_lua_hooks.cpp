@@ -60,9 +60,11 @@
 #include <rex/ppc.h>
 
 #include "core/host_asset_reader.h"
+#include "core/camera_views.h"
 #include "core/mod_values.h"
 #include "core/payload_bridge.h"
 #include "core/refii_mod_bus.h"
+#include "core/achievement_statement.h"
 #include "core/refii_mod_requests.h"
 #include "core/rex_payload_bridge.h"
 #include "../../vfs/include/fable3_guest_build.h"
@@ -158,6 +160,11 @@ constexpr int32_t kEventModNotice = 89;
 constexpr int32_t kEventModMenuBox = 90;
 constexpr int32_t kEventAttackModeChanged = 105;
 constexpr int32_t kEventCameraChanged = 112;
+constexpr int32_t kEventCameraCut = 164;
+constexpr int32_t kEventCameraBlend = 165;
+constexpr int32_t kEventCameraScreenChanged = 166;
+constexpr int32_t kEventCameraZoomChanged = 167;
+constexpr int32_t kEventCameraTick = 168;
 /// The kind the host's query replies arrive under (REFII_MOD_HOST_REPLY_KIND).
 constexpr int32_t kHostReplyKind = 1000;
 
@@ -1256,6 +1263,42 @@ REFII_F3_NATIVE(NativePlayerValueText) {
   g_results = 1;
 }
 
+/// ACHIEVEMENTS PER CHARACTER, as the machine that plays the hero states them (core/achievement_statement.h):
+/// the statement in player p's store, the same text Godot's RefiiHost twins read, so both surfaces answer
+/// alike — and on both co-op machines, the partner's hero included.
+refii::achievements::Statement AchievementStatement(int32_t player) {
+  char text[257];
+  constexpr size_t kKey = sizeof(refii::achievements::kStatementKey) - 1u;
+  if ((player != 1 && player != 2) ||
+      refii_bridge_player_get_text(player, refii::achievements::kStatementKey, kKey, text, sizeof(text)) <= 0) {
+    return {};
+  }
+  return refii::achievements::ParseStatement(text);
+}
+
+/// Refii.achievement_unlocked(p, id): whether the hero player p plays has unlocked achievement id.
+REFII_F3_NATIVE(NativeAchievementUnlocked) {
+  const refii::achievements::Statement statement = AchievementStatement(PlayerArgument(lua, 1, 0));
+  const double id = lua.Type(2) == kTypeNumber ? lua.Number(2) : 0.0;
+  lua.PushBoolean(statement.valid && id >= 1.0 && id <= 255.0 &&
+                  refii::achievements::Holds(statement.hero, static_cast<uint32_t>(id)));
+  g_results = 1;
+}
+
+/// Refii.achievements(p): the ids the hero player p plays has unlocked, ascending, "id,id,…" ("" for none).
+REFII_F3_NATIVE(NativeAchievements) {
+  const refii::achievements::Statement statement = AchievementStatement(PlayerArgument(lua, 1, 0));
+  lua.PushString(statement.valid ? refii::achievements::IdList(statement.hero) : std::string());
+  g_results = 1;
+}
+
+/// Refii.character_id(p): the character id of the hero player p plays, "" before the game bound one.
+REFII_F3_NATIVE(NativeCharacterId) {
+  const refii::achievements::Statement statement = AchievementStatement(PlayerArgument(lua, 1, 0));
+  lua.PushString(statement.valid ? statement.character : std::string());
+  g_results = 1;
+}
+
 void PlayerWriteText(GuestLua& lua, int32_t saved) {
   const std::string key = StoreKey(lua);
   const std::string text = lua.String(3, 256u);
@@ -1747,6 +1790,150 @@ REFII_F3_NATIVE(NativeCameraStated) {
     std::snprintf(fields, sizeof(fields), "player=%d,mode=%d,previous=%d,hero=%u", player, mode, previous,
                   refii_bridge_mod_handle(hero));
     refii::fable3::modlua::QueueEvent(kEventCameraChanged, fields);
+  }
+}
+
+/// Refii._camera_zoom_stated(hero, set, level, combat, string_length, cage_radius, max_cage_radius, height,
+/// focal_offset, fov, max_coop_distance): the core chunk's statement after each
+/// SACCamera:CalculateActiveZoomLevel; camera_zoom_changed when the set or the combat blend (weight
+/// above 0) differs from what was last raised for the player.
+std::array<std::string, 3> g_zoom_set{};
+std::array<int32_t, 3> g_zoom_combat{-1, -1, -1};
+
+REFII_F3_NATIVE(NativeCameraZoomStated) {
+  const int32_t player = refii::fable3::modlua::PlayerOf(lua.base, EntityArgument(lua, 1));
+  if (player != 1 && player != 2) {
+    return;
+  }
+  const std::string set = lua.String(2, 63u);
+  double values[8];
+  for (int32_t i = 0; i < 8; ++i) {
+    values[i] = lua.Type(4 + i) == kTypeNumber ? lua.Number(4 + i) : 0.0;
+  }
+  const int32_t combat = values[0] > 0.0 ? 1 : 0;
+  const size_t at = static_cast<size_t>(player);
+  if (g_zoom_combat[at] == combat && g_zoom_set[at] == set) {
+    return;
+  }
+  const std::string previous = g_zoom_combat[at] < 0 ? std::string() : g_zoom_set[at];
+  g_zoom_set[at] = set;
+  g_zoom_combat[at] = combat;
+  char numbers[320];
+  std::snprintf(numbers, sizeof(numbers),
+                ",level=%d,combat=%.9g,string_length=%.9g,cage_radius=%.9g,max_cage_radius=%.9g,height=%.9g,"
+                "focal_offset=%.9g,fov=%.9g,max_coop_distance=%.9g",
+                lua.Type(3) == kTypeNumber ? static_cast<int32_t>(lua.Number(3)) : 0, values[0], values[1], values[2],
+                values[3], values[4], values[5], values[6], values[7]);
+  refii::fable3::modlua::QueueEvent(kEventCameraZoomChanged,
+                                    "player=" + std::to_string(player) + ",set='" +
+                                        refii::fable3::modlua::Quoted(set) + "',previous_set='" +
+                                        refii::fable3::modlua::Quoted(previous) + "'" + numbers);
+}
+
+/// Refii._camera_read(what, p [, x, y]): the camera's read calls (refii_mod_requests.h), flat for the
+/// preamble's Refii.camera_* — 1 pose (12 numbers), 2 stated (11), 3 view (4), 4 screen (mode, split),
+/// 5 ray (6); nil where there is none. Fable 2's NativeCameraRead.
+REFII_F3_NATIVE(NativeCameraRead) {
+  const int32_t what = lua.Type(1) == kTypeNumber ? static_cast<int32_t>(lua.Number(1)) : 0;
+  const int32_t player = lua.Type(2) == kTypeNumber ? static_cast<int32_t>(lua.Number(2)) : 0;
+  float out[12] = {};
+  int32_t count = 0;
+  if (what == 1 && refii_mod_camera_pose(player, out) != 0) {
+    count = 12;
+  } else if (what == 2 && refii_mod_camera_stated(player, out) != 0) {
+    count = 11;
+  } else if (what == 3 && refii_mod_camera_view(player, out) != 0) {
+    count = 4;
+  } else if (what == 4) {
+    int32_t split = 0;
+    out[0] = static_cast<float>(refii_mod_camera_screen_mode(&split));
+    out[1] = static_cast<float>(split);
+    count = 2;
+  } else if (what == 5) {
+    const float x = lua.Type(3) == kTypeNumber ? static_cast<float>(lua.Number(3)) : 0.5f;
+    const float y = lua.Type(4) == kTypeNumber ? static_cast<float>(lua.Number(4)) : 0.5f;
+    if (refii_mod_camera_ray(player, x, y, out) != 0) {
+      count = 6;
+    }
+  }
+  if (count == 0) {
+    lua.PushNil();
+    g_results = 1;
+    return;
+  }
+  for (int32_t i = 0; i < count; ++i) {
+    lua.PushNumber(out[i]);
+  }
+  g_results = count;
+}
+
+/// Refii._camera_offset_stated(p, on, right, up, back, yaw, pitch, roll, fov): the display offset the
+/// camera store resolved for player p, for the shell's drawn frame only.
+REFII_F3_NATIVE(NativeCameraOffsetStated) {
+  float seven[7];
+  for (int32_t i = 0; i < 7; ++i) {
+    seven[i] = lua.Type(3 + i) == kTypeNumber ? static_cast<float>(lua.Number(3 + i)) : 0.0f;
+  }
+  refii_bridge_camera_offset_set(lua.Type(1) == kTypeNumber ? static_cast<int32_t>(lua.Number(1)) : 0, seven,
+                                 lua.Boolean(2) ? 1 : 0);
+}
+
+extern "C" int32_t RefiiF3CoopSplitScreen(void);
+
+/// Refii._coop_split() -> whether each couch player has their own camera now (coop_camera_hooks.cpp): the
+/// core chunk's own-camera rules and Refii.split_screen.
+REFII_F3_NATIVE(NativeCoopSplit) {
+  lua.PushBoolean(RefiiF3CoopSplitScreen() != 0);
+  g_results = 1;
+}
+
+extern "C" int32_t RefiiF3PartnerCameraUpdating(void);
+extern "C" void RefiiF3PlayerIconsFromCamera(int32_t on);
+extern "C" int32_t RefiiF3PartnerCameraGeneration(void);
+extern "C" void RefiiF3PartnerScreen(int32_t on);
+
+/// Refii._partner_camera_update() -> true while player two's camera manager updates in a couch game, its
+/// selection and its mode's frame update both (coop_camera_hooks.cpp RefiiF3PartnerCameraUpdating).
+REFII_F3_NATIVE(NativePartnerCameraUpdate) {
+  lua.PushBoolean(RefiiF3PartnerCameraUpdating() != 0);
+  g_results = 1;
+}
+
+/// Refii._partner_screen(on): "the" camera answers player two's view until turned off (nests), as on Fable 2
+/// (coop_camera_hooks.cpp RefiiF3PartnerScreen): the camera mod API's camera_shake for player two.
+REFII_F3_NATIVE(NativePartnerScreen) {
+  RefiiF3PartnerScreen(lua.Boolean(1) ? 1 : 0);
+  g_results = 0;
+}
+
+/// Refii._partner_player_icons(on): player two's camera's GUI.SetShouldDrawPlayerIcons, stated for player two's
+/// half (stated value 25: 1 off, 2 on; Fable3CoreLua.cs's wrap) instead of the one HUD's.
+REFII_F3_NATIVE(NativePartnerPlayerIcons) {
+  refii_bridge_stated_value(25u, lua.Boolean(1) ? 2u : 1u);
+  g_results = 0;
+}
+
+/// Refii._camera_player_icons(on): true around a camera's own GUI.SetShouldDrawPlayerIcons (SACCamera:Activate /
+/// :Deactivate, Fable3CoreLua.cs's wrap), so the native's send to the session's partner is skipped: a camera's
+/// switch is its own machine's (coop_player_icons.cpp RefiiF3PlayerIconsStayHere).
+REFII_F3_NATIVE(NativeCameraPlayerIcons) {
+  RefiiF3PlayerIconsFromCamera(lua.Boolean(1) ? 1 : 0);
+  g_results = 0;
+}
+
+/// Refii._partner_camera_manager() -> which camera manager player two's is: a small number moved on at each
+/// new one (coop_camera_hooks.cpp RefiiF3PartnerCameraGeneration), float32-exact.
+REFII_F3_NATIVE(NativePartnerCameraManager) {
+  lua.PushNumber(static_cast<double>(RefiiF3PartnerCameraGeneration()));
+  g_results = 1;
+}
+
+/// Refii._coop_tether_stated(distance, separation): the core camera chunk's statement each camera tick of the
+/// co-op leash — the distance its camera last stated to Debug.SetLimitCharacterDistance and the heroes'
+/// head-to-head separation, as the leash sub_8279C050 (disc sub_82765928) measures it — for hybrid's split.
+REFII_F3_NATIVE(NativeCoopTetherStated) {
+  if (lua.Type(1) == kTypeNumber && lua.Type(2) == kTypeNumber) {
+    refii_bridge_coop_tether_stated(static_cast<float>(lua.Number(1)), static_cast<float>(lua.Number(2)));
   }
 }
 
@@ -2429,6 +2616,16 @@ REFII_F3_NATIVE(NativeCameraHeld) {
   }
 }
 
+/// Refii._camera_native_restore(hero, normal, look_at): the Player component's two override-camera
+/// words stored back (Fable3CoreLua's Refii._camera_apply, after each SetCameraOverride of the hold).
+REFII_F3_NATIVE(NativeCameraNativeRestore) {
+  const uint32_t hero = EntityArgument(lua, 1);
+  if (hero != 0u && lua.Type(2) == kTypeNumber && lua.Type(3) == kTypeNumber) {
+    refii::fable3::modlua::RestoreCameraModes(lua.base, hero, static_cast<uint32_t>(static_cast<int32_t>(lua.Number(2))),
+                                              static_cast<uint32_t>(static_cast<int32_t>(lua.Number(3))));
+  }
+}
+
 /// Refii._view_fov() -> degrees: the horizontal 4:3 FOV of the camera this machine renders with, as the
 /// shell states its rebuild back (the block's +0x30); 0 before the first.
 REFII_F3_NATIVE(NativeViewFov) {
@@ -2499,6 +2696,7 @@ Native g_natives[] = {
     {"morph_set", &NativeMorphSet, 0u},
     {"wheel_switches_target", &NativeWheelSwitchesTarget, 0u},
     {"_camera_held", &NativeCameraHeld, 0u},
+    {"_camera_native_restore", &NativeCameraNativeRestore, 0u},
     {"_error", &NativeError, 0u},
     {"publish", &NativePublish, 0u},
     {"value", &NativeValue, 0u},
@@ -2548,6 +2746,9 @@ Native g_natives[] = {
     {"creature_tier", &NativeCreatureTier, 0u},
     {"event_replica", &NativeEventReplica, 0u},
     {"player_here", &NativePlayerHere, 0u},
+    {"achievement_unlocked", &NativeAchievementUnlocked, 0u},
+    {"achievements", &NativeAchievements, 0u},
+    {"character_id", &NativeCharacterId, 0u},
     {"player_value", &NativePlayerValue, 0u},
     {"player_set", &NativePlayerSet, 0u},
     {"player_save", &NativePlayerSave, 0u},
@@ -2576,6 +2777,16 @@ Native g_natives[] = {
     {"hide_part", &NativeHidePart, 0u},
     {"_camera_stated", &NativeCameraStated, 0u},
     {"camera_mode", &NativeCameraMode, 0u},
+    {"_camera_zoom_stated", &NativeCameraZoomStated, 0u},
+    {"_camera_read", &NativeCameraRead, 0u},
+    {"_camera_offset_stated", &NativeCameraOffsetStated, 0u},
+    {"_coop_tether_stated", &NativeCoopTetherStated, 0u},
+    {"_coop_split", &NativeCoopSplit, 0u},
+    {"_partner_camera_update", &NativePartnerCameraUpdate, 0u},
+    {"_partner_camera_manager", &NativePartnerCameraManager, 0u},
+    {"_partner_screen", &NativePartnerScreen, 0u},
+    {"_partner_player_icons", &NativePartnerPlayerIcons, 0u},
+    {"_camera_player_icons", &NativeCameraPlayerIcons, 0u},
 };
 
 /// A guest function inside the game module, for the thunk pool: lhLua_RunScriptBuffer.
@@ -2977,6 +3188,8 @@ constexpr std::pair<const char*, int32_t> kRaisedNames[] = {
     {"chapter_progress", 152}, {"scar_added", 153}, {"scar_removed", 154}, {"age_changed", 155}, {"hero_stage", 156},
     {"clothing_worn", 157}, {"clothing_removed", 158}, {"clothing_dyed", 159}, {"village_wealth", 162},
     {"partnership", 84}, {"morph_changed", 115},
+    {"camera_cut", 164}, {"camera_blend", 165}, {"camera_screen_changed", 166}, {"camera_zoom_changed", 167},
+    {"camera_tick", 168},
 };
 
 void NameRaisedKinds() {
@@ -3039,6 +3252,46 @@ bool Raise(GuestLua& lua, int32_t kind, const std::string& fields) {
     refii::mods::PostEvent(kind, fields);
   }
   return cancelled;
+}
+
+/// THE CAMERA EVENTS from the statements and the shell's views (refii_mod_events.h 164..168), raised at
+/// the step, outside every camera update — Fable 2's DispatchCameraEvents.
+int32_t g_camera_screen_raised = -1;
+bool g_camera_split_raised = false;
+
+void RaiseCameraEvents(GuestLua& lua) {
+  namespace cam = refii::camera;
+  std::array<uint32_t, 32u * cam::kEventWords> words{};
+  const uint32_t taken = refii_bridge_camera_events_take(words.data(), 32u);
+  for (uint32_t i = 0; i < taken; ++i) {
+    const uint32_t* w = &words[i * cam::kEventWords];
+    float b[11];
+    std::memcpy(b, &w[3], sizeof(b));
+    char fields[400];
+    if (w[0] == cam::kEventCut) {
+      std::snprintf(fields, sizeof(fields), "player=%u", w[1]);
+      Raise(lua, kEventCameraCut, fields);
+    } else if (w[0] == cam::kEventBlend) {
+      std::snprintf(fields, sizeof(fields), "player=%u,ticks=%u", w[1], w[2]);
+      Raise(lua, kEventCameraBlend, fields);
+    } else if (w[0] == cam::kEventTick) {
+      std::snprintf(fields, sizeof(fields),
+                    "player=%u,x=%.9g,y=%.9g,z=%.9g,fx=%.9g,fy=%.9g,fz=%.9g,ux=%.9g,uy=%.9g,uz=%.9g,fov=%.9g,cut=%s", w[1],
+                    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9] * 57.29577951308232, b[10] != 0.0f ? "true" : "false");
+      Raise(lua, kEventCameraTick, fields);
+    }
+  }
+
+  int32_t split = 0;
+  const int32_t mode = refii_bridge_camera_screen_read(&split);
+  if (mode >= 0 && (mode != g_camera_screen_raised || (split != 0) != g_camera_split_raised)) {
+    char fields[96];
+    std::snprintf(fields, sizeof(fields), "mode=%d,split=%s,previous=%d,reason=%d", mode, split != 0 ? "true" : "false",
+                  g_camera_screen_raised, mode == g_camera_screen_raised && mode == cam::kScreenHybrid ? 1 : 0);
+    g_camera_screen_raised = mode;
+    g_camera_split_raised = split != 0;
+    Raise(lua, kEventCameraScreenChanged, fields);
+  }
 }
 
 void Reply(const std::string& id, bool ok, const std::string& fields) {
@@ -3691,6 +3944,8 @@ void Tick(PPCContext& ctx, uint8_t* base) {
     RunCommand(lua, line);
   }
 
+  RaiseCameraEvents(lua);
+
   char fields[48];
   std::snprintf(fields, sizeof(fields), "seconds=%.9g", static_cast<double>(kStepSeconds));
   Raise(lua, kEventTick, fields);
@@ -3823,9 +4078,17 @@ extern "C" int32_t refii_mod_run_game_lua(PPCContext* ctx, uint8_t* base, const 
 /// Changes every time the game VM is rebuilt (a new session, a load): the mods' runtime generation.
 extern "C" uint32_t refii_mod_lua_generation(void) { return g_generation.load(std::memory_order_relaxed); }
 
+namespace refii::fable3::binding {
+void SavesListed(uint32_t user, uint32_t names);
+}  // namespace refii::fable3::binding
+
+// r3 the user, r5 the save-name vector it fills (begin +4, end +8). The drop-in join's list is also the
+// joining player's choice (character_binding_hooks.cpp).
 REX_EXTERN(rex_SaveGame_EnumerateNames) {
+  const uint32_t user = ctx.r3.u32;
   const uint32_t names = ctx.r5.u32;
   __imp__rex_SaveGame_EnumerateNames(ctx, base);
+  refii::fable3::binding::SavesListed(user, names);
   if (Plausible(names)) {
     const uint32_t begin = Word(base, names + 4u);
     const uint32_t end = Word(base, names + 8u);

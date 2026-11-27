@@ -32,11 +32,11 @@ using refii::mods::StoreU32;
 // page 1 (its preview at h+128), h+320 page 2, h+348 the last highlighted row id (-1 none). Same
 // offsets on both builds.
 //
-// Three slots stay the guest's. OnEnter (TU1 0x826B6FE8 / disc 0x8259C200) is the book's registration,
-// the population, the gold text, the title's tag, h+88 and h+348 = -1 around one open sound and one
-// slide. OnMenuEvent (0x826B65F0 / 0x8259C768) is ONE BODY SHARED with upgrade furniture 26 and the
-// co-op screen 24, OnExit (0x826B6190 / 0x8259B380) ONE BODY SHARED with 26 and gift 25: neither is
-// ever replaced. The dtor (0x826B5FE8 / 0x8259C150) is shared with 26.
+// Every slot is ported: OnEnter, Update and OnScreenAction below; OnMenuEvent (0x826B65F0 / 0x8259C768,
+// one body shared with upgrade furniture 26 and the co-op screen 24) and OnExit (0x826B6190 /
+// 0x8259B380, one body shared with 26 and gift 25) for every vtable they sit in
+// (gui_screen_stub_shared.cpp). The dtor (0x826B5FE8 / 0x8259C150, shared with 26) frees and nothing
+// else.
 
 namespace {
 
@@ -49,6 +49,69 @@ bool g_decoration_update_said = false;
 
 }  // namespace
 
+// OnEnter TU1 0x826B6FE8 / disc 0x8259C200. Kept, in the guest's order: the two pages h+96 and h+320
+// pushed (`sub_82B49750` 0x826B7038 / 0x826B704C; disc 0x8228A900) and the book
+// `sub_82990610(h+44, &pages, "Foreground.Book", pres, 1)` (0x826B707C / 0x828CE060), which runs each
+// page's +4; the rows, h+24 vf+4 (0x826B70A0: `sub_8299D5B0` → `sub_8299DD88`); the gold text
+// `sub_8246B5E8(pres, 0x8349AE9C, 1)` (0x826B70B4 / 0x82837218 with 0x83498D58); the title
+// `sub_8246B888(pres, 0x8349AEA0 "Foreground.ExpandableMenu.Title.Group.Title", localised
+// "GUI_SCREEN_TITLE_DECORATION")` (0x826B70C8 / 0x826B70D4 / 0x826B70E8; disc 0x828374B8 with
+// 0x83498D5C) and the text's release (0x826B70F0); the mount binding `sub_826B7128(h, h+88)`
+// (0x826B70FC / 0x8259C340: the local player's use target's component 239 filed at h+88); h+348 = -1
+// (0x826B7108). `pres` is `*(*(G+56)+156)` (disc +152, 0x826B700C / 0x8259C224). Dropped: the open
+// sound, `h` vf+4 (0x826B7014), and the book's slide `sub_82990A98(h+44, pres, 1)` (0x826B708C /
+// 0x828CE4E8: `lhGuiElement_GoToSlideAndRestart`, the sound 0x83497DF0 "SE_GUI_BLADE_SLIDE_IN", and
+// book+40 = h+84 = 1). h+84 stays 0, as the registration leaves it: its only readers are the slide
+// itself, the page input `sub_829907F0` / `sub_829911D0` and OnScreenAction's own test (0x826B792C /
+// 0x8259CBCC) — all reached from OnScreenAction alone, ported empty. ADDED, first: the GUI's owner
+// stated as the opener's player (StateGuiOwner): the one opener, the player-interact ability
+// (`lhGuiManager_SetScreen(QM, 0x1B, 0)` 0x829777A4 / disc 0x1A at 0x829A6DBC), states none; its actor
+// is noted there (gui_screen_stub_shared.cpp RefiiInteractScreenOwner). A DELIBERATE DEPARTURE from the
+// guest: the handler takes player one's input alone (OnScreenAction `cmplwi cr6, r5, 1` / `bne`
+// 0x826B7788 / disc 0x8259CA28); here the screen's owner drives it, player two included. OnEnter, Update
+// and the levers run for the owner (OwnerScope): the mount binding's "local player" is inlined
+// (`sub_826B7128` 0x826B718C / 0x8259C3A4: the owner's use target, the mount in the house they stand
+// in), as are the pages' (`sub_8299C008` 0x8299C0AC / 0x828F1C5C, `sub_8299CF80` 0x8299CFEC /
+// 0x828F2B94); the mount `sub_826B7550` takes the trophy from the local player's hero (0x826B7610) and
+// the take-down `sub_8243ED88` gives it back through the hero-one slot (0x8243F19C).
+REX_EXTERN(rex_lhGuiDecorationScreen_OnEnter) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t h = ctx.r3.u32;
+  const Scratch s = Claim(ctx);
+  const uint32_t pages = s.data;         // {?, begin, end, capacity}
+  const uint32_t item = s.data + 0x10u;  // the page pointer handed to the push, then the book's name
+  const uint32_t wide = s.data + 0x14u;  // the title's localised text
+  const uint32_t tag = s.data + 0x18u;   // the title's tag, consumed by the localiser
+  const uint32_t pres = BookPresentation(base);
+  g_decoration_update_said = false;
+  StateGuiOwner(ctx, base, s.frame, TakeOpenerPlayer() == 2u);
+  OwnerScope owner(base, 27u);
+
+  for (uint32_t i = 0; i < 16u; i += 4u) {
+    StoreU32(base, pages + i, 0u);
+  }
+  for (uint32_t page : {0x60u, 0x140u}) {
+    StoreU32(base, item, h + page);
+    Call(ctx, base, s.frame, 0x82B49750u, {pages, item});
+  }
+  MakeString(ctx, base, s.frame, item, s.data + 0x40u, "Foreground.Book");
+  Call(ctx, base, s.frame, 0x82990610u, {h + 0x2Cu, pages, item, pres, 1u});
+  CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
+  Call(ctx, base, s.frame, 0x8246B5E8u, {pres, Address(0x8349AE9Cu), 1u});
+  MakeString(ctx, base, s.frame, tag, s.data + 0x80u, "GUI_SCREEN_TITLE_DECORATION");
+  const uint32_t title = Call(ctx, base, s.frame, 0x8230E0E8u, {wide, tag});
+  Call(ctx, base, s.frame, 0x8246B888u, {pres, Address(0x8349AEA0u), title});
+  Call(ctx, base, s.frame, 0x821C67F8u, {wide});
+  Call(ctx, base, s.frame, 0x826B7128u, {h, h + 0x58u});
+  StoreU32(base, h + 0x15Cu, 0xFFFFFFFFu);
+  DropString(ctx, base, s.frame, item);
+  const uint32_t storage = LoadU32(base, pages + 4u);
+  if (storage != 0u) {
+    Call(ctx, base, s.frame, 0x8221BD38u, {storage});  // Render_FreeD3DObject
+  }
+  Said("decoration (27)", "OnEnter", h, LoadU32(base, h + 0x58u));
+}
+
 // Update TU1 0x826B7510 / disc 0x8259C728. Kept: the highlight edge `sub_826B7438(h)` / 0x8259C650
 // whole (0x826B752C) — the highlighted row (`lhGuiMenu_GetHighlightedItemData` 0x826B74BC, answered
 // natively from the row Godot states) and, on an id unlike h+348, the two page fills
@@ -58,10 +121,11 @@ bool g_decoration_update_said = false;
 // nullsub) and the book's tick `sub_82990730(h+44)` (0x826B7534: the preview's per-frame update).
 REX_EXTERN(rex_lhGuiDecorationScreen_Update) {
   REX_FUNC_PROLOGUE();
+  OwnerScope owner(base, 27u);
   const uint32_t h = ctx.r3.u32;
   const Scratch s = Claim(ctx);
   Call(ctx, base, s.frame, 0x826B7438u, {h});
-  // The kept OnEnter states hero one's gold (0x826B70B0 `li r5,1` / disc 0x8259C2C8); player two's purse.
+  // OnEnter states hero one's gold (0x826B70B0 `li r5,1` / disc 0x8259C2C8); player two's purse.
   RestatePurseForPlayerTwo(ctx, base, s.frame, BookPresentation(base), 0x8349AE9Cu);
   if (!g_decoration_update_said) {
     g_decoration_update_said = true;
@@ -69,7 +133,7 @@ REX_EXTERN(rex_lhGuiDecorationScreen_Update) {
   }
 }
 
-// OnScreenAction TU1 0x826B7770 / disc 0x8259CA10 (player one only, `cmplwi r5, 1; bne` 0x826B7788;
+// OnScreenAction TU1 0x826B7770 / disc 0x8259CA10 (the guest's: player one only, `cmplwi r5, 1; bne` 0x826B7788;
 // jump table 0x826B77B4 / 0x8259CA54, index code − 26, read from the image): 26 / 27 the open page's
 // input (behind h+84), 36 A — a sound, then on a highlighted id that is not 0x0FFFFFFF (0x826B7888)
 // the mount `sub_826B7550(h)`, `ExitScreen(QM, 1)` and the preview's Hide (0x826B7894..0x826B78AC) —
@@ -87,11 +151,13 @@ REX_EXTERN(rex_lhGuiDecorationScreen_OnScreenAction) {
 namespace refii::vfs {
 
 bool DispatchDecoration(PPCContext& ctx, uint8_t* base, uint32_t player, const std::string& verb, uint32_t ticket) {
+  // The handler's A / B / Y — the guest's for player one alone (0x826B7788 / disc 0x8259CA28), the
+  // owner's here (the departure stated at OnEnter; Godot routes the owner's pad alone).
   const Scratch s = Claim(ctx);
+  OwnerScope owner(base, 27u);
   const uint32_t h = ScreenHandler(ctx, base, s.frame, 27u, kDecorationVtable);
-  if (h == 0u || player != 1u) {
-    REXLOG_INFO("Refii guest-tick pump: Decoration:{}:{} — {}", player, verb,
-                h == 0u ? "no decoration handler, dropped" : "the screen takes player one's buttons alone, refused");
+  if (h == 0u) {
+    REXLOG_INFO("Refii guest-tick pump: Decoration:{}:{} — no decoration handler, dropped", player, verb);
     return true;
   }
   const auto leave = [&] {

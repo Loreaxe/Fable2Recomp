@@ -65,7 +65,7 @@ public class ModPadBindingsTests
         AssertThat(script).Contains("host.press(player, \"Y\", 1 if left_held or right_held or (pad_aim and pad_rearm <= 0.0) else 0)");
         AssertThat(script).Contains("if not pressed and pad_rearm <= 0.0:\n\t\tshot_void_left = TAP_AIM_SECONDS");
         AssertThat(script).Contains("if shot_void_left > 0.0:\n\t\t\t\tshot_void_left = 0.0\n\t\t\telse:\n\t\t\t\t_fire(colour)");
-        AssertThat(Read(root, "portal_gun", "mod", "camera.lua")).Contains("return NARROW_CONE");
+        AssertThat(Read(root, "portal_gun", "mod", "camera.lua")).Contains("ranged_tightness = 0.1");
     }
 
     /// <summary>On a controller melee and magic stay the game's, and the triggers are the gun's only while Y aims.</summary>

@@ -20,6 +20,7 @@
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 
+#include "core/camera_views.h"
 #include "core/mod_values.h"
 #include "core/payload_bridge.h"
 
@@ -71,6 +72,104 @@ uint32_t PostPlayFx(const char* name, const float* xyz, uint32_t handle, const r
 }
 
 }  // namespace
+
+// The camera mod API's shape calls, made where the mods' Lua makes them: Refii._camera_call (the
+// preamble, Engine_ModLuaCamera.cs) in the game VM, owner "native".
+extern "C" int32_t refii_mod_camera_state(PPCContext* ctx, uint8_t* base, int32_t player, const char* call,
+                                          const char* arguments) {
+  if (ctx == nullptr || base == nullptr || (player != 1 && player != 2) || call == nullptr || call[0] == 0) {
+    return 0;
+  }
+  for (const char* c = call; *c != 0; ++c) {
+    if ((*c < 'a' || *c > 'z') && *c != '_') {
+      return 0;
+    }
+  }
+  std::string chunk = "if Refii and Refii._camera_call then Refii._camera_call('native','";
+  chunk += call;
+  chunk += "',";
+  chunk += std::to_string(player);
+  if (arguments != nullptr && arguments[0] != 0) {
+    chunk += ",";
+    chunk += arguments;
+  }
+  chunk += ") end";
+  return refii_mod_run_game_lua(ctx, base, chunk.c_str());
+}
+
+// The camera's read calls: the shell's views and the statements' per-player blocks, as the runtime
+// holds them (src/runtime/src/core/stated_view.cpp, core/camera_views.h). No guest read.
+namespace {
+constexpr float kDegrees = 57.29577951308232f;
+}  // namespace
+
+extern "C" int32_t refii_mod_camera_pose(int32_t player, float* out12) {
+  float view[refii::camera::kViewWords];
+  if (out12 == nullptr || refii_bridge_camera_view_read(player, view) == 0) {
+    return 0;
+  }
+  for (int i = 0; i < 9; ++i) {
+    out12[i] = view[i];
+  }
+  out12[9] = view[9] * kDegrees;
+  out12[10] = view[10] * kDegrees;
+  out12[11] = view[11];
+  return 1;
+}
+
+extern "C" int32_t refii_mod_camera_stated(int32_t player, float* out11) {
+  float block[11];
+  if (out11 == nullptr || refii_bridge_camera_stated_block(player, block) == 0) {
+    return 0;
+  }
+  for (int i = 0; i < 11; ++i) {
+    out11[i] = block[i];
+  }
+  out11[9] = block[9] * kDegrees;
+  return 1;
+}
+
+extern "C" int32_t refii_mod_camera_view(int32_t player, float* out4) {
+  float view[refii::camera::kViewWords];
+  if (out4 == nullptr || refii_bridge_camera_view_read(player, view) == 0) {
+    return 0;
+  }
+  for (int i = 0; i < 4; ++i) {
+    out4[i] = view[12 + i];
+  }
+  return 1;
+}
+
+extern "C" int32_t refii_mod_camera_screen_mode(int32_t* split) { return refii_bridge_camera_screen_read(split); }
+
+// Engine_CameraViews.Ray's: forward + u·tan(h/2)·right + v·tan(v/2)·up, right = forward × up.
+extern "C" int32_t refii_mod_camera_ray(int32_t player, float x, float y, float* out6) {
+  float v[refii::camera::kViewWords];
+  if (out6 == nullptr || refii_bridge_camera_view_read(player, v) == 0) {
+    return 0;
+  }
+  const float* f = v + 3;
+  const float* up = v + 6;
+  float right[3] = {f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]};
+  const float rl = std::sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+  if (rl > 0.0f) {
+    for (float& c : right) {
+      c /= rl;
+    }
+  }
+  const float a = v[17] + (2.0f * x - 1.0f) * std::tan(v[9] * 0.5f);
+  const float b = v[18] + (1.0f - 2.0f * y) * std::tan(v[10] * 0.5f);
+  float d[3];
+  for (int i = 0; i < 3; ++i) {
+    d[i] = f[i] + right[i] * a + up[i] * b;
+  }
+  const float dl = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+  for (int i = 0; i < 3; ++i) {
+    out6[i] = v[i];
+    out6[3 + i] = dl > 0.0f ? d[i] / dl : f[i];
+  }
+  return 1;
+}
 
 extern "C" uint32_t refii_mod_play_fx(const char* name, const float* xyz, const refii_mod_fx_options* options) {
   return PostPlayFx(name, xyz, 0u, options);

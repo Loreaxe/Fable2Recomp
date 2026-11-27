@@ -454,45 +454,6 @@ public partial class GameUi
 			_boxes.InfoBoxEx(
 				call.Argument(0).Text, call.Argument(1).Number, Localise(call, 2)));
 
-		// `@Augment.Result(ok, augment, target)` — the pump's verdict on an attach
-		// (DispatchAugment: `sub_826CA298` itself). The message is the one the guest's handler
-		// raises: `GUI_SCREEN_AUGMENT_APPLIED` with %1 the augment and %2 the weapon, or
-		// `GUI_SCREEN_AUGMENT_FAILED_FULL` with %1 the weapon (0x826d20b0..0x826d21e4). The held
-		// list is put away either way; the items list stands again.
-		//
-		// The guest's handler raises it as a router MESSAGE box — `lhGuiManager_OpenModal(gui28,
-		// text, 2, 38, …)` (0x826d2140 / 0x826d21e4) — which the player dismisses; the pump took the
-		// handler's place, so the host raises the same dismissable notice
-		// (Engine_UiHostBoxes.Tell, drawn on the query paper by the owned query surface).
-		_guiNatives.Register("@Augment.Result", call =>
-		{
-			bool ok = call.Argument(0).Boolean;
-			(string augment, string target) = Engine_UiAugmentFlow.Names;
-			string text = ok
-				? Engine_UiGuiText.Substitute(Engine_UiGuiText.Resolve("GUI_SCREEN_AUGMENT_APPLIED", _presentation?.Strings), new[] { augment, target })
-				: Engine_UiGuiText.Substitute(Engine_UiGuiText.Resolve("GUI_SCREEN_AUGMENT_FAILED_FULL", _presentation?.Strings), new[] { target });
-			Engine_UiHostBoxes.Tell(text);
-			Engine_UiAugmentFlow.End();
-			_screenMenu?.FollowDyeFlow();
-			_screenMenuView?.Refresh();
-		});
-
-		// `@Augment.Removed(ok, remover, target)` — the pump's verdict on a strip
-		// (DispatchAugment: `sub_826CA840` itself). `GUI_SCREEN_AUGMENT_REMOVED_SUCCESS` /
-		// `_FAIL`, %1 the weapon (0x826d23ac, 0x826d2484); the remover is not consumed.
-		_guiNatives.Register("@Augment.Removed", call =>
-		{
-			bool ok = call.Argument(0).Boolean;
-			(_, string target) = Engine_UiAugmentFlow.Names;
-			string text = Engine_UiGuiText.Substitute(
-				Engine_UiGuiText.Resolve(ok ? "GUI_SCREEN_AUGMENT_REMOVED_SUCCESS" : "GUI_SCREEN_AUGMENT_REMOVED_FAIL", _presentation?.Strings),
-				new[] { target });
-			Engine_UiHostBoxes.Tell(text);
-			Engine_UiAugmentFlow.End();
-			_screenMenu?.FollowDyeFlow();
-			_screenMenuView?.Refresh();
-		});
-
 		_guiNatives.Register("RemoveDisplayBox", call =>
 			_boxes.Remove(call.Argument(0).Text));
 

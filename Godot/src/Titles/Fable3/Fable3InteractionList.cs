@@ -28,6 +28,14 @@ using Refii.Ui;
 /// waiting for the cursor the guest states — and then presses A, the pad's own accept, once the
 /// stated cursor is that row. The wheel and the two arrows step one row. A pad move drops a walk.
 /// The tab's prompt is its button under the pointer (<see cref="Fable3Prompts"/>).</para>
+/// <para>THE REAL-ESTATE AND CRIME MODES' ROWS are their populates' own (<see cref="Fable3PopulatedRows"/>):
+/// while they are the list up, each window row's label is its stated tag in the game's book; a
+/// real-estate row is asked by its id on a click (`realestate:&lt;p&gt;:row:&lt;id&gt;`) instead of walking
+/// the cursor to it.</para>
+/// <para>THE SANCTUARY (mode 3) is the same view on Godot's own list: its rows are the ones the mode kept,
+/// as the guest states them while it fills the mode (<see cref="Fable3GuiWorld"/>; its row writer states
+/// no window for it), the cursor is Godot's and goes to the guest as `guiworld:&lt;p&gt;:cursor:&lt;row&gt;`, a
+/// click is the cursor and A, the wheel and the arrows move the cursor. No walk, no populated rows.</para>
 /// <para>THE ART is the 360's: `buttonbox_24x24` (the list's own row backing) as the bar, and the
 /// box screens' `selectionbar_*` four pieces as the tab and the arrows. Until the banks hold them a
 /// flat panel stands in.</para>
@@ -192,7 +200,8 @@ public partial class Fable3InteractionList : Control
 	{
 		get
 		{
-			if (!Fable3UiStatements.InteractionListUp || Fable3UiStatements.InteractionList.Count <= 0)
+			bool world = Fable3GuiWorld.ListUp;
+			if (!world && (!Fable3UiStatements.InteractionListUp || Fable3UiStatements.InteractionList.Count <= 0))
 			{
 				return false;
 			}
@@ -225,8 +234,10 @@ public partial class Fable3InteractionList : Control
 
 	public override void _Process(double delta)
 	{
+		Fable3PopulatedRows.Observe(Fable3UiStatements.InteractionListUp);
 		bool shown = HostBridge.IsInGame && HasPad;
-		(int cursor, int count, int _) = Fable3UiStatements.InteractionList;
+		bool world = Fable3GuiWorld.ListUp;
+		(int cursor, int count) = Window();
 		if (!shown)
 		{
 			_walk.Drop();
@@ -244,6 +255,14 @@ public partial class Fable3InteractionList : Control
 		LoadArt(delta);
 		_rows = RowsShown(cursor, count);
 
+		if (world)
+		{
+			_walk.Drop();
+			Point(cursor, count);
+			Redraw(cursor, count);
+			return;
+		}
+
 		// A pad move is the player's own: it ends a walk the pointer began.
 		uint pad = GameInput.Pad0.Buttons;
 		bool padMoved = (pad & ~_padWas) != 0u || Mathf.Abs(GameInput.LeftStick.Y) > 0.5f;
@@ -257,24 +276,44 @@ public partial class Fable3InteractionList : Control
 		switch (_walk.Next(cursor, count, Time.GetTicksMsec() / 1000.0))
 		{
 			case Ask.StepDown:
-				HostBridge.PostFrontEndAction(Step(Fable3ActingPlayer.One, down: true));
+				HostBridge.PostFrontEndAction(Step(Fable3ActingPlayer.Pointer, down: true));
 				break;
 			case Ask.StepUp:
-				HostBridge.PostFrontEndAction(Step(Fable3ActingPlayer.One, down: false));
+				HostBridge.PostFrontEndAction(Step(Fable3ActingPlayer.Pointer, down: false));
 				break;
 			case Ask.Accept:
 				GameInput.QueuePointerPress(GameInput.PadA);
 				break;
 		}
 
+		Redraw(cursor, count);
+	}
+
+	/// <summary>The cursor and count the view shows: the Sanctuary's own, else the guest's stated window.</summary>
+	private static (int Cursor, int Count) Window()
+	{
+		if (Fable3GuiWorld.ListUp)
+		{
+			return (Fable3GuiWorld.Cursor, Fable3GuiWorld.Model!.Rows.Count);
+		}
+
+		(int cursor, int count, int _) = Fable3UiStatements.InteractionList;
+		return (cursor, count);
+	}
+
+	private void Redraw(int cursor, int count)
+	{
 		ulong stamp = Fable3Elements.Generation ^ (Fable3UiStatements.Generation << 20) ^ ((ulong)(_hover + 1) << 60) ^
-			(ulong)Engine_UiInputMode.Generation << 40;
+			(ulong)Engine_UiInputMode.Generation << 40 ^ (Fable3PopulatedRows.Generation << 52) ^ (Fable3GuiWorld.Generation << 8);
 		if (!_shown || stamp != _drawn)
 		{
 			if (!_shown)
 			{
-				GD.Print($"[fable3-interaction-list] up: cursor {cursor} of {count}, window '{Label(RowElements[0])}' | " +
-					$"'{Label(RowElements[1])}' | '{Label(RowElements[2])}'");
+				string rows = Fable3GuiWorld.ListUp ? " (the Sanctuary's)"
+					: Fable3PopulatedRows.Up is { } populated ? (populated == Fable3PopulatedRows.Crime ? " (crime rows)" : " (real-estate rows)")
+					: string.Empty;
+				GD.Print($"[fable3-interaction-list] up{rows}: cursor {cursor} of {count}, window '{RowLabel(cursor, 0)}' | " +
+					$"'{RowLabel(cursor, 1)}' | '{RowLabel(cursor, 2)}'");
 			}
 
 			_shown = true;
@@ -292,7 +331,7 @@ public partial class Fable3InteractionList : Control
 			return;
 		}
 
-		Vector2 at = GetLocalMousePosition();
+		Vector2 at = Engine_UiPointer.LocalTo(this);
 		if (at.DistanceSquaredTo(_pointerAt) > 4f)
 		{
 			_pointerAt = at;
@@ -301,6 +340,12 @@ public partial class Fable3InteractionList : Control
 
 		bool onList = _hover >= 0 || _upRect.HasPoint(at) || _downRect.HasPoint(at);
 		int wheel = onList ? Engine_UiPointer.TakeWheel() : 0;
+		if (Fable3GuiWorld.ListUp)
+		{
+			PointWorld(cursor, count, at, wheel);
+			return;
+		}
+
 		if (wheel != 0)
 		{
 			int from = _walk.Active ? _walk.Target : cursor;
@@ -317,7 +362,16 @@ public partial class Fable3InteractionList : Control
 		if (row >= 0)
 		{
 			Engine_UiPointer.TakeLeft();
-			_walk.To(cursor + row, accept: true);
+			if (Fable3PopulatedRows.Up is { AsksById: true } populated && populated.At(cursor, row) is { } asked &&
+				populated.Lever(Fable3ActingPlayer.One, asked.Id) is { } lever)
+			{
+				_walk.Drop();
+				HostBridge.PostFrontEndAction(lever);
+			}
+			else
+			{
+				_walk.To(cursor + row, accept: true);
+			}
 		}
 		else if (up && _upRect.HasPoint(at))
 		{
@@ -328,6 +382,38 @@ public partial class Fable3InteractionList : Control
 		{
 			Engine_UiPointer.TakeLeft();
 			_walk.To(cursor + 1, accept: false);
+		}
+	}
+
+	/// <summary>The pointer on the Sanctuary's list: the cursor and A through Godot's own cursor.</summary>
+	private void PointWorld(int cursor, int count, Vector2 at, int wheel)
+	{
+		if (wheel != 0)
+		{
+			Fable3GuiWorld.Point(cursor + wheel, accept: false, Fable3ActingPlayer.Pointer);
+		}
+
+		if (!Engine_UiPointer.LeftPressed)
+		{
+			return;
+		}
+
+		(bool up, bool down) = Arrows(cursor, count);
+		int row = Fable3BoxAnswers.RowAt(new ArraySegment<Rect2>(_rowRects, 0, _rows), at);
+		if (row >= 0)
+		{
+			Engine_UiPointer.TakeLeft();
+			Fable3GuiWorld.Point(cursor + row, accept: true, Fable3ActingPlayer.Pointer);
+		}
+		else if (up && _upRect.HasPoint(at))
+		{
+			Engine_UiPointer.TakeLeft();
+			Fable3GuiWorld.Point(cursor - 1, accept: false, Fable3ActingPlayer.Pointer);
+		}
+		else if (down && _downRect.HasPoint(at))
+		{
+			Engine_UiPointer.TakeLeft();
+			Fable3GuiWorld.Point(cursor + 1, accept: false, Fable3ActingPlayer.Pointer);
 		}
 	}
 
@@ -367,9 +453,35 @@ public partial class Fable3InteractionList : Control
 	private static string Label(string element) =>
 		Fable3Elements.Get(Fable3Elements.InteractionDocument, element + ".Title")?.StatedTextValue ?? string.Empty;
 
-	/// <summary>A row's bar and label as the button writer left it: 50 is a row the game offers disabled.</summary>
-	private static bool Enabled(string element) =>
-		Fable3Elements.Get(Fable3Elements.InteractionDocument, element)?.StatedOpacity is not { } opacity || opacity > 50f;
+	/// <summary>
+	/// Window row <paramref name="offset"/>'s label: the Sanctuary's kept row's tag, a populated row's tag in the
+	/// book, else the row writer's.
+	/// </summary>
+	private static string RowLabel(int cursor, int offset)
+	{
+		if (Fable3GuiWorld.ListUp)
+		{
+			Fable3GuiWorldModel model = Fable3GuiWorld.Model!;
+			int row = cursor + offset;
+			return row >= 0 && row < model.Rows.Count
+				? Engine_UiGuiText.Resolve(model.Rows[row].TextTag, Fable3Strings.Current)
+				: string.Empty;
+		}
+
+		if (Fable3PopulatedRows.Up is { } populated)
+		{
+			return populated.At(cursor, offset) is { } row
+				? Fable3PopulatedRows.Label(row, tag => Fable3Strings.Current is { } book && book.TryGetString(tag, out string text) ? text : null)
+				: string.Empty;
+		}
+
+		return Label(RowElements[offset]);
+	}
+
+	/// <summary>A row's bar and label as the button writer left it: 50 is a row the game offers disabled. The Sanctuary's rows carry no such state.</summary>
+	private static bool Enabled(int offset) =>
+		Fable3GuiWorld.ListUp ||
+		Fable3Elements.Get(Fable3Elements.InteractionDocument, RowElements[offset])?.StatedOpacity is not { } opacity || opacity > 50f;
 
 	private void Bar(Texture2D? art, Rect2 rect, float alpha)
 	{
@@ -408,7 +520,7 @@ public partial class Fable3InteractionList : Control
 		float line = _font.Font.LineHeight;
 		// The cursor row's text is the file's 16 pt on its 32-unit bar; the font's own line fits it.
 		float text = BarHeight * 0.62f * scale / line;
-		(int cursor, int count, int _) = Fable3UiStatements.InteractionList;
+		(int cursor, int count) = Window();
 
 		// The selection tab: the cursor row's label behind its A prompt, on the selection bar.
 		Rect2 tab = Pixels(TabBox, size, scale);
@@ -418,7 +530,7 @@ public partial class Fable3InteractionList : Control
 			DrawTextureRect(_tabLines, tab, false);
 		}
 
-		string chosen = Label(RowElements[0]);
+		string chosen = RowLabel(cursor, 0);
 		Fable3Prompts.Draw(this, _font, "A", chosen, tab.Position + new Vector2(TextInset * scale, (tab.Size.Y - (line * text * OtherRowScale)) * 0.5f),
 			text * OtherRowScale, Colors.White);
 
@@ -426,12 +538,12 @@ public partial class Fable3InteractionList : Control
 		{
 			Rect2 rect = Pixels(RowBox(row), size, scale);
 			_rowRects[row] = rect;
-			bool enabled = Enabled(RowElements[row]);
+			bool enabled = Enabled(row);
 			float dim = enabled ? 1f : DisabledAlpha;
 			Bar(_bar, rect, (row == 0 ? 1f : row == _hover ? HoverBarAlpha : OtherBarAlpha) * dim);
 			float rowText = text * (row == 0 ? 1f : OtherRowScale);
 			var colour = new Color(1f, 1f, 1f, (row == 0 ? CursorTextAlpha : OtherTextAlpha) * dim);
-			Engine_UiCanvasText.DrawLine(this, _font, Label(RowElements[row]),
+			Engine_UiCanvasText.DrawLine(this, _font, RowLabel(cursor, row),
 				rect.Position + new Vector2(TextInset * scale, (rect.Size.Y - (line * rowText)) * 0.5f), rowText, colour);
 		}
 

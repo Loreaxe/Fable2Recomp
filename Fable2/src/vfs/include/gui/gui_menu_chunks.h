@@ -85,8 +85,24 @@ inline bool MenuByNameTextTag(uint32_t presentation, std::string* out) {
   return true;
 }
 
+/// The attribute `name` staged for the chunk about to run, read before it consumes the bag: its text and
+/// number. False when none is staged.
+inline bool StagedMenuAttributeNow(const char* name, std::string* text, float* number) {
+    char buffer[512];
+    if (refii_bridge_staged_menu_attribute(name, text != nullptr ? buffer : nullptr, sizeof(buffer), number) == 0) {
+        return false;
+    }
+    if (text != nullptr) {
+        *text = buffer;
+    }
+    return true;
+}
+
 /// Takes every recorded call. Empties the queue.
 std::vector<MenuChunkCall> TakeMenuChunkCalls();
+
+/// Puts `taken[from..]` back at the front of the queue, in order (a drain whose buffers were full).
+void PutBackMenuChunkCalls(std::vector<MenuChunkCall>& taken, std::size_t from);
 
 /// Recorded, pending, and how many were dropped to the ceiling.
 void MenuChunkCounters(uint64_t* out_recorded, uint32_t* out_pending, uint64_t* out_dropped);

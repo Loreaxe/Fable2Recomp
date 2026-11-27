@@ -52,9 +52,24 @@ public class Engine_HudTitleLayout
     /// <summary>The timing meter, which belongs to whichever player armed it.</summary>
     public virtual bool IsExpressionMeter(Engine_HudLayout.Piece piece) => false;
 
+    /// <summary>
+    /// Where a piece stands in a view seated in one player's half (<see cref="Engine_HudView.Seat"/> not
+    /// Whole): the piece as it is, unless the title places it otherwise in a half. The whole window always
+    /// places the piece as it is.
+    /// </summary>
+    public virtual Engine_HudLayout.Piece SeatedPiece(Engine_HudLayout.Piece piece) => piece;
+
     /// <summary>The id of the piece stating player two's version of player one's piece <paramref name="id"/>, or null.</summary>
     public virtual string? PlayerTwoSourceId(string id) => null;
 
     /// <summary>The id of player one's piece that player two's source <paramref name="id"/> keys, or null.</summary>
     public virtual string? PlayerOneIdOf(string id) => null;
+
+    /// <summary>
+    /// Whether a view seated in one player's half draws nothing outside that half
+    /// (<see cref="Engine_HudView"/>, the UI shaders' `seat_rect`): the half is that player's screen,
+    /// and art the file authors past a 1280-wide screen's edge (a slid-off alert, an edge highlight)
+    /// stays off it instead of landing in the other player's half.
+    /// </summary>
+    public virtual bool KeepsToSeat => false;
 }

@@ -99,20 +99,9 @@ public class Fable3BoxAnswersTests
 		AssertThat(Fable3BoxAnswers.TopBox(a: true, down: true)).IsEqual("topbox:1:a:down");
 		AssertThat(Fable3BoxAnswers.TopBox(a: true, down: false)).IsEqual("topbox:1:a:up");
 		AssertThat(Fable3BoxAnswers.TopBox(a: false, down: true, player: 2)).IsEqual("topbox:2:y:down");
-	}
-
-	/// <summary>A click accepts on the list pages only; on the settings pages the wheel steps the value.</summary>
-	[TestCase]
-	public void OptionsSettingsPagesTakeTheClickAsTheCursorAndTheWheelAsTheValue()
-	{
-		AssertThat(Fable3BoxAnswers.OptionsClickAccepts(1)).IsTrue();
-		AssertThat(Fable3BoxAnswers.OptionsClickAccepts(2)).IsTrue();
-		AssertThat(Fable3BoxAnswers.OptionsClickAccepts(5)).IsTrue();
-		AssertThat(Fable3BoxAnswers.OptionsClickAccepts(3)).IsFalse();
-		AssertThat(Fable3BoxAnswers.OptionsClickAccepts(4)).IsFalse();
-		AssertThat(Fable3BoxAnswers.OptionsWheelSteps(2)).ContainsExactly(32, 32);
-		AssertThat(Fable3BoxAnswers.OptionsWheelSteps(-1)).ContainsExactly(31);
-		AssertThat(Fable3BoxAnswers.OptionsWheelSteps(0)).IsEmpty();
+		AssertThat(Fable3BoxAnswers.TopBoxFill(a: true, thousandths: 250)).IsEqual("topbox:1:a:fill:250");
+		AssertThat(Fable3BoxAnswers.TopBoxFill(a: false, thousandths: 1200, player: 2)).IsEqual("topbox:2:y:fill:1000");
+		AssertThat(Fable3BoxAnswers.TopBoxFill(a: true, thousandths: -3)).IsEqual("topbox:1:a:fill:0");
 	}
 
 	/// <summary>The card's hold takes the guest's one second: 15 game ticks at 1/15 a tick.</summary>
@@ -159,18 +148,18 @@ public class Fable3BoxAnswersTests
 	}
 
 	[TestCase]
-	public void OptionsPressesAreTheHandlersActions()
+	public void OptionsLeversAreTheHandlersActionsAndGodotsValues()
 	{
-		AssertThat(Fable3BoxAnswers.OptionsAction(A)).IsEqual(Fable3BoxAnswers.ActionA);
-		AssertThat(Fable3BoxAnswers.OptionsAction(B)).IsEqual(75);
-		AssertThat(Fable3BoxAnswers.OptionsAction(Up)).IsEqual(29);
-		AssertThat(Fable3BoxAnswers.OptionsAction(new Fable3BoxAnswers.Press(false, false, false, false, false, false, false, true))).IsEqual(32);
-		AssertThat(Fable3BoxAnswers.OptionsAction(X)).IsNull();
-		AssertThat(Fable3BoxAnswers.Options(31)).IsEqual("options:1:31");
-		AssertThat(Fable3BoxAnswers.Options(74, 2)).IsEqual("options:2:74");
+		AssertThat(Fable3BoxAnswers.Options(Fable3BoxAnswers.ActionA)).IsEqual("options:1:74");
+		AssertThat(Fable3BoxAnswers.Options(Fable3BoxAnswers.ActionStart, 2)).IsEqual("options:2:14");
+		AssertThat(Fable3BoxAnswers.OptionsValue(3, 4, 0.725f)).IsEqual("options-value:1:3:4:0.725");
+		AssertThat(Fable3BoxAnswers.OptionsValue(3, 9, 2f, 2)).IsEqual("options-value:2:3:9:2");
+		AssertThat(Fable3BoxAnswers.OptionsValue(4, 1, 0f)).IsEqual("options-value:1:4:1:0");
+		AssertThat(Fable3BoxAnswers.OptionsValue(3, 0, 1f)).IsNull();
+		AssertThat(Fable3BoxAnswers.OptionsValue(3, 3, -0.1f)).IsNull();
 	}
 
-	private static Engine_UiModel.GuiNativeCall State(params float[] fields)
+	private static Engine_UiModel.GuiNativeCall Call(string name, params float[] fields)
 	{
 		var arguments = new List<Engine_UiModel.GuiNativeArgument>
 		{
@@ -182,40 +171,50 @@ public class Fable3BoxAnswersTests
 				field.ToString(System.Globalization.CultureInfo.InvariantCulture)));
 		}
 
-		return new Engine_UiModel.GuiNativeCall("@Options.State", arguments);
+		return new Engine_UiModel.GuiNativeCall(name, arguments);
 	}
 
 	[TestCase]
-	public void TheOptionsStateJoinsTheStatedLevels()
+	public void TheOptionsStateIsThePageAndTheGuestsGates()
 	{
-		// page 3, row 4, invert on, subtitles off, tutorial on, breadcrumb 3, speaker 0 (the box's),
-		// language 1 of 4, flags 0/0, from the pause, in game, save allowed, no query, unchanged, load
-		// not offered.
-		uint[]? words = Fable3OptionsState.Parse(State(3, 4, 1, 0, 1, 3, 0, 1, 4, 0, 0, 1, 0, 1, 0, 0, 0));
-		AssertThat(words).IsNotNull();
-		AssertThat(words![0]).IsEqual(0x8B0010A0u);
-		AssertThat(words[Fable3OptionsState.QueryWord]).IsEqual(0u);
-
-		Fable3OptionsModel.Snapshot snapshot = Fable3OptionsState.Snapshot(words, 0.25f, 0.5f, 0.75f, 1.0f, 2);
-		AssertThat(snapshot.Page).IsEqual(Fable3OptionsModel.PageGameSettings);
-		AssertThat(snapshot.SelectedRow).IsEqual(4);
-		AssertThat(snapshot.Controller).IsTrue();
-		AssertThat(snapshot.Subtitles).IsFalse();
-		AssertThat(snapshot.Breadcrumb).IsEqual(3);
-		// The applier's speaker mode wins over the screen's field; the levels are the appliers'.
-		AssertThat(snapshot.Speaker).IsEqual(2);
-		AssertThat(snapshot.Gamma).IsEqual(0.25f);
-		AssertThat(snapshot.Music).IsEqual(0.5f);
-		AssertThat(snapshot.Sfx).IsEqual(0.75f);
-		AssertThat(snapshot.Voice).IsEqual(1.0f);
-		AssertThat(snapshot.CanSave).IsTrue();
-		AssertThat(snapshot.CanLoad).IsFalse();
-
-		// Unknown speaker: the screen's own field stands.
-		AssertThat(Fable3OptionsState.Snapshot(words, 0.5f, 1f, 1f, 0.9f, -1).Speaker).IsEqual(0);
+		// page 2, row 1, from the pause, in game, save allowed, no role, Load blocked 2 (not now),
+		// Load not offered, 3 saves, 4 languages, no query, nothing waiting; player two's Options.
+		Fable3OptionsState.State? state = Fable3OptionsState.Parse(Call("@Options.State", 2, 1, 1, 0, 1, 0, 2, 0, 3, 4, 0, 0, 2));
+		AssertThat(state).IsNotNull();
+		AssertThat(state!.Value.Box).IsEqual(0x8B0010A0u);
+		AssertThat(state.Value.Page).IsEqual(Fable3OptionsModel.PageSaveManagement);
+		AssertThat(state.Value.Row).IsEqual(1);
+		AssertThat(state.Value.FromPause).IsTrue();
+		AssertThat(state.Value.FrontEnd).IsFalse();
+		AssertThat(state.Value.CanSave).IsTrue();
+		AssertThat(state.Value.LoadBlocked).IsEqual(2u);
+		AssertThat(state.Value.CanLoad).IsFalse();
+		AssertThat(state.Value.Saves).IsEqual(3);
+		AssertThat(state.Value.Languages).IsEqual(4);
+		AssertThat(state.Value.Query).IsFalse();
+		AssertThat(state.Value.Pending).IsFalse();
+		AssertThat(state.Value.Owner).IsEqual(2);
 
 		// A short statement is no state.
-		AssertThat(Fable3OptionsState.Parse(State(3, 4))).IsNull();
+		AssertThat(Fable3OptionsState.Parse(Call("@Options.State", 3, 4))).IsNull();
+	}
+
+	[TestCase]
+	public void TheOptionsValuesAreTheSettingsInTheirOrder()
+	{
+		// epoch 7, page 3: invert on, subtitles off, tutorial on, gamma 0.5, breadcrumb 3, music 1,
+		// sfx 0.75, voice 0.9, speaker 2, language 0.
+		Fable3OptionsState.Values? values = Fable3OptionsState.ParseValues(
+			Call("@Options.Values", 7, 3, 1, 0, 1, 0.5f, 3, 1, 0.75f, 0.9f, 2, 0));
+		AssertThat(values).IsNotNull();
+		AssertThat(values!.Epoch).IsEqual(7);
+		AssertThat(values.Page).IsEqual(3);
+		AssertThat(values.Settings[(int)Fable3OptionSetting.Invert]).IsEqual(1f);
+		AssertThat(values.Settings[(int)Fable3OptionSetting.Gamma]).IsEqual(0.5f);
+		AssertThat(values.Settings[(int)Fable3OptionSetting.Breadcrumb]).IsEqual(3f);
+		AssertThat(values.Settings[(int)Fable3OptionSetting.Sfx]).IsEqual(0.75f);
+		AssertThat(values.Settings[(int)Fable3OptionSetting.Speaker]).IsEqual(2f);
+		AssertThat(Fable3OptionsState.ParseValues(Call("@Options.Values", 7, 3))).IsNull();
 	}
 
 	/// <summary>
@@ -278,5 +277,18 @@ public class Fable3BoxAnswersTests
 		AssertThat(Fable3Prompts.ButtonAt(prompts, new Godot.Vector2(20f, 15f))).IsEqual("A");
 		AssertThat(Fable3Prompts.ButtonAt(prompts, new Godot.Vector2(150f, 15f))).IsEqual("B");
 		AssertThat(Fable3Prompts.ButtonAt(prompts, new Godot.Vector2(100f, 15f))).IsNull();
+	}
+
+	[TestCase]
+	public void TheHudsLeversNameTheirPlayerAndTheGamesCode()
+	{
+		AssertThat(Fable3BoxAnswers.Emotion(Fable3GameActions.EmotionPressed(1))).IsEqual("emotion:1:103");
+		AssertThat(Fable3BoxAnswers.Emotion(Fable3GameActions.EmotionReleased(5), player: 2)).IsEqual("emotion:2:112");
+		AssertThat(Fable3BoxAnswers.WorldIconHold(down: true)).IsEqual("worldicon:1:hold:down");
+		AssertThat(Fable3BoxAnswers.WorldIconHold(down: false, player: 2)).IsEqual("worldicon:2:hold:up");
+		AssertThat(Fable3BoxAnswers.Dpad(Fable3GameActions.GuiRight)).IsEqual("dpad:1:32");
+		AssertThat(Fable3BoxAnswers.Dpad(Fable3GameActions.GuiUpReleased, player: 2)).IsEqual("dpad:2:33");
+		AssertThat(Fable3BoxAnswers.Interaction(Fable3GameActions.GuiB)).IsEqual("interaction:1:75");
+		AssertThat(Fable3BoxAnswers.Interaction(Fable3GameActions.GuiRightTriggerHeld, player: 2)).IsEqual("interaction:2:91");
 	}
 }

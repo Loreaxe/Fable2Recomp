@@ -261,6 +261,9 @@ inline void PostGuiNativeCall(GuiNativeCall call) {
 /// Takes every pending call. Empties the queue.
 std::vector<GuiNativeCall> TakeGuiNativeCalls();
 
+/// Puts `taken[from..]` back at the front of the queue, in order (a drain whose buffers were full).
+void PutBackGuiNativeCalls(std::vector<GuiNativeCall>& taken, std::size_t from);
+
 /// How many calls have been intercepted and how many are waiting, for the host's report.
 void GuiNativeCounters(uint64_t* out_intercepted, uint32_t* out_pending, uint32_t* out_named);
 

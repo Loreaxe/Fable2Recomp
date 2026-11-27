@@ -59,6 +59,12 @@ public abstract class Engine_UiHostOptionsPage
 	/// <summary>The caption a row shows at an index.</summary>
 	public abstract string Caption(int row, int index);
 
+	/// <summary>
+	/// The caption where the page's commit is the button named <paramref name="commitButton"/>: a
+	/// caption that names the commit button (a reset row's) says that one.
+	/// </summary>
+	public virtual string Caption(int row, int index, string commitButton) => Caption(row, index);
+
 	/// <summary>Every row's index as the committed values put it — the page's seed on entry and its preview at the list level.</summary>
 	public abstract int[] Read();
 
@@ -69,6 +75,23 @@ public abstract class Engine_UiHostOptionsPage
 
 	/// <summary>A on the page; false keeps the page open. <paramref name="index"/> is each row's pending index.</summary>
 	public virtual bool Commit(Func<int, int> index) => true;
+
+	/// <summary>
+	/// Whether A (Enter, a click) acts on the cursor ROW (<see cref="Accepted"/>) — a rebind row
+	/// arms its capture, an opener opens its page — so the page's commit is another button of the
+	/// driver's. False: A is the commit. A capability of the page; a driver opts in by reading it.
+	/// </summary>
+	public virtual bool RowsTakeAccept => false;
+
+	/// <summary>Whether the page has values to commit; false for a page of openers.</summary>
+	public virtual bool Commits => true;
+
+	/// <summary>
+	/// A on <paramref name="row"/> standing at <paramref name="index"/>: the index the row goes
+	/// to. The driver stores it and calls <see cref="Changed"/>, which is where a capture arms. A
+	/// row that opens another page does it here and answers <paramref name="index"/>.
+	/// </summary>
+	public virtual int Accepted(int row, int index) => index;
 
 	/// <summary>The page open now, or null while the list level or a guest page is up.</summary>
 	public static Engine_UiHostOptionsPage? Current { get; internal set; }
@@ -230,5 +253,6 @@ public abstract class Engine_UiHostOptionsPage
 		Register(Engine_UiWeatherOptions.OpenCommand, _ => Engine_UiWeatherOptions.Page);
 		Register(Refii.Mods.ModSettingsUi.OpenCommandPrefix, Refii.Mods.ModSettingsUi.PageFor);
 		Register(Engine_UiControlsPage.OpenCommand, _ => Engine_UiControlsPage.Page);
+		Register(Engine_UiDisplayOptions.OpenCommand, _ => Engine_UiDisplayOptions.Page);
 	}
 }

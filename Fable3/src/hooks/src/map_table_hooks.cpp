@@ -98,7 +98,6 @@ constexpr uint32_t kAlphaCommand = 0x820A38F8u;  // classified by ToTu3
 
 constexpr uint32_t kHolderCamera = 16u;
 constexpr uint32_t kHolderCameraMessage = 32u;
-constexpr uint32_t kHolderPresented = 208u;
 
 /// Ids at or past this are not tracked (the twin table is a few thousand in a region).
 constexpr uint32_t kIds = 65536u;
@@ -254,11 +253,14 @@ REX_EXTERN(rex_MapScene_AddOrUpdate) {
   }
 }
 
+/// (holder, on): presented as the call states it, r4's low byte (`clrlwi r11,r4,24` TU3 0x8298459C;
+/// the callee compares it with H+208 only to skip a repeat, 0x82984598..0x829845AC).
 REX_EXTERN(rex_MapScene_Present) {
   const uint32_t holder = ctx.r3.u32;
+  const int on = (ctx.r4.u32 & 0xFFu) != 0u ? 1 : 0;
   __imp__rex_MapScene_Present(ctx, base);
   if (Plausible(holder)) {
-    refii_bridge_scene_presented(holder, base[holder + kHolderPresented] != 0u ? 1 : 0);
+    refii_bridge_scene_presented(holder, on);
   }
 }
 

@@ -276,11 +276,14 @@ public static class Engine_UiVerbs
 	public static readonly Engine_UiVerb Network = new(Engine_UiNetworkSource.CommandPrefix, "Net:<op>[:<arg>]",
 		"the multiplayer rows' answers (Net:book opens the multiplayer book)", Anywhere);
 
+	public static readonly Engine_UiVerb AchievementsView = new(Engine_UiAchievementPage.ViewPrefix, "Achievements:view:<partner|own>",
+		"the achievements page shows the partner's hero, or the opener's own again (local or online co-op)", Anywhere);
+
 	/// <summary>The shell's own verbs, which every title answers.</summary>
 	private static readonly Engine_UiVerb[] Shell =
 	{
 		Opens, Lua, OpenScreen, Options, SettingToggle, SettingCycle, SettingSet, ScreenBack, ScreenDismiss,
-		ScreenUnlearn, ScreenSelect, BoxDismiss, QuitToDesktop, Network,
+		ScreenUnlearn, ScreenSelect, BoxDismiss, QuitToDesktop, Network, AchievementsView,
 	};
 
 	private static readonly List<Engine_UiVerb> TitleVerbs = new();

@@ -15,7 +15,16 @@
 #include <rex/system/flags.h>
 #include <rex/system/kernel_state.h>
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstring>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
 
 #include <imgui.h>
 
@@ -24,7 +33,10 @@ REXCVAR_DEFINE_BOOL(headless, false, "Kernel",
 #include <achievement/achievement_runtime.h>
 #include <rex/kernel/xam/private.h>
 #include <rex/hook.h>
+#include <rex/memory/utils.h>
 #include <rex/types.h>
+#include <rex/system/xio.h>
+#include <rex/system/xthread.h>
 #include <rex/system/xtypes.h>
 #include <rex/thread.h>
 #include <rex/ui/imgui_dialog.h>
@@ -267,6 +279,92 @@ class MessageBoxDialog : public XamDialog {
   uint32_t chosen_button_ = 0;
 };
 
+// THE GUEST'S SYSTEM MESSAGE BOX IS THE HOST'S TO SHOW. Embedded (REX_EMBED_HEADLESS) there is no
+// drawer, so the box is kept as the guest stated it — user, title, text, buttons, the focused
+// button, the flags — for the host (`RefiiSystemMessageBoxFront`), which shows it and answers with
+// a button's index (`RefiiSystemMessageBoxAnswer`). The answer completes the call as the guide's
+// does: the index stored at `result`, the overlapped completed with success (ERROR_CANCELLED and
+// `result` untouched for -1), XN_SYS_UI on at the call and off 100 ms after the answer.
+//
+// Callers wait on those two edges, not on the overlapped. Fable 3's sign-in warning (TU3
+// sub_8236C588 / disc sub_82365898, keys GUI_SIGNIN_WARNING_TITLE / _BODY, buttons SIGNIN, CONTINUE,
+// CANCEL, focus 0) spins on the sign-in manager's XN_SYS_UI byte: `cmplwi r3,0x3E5`, then
+// `lbz r11,0x18(r25)` until set and until clear again (TU3 0x8236C90C..0x8236C950, disc
+// 0x82365C1C..0x82365C64), and only then reads the button (disc `lwz r11,0x110+var_90(r1)`
+// 0x82365C68): 1 CONTINUE joins the pad's player without a profile, 2 CANCEL drops the join, 0 SIGN
+// IN (and an untouched -1) shows the sign-in UI again. NO AUTO-ANSWER: the focused button the
+// headless pick took is SIGN IN there, and the sign-in UI signs no second user in here, so a second
+// pad's START looped between the two for good.
+namespace {
+
+struct HostMessageBox {
+  uint32_t id = 0;
+  uint32_t user = 0;
+  uint32_t flags = 0;
+  uint32_t active = 0;
+  std::string title;
+  std::string text;
+  std::vector<std::string> buttons;
+  uint32_t result_ptr = 0;
+  uint32_t overlapped = 0;
+  bool answered = false;
+  int32_t button = -1;
+};
+
+std::mutex g_host_box_mutex;
+std::condition_variable g_host_box_answered;
+std::deque<std::shared_ptr<HostMessageBox>> g_host_boxes;
+uint32_t g_host_box_next = 1;
+
+constexpr uint32_t kXnSysUi = 0x00000009;
+
+}  // namespace
+
+X_RESULT AskHostMessageBox(uint32_t user_index, std::string title, std::string text,
+                           std::vector<std::string> buttons, uint32_t active_button,
+                           uint32_t flags, uint32_t result_ptr, uint32_t overlapped) {
+  auto box = std::make_shared<HostMessageBox>();
+  box->user = user_index;
+  box->flags = flags;
+  box->active = active_button;
+  box->title = std::move(title);
+  box->text = std::move(text);
+  box->buttons = std::move(buttons);
+  box->result_ptr = result_ptr;
+  box->overlapped = overlapped;
+
+  // Pending before the host can see the box: its answer completes this overlapped.
+  if (overlapped != 0) {
+    auto* ptr = REX_KERNEL_MEMORY()->TranslateVirtual(overlapped);
+    XOverlappedSetResult(ptr, X_ERROR_IO_PENDING);
+    XOverlappedSetContext(ptr, XThread::GetCurrentThreadHandle());
+  }
+  REX_KERNEL_STATE()->BroadcastNotification(kXnSysUi, 1);
+
+  {
+    std::lock_guard<std::mutex> lock(g_host_box_mutex);
+    box->id = g_host_box_next++;
+    g_host_boxes.push_back(box);
+  }
+  REXKRNL_INFO(
+      "XamShowMessageBoxUI(user {}, '{}', {} button(s), focus {}, flags {:08X}): asked of the host "
+      "as box {}{}",
+      user_index, box->title, box->buttons.size(), active_button, flags, box->id,
+      overlapped != 0 ? "" : " (the caller waits)");
+
+  if (overlapped != 0) {
+    return X_ERROR_IO_PENDING;
+  }
+
+  std::unique_lock<std::mutex> lock(g_host_box_mutex);
+  g_host_box_answered.wait(lock, [&box] { return box->answered; });
+  const int32_t button = box->button;
+  lock.unlock();
+  rex::thread::Sleep(std::chrono::milliseconds(100));
+  REX_KERNEL_STATE()->BroadcastNotification(kXnSysUi, 0);
+  return button >= 0 ? X_ERROR_SUCCESS : X_ERROR_CANCELLED;
+}
+
 // https://www.se7ensins.com/forums/threads/working-xshowmessageboxui.844116/
 u32 XamShowMessageBoxUI_entry(u32 user_index, mapped_wstring title_ptr, mapped_wstring text_ptr,
                               u32 button_count, mapped_u32 button_ptrs, u32 active_button,
@@ -331,12 +429,9 @@ u32 XamShowMessageBoxUI_entry(u32 user_index, mapped_wstring title_ptr, mapped_w
           new MessageBoxDialog(imgui_drawer, title, text_str, buttons, active_button), close,
           overlapped.guest_address());
     } else {
-      // Fallback to headless if no drawer available
-      auto run = [result_ptr, active_button]() -> X_RESULT {
-        *result_ptr = static_cast<uint32_t>(active_button);
-        return X_ERROR_SUCCESS;
-      };
-      result = xeXamDispatchHeadless(run, overlapped.guest_address());
+      result = AskHostMessageBox(user_index, std::move(title), std::move(text_str),
+                                 std::move(buttons), active_button, flags,
+                                 result_ptr.guest_address(), overlapped.guest_address());
     }
   }
   return result;
@@ -627,6 +722,90 @@ extern "C" uint32_t RefiiGamerCardRequest(uint64_t* xuid) {
     *xuid = rex::kernel::xam::g_gamer_card_xuid.load(std::memory_order_relaxed);
   }
   return requests;
+}
+
+/// The oldest message box the guest is waiting on, as one record of fields split by 0x1F: id,
+/// user, flags, the focused button, the button count, title, text, then each button's caption
+/// (UTF-8, as the guest passed them). Returns the record's length, 0 when no box waits; the record
+/// is cut at `capacity - 1` and NUL-terminated.
+extern "C" uint32_t RefiiSystemMessageBoxFront(char* out, uint32_t capacity) {
+  std::string record;
+  {
+    std::lock_guard<std::mutex> lock(rex::kernel::xam::g_host_box_mutex);
+    if (rex::kernel::xam::g_host_boxes.empty()) {
+      return 0;
+    }
+    const auto& box = *rex::kernel::xam::g_host_boxes.front();
+    const char sep = '\x1F';
+    record = std::to_string(box.id) + sep + std::to_string(box.user) + sep +
+             std::to_string(box.flags) + sep + std::to_string(box.active) + sep +
+             std::to_string(box.buttons.size()) + sep + box.title + sep + box.text;
+    for (const std::string& caption : box.buttons) {
+      record += sep;
+      record += caption;
+    }
+  }
+  if (out == nullptr || capacity == 0) {
+    return static_cast<uint32_t>(record.size());
+  }
+  const size_t written = std::min<size_t>(record.size(), capacity - 1);
+  std::memcpy(out, record.data(), written);
+  out[written] = '\0';
+  return static_cast<uint32_t>(written);
+}
+
+/// The host's answer to box `id`: a button's index, or -1 to cancel it. Stores the index at the
+/// guest's `result`, then completes the overlapped and turns XN_SYS_UI off 100 ms later on the
+/// kernel's dispatch thread (the order the deferred dialogs above keep); a caller that passed no
+/// overlapped is woken and does the same on its own thread. Returns 0 for no such box or a button
+/// the box does not have.
+extern "C" int RefiiSystemMessageBoxAnswer(uint32_t id, int32_t button) {
+  using namespace rex::kernel::xam;
+  std::shared_ptr<HostMessageBox> box;
+  {
+    std::lock_guard<std::mutex> lock(g_host_box_mutex);
+    for (auto it = g_host_boxes.begin(); it != g_host_boxes.end(); ++it) {
+      if ((*it)->id != id) {
+        continue;
+      }
+      if (button < -1 || button >= static_cast<int32_t>((*it)->buttons.size())) {
+        return 0;
+      }
+      box = *it;
+      g_host_boxes.erase(it);
+      break;
+    }
+  }
+  if (!box) {
+    return 0;
+  }
+
+  if (button >= 0 && box->result_ptr != 0) {
+    rex::memory::store_and_swap<uint32_t>(REX_KERNEL_MEMORY()->TranslateVirtual(box->result_ptr),
+                                          static_cast<uint32_t>(button));
+  }
+  REXKRNL_INFO("XamShowMessageBoxUI box {} (user {}): the host answered {}{}", box->id, box->user,
+               button, button >= 0 ? " ('" + box->buttons[button] + "')" : std::string(" (cancelled)"));
+
+  if (box->overlapped != 0) {
+    using rex::X_RESULT;
+    const uint32_t overlapped = box->overlapped;
+    const uint32_t result = button >= 0 ? X_ERROR_SUCCESS : X_ERROR_CANCELLED;
+    REX_KERNEL_STATE()->PostToDispatchThread([overlapped, result]() {
+      REX_KERNEL_STATE()->CompleteOverlappedEx(overlapped, result, result, 0);
+      rex::thread::Sleep(std::chrono::milliseconds(100));
+      REX_KERNEL_STATE()->BroadcastNotification(kXnSysUi, 0);
+    });
+    return 1;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(g_host_box_mutex);
+    box->button = button;
+    box->answered = true;
+  }
+  g_host_box_answered.notify_all();
+  return 1;
 }
 
 REX_EXPORT_STUB(__imp__XamIsGuideDisabled);

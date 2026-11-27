@@ -58,23 +58,13 @@ public static class Engine_UiJoinRequests
 		}
 	}
 
-	/// <summary>The statuses a player can state (Fable 3's orb status), index 0 none.</summary>
-	public static readonly string[] Statuses =
-	{
-		"Exploring",
-		"Looking for co-op",
-		"Trading",
-		"Giving gifts",
-	};
-
-	/// <summary>The greetings a player can send (Fable 3's orb emotes): signal id = index + 1.</summary>
-	public static readonly (string Label, string Heard)[] Greetings =
-	{
-		("Wave", "{0} waves to you."),
-		("Come and join me", "{0} would like you to join them."),
-		("Thank you", "{0} says thank you."),
-		("Well met", "{0} says well met, hero."),
-	};
+	/// <summary>
+	/// The statuses a player can state (Fable 3's orb status) AS SENT to RexNet: the wire text, English on
+	/// every build. Drawn through <see cref="Engine_UiNetworkWords.Status"/> (own row) and
+	/// <see cref="Engine_UiNetworkWords.DrawnStatus"/> (a friend's), never as written here. The greetings
+	/// (Fable 3's orb emotes, signal id = index + 1) are <see cref="Engine_UiNetworkWords.GreetingCount"/>.
+	/// </summary>
+	public static readonly string[] Statuses = Engine_UiNetworkWords.WireStatuses;
 
 	private static int? _status;
 
@@ -124,10 +114,9 @@ public static class Engine_UiJoinRequests
 			}
 
 			int id = (int)(friend.Signal & 0xFFu);
-			if (id >= 1 && id <= Greetings.Length)
+			if (id >= 1 && id <= Engine_UiNetworkWords.GreetingCount)
 			{
-				string name = friend.DisplayName.Length == 0 ? "A friend" : friend.DisplayName;
-				heard.Add(string.Format(System.Globalization.CultureInfo.InvariantCulture, Greetings[id - 1].Heard, name));
+				heard.Add(Engine_UiNetworkWords.Heard(id - 1, friend.DisplayName));
 			}
 		}
 
@@ -143,8 +132,7 @@ public static class Engine_UiJoinRequests
 	private static readonly List<NetBridge.JoinRequest> _arrived = new();
 
 	/// <summary>The display name an ask is shown under; Discord can hand over an empty one.</summary>
-	public static string Who(NetBridge.JoinRequest ask) =>
-		ask.UserName.Length == 0 ? "A Discord player" : ask.UserName;
+	public static string Who(NetBridge.JoinRequest ask) => Engine_UiNetworkWords.DiscordName(ask.UserName);
 
 	/// <summary>
 	/// Takes what the node handed over since the last read and drops what went stale. A repeat
