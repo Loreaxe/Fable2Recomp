@@ -12,56 +12,6 @@
 # first generator run on this executable reports what it still needs, as the disc's did.
 
 [functions]
-# Indirect callback reached after loading Bowerstone Castle on TU3.
-0x82459600 = {}
-# TU3 startup calls these short thunks indirectly. The scan misses these entries.
-0x828BD238 = { size = 0x10 } # Dispatch through vtable slot 0x68.
-# The remaining unregistered slots in the same run of four-instruction dispatchers.
-0x828BD248 = { size = 0x10 }
-0x828BD298 = { size = 0x10 }
-0x828BD2E8 = { size = 0x10 }
-0x828BD2F8 = { size = 0x10 }
-0x82DF1000 = { size = 0x10 } # Load the dispatcher and branch to 0x82DF7F70.
-0x82E83F08 = { size = 0x8 }  # Adjust this by -36 and branch to 0x82E873D8.
-
-# Other indirect callbacks referenced by TU3 read-only function tables.
-# These include 0x82E30758, reached during startup after 0x82DF1000.
-0x826BE548 = {}
-0x82734DA0 = {}
-0x827A0090 = {}
-0x827C3DA8 = {}
-0x82827F18 = {}
-0x82848A70 = {}
-0x8298F568 = {}
-0x82991D88 = {}
-0x82A12178 = {}
-0x82A35F90 = {}
-0x82C32EE8 = {}
-0x82C3A520 = {}
-0x82D97640 = {}
-0x82E30758 = {}
-0x82E425D8 = {}
-0x82E7C918 = {}
-0x82E83400 = {}
-0x82EAA0F8 = {}
-0x830603E0 = {}
-0x831433F0 = {}
-
-# Callback passed in r6 to 0x82328400 by the registration at 0x8231F5E0.
-0x8228A288 = {}
-
-# Script bindings build their callback addresses with lis/addi before storing them.
-# 0x8279F110 is called when Start advances past the title screen.
-0x826E4740 = {}
-0x8279F110 = {}
-0x8286ED28 = {}
-0x828C5B18 = {}
-0x828E20F0 = {}
-0x82A310F8 = {}
-0x82A428F8 = {}
-0x82A47B38 = {}
-0x82AE58E8 = {}
-
 # The ring-buffer initialiser (calls VdInitializeRingBuffer and VdEnableRingBufferRPtrWriteBack);
 # Fable3/src/hooks/src/boot_no_gpu.cpp arms the device's no-GPU bit as it returns.
 0x82D52788 = { name = "rex_D3DDevice_InitializeRingBuffer" }
