@@ -23,7 +23,7 @@ public static partial class HostBridge
 	/// ABI this binding expects; bump together with the native `RefiiHostBridgeAbiVersion`.
 	/// The check is exact and `GameSession` treats a mismatch as fatal before the guest initialises.
 	/// </summary>
-	public const int ExpectedAbiVersion = 277;
+	public const int ExpectedAbiVersion = 279;
 
 	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
 	private static extern uint RefiiHostGetSaveRoot(byte[] output, uint capacity);
@@ -3000,7 +3000,8 @@ public static partial class HostBridge
 	/// <summary>
 	/// One of a player's properties: the building's UID, its BuildingName tag, flags (bit 0 marital
 	/// home, 1 rented out, 2 dungeon, 3 home, 4 tenants, 5 workers, 6 shared with the holder's
-	/// partner), rent per drop, value, condition 0..1, a full repair's bill and what it was bought for.
+	/// partner, 7 held by that partner), rent per drop, value, condition 0..1, a full repair's bill and what
+	/// it was bought for — as the guest's own calls stated the owner's list (RefiiHostGetProperties).
 	/// </summary>
 	public readonly record struct Property(
 		ulong Uid, string NameTag, uint Flags, int Income, int Value, float Condition, int RepairCost,
@@ -3012,6 +3013,9 @@ public static partial class HostBridge
 		public bool IsRented => (Flags & 2u) != 0u;
 		public bool HasTenants => (Flags & 16u) != 0u;
 		public bool IsShared => (Flags & 64u) != 0u;
+
+		/// <summary>The partner's own purchase, shared with this hero: its record is the partner's.</summary>
+		public bool IsPartners => (Flags & 128u) != 0u;
 	}
 
 
@@ -7026,61 +7030,6 @@ public static partial class HostBridge
 	}
 
 	/// <summary>
-	/// One world-map region's minimap keys (SampleWorldMapRegion): the region the host named by the row's
-	/// own id less 999, its name, and what the minimap keys its `MinimapInfo` record and art on. The
-	/// region info page is its fill's statement, not this. Fable 3 answers no region.
-	/// </summary>
-	public readonly record struct WorldMapRegion(
-		uint Count, uint Index, string Name,
-
-		/// <summary>The region's first level, the `MinimapInfo` key — see the sampler.</summary>
-		string LevelName = "",
-
-		/// <summary>The guest's world/level key for it, compared to the current level's.</summary>
-		uint LevelKey = 0,
-
-		/// <summary>The scenario the world names for that key; empty means DefaultScenario.</summary>
-		string Scenario = "")
-	{
-		/// <summary>
-		/// Whether this sample is of the region a caller asked for. A `default` sample — what
-		/// <see cref="GetWorldMapRegion"/> returns with no guest, and what a caller with no sample
-		/// passes — has a NULL name and is a sample of nothing.
-		/// </summary>
-		public bool IsFor(int wanted) =>
-			!string.IsNullOrEmpty(Name) && wanted >= 0 && Index == (uint)wanted;
-	}
-
-	/// <summary>Reads back the sampled region. See <see cref="WorldMapRegion"/>.</summary>
-	public static WorldMapRegion GetWorldMapRegion()
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return default;
-		}
-
-		var name = new byte[64];
-		var levelName = new byte[64];
-		var scenario = new byte[64];
-		uint total;
-		uint index;
-		uint levelKey;
-		try
-		{
-			total = RefiiHostGetWorldMapRegion(
-				out index, name, (uint)name.Length,
-				levelName, (uint)levelName.Length, out levelKey, scenario, (uint)scenario.Length);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
-
-		return new WorldMapRegion(total, index, Utf8(name), Utf8(levelName), levelKey, Utf8(scenario));
-	}
-
-
-	/// <summary>
 	/// Moves whenever something an open menu lists changes (an ability level, experience, an item,
 	/// gold, a drawn weapon, or the pump's own item/ability/shop/repair actions): the open list
 	/// re-reads its sources when it does. 0 before the bridge answers.
@@ -8989,11 +8938,6 @@ public static partial class HostBridge
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetScreenFade(
 		float[]? outRgba, out float outProgress, out uint outLocked);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetWorldMapRegion(
-		out uint outIndex, byte[] name, uint nameCapacity,
-		byte[] levelName, uint levelCapacity, out uint outLevelKey, byte[] scenario, uint scenarioCapacity);
 
 	[DllImport(Library)]
 	private static extern void RefiiHostSetHighlightedRow(

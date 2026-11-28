@@ -7,7 +7,9 @@ namespace Refii.Titles.Fable2;
 using Refii.Ui;
 
 /// <summary>
-/// THE WORLD MAP'S PROPERTIES: the properties of the player whose menus are open, each with its
+/// THE WORLD MAP'S PROPERTIES: the properties the player whose menus are open OWNS — as the guest's own
+/// calls state each hero's list (the purchases, the loader's per-record read, the sale's removal and the
+/// per-property setters; hooks/src/property_list_hooks.cpp, `Fable2Bridge.GetProperties`) — each with its
 /// condition, and Fable 3's repair from the map (its `REPAIR_RENT_REMINDER`: "You can repair houses
 /// via the map"). Fable 2 has no condition; the native side keeps Fable 3's
 /// (hooks/src/property_hooks.cpp, core/property_condition.h): rented homes lose 0.01 a rent drop,
@@ -22,6 +24,14 @@ using Refii.Ui;
 /// marry in: `GUI_MARRIAGE_PROPOSAL_NEED_HOUSE`, `sub_824C4658`; the household tick publishes each
 /// hero's home count as `refii.homes.<p>`) and, our Fable 2 touch, a wedding ring of the proposer's
 /// (<see cref="Rings"/>), given when the partner accepts; the marital home is then theirs together.
+///
+/// EVERY ROW IS THE ONE MENU TEMPLATE'S PLAIN ROW: a name, its details on its page (<see cref="FillPage"/>).
+/// A property is never ghosted — it is there to be read whether or not it needs repairing; A repairs one that
+/// does and does nothing on one that does not (no action, no identity: the screen menu commits nothing). Only
+/// Repair All with nothing to repair is ghosted, an action that is not available. The shared row view
+/// draws a label too long for its slot smaller (Engine_FrontEndMenuView.SetLabel), so a row whose label
+/// carried its condition and price drew smaller than its neighbours, and a ghosted one dark: the names alone
+/// keep the column one size, and the page states the condition, the bill and what A does.
 /// </remarks>
 public static class Engine_UiPropertySource
 {
@@ -94,28 +104,27 @@ public static class Engine_UiPropertySource
 		var rows = new List<Engine_UiMenuSources.Row>();
 		if (Fable2Bridge.GetPartnership() is { } partnership)
 		{
+			// Each row's label is its page's title (FillPage).
 			if (partnership < 2)
 			{
-				rows.Add(PartnerRow("propose", "Propose marriage to your partner"));
+				rows.Add(PartnerRow("propose", "Marriage"));
 			}
 
 			rows.Add(partnership switch
 			{
-				0 => PartnerRow("business", "Offer your partner a business partnership"),
-				1 => PartnerRow("end", "End your business partnership"),
-				_ => PartnerRow("divorce", "Divorce your partner"),
+				0 => PartnerRow("business", "Business Partnership"),
+				1 => PartnerRow("end", "End Partnership"),
+				_ => PartnerRow("divorce", "Divorce"),
 			});
 		}
 
 		List<HostBridge.Property> properties = Fable2Bridge.GetProperties(0);
 		int worn = 0;
-		int bill = 0;
 		foreach (HostBridge.Property property in properties)
 		{
 			if (property.Condition < 1f && property.RepairCost > 0)
 			{
 				++worn;
-				bill += property.RepairCost;
 			}
 		}
 
@@ -125,9 +134,7 @@ public static class Engine_UiPropertySource
 		{
 			rows.Add(new Engine_UiMenuSources.Row(
 				Name: RepairAllRow,
-				Label: worn == 0
-					? "Repair all — nothing needs repairing"
-					: $"Repair all {worn.ToString(CultureInfo.InvariantCulture)} {(worn == 1 ? "property" : "properties")} — {bill.ToString(CultureInfo.InvariantCulture)} gold",
+				Label: "Repair All",
 				Icon: Icon,
 				EventType: 0,
 				Id: 0u,
@@ -140,25 +147,16 @@ public static class Engine_UiPropertySource
 		foreach (HostBridge.Property property in properties)
 		{
 			_known[property.Uid] = property;
-			string name = Name(property);
-			bool decays = property.IsHome && property.IsRented;
-			string label = decays || property.Condition < 1f
-				? $"{name} — {Percent(property.Condition)} condition"
-				: name;
-			if (property.IsShared)
-			{
-				label += " — shared with your partner";
-			}
 			bool repairable = property.Condition < 1f && property.RepairCost > 0;
 			rows.Add(new Engine_UiMenuSources.Row(
 				Name: $"Property:{property.Uid:X16}",
-				Label: repairable ? $"{label} — Repair {property.RepairCost.ToString(CultureInfo.InvariantCulture)} gold" : label,
+				Label: Name(property),
 				Icon: Icon,
 				EventType: 0,
 				Id: 0u,
 				Rating: Engine_UiMenuConstants.EmptyRatingSlide,
 				Committable: repairable,
-				Ghosted: !repairable,
+				Ghosted: false,
 				Command: repairable ? RepairAction + property.Uid.ToString("X16", CultureInfo.InvariantCulture) : null));
 		}
 
@@ -354,10 +352,10 @@ public static class Engine_UiPropertySource
 
 	/// <summary>
 	/// THE WORLD MAP'S PAGE FOR A PROPERTIES ROW, on the map's Sales page (a title and one text block).
-	/// A property shows its sign — screen 28's own values and captions
-	/// (<see cref="Engine_UiRealEstatePage.Lines"/>) while its region is loaded and the pump has
-	/// sampled it, its ownership record otherwise — then Fable 3's condition, repair bill and the
-	/// partnership it is shared under. A partnership row says what it does. False for any other row.
+	/// A property shows its stated ownership record — its type, value, rent, bought-for price, marital or
+	/// rented-out state — then Fable 3's condition, repair bill and the partnership it is shared under. No
+	/// guest page states a building whose sign is not open, so nothing of screen 28's is sampled for it. A
+	/// partnership row says what it does. False for any other row.
 	/// </summary>
 	public static bool FillPage(
 		Dictionary<string, string> values, string? rowName, Refii.Text.Engine_BabelDatabase? strings)
@@ -398,7 +396,7 @@ public static class Engine_UiPropertySource
 			}
 
 			values[SaleTitle] = "Repair All";
-			values[SaleBody] =
+			values[SaleBody] = listed.Count == 0 ? "Repair all — nothing needs repairing" :
 				$"Total <s1>{Gold}{total.ToString(CultureInfo.InvariantCulture)}</s1> — press A to repair them all, cheapest first while your gold lasts.<br><br>" +
 				string.Join("<br>", listed);
 			return true;
@@ -415,25 +413,17 @@ public static class Engine_UiPropertySource
 			return false;
 		}
 
-		var lines = new List<string>(20);
-		Fable2Bridge.RealEstate estate = Fable2Bridge.GetPropertyEstate(uid);
-		if (estate.Known)
+		var lines = new List<string>(12);
+		string type = property.IsHome ? Babel(strings, "GUI_SCREEN_REAL_ESTATE_BUILDING_TYPE_HOME") : string.Empty;
+		if (type.Length != 0)
 		{
-			lines.AddRange(Engine_UiRealEstatePage.Lines(estate, strings));
+			lines.Add(type);
 		}
-		else
-		{
-			string type = property.IsHome ? Babel(strings, "GUI_SCREEN_REAL_ESTATE_BUILDING_TYPE_HOME") : string.Empty;
-			if (type.Length != 0)
-			{
-				lines.Add(type);
-			}
 
-			lines.Add($"Value <s1>{Gold}{property.Value.ToString(CultureInfo.InvariantCulture)}</s1>");
-			if (property.IsRented || property.HasTenants)
-			{
-				lines.Add($"{Babel(strings, "GUI_RENT")} <s1>{Gold}{property.Income.ToString(CultureInfo.InvariantCulture)}</s1>");
-			}
+		lines.Add($"Value <s1>{Gold}{property.Value.ToString(CultureInfo.InvariantCulture)}</s1>");
+		if (property.IsRented || property.HasTenants)
+		{
+			lines.Add($"{Babel(strings, "GUI_RENT")} <s1>{Gold}{property.Income.ToString(CultureInfo.InvariantCulture)}</s1>");
 		}
 
 		if (property.BoughtFor > 0)

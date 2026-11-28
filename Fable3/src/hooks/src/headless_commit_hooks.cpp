@@ -22,11 +22,7 @@
 //   job           sub_82973E00 0x82973E70 r11, r4 (prefix + level, sub_82DA5E00 at 0x82973E54)
 //   look-at       sub_829739D8 0x82973B68 r31, r27
 //   quest summary sub_829BCA18 0x829BCC0C r3, r29; 0x829BCC60 r3, r1+0x54; 0x829BCCAC r3, r1+0x58
-//   stats         sub_829B7458 0x829B75C0 r31, r1+0x50; sub_829B76A0 0x829B7D68 r3, r1+0x7C,
-//                 0x829B7DE4 r31, r1+0x64, 0x829B7F30 r30, r3, 0x829B7F68 r27, r1+0x70,
-//                 0x829B7FD4 r30, r1+0x80, 0x829B8018 r27, r1+0x84; sub_829B8C48 0x829B8D20
-//                 r31, r23, 0x829B8D94 r31, r27, 0x829B8E08 r31, r24; sub_829B8FC0 0x829B9498
-//                 r31, r1+0x50, 0x829B9634 r31, r1+0x54, 0x829B968C r31, r3
+//   (stats: its writers are replaced and state their rows, stats_screen_stubs.cpp)
 //   promise       CPromiseMessageBox_Show sub_827DA840 0x827DA8E0 r30, r3
 //   divorce       sub_8297F7F8 0x8297F84C / 0x8297F8A4 r3, r30; sub_8297F8D8 0x8297F97C r31, r4,
 //                 0x8297FB90 r3, r1+0x50; sub_8297FBC0 0x8297FCA0 r3, r1+0x50, 0x8297FCFC r3,
@@ -119,10 +115,6 @@ REFII_F3_STACK_COMMIT(5C)
 REFII_F3_STACK_COMMIT(64)
 REFII_F3_STACK_COMMIT(68)
 REFII_F3_STACK_COMMIT(6C)
-REFII_F3_STACK_COMMIT(70)
-REFII_F3_STACK_COMMIT(7C)
-REFII_F3_STACK_COMMIT(80)
-REFII_F3_STACK_COMMIT(84)
 #undef REFII_F3_STACK_COMMIT
 
 /// The credits roll's next line: `*(roll+0x1C) + 4 * index` (sub_82B74F98 at 0x82B75080..0x82B75088).

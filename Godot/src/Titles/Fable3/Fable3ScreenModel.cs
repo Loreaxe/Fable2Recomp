@@ -106,19 +106,19 @@ public static class Fable3ScreenModel
 	}
 
 	/// <summary>
-	/// STATS. The page moves through sub_8296EC88 (`@Screen.StatsPage`; the Show slides the root to 2
-	/// at 0x8296D54C); the cursor is Godot's, the row its lever stored (`@Screen.Cursor`, 0 on a new
-	/// page). Each page's
-	/// writer decides its window (`@Screen.StatsWindow`: first row, count, rows) and highlights the
-	/// row where `start + row == cursor`: 2 the categories, `…Categories.Details.
-	/// CompStatisticCategories%d` labelled `.Categories.Category01` (sub_8296ED30, 0x8296EE30); 3 a
-	/// category's statistics, `…FullStatistics.Details.CompStatisticDetails%d` with
-	/// `Statistics.Title.Statistic` / `.Score` / `.Rank` (sub_8296EF78, 0x8296F50C; six rows when
-	/// online, nine offline); 4 the friends' board, `…FriendsStatistics.Details.
-	/// CompStatisticFriendsOnly%d` with `Line1.GamerTag` / `.Score` / `.Rank` (sub_829708B0,
-	/// 0x82970C50). Rows past the list are its unused slides and are not drawn. Input sub_8296DA10 by
-	/// page: categories A (72) opens the statistics, B (73) closes (sub_8296DC00); statistics B back to
-	/// the categories, A the friends' board (sub_8296DD90).
+	/// STATS. The page moves through sub_8296EC88 (`@Screen.StatsPage`; the Show slides the root to 2,
+	/// TU3 0x829B5CCC); the cursor is Godot's, the row its lever stored (`@Screen.Cursor`, 0 on a new
+	/// page). The screen's presentation is never made: its three page writers are replaced and state
+	/// their lists (Fable3/src/hooks/src/stats_screen_stubs.cpp) — `@Screen.StatsList` (count, the
+	/// guest's window rows and first row, online, the title's and the A caption's tags) and every row
+	/// `@Screen.StatsRow`: 2 the categories, each by its name tag (eight rows); 3 a category's
+	/// statistics, the name tag, the value as the guest formats it and the rank (online, six rows) or the
+	/// offline rank's tag (nine rows), with the board around the player for the statistic under the
+	/// cursor (`@Screen.StatsBoard`, three lines) when online; 4 the friends' board, gamertag, score and
+	/// rank (nine rows). Godot draws the guest's window (`@Screen.StatsWindow`) with the row where `start
+	/// + row == cursor` highlighted. Input sub_8296DA10 by page: categories A (72) opens the statistics,
+	/// B (73) closes (sub_8296DC00); statistics B back to the categories, A the friends' board when
+	/// online (sub_8296DD90), so the A prompt shows on page 3 only when its caption is stated.
 	/// </summary>
 	/// <summary>The host's Achievements category row on the stats box's categories page.</summary>
 	public const string StatsAchievementsRow = "Achievements";
@@ -129,32 +129,34 @@ public static class Fable3ScreenModel
 		int cursor = screen.Cursor ?? 0;
 		var rows = new List<Fable3ScreenPage.Row>();
 		int selected = -1;
-		string title = Text(stated, Stats + ".Title") ?? resolve("TEXT_GUI_STATS_SCREEN_TITLE");
-		string accept = Text(stated, Stats + ".Buttons.A_Button.Group.Text") ?? resolve("GUI_TEXT_MORE_DETAILS");
+		screen.StatsLists.TryGetValue(page, out Fable3ScreenState.StatsList? list);
+		string title = list is { TitleTag: not 0u } && Tag(list.TitleTag) is { Length: > 0 } named ? named
+			: Text(stated, Stats + ".Title") ?? resolve("TEXT_GUI_STATS_SCREEN_TITLE");
 		var prompts = new List<Fable3ScreenPage.Prompt>();
 		(int start, int count, int shown) = screen.StatsWindows.TryGetValue(page, out (int, int, int) window)
 			? window : (0, int.MaxValue, page == 3 ? 9 : page == 4 ? 9 : 8);
+		screen.StatsRows.TryGetValue(page, out SortedDictionary<int, Fable3ScreenState.StatsRow>? stats);
 
 		for (int row = 0; row < shown && start + row < count; ++row)
 		{
-			string n = row.ToString(CultureInfo.InvariantCulture);
-			string? line = page switch
-			{
-				3 => Line(Stats + ".Table.FullStatistics.Details.CompStatisticDetails" + n + ".Statistics.Title.", "Statistic"),
-				4 => Line(Stats + ".Table.FriendsStatistics.Details.CompStatisticFriendsOnly" + n + ".Line1.", "GamerTag"),
-				_ => Text(stated, Stats + ".Table.Categories.Details.CompStatisticCategories" + n + ".Categories.Category01"),
-			};
-
-			if (line is null)
+			if (stats is null || !stats.TryGetValue(start + row, out Fable3ScreenState.StatsRow? stat))
 			{
 				continue;
 			}
+
+			string line = page switch
+			{
+				3 => Join(Tag(stat.LabelTag), stat.Value, stat.Rank.Length > 0 ? "#" + stat.Rank : Tag(stat.RankTag)),
+				4 => Join(stat.Label, stat.Value, stat.Rank.Length > 0 ? "#" + stat.Rank : string.Empty),
+				_ => Tag(stat.LabelTag),
+			};
 
 			if (start + row == cursor && !(page == 2 && screen.StatsAchievements))
 			{
 				selected = rows.Count;
 			}
 
+			string n = row.ToString(CultureInfo.InvariantCulture);
 			rows.Add(new((page switch { 3 => "Statistic", 4 => "Friend", _ => "Category" }) + n, line));
 		}
 
@@ -170,23 +172,45 @@ public static class Fable3ScreenModel
 			rows.Add(new(StatsAchievementsRow, Refii.Text.Engine_OwnWords.Say("REFII_ACHIEVEMENTS")));
 		}
 
-		if (page != 4)
+		// The board around the player for the statistic under the cursor (online, page 3 only).
+		var board = new List<string>();
+		if (page == 3)
 		{
+			foreach (Fable3ScreenState.StatsBoardLine entry in screen.StatsBoard.Values)
+			{
+				if (entry.GamerTag.Length > 0 || entry.Score.Length > 0)
+				{
+					board.Add((entry.Mine ? "> " : string.Empty) + Join("#" + entry.Rank, entry.GamerTag, entry.Score));
+				}
+			}
+		}
+
+		// The A caption: page 2 always, page 3 when its writer stated one (online), page 4 never.
+		uint acceptTag = list?.AcceptTag ?? 0u;
+		if (page == 2 || (page == 3 && (list is null || acceptTag != 0u)))
+		{
+			string accept = acceptTag != 0u && Tag(acceptTag) is { Length: > 0 } caption ? caption
+				: Text(stated, Stats + ".Buttons.A_Button.Group.Text") ?? resolve("GUI_TEXT_MORE_DETAILS");
 			prompts.Add(new("A", accept));
 		}
 
 		prompts.Add(new("B", resolve("GUI_BACK")));
-		return new Fable3ScreenPage(title, rows, selected, string.Empty, prompts, true);
+		return new Fable3ScreenPage(title, rows, selected, string.Join("\n", board), prompts, true);
 
-		string? Line(string path, string name)
+		static string Tag(uint tag) => tag != 0u ? Fable3Elements.TagText(tag) ?? string.Empty : string.Empty;
+
+		static string Join(string label, string value, string rank)
 		{
-			if (Text(stated, path + name) is not { } label)
+			string line = label;
+			foreach (string part in new[] { value, rank })
 			{
-				return null;
+				if (part.Length > 0)
+				{
+					line += Gap + part;
+				}
 			}
 
-			string line = label + Gap + (Text(stated, path + "Score") ?? string.Empty);
-			return Text(stated, path + "Rank") is { } rank ? line + Gap + "#" + rank : line;
+			return line;
 		}
 	}
 

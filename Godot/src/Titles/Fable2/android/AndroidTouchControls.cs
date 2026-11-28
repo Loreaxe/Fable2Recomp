@@ -485,7 +485,7 @@ public partial class AndroidTouchControls : Control, IAndroidTouchControls
         equipped != 0u || carried() != 0u || toyPistolCount() != 0;
 
     /// <summary>
-    /// What the hero can do, re-read twice a second: a ranged weapon equipped (Y), a spell (B), two
+    /// What the hero can do, re-read twice a second: a ranged weapon on the body (Y), a spell (B), two
     /// spells (the spell menu). Unknown counts as able — nothing is hidden on a guess.
     /// </summary>
     /// <param name="world">Whether the play is laid out: only its buttons stand on what the hero can do, so
@@ -511,9 +511,12 @@ public partial class AndroidTouchControls : Control, IAndroidTouchControls
         }
 
         _heroClock = 0.5;
+        // This machine's player one: key 2 on a joiner, 1 otherwise (the resolver's own choice,
+        // host_bridge.cpp ResolvePlayerHero).
+        uint own = CoopSession.IsClient ? 2u : 1u;
         bool ranged = CanUseRanged(Fable2Bridge.HeroWeapons()?.Ranged,
-            static () => Fable2Bridge.CoopHeldUids(1)?.Ranged ?? 0,
-            static () => Fable2Bridge.GetItemCount(1, "ObjectInventoryPistol_Child"));
+            () => Fable2Bridge.CoopHeldUids(own)?.Ranged ?? 0,
+            () => Fable2Bridge.GetItemCount((int)own, "ObjectInventoryPistol_Child"));
         int? spells = Engine_UiSpellAssignSet.HeroSpellTypes;
         _hero = new TouchHero(ranged, spells is not { } known || known >= 1, Engine_UiSpellAssignSet.SpellsMenuCanOpen, villager);
         return _hero;

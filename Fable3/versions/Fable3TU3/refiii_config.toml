@@ -971,6 +971,26 @@
 0x829B7458 = { name = "rex_StatsBox_WriteCategories" }
 0x829B76A0 = { name = "rex_StatsBox_WriteStatistics" }
 0x829B8FC0 = { name = "rex_StatsBox_WriteFriends" }
+# THE STATS SCREEN, Godot's (Fable3/src/hooks/src/stats_screen_stubs.cpp): the three page writers
+# above are replaced and state their rows; the board line (box, element, gamertag*, score*, rank*,
+# line, highlighted, xuid*) is replaced and states its line; named, called from the replacements:
+# the board around the player, the friends' ranking, a statistic's name tag, value format and
+# leaderboard ids, the number text, the gamer record's builders and name, the world, a session
+# player's gamertag, the LHString append and assign.
+0x829B8C48 = { name = "rex_StatsBox_BoardLine" }
+0x829B8360 = { name = "rex_StatsBox_Board" }
+0x829B8188 = { name = "rex_StatsBox_Ranking" }
+0x823E4C90 = { name = "rex_Stats_NameTag" }
+0x823CE600 = { name = "rex_Stats_FormatValue" }
+0x823EAD78 = { name = "rex_Stats_LeaderboardIds" }
+0x82304950 = { name = "rex_Text_FromInt" }
+0x8242DF20 = { name = "rex_GamerRecord_FromComponent" }
+0x8218CAC8 = { name = "rex_GamerRecord_ForEntity" }
+0x8245F2A8 = { name = "rex_GamerRecord_Name" }
+0x8239FF30 = { name = "rex_Game_World" }
+0x823914A0 = { name = "rex_Net_GamerTag" }
+0x823CDA60 = { name = "rex_LHString_Append" }
+0x8226D528 = { name = "rex_LHString_Assign" }
 # The co-op partners' row writer (box, row path, record) (screen_stated_hooks.cpp).
 0x82B92638 = { name = "rex_PartnersBox_Row" }
 # The king's schedule's Show (box), replaced: its title, day and rows are stated and no presentation
@@ -981,6 +1001,17 @@
 # element writes are gone, and no presentation is made for it (display_box_stubs.cpp).
 0x829BADE0 = { name = "rex_OrbChatBox_Show" }
 0x829BB200 = { name = "rex_OrbChatBox_Update" }
+# THE SCREENS GODOT OWNS (Fable3/src/hooks/src/screen_cut_hooks.cpp): the screen loader (L, id),
+# which leaves an owned id unloaded, and its file map lookup (map, id*), named; Pres(box), which
+# answers an owned box type its token; Find(path, pres), which finds nothing under a token; and the
+# three path setters (path, pres, value) a token's writers call, stated (ui_stated_hooks.cpp).
+0x825F26E8 = { name = "rex_ScreenLoader_Load" }
+0x82355420 = { name = "rex_ScreenLoader_FileOf" }
+0x829588C8 = { name = "rex_DisplayBox_Presentation" }
+0x82877D40 = { name = "rex_GuiElement_Find" }
+0x82877898 = { name = "rex_GuiElement_SetVisibleAt" }
+0x82876F38 = { name = "rex_GuiElement_SetTextNameAt" }
+0x82877030 = { name = "rex_GuiElement_SetTextTagAt" }
 # The session boxes (session_boxes.cpp): the join / visibility options' and the friends channel's
 # Show and Update (box), replaced — their setting stated, no presentation made; the in-live-game
 # test the friends channel's Show calls (TU3) and the bed's cancel calls; the partners' window
@@ -1692,6 +1723,20 @@ labels = [
 # the text (a register, or a stack LHString at r1 + the offset its name carries). Money alert, crime
 # timer, job multiplier, look-at, quest summary, stats, promise, divorce, food and credits.
 
+# The quest summary's owner, the player index its ctor stores at box+0x38 (`stw r11,0x38(r24)`)
+# (Fable3/src/hooks/src/screen_stated_hooks.cpp).
+[[midasm_hook]]
+name = "RefiiF3QuestSummaryOwner"
+address = 0x829BC23C
+registers = ["r24", "r11"]
+
+# The stats screen's owner, the player index its Show caches at box+0x40 (`stw r11,0x40(r29)`)
+# (Fable3/src/hooks/src/stats_screen_stubs.cpp).
+[[midasm_hook]]
+name = "RefiiF3StatsOwner"
+address = 0x829B5EC0
+registers = ["r29", "r11"]
+
 [[midasm_hook]]
 name = "RefiiF3StateCommit"
 address = 0x8287C42C
@@ -1741,73 +1786,6 @@ registers = ["r3", "r1"]
 name = "RefiiF3StateCommitAt58"
 address = 0x829BCCAC
 registers = ["r3", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt50"
-address = 0x829B75C0
-registers = ["r31", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt7C"
-address = 0x829B7D68
-registers = ["r3", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt64"
-address = 0x829B7DE4
-registers = ["r31", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommit"
-address = 0x829B7F30
-registers = ["r30", "r3"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt70"
-address = 0x829B7F68
-registers = ["r27", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt80"
-address = 0x829B7FD4
-registers = ["r30", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt84"
-address = 0x829B8018
-registers = ["r27", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommit"
-address = 0x829B8D20
-registers = ["r31", "r23"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommit"
-address = 0x829B8D94
-registers = ["r31", "r27"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommit"
-address = 0x829B8E08
-registers = ["r31", "r24"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt54"
-address = 0x829B9498
-# TU3 builds this text at r1+0x54 (0x829B94B0 `addi r4,r1,0x54`; the disc's is at +0x50).
-registers = ["r31", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt50"
-address = 0x829B9634
-# TU3 builds this text at r1+0x50 (0x829B964C `addi r4,r1,0x50`; the disc's is at +0x54).
-registers = ["r31", "r1"]
-
-[[midasm_hook]]
-name = "RefiiF3StateCommit"
-address = 0x829B968C
-registers = ["r31", "r3"]
 
 [[midasm_hook]]
 name = "RefiiF3StateCommit"
@@ -2219,25 +2197,6 @@ registers = ["r31", "r27", "r26", "r25"]
 name = "RefiiF3WeddingOpened"
 address = 0x82B90A28
 registers = ["r31", "r5", "r3", "r10"]
-
-# The stats screen's page windows as each writer decides them (box, start, count[, rows]): the
-# categories (0x829B74A4), the statistics (0x829B7930) and the friends' board (0x829B9280)
-# (Fable3/src/hooks/src/screen_stated_hooks.cpp).
-[[midasm_hook]]
-name = "RefiiF3StatsCategories"
-address = 0x829B74A4
-registers = ["r27", "r24", "r7"]
-
-[[midasm_hook]]
-name = "RefiiF3StatsStatistics"
-address = 0x829B7930
-# TU3 holds the box in r26 (0x829B76B4 `mr r26,r3`; r28 is box+0x2C, 0x829B76BC).
-registers = ["r26", "r31", "r30", "r27"]
-
-[[midasm_hook]]
-name = "RefiiF3StatsFriends"
-address = 0x829B9280
-registers = ["r28", "r10", "r31"]
 
 # THE INTERACTION MODE'S LAST UNSTATED WRITERS (f3last): the overlay bars' TopBox slide
 # (sub_825C6D78), the mini-game counter's slide (sub_826ECB18), the decoration and world-map

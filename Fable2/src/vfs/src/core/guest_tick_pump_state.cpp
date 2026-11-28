@@ -398,12 +398,8 @@ namespace {
 refii::TracedMutex g_hero_mutex{"guest hero snapshot"};
 HeroDerived g_hero;
 
-std::mutex g_region_mutex;
-WorldMapRegion g_region;
 std::mutex g_coop_mutex;
 CoopScreen g_coop;
-
-std::atomic<uint32_t> g_region_wanted{0};
 
 std::mutex g_quest_mutex;
 QuestEntry g_quests[kMaxCompletedQuests];
@@ -518,25 +514,6 @@ extern "C" uint32_t refii_bridge_player_inventory_snapshot(int32_t player, uint3
   return words / 4u;
 }
 
-void RequestWorldMapRegion(uint32_t index) { g_region_wanted.store(index); }
-
-extern "C" uint32_t refii_bridge_requested_world_map_region() {
-  return g_region_wanted.load();
-}
-
-extern "C" void refii_bridge_publish_world_map_region(const void* region) {
-  if (region == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(g_region_mutex);
-  g_region = *static_cast<const WorldMapRegion*>(region);
-}
-
-WorldMapRegion WorldMapRegionSnapshot() {
-  std::lock_guard<std::mutex> lock(g_region_mutex);
-  return g_region;
-}
-
 extern "C" void refii_bridge_publish_coop_screen(const void* coop) {
   if (coop == nullptr) {
     return;
@@ -619,34 +596,6 @@ extern "C" uint32_t refii_bridge_list_fold_depth(uint32_t screen) {
   std::lock_guard<std::mutex> lock(g_fold_mutex);
   const auto found = g_fold_depth.find(screen);
   return found == g_fold_depth.end() ? 0u : found->second;
-}
-
-namespace {
-std::atomic<uint64_t> g_property_estate_wanted{0};
-std::mutex g_property_estate_mutex;
-RealEstate g_property_estate;
-uint64_t g_property_estate_uid = 0u;
-}  // namespace
-
-void RequestPropertyEstate(uint64_t uid) { g_property_estate_wanted.store(uid); }
-
-extern "C" uint64_t refii_bridge_requested_property_estate(void) { return g_property_estate_wanted.load(); }
-
-extern "C" void refii_bridge_publish_property_estate(uint64_t uid, const void* estate) {
-  if (estate == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(g_property_estate_mutex);
-  g_property_estate = *static_cast<const RealEstate*>(estate);
-  g_property_estate_uid = uid;
-}
-
-RealEstate PropertyEstateSnapshot(uint64_t* uid) {
-  std::lock_guard<std::mutex> lock(g_property_estate_mutex);
-  if (uid != nullptr) {
-    *uid = g_property_estate_uid;
-  }
-  return g_property_estate;
 }
 
 extern "C" void refii_bridge_publish_quests(const void* entries, uint32_t count) {

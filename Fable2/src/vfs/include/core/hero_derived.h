@@ -11,35 +11,6 @@
 namespace refii::vfs {
 
 
-/// The world map's minimap keys for one region (SampleWorldMapRegion): what the minimap fill
-/// `sub_829ABFC0` keys its `MinimapInfo` record and art on. The region info page is its own fill's
-/// statement (page_fills_stated.cpp).
-struct WorldMapRegion {
-    bool known = false;
-
-    /// Which region this sample is of — the guest's region walk `sub_82518330`'s index, the row's id
-    /// less 999; the pump answers a tick late.
-    uint32_t index = 0xFFFFFFFFu;
-
-    /// The region record's name, the narrow key `sub_82519DF8` matches regions by.
-    char name[64] = {};
-
-    /// How many regions the walk holds, so a host can bound its cursor.
-    uint32_t count = 0;
-
-    /// The region's FIRST LEVEL (`**(region+16)`), what the world map's minimap page keys the
-    /// `MinimapInfo` record on: `regionmap_<level>_<scenario>` (`sub_829ABFC0`).
-    char level_name[64] = {};
-
-    /// `World_ComputeWorldLevelFnv1Key(World, "Albion", &level)` — the key the page compares to
-    /// the current level's `L+180` before it plots the hero.
-    uint32_t level_key = 0;
-
-    /// `World_LookupLevelNameByKey(World, level_key)`, empty when the world names no scenario
-    /// for it (the page then uses "DefaultScenario").
-    char scenario[64] = {};
-};
-
 /// One completed quest for the logbook page. Row key is `index + 1000` into the list
 /// `sub_82470220` rebuilds: sorted descending by GDB `DisplayPriority`, then filtered
 /// order-preserving.
@@ -138,70 +109,6 @@ inline void PublishQuests(const QuestEntry* entries, uint32_t count) {
 
 uint32_t QuestSnapshot(QuestEntry* out, uint32_t capacity);
 
-/// ONE BUILDING'S REAL-ESTATE NUMBERS, for the world map's property row (SamplePropertyEstate):
-/// the remaster's map properties have no guest page, so the guest's providers answer for the
-/// building the host names. Screen 28 itself is stated by its page fills (page_fills_stated.cpp).
-///
-/// WHAT CROSSES IS DATA, NOT PRESENTATION. Every number here is the guest's own answer —
-/// `sub_8282AEB0` (value), `sub_8282C1C0` (economy), `sub_8282C110` (income), `sub_8282BCA0`
-/// (sale floor), `sub_8282BA48` (purchase) and the three not-owned deltas — because each of
-/// them averages or walks something the host has no business reproducing: prosperity off a
-/// world component, a GDB adjustment array matched against the building-type mask, an
-/// occupant-opinion term weighted over five personality axes. The FORMATTING is Godot's: the
-/// star bin, the `<gold_img>` prefix, the negative recolour, which of the four Variable rows
-/// stands, and the HOUSE-versus-SHOP legend are all decided from these fields.
-struct RealEstate {
-    bool known = false;
-
-    /// The GDB record the page's text hangs off — `BuildingName`, `BuildingAddress`,
-    /// `BuildingAnecdotes`, `BasicSalePrice`, `CanSellOncePurchased`. It is NOT the building
-    /// entity's own record: `sub_821DA3B0` takes the entity's def handle at `BE+28`, then a
-    /// property named after the component's class, and the entry-ref THAT yields is this hash.
-    uint32_t record = 0;
-
-    /// `*(u32*)(CECBuilding+28)` — the BuildingType bitmask. Bit 0 HOME, then DOCK, FARM,
-    /// TOWNHALL, WAREHOUSE, SHOP, BAR, BORDELLO, UNIQUE, STALL, HOUSE, TEMPLE.
-    /// `mask & 0xEFE` is "is a business", the guest's own test at 0x82999CF8.
-    uint32_t type_mask = 0;
-
-    bool owned = false;
-    bool has_tenant = false;
-
-    int32_t value = 0;
-    int32_t economy = 0;
-    int32_t decoration = 0;
-    int32_t income = 0;
-    int32_t sale_price = 0;
-
-    /// Owned only: `sub_8282BCA0 - sub_8282AEB0`, the negative selling fee.
-    int32_t selling_fees = 0;
-
-    /// Not owned only: the three price deltas the page lists as Variable1..3.
-    int32_t not_vacant = 0;
-    int32_t owner_killed = 0;
-    int32_t hero_opinion = 0;
-
-    /// `sub_823C8510` on the TENANT when there is one, else on the OWNER when the hero is not
-    /// the owner. Empty when the entity is gone (the page's "OTHER" case) and empty when the
-    /// hero owns it — the guest never names the hero this way; see `title_record`.
-    char occupant[128] = {};
-
-    /// A HERO-OWNED PROPERTY IS NAMED AFTER THE HERO'S TITLE, not through the creature-name
-    /// path. `sub_82998FB0` branches on ownership first (0x8299959c) and, when the hero owns
-    /// the building, calls `sub_824D8A10(&text, heroComponent57)`: the lazy GDB ref at
-    /// `comp57+92` (`{hash, cache}`, resolved by `sub_821B24F8`), its `HeroTitleComponent`
-    /// reference, that entry's `TextTag`, through Babel. This is that hash; 0 when the hero
-    /// holds no title, which the guest draws as an empty name. `sub_823C8510` cannot name the
-    /// hero: it carries no component 20.
-    uint32_t title_record = 0;
-
-    /// The GDB record carrying the `Bonuses` array. NOT `record`: `sub_82917F60` runs the same
-    /// `sub_821DA3B0` indirection over component **184**, so the array hangs off that
-    /// component's own sub-entry. The host reads the array and each element's
-    /// `ShortNameTextTag` from its own GDB; no string crosses.
-    uint32_t bonuses_record = 0;
-};
-
 /// THE CO-OP SCREEN'S STATE (screen 24, ctor `sub_82434DD8`) — what its writers decide from,
 /// read off the screen object and the session as plain data. The host composes every caption,
 /// slide and opacity from these by the writers' own rules (`sub_82439988` buttons,
@@ -230,32 +137,6 @@ inline void PublishCoopScreen(const CoopScreen& coop) {
 }
 
 CoopScreen CoopScreenSnapshot();
-
-/// THE WORLD MAP'S PROPERTY ROW. The host names the UID under its cursor; the pump answers with
-/// screen 28's numbers for that building while its region is loaded, unknown otherwise.
-void RequestPropertyEstate(uint64_t uid);
-
-inline uint64_t RequestedPropertyEstate() { return refii_bridge_requested_property_estate(); }
-
-inline void PublishPropertyEstate(uint64_t uid, const RealEstate& estate) {
-  refii_bridge_publish_property_estate(uid, &estate);
-}
-
-/// The last answer and the UID it is for.
-RealEstate PropertyEstateSnapshot(uint64_t* uid);
-
-/// Which region the host wants sampled; the pump answers for that one only.
-void RequestWorldMapRegion(uint32_t index);
-
-inline uint32_t RequestedWorldMapRegion() {
-  return refii_bridge_requested_world_map_region();
-}
-
-inline void PublishWorldMapRegion(const WorldMapRegion& region) {
-  refii_bridge_publish_world_map_region(&region);
-}
-
-WorldMapRegion WorldMapRegionSnapshot();
 
 }  // namespace refii::vfs
 

@@ -74,7 +74,7 @@ public sealed record TouchControl(string Id, TouchControlKind Kind, Rect2 Bounds
 
 /// <summary>
 /// What the hero can do right now, for the buttons that stand only when they would act: Y with a
-/// ranged weapon equipped or a villager's Y prompt up (<paramref name="Villager"/>: their opinion
+/// ranged weapon on the body or a villager's Y prompt up (<paramref name="Villager"/>: their opinion
 /// and the gift or proposal it offers), B with a spell, Spells with two (the game opens its spell
 /// menu only then).
 /// </summary>

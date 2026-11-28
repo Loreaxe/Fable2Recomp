@@ -205,11 +205,13 @@ public sealed class Engine_StaticTwins
 
         if (adoption.Node is Refii.Level.SilverKeyNode key)
         {
-            // The key keeps its bob and spin; the guest's placement moves the base it rides.
+            // The guest's CECHighlightedItem bobs and turns the key's entity itself (SilverKeyNode): the
+            // key stands where the guest states it, with no motion of the node's own on top.
             Transform3D parent = key.GetParent() is Node3D above
                 ? above.GlobalTransform
                 : Transform3D.Identity;
             key.BaseTransform = parent.AffineInverse() * world;
+            key.Stated = true;
             return;
         }
 

@@ -124,10 +124,6 @@ REFII_HOST_ABI_EXPORT int RefiiHostGetVideoPlanes(uint8_t* /*out_y*/, uint32_t /
     return 0;
 }
 
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldMapRegion(uint32_t* /*out_index*/, char* /*name*/, uint32_t /*name_capacity*/, char* /*level_name*/, uint32_t /*level_capacity*/, uint32_t* /*out_level_key*/, char* /*scenario*/, uint32_t /*scenario_capacity*/) {
-    return 0;
-}
-
 // The running build and its translation (fable3_guest_build.h): the shell ABI's "TU1" is the build
 // a title's source names, which for Fable 3 is TU3; 1 is the disc.
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGuestAddress(uint32_t tu3_address) {

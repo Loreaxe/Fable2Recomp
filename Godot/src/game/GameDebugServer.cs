@@ -4345,18 +4345,6 @@ public partial class GameDebugServer : Node
 		}
 
 		state["captureScreen"] = Engine_UiSource.Current.MenuScreenId();
-
-		// The world-map region sample (the minimap's keys) as the C# side reads it RIGHT NOW — the
-		// half of the round-trip a blank minimap cannot distinguish on its own: a nameless sample is
-		// the pump never publishing; a named one that stays blank is the match refusing it.
-		Refii.Host.HostBridge.WorldMapRegion region = Refii.Host.HostBridge.GetWorldMapRegion();
-		// Count discriminates the halves: 7 with no name means the pump's walk works and the
-		// WANTED index never matched (the request side); 0 means the walk itself is failing.
-		state["regionCount"] = region.Count;
-		state["regionKnown"] = region.Name.Length != 0;
-		state["regionIndex"] = region.Index;
-		state["regionName"] = region.Name;
-		state["regionLevel"] = region.LevelName;
 		return state;
 	}
 

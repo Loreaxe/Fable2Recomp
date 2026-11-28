@@ -11,6 +11,8 @@ using refii::coop::EstateAccess;
 using refii::coop::EstateAccessFor;
 using refii::coop::EstateActionAllowed;
 using refii::coop::EstateActsFor;
+using refii::coop::EstateOwnerCopyServes;
+using refii::coop::EstatePartnershipHere;
 
 int main() {
   // No hero owns it: open to either player, who may buy it and nothing else.
@@ -46,6 +48,27 @@ int main() {
     assert(EstateActsFor(2, 1, partnership) == 1);
     assert(EstateActsFor(1, 2, partnership) == 2);
   }
+  // The partnership decided by: the host and local co-op read their own; an online joiner takes the
+  // host's statement once it has arrived, its own before; anything outside 0..2 is none.
+  for (int own = 0; own <= 2; ++own) {
+    for (int stated = 0; stated <= 2; ++stated) {
+      assert(EstatePartnershipHere(false, true, stated, own) == own);
+      assert(EstatePartnershipHere(true, true, stated, own) == stated);
+      assert(EstatePartnershipHere(true, false, stated, own) == own);
+    }
+  }
+  assert(EstatePartnershipHere(true, true, 3, 1) == 0);
+  assert(EstatePartnershipHere(false, false, 0, -1) == 0);
+  // A joiner whose own reading is none while the host's says partners: partners, both ways, married too.
+  for (int stated = 1; stated <= 2; ++stated) {
+    const int partnership = EstatePartnershipHere(true, true, stated, 0);
+    assert(EstateAccessFor(2, 1, partnership) == EstateAccess::kPartner);
+    assert(EstateActsFor(2, 1, partnership) == 1);
+  }
+  // The owner's copy serves a bound screen with its properties and its targeting; the purse is not asked.
+  assert(EstateOwnerCopyServes(true, true));
+  assert(!EstateOwnerCopyServes(true, false));
+  assert(!EstateOwnerCopyServes(false, true));
   std::puts("estate owner rule: ok");
   return 0;
 }

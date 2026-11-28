@@ -1390,10 +1390,13 @@ REFII_LUA_NATIVE(NativeEstateReady) {
 namespace {
 constexpr int32_t kTypeUserdata = 7;
 
-/// The record hash of the inventory item a Lua InventoryItem userdata holds: its body is the item's
-/// handle (`*body` the item — what `Lua_GUI_DisplayReceivedItem`'s core `sub_82304EF8` tests, TU1
-/// 0x82304F0C `lwz r11,0(r4)`), the record hash at item+4 (`CECInventory_FindItemByRecordHash`
-/// compares it, 0x824F1CE4). 0 for anything else, an Entity userdata included.
+/// The record hash of the inventory item a Lua InventoryItem userdata holds. Its body holds a POINTER
+/// to the item's handle: the GUI.DisplayReceivedItem binding passes `*body` as the handle
+/// (`bl lua_touserdata` / `lwz r3,0(r3)` / `bctrl`, TU1 0x8235C1E0..0x8235C1EC, disc 0x823B1E68..
+/// 0x823B1E74), and its core `sub_82304EF8` takes the item from the handle's first word (TU1 0x82304F0C
+/// `lwz r11,0(r4)`). The record hash is item+4 (`sub_821DA348` stores it there, with the GDB entry at
+/// +8; `CECInventory_FindItemByRecordHash` compares it, 0x824F1CE4), the count item+12. 0 for anything
+/// else, an Entity userdata included.
 uint32_t ItemRecord(Lua& lua, int32_t index) {
   if (lua.Type(index) != kTypeUserdata) {
     return 0u;
@@ -1410,7 +1413,8 @@ uint32_t ItemRecord(Lua& lua, int32_t index) {
   rex_lua_touserdata(data, lua.base);
   const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
   const uint32_t body = data.r3.u32;
-  const uint32_t item = plausible(body) ? refii::mods::LoadU32(lua.base, body) : 0u;
+  const uint32_t handle = plausible(body) ? refii::mods::LoadU32(lua.base, body) : 0u;
+  const uint32_t item = plausible(handle) ? refii::mods::LoadU32(lua.base, handle) : 0u;
   if (!plausible(item)) {
     return 0u;
   }

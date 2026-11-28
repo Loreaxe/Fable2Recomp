@@ -16,8 +16,9 @@ using Refii.Ui;
 /// edges' fills ("row": the shop's `sub_826B13B8`, keyed by the row's ticket; upgrade furniture's
 /// `sub_826B64D8`, keyed by the level), and the world map's (23) five row pages, one scope per page
 /// ("row.region" `sub_829AB0E0`, "row.quest" `sub_829AF638`, "row.job" `sub_829AFE58`, "row.sale"
-/// `sub_829AAB50`, "row.family" `sub_829B04E0`), run for the highlighted row each Update and keyed by
-/// the row's spawned id; and the item books' row fills ("row": screen 15 `sub_829B5160` + `sub_829B6B50`,
+/// `sub_829AAB50`, "row.family" `sub_829B04E0`, and the region row's minimap page "row.minimap"
+/// `sub_829ABFC0` — its image's texture and rotation, its legend, its projection and its icons), run for
+/// the highlighted row each Update and keyed by the row's spawned id; and the item books' row fills ("row": screen 15 `sub_829B5160` + `sub_829B6B50`,
 /// 16 `sub_829B6310` + `sub_829B7368`, 25 `sub_829AA588`), keyed by the row's ticket. A page's own fill drops
 /// the screen's row and tick statements. A row scope's
 /// statement belongs to the row whose id is its key — the edge ran its fills for the row the highlight
@@ -41,7 +42,31 @@ public static class Engine_UiPageFills
 
 		/// <summary>GDB records the fill named: "preview" (its preview's Set), "card" (furniture's card).</summary>
 		public readonly Dictionary<string, uint> Records = new(System.StringComparer.Ordinal);
+
+		/// <summary>Texture hashes the fill stored on a quad (`sub_82425C10`, the minimap's inline stores), by path.</summary>
+		public readonly Dictionary<string, uint> Textures = new(System.StringComparer.Ordinal);
+
+		/// <summary>Rotations the fill handed an element (`sub_824254C8`), radians about x, y, z, by path.</summary>
+		public readonly Dictionary<string, Vector3> Rotations = new(System.StringComparer.Ordinal);
+
+		/// <summary>The minimap fill's projection (`map`), or null when it stated none.</summary>
+		public MinimapProjection? Projection;
+
+		/// <summary>The minimap fill's icons (`icon`), in the order its builder was called.</summary>
+		public readonly List<MinimapIcon> Icons = new();
 	}
+
+	/// <summary>
+	/// The page fields the minimap's icon builder projects through (minimap_page_stated.cpp): page+0x1C the
+	/// degrees to north, +0x34 the icon rotation, +0x40 / +0x44 / +0x48 the icon offset, +0x50 the icon scale,
+	/// +0x54 the proper-minimap flag, +0x30 the current level's larger span.
+	/// </summary>
+	public readonly record struct MinimapProjection(
+		float DegreesToNorth, float IconRotation, Vector3 IconOffset, float IconScale, bool Proper, float Extent);
+
+	/// <summary>One icon the minimap fill handed its builder (`sub_829AE1C8`): its texture hash, its world
+	/// point, its facing (zero for none).</summary>
+	public readonly record struct MinimapIcon(uint Texture, Vector3 World, Vector3 Facing);
 
 	private static readonly Dictionary<(uint Screen, string Scope), Fill> Said = new();
 
@@ -101,6 +126,20 @@ public static class Engine_UiPageFills
 				case "record" when uint.TryParse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint record):
 					fill.Records[path] = record;
 					break;
+				case "texture" when uint.TryParse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint hash):
+					fill.Textures[path] = hash;
+					break;
+				case "rotation" when Floats(value, 3) is { } turn:
+					fill.Rotations[path] = new Vector3(turn[0], turn[1], turn[2]);
+					break;
+				case "map" when Floats(value, 8) is { } map:
+					fill.Projection = new MinimapProjection(
+						map[0], map[1], new Vector3(map[2], map[3], map[4]), map[5], map[6] != 0f, map[7]);
+					break;
+				case "icon" when uint.TryParse(path, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint icon) &&
+					Floats(value, 6) is { } point:
+					fill.Icons.Add(new MinimapIcon(icon, new Vector3(point[0], point[1], point[2]), new Vector3(point[3], point[4], point[5])));
+					break;
 				case "colour" or "tint" when value.Length == 8 &&
 					uint.TryParse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint rgba):
 					(kind == "tint" ? fill.Tints : fill.Colours)[path] = new Color(
@@ -111,6 +150,28 @@ public static class Engine_UiPageFills
 		}
 
 		return (screen, scope, fill);
+	}
+
+	/// <summary>Exactly <paramref name="count"/> space-separated invariant floats, or null.</summary>
+	private static float[]? Floats(string value, int count)
+	{
+		string[] parts = value.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+		if (parts.Length != count)
+		{
+			return null;
+		}
+
+		var numbers = new float[count];
+		for (int i = 0; i < count; ++i)
+		{
+			if (!float.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out numbers[i]) ||
+				!float.IsFinite(numbers[i]))
+			{
+				return null;
+			}
+		}
+
+		return numbers;
 	}
 
 	/// <summary>What the screen's fill under <paramref name="scope"/> last wrote, or null.</summary>

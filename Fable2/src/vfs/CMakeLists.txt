@@ -36,6 +36,9 @@ set(REFII_VFS_RUNTIME_SOURCES
     # RTLD_DEFAULT to compile against and no global scope to look a name up in.
     ${REFII_VFS_ROOT}/src/core/stated_fx_state.cpp
     ${REFII_VFS_ROOT}/src/core/target_highlight_state.cpp
+    # Each hero's owned properties as the guest's own calls state them, filled by
+    # Fable2/src/hooks/src/property_list_hooks.cpp; read by the host bridge's RefiiHostGetProperties.
+    ${REFII_VFS_ROOT}/src/core/property_list_state.cpp
     # Each renderable's stated appearance (alpha, tint, scale, drawable): same rule, filled by
     # Fable2/src/vfs/src/hooks/entity_appearance.cpp.
     ${REFII_VFS_ROOT}/src/core/entity_appearance_state.cpp
@@ -151,6 +154,7 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     ${REFII_VFS_ROOT}/src/hooks/shop_keeper_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/preview_item_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/page_fills_stated.cpp
+    ${REFII_VFS_ROOT}/src/hooks/minimap_page_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/item_rows_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/pending_weapons_stated.cpp
     ${REFII_VFS_ROOT}/src/hooks/experience_counter_stated.cpp

@@ -11900,6 +11900,21 @@
 0x8282BCA0 = { name = "rex_CECBuilding_SalePrice" }
 0x828D0080 = { name = "rex_CECPlayerProperties_Buy" }
 0x828D0B78 = { name = "rex_CECPlayerProperties_Sell" }
+# Each hero's owned properties, stated by the calls that change them (hooks/src/property_list_hooks.cpp): the
+# purchase's record constructor, the loader (slot 9) and its per-record read, the removal, the destructor, the
+# marital / occupancy setters and the record re-asks (has tenants, has workers, value).
+0x828CD2F0 = { name = "rex_PlayerBuildingData_FromBuilding", size = 0x28C }
+0x828D1A00 = { name = "rex_CECPlayerProperties_Serialize", size = 0x830 }
+0x828CE118 = { name = "rex_PlayerBuildingData_Serialize", size = 0x4AC }
+0x828CFE08 = { name = "rex_CECPlayerProperties_RemoveRecord", size = 0x274 }
+0x828CE870 = { name = "rex_CECPlayerProperties_Destroy", size = 0x80 }
+0x828D2230 = { name = "rex_CECPlayerProperties_SetMaritalHome", size = 0xC8 }
+0x828D2300 = { name = "rex_CECPlayerProperties_ClearMaritalHome", size = 0xC8 }
+0x828D23D0 = { name = "rex_CECPlayerProperties_MarryHome", size = 0x384 }
+0x828D3BD8 = { name = "rex_CECPlayerProperties_SetOccupied", size = 0x134 }
+0x828CD6E8 = { name = "rex_PlayerBuildingData_HasTenants", size = 0x1CC }
+0x828CD8B8 = { name = "rex_PlayerBuildingData_HasWorkers", size = 0x1F0 }
+0x828CE5C8 = { name = "rex_PlayerBuildingData_Value", size = 0x198 }
 0x8282D410 = { name = "rex_CECBuilding_Owner" }
 0x8282D5D8 = { name = "rex_CECBuilding_Occupant" }
 0x8282AEB0 = { name = "rex_CECBuilding_BaseValue" }
@@ -12020,6 +12035,10 @@
 0x82426078 = { name = "rex_lhGuiElement_SetOpacity" }
 0x82425E58 = { name = "rex_lhGuiElement_SetTextColour" }
 0x82425C58 = { name = "rex_lhGuiElement_SetQuadColour" }
+# The minimap fill's legend textures (`sub_82425C10`: r3 &hash, r4 the element) and the map image's rotation
+# (`sub_824254C8`: r3 the element, f1..f3), stated inside a fill (page_fills_stated.cpp).
+0x82425C10 = { name = "rex_lhGuiElement_SetTextureHash", size = 0x48 }
+0x824254C8 = { name = "rex_lhGuiElement_SetRotation", size = 0x110 }
 0x82991800 = { name = "rex_lhGuiShopFrontPage_Fill" }
 0x825CC7A8 = { name = "rex_lhUpgradeableFurniture_Card" }
 0x82998FB0 = { name = "rex_lhGuiRealEstatePage1_Fill" }
@@ -12133,6 +12152,29 @@ jump_address_on_true = 0x82821CF4
 name = "RefiiCoopUseIconOfUser"
 address = 0x82821A30
 registers = ["r11", "r24", "r27"]
+
+# Before `cmplwi cr6,r9,0` on Inventory.AddItem's player test (r11 the receiver): a money item given to
+# player two is gold (coop_hero_hooks.cpp RefiiCoopMoneyItemForPlayerTwo).
+[[midasm_hook]]
+name = "RefiiCoopMoneyItemForPlayerTwo"
+address = 0x824F0B24
+registers = ["r9", "r11"]
+
+# Page 1 of the property screen: before `mr r4,r3` after Lua_Building_GetBuildingOwner, the host's stated
+# owner text as the caption on an online joiner (coop_estate_owner.cpp RefiiEstateOwnerStatedText).
+[[midasm_hook]]
+name = "RefiiEstateOwnerStatedText"
+address = 0x829996B8
+registers = ["r1", "r3"]
+jump_address_on_true = 0x82999714
+
+# Page 1's renter caption: before `mr r4,r3` after its occupant call, the host's stated tenant text on an
+# online joiner (coop_estate_owner.cpp RefiiEstateTenantStatedText).
+[[midasm_hook]]
+name = "RefiiEstateTenantStatedText"
+address = 0x8299973C
+registers = ["r1", "r3"]
+jump_address_on_true = 0x82999798
 
 [[midasm_hook]]
 name = "RefiiCoopShopForLocalPlayerTwo"
@@ -12938,6 +12980,70 @@ registers = ["r3"]
 name = "RefiiPauseMarker"
 address = 0x826A3FD8  # sub_826A3FD8 entry
 registers = ["r4", "r5"]
+return_on_true = true
+
+# THE WORLD MAP'S MINIMAP PAGE (minimap_page_stated.cpp): the fill's inline texture stores, each at its
+# `lwz r11, 4(rE)` head (the element, and the hash or the register holding its address), and the icon
+# builder sub_829AE1C8's entry (r3 page, r4 &hash, r5 &world, r6 &facing; its drawing body skipped).
+[[midasm_hook]]
+name = "RefiiMinimapImageTexture"
+address = 0x829AC770  # sub_829ABFC0, the map image
+registers = ["r24", "r29"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyTexture"
+address = 0x829AD3C0  # KeyImage, minimap16
+registers = ["r30", "r26"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyTexture"
+address = 0x829AD4B8  # KeyImage, minimap11
+registers = ["r30", "r25"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyTexture"
+address = 0x829AD5BC  # KeyImage, minimap1
+registers = ["r30", "r23"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyTexture"
+address = 0x829AD624  # KeyImage, minimap17
+registers = ["r30", "r24"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyTexture"
+address = 0x829AD71C  # KeyImage, minimap3
+registers = ["r30", "r22"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyTexture"
+address = 0x829AD814  # KeyImage, minimap10
+registers = ["r30", "r16"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyRegionExit"
+address = 0x829AD90C  # KeyImage, dword_8349D738
+registers = ["r30"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyWeaponShops"
+address = 0x829ADA08  # KeyImage, dword_8349D740
+registers = ["r30"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyMiscellaneous"
+address = 0x829ADB04  # KeyImage, dword_8349D744
+registers = ["r30"]
+
+[[midasm_hook]]
+name = "RefiiMinimapKeyAppearance"
+address = 0x829ADC00  # KeyImage, dword_8349D748
+registers = ["r30"]
+
+[[midasm_hook]]
+name = "RefiiMinimapIcon"
+address = 0x829AE1C8  # sub_829AE1C8 entry
+registers = ["r3", "r4", "r5", "r6"]
 return_on_true = true
 
 # The inline texture store on a headless element (gui_pause_hooks.cpp): each co-op save card's

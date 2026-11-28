@@ -39,6 +39,25 @@ public sealed class Fable3ScreenState
 	/// <summary>The stats pages' windows by page (2 categories, 3 statistics, 4 friends): the first row, the list's count and the rows drawn.</summary>
 	public Dictionary<int, (int Start, int Count, int Rows)> StatsWindows { get; } = new();
 
+	/// <summary>
+	/// The stats pages' lists as their writers stated them (stats_screen_stubs.cpp `@Screen.StatsList`), by
+	/// page (2 categories, 3 statistics, 4 friends): the count, the guest's window rows and first row, the
+	/// statistics page's online test, the title's tag and the A caption's tag (0: no A on that page).
+	/// </summary>
+	public Dictionary<int, StatsList> StatsLists { get; } = new();
+
+	/// <summary>The stats pages' rows (`@Screen.StatsRow`) by page, then by the row's index in the whole list.</summary>
+	public Dictionary<int, SortedDictionary<int, StatsRow>> StatsRows { get; } = new();
+
+	/// <summary>The board around the player for the statistic under the cursor (`@Screen.StatsBoard`), lines 1..3.</summary>
+	public SortedDictionary<int, StatsBoardLine> StatsBoard { get; } = new();
+
+	/// <summary>
+	/// The player the box belongs to as its Show cached it (`@Screen.Owner`: the stats box's +0x40, the
+	/// value its own handler tests a press's player against); null before it.
+	/// </summary>
+	public int? Owner { get; set; }
+
 	/// <summary>The promise ctor's tag and accepted argument (sub_827DA738 / disc sub_827A3290, r5 and r6), null before it.</summary>
 	public (uint Tag, bool Accepted)? Promise { get; set; }
 
@@ -100,6 +119,18 @@ public sealed class Fable3ScreenState
 
 	public bool OpenedFlag(int index, bool fallback) => index < Opened.Length ? Opened[index] != 0 : fallback;
 
+	/// <summary>One stats page's list as its writer stated it.</summary>
+	public sealed record StatsList(int Count, int Rows, int Start, bool Online, uint TitleTag, uint AcceptTag);
+
+	/// <summary>
+	/// One stats row: its label by tag (categories, statistics) or literally (a friend's gamertag), its
+	/// value text, its rank text ("" for none) and the offline rank's tag (0 for none).
+	/// </summary>
+	public sealed record StatsRow(uint LabelTag, string Label, string Value, string Rank, uint RankTag);
+
+	/// <summary>One line of the board around the player: whether it is the player's own, its gamertag, score and rank.</summary>
+	public sealed record StatsBoardLine(bool Mine, string GamerTag, string Score, string Rank);
+
 	/// <summary>The bed menu's stated tags (sub_82B8DB48's statics, by row and option).</summary>
 	public sealed record BedTags(uint SleepTitle, uint SexTitle, uint[] Sleep, uint[] SleepAbout, uint[] Sex, uint[] SexAbout);
 }
@@ -109,6 +140,9 @@ public sealed class Fable3ScreenState
 /// box until the box closes: `@Screen.Opened(box, kind, args…)`, `@Screen.PartnerRow(box, path, married, online, joinable)`,
 /// `@Screen.ScheduleRow(box, row, tick, tag)`, `@Screen.QuestRow(box, row, quest, selected, last)`,
 /// `@Screen.StatsPage(box, page)`, `@Screen.StatsWindow(box, page, start, count, rows)`,
+/// `@Screen.StatsList(box, page, count, rows, start, online, title tag, A tag)`, `@Screen.StatsRow(box, page,
+/// index, label tag, label, value, rank, rank tag)`, `@Screen.StatsBoard(box, line, mine, gamertag, score,
+/// rank)` and `@Screen.Owner(box, player)` (stats_screen_stubs.cpp),
 /// `@Screen.Promise(box, tag, accepted)`, `@Screen.Cursor(box, row)` (a row lever's stored row,
 /// display_box_hooks.cpp), `@Screen.Schedule(box, title tag, day tag, day)` (the king's
 /// schedule's Show) and `@Screen.Chat(box, saved, saved tag, muted tag, audible tag)` (the chat
@@ -272,6 +306,38 @@ public static class Fable3ScreenStatements
 			Fable3Elements.Parse(call.Argument(3).Text), Fable3Elements.Parse(call.Argument(4).Text)));
 		Add("@Screen.Schedule", call => At(call).Schedule =
 			(Fable3Elements.Parse(call.Argument(1).Text), Fable3Elements.Parse(call.Argument(2).Text), (int)call.Argument(3).Number));
+		Add("@Screen.StatsList", call =>
+		{
+			Fable3ScreenState state = At(call);
+			int page = (int)call.Argument(1).Number;
+			state.StatsLists[page] = new Fable3ScreenState.StatsList((int)call.Argument(2).Number, (int)call.Argument(3).Number,
+				(int)call.Argument(4).Number, call.Argument(5).Boolean, Fable3Elements.Parse(call.Argument(6).Text),
+				Fable3Elements.Parse(call.Argument(7).Text));
+			state.StatsRows[page] = new SortedDictionary<int, Fable3ScreenState.StatsRow>();
+			if (page == 3)
+			{
+				state.StatsBoard.Clear();
+			}
+		});
+		Add("@Screen.StatsRow", call =>
+		{
+			Fable3ScreenState state = At(call);
+			int page = (int)call.Argument(1).Number;
+			if (!state.StatsRows.TryGetValue(page, out SortedDictionary<int, Fable3ScreenState.StatsRow>? rows))
+			{
+				state.StatsRows[page] = rows = new SortedDictionary<int, Fable3ScreenState.StatsRow>();
+			}
+
+			rows[(int)call.Argument(2).Number] = new Fable3ScreenState.StatsRow(Fable3Elements.Parse(call.Argument(3).Text),
+				call.Argument(4).Text, call.Argument(5).Text, call.Argument(6).Text, Fable3Elements.Parse(call.Argument(7).Text));
+		});
+		Add("@Screen.StatsBoard", call =>
+		{
+			int line = (int)call.Argument(1).Number;
+			At(call).StatsBoard[line] = new Fable3ScreenState.StatsBoardLine(line == (int)call.Argument(2).Number,
+				call.Argument(3).Text, call.Argument(4).Text, call.Argument(5).Text);
+		});
+		Add("@Screen.Owner", call => At(call).Owner = (int)call.Argument(1).Number);
 		Add("@Screen.StatsWindow", call => At(call).StatsWindows[(int)call.Argument(1).Number] =
 			((int)call.Argument(2).Number, (int)call.Argument(3).Number, (int)call.Argument(4).Number));
 		Add("@Screen.Promise", call =>

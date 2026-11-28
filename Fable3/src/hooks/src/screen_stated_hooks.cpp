@@ -278,6 +278,14 @@ REX_EXTERN(rex_JobMultiplier_Set) {
   __imp__rex_JobMultiplier_Set(ctx, base);
 }
 
+/// The quest summary's owner: its ctor stores the player index of the GUI hero's (else the box
+/// entity's) component 37 `*(+0x14)+0x24` (-1 with no +0x14) at `stw r11,0x38(r24)` TU3 0x829BC23C /
+/// disc 0x829737D4, the value its input handler compares with r5 (`lwz r11,0x38(r3); cmpw r5,r11`
+/// 0x829BD028..0x829BD030). `@Screen.Owner(box, player)`.
+void RefiiF3QuestSummaryOwner(PPCRegister& box, PPCRegister& player) {
+  Statement("@Screen.Owner").Add(Text(Hex(box.u32))).Add(Number(static_cast<float>(static_cast<int32_t>(player.u32)))).Post();
+}
+
 /// sub_829BCA18(box, row, quest, selected, isLast).
 REX_EXTERN(rex_QuestSummary_Row) {
   const int32_t row = static_cast<int32_t>(ctx.r4.u32);
@@ -385,24 +393,19 @@ REX_EXTERN(rex_PartnersBox_Row) {
   __imp__rex_PartnersBox_Row(ctx, base);
 }
 
-/// THE STATS SCREEN'S WINDOWS: each page's writer decides its first row, and the cursor `+68` is
-/// highlighted where `start + row == cursor`. `@Screen.StatsWindow(box, page, start, count, rows)`
-/// at the instruction after the decision:
-///   - categories sub_829B7458: count = the categories / 20 (`divw r7` 0x829B7480); start r24 = 0, or
-///     cursor - 8 when count > 8 and cursor >= 8 (0x829B7484..0x829B749C); rows 0..7 (`cmplwi r28,8`
-///     0x829B75F8). Midasm at 0x829B74A4 (box r27).
-///   - statistics sub_829B76A0: count r30 (0x829B78CC); rows r27 = 6 when the profile is online and
-///     listed (disc 0x8296F1C8..disc 0x8296F1D4), else 9 (disc 0x8296F1E8); start r31 = 0, or cursor - rows + 1
-///     when count > rows and cursor >= rows (0x829B790C..0x829B792C). Midasm at 0x829B7930 (box r28).
-///   - friends sub_829B8FC0: count r31 (stored at box+80, 0x829B9268); start r10 = 0, or cursor - 8
-///     when count > 9 and cursor >= 9 (0x829B9264..0x829B927C); rows 0..8. Midasm at 0x829B9280
-///     (box r28).
+/// THE STATS SCREEN'S WINDOWS: each page's writer decides its first row, and the cursor `+0x44` is
+/// highlighted where `start + row == cursor`. The three writers are replaced and state their window
+/// with their rows (stats_screen_stubs.cpp): `@Screen.StatsWindow(box, page, start, count, rows)`.
 namespace {
 
 /// The stats pages' list lengths as their writers stated them, for the box that shows.
 std::mutex g_stats_mutex;
 uint32_t g_stats_box = 0u;
 uint32_t g_stats_counts[3] = {0u, 0u, 0u};
+
+}  // namespace
+
+namespace refii::fable3 {
 
 void StateStatsWindow(uint32_t box, int32_t page, uint32_t start, uint32_t count, int32_t rows) {
   {
@@ -420,19 +423,7 @@ void StateStatsWindow(uint32_t box, int32_t page, uint32_t start, uint32_t count
   statement.Add(Number(static_cast<float>(rows))).Post();
 }
 
-}  // namespace
-
-void RefiiF3StatsCategories(PPCRegister& box, PPCRegister& start, PPCRegister& count) {
-  StateStatsWindow(box.u32, 2, start.u32, count.u32, 8);
-}
-
-void RefiiF3StatsStatistics(PPCRegister& box, PPCRegister& start, PPCRegister& count, PPCRegister& rows) {
-  StateStatsWindow(box.u32, 3, start.u32, count.u32, static_cast<int32_t>(rows.u32));
-}
-
-void RefiiF3StatsFriends(PPCRegister& box, PPCRegister& start, PPCRegister& count) {
-  StateStatsWindow(box.u32, 4, start.u32, count.u32, 9);
-}
+}  // namespace refii::fable3
 
 namespace refii::fable3 {
 

@@ -330,8 +330,6 @@ uint32_t refii_bridge_hero_inventory_items_snapshot(uint32_t* out, uint32_t word
 void refii_bridge_publish_player_inventory(int32_t player, const uint32_t* words, uint32_t count);
 uint32_t refii_bridge_player_inventory_snapshot(int32_t player, uint32_t* out, uint32_t word_capacity);
 void refii_bridge_publish_quests(const void* entries, uint32_t count);
-uint32_t refii_bridge_requested_world_map_region(void);
-void refii_bridge_publish_world_map_region(const void* region);
 
 /// 1 while a captured menu row stands for the inventory item `item` (its guest address), else 0
 /// (guest_tick_pump_state.cpp; refii::vfs::MenuRowsHoldItem).
@@ -367,9 +365,44 @@ bool refii_bridge_menu_last_spawned_row_name(int32_t event_type, uint32_t id, ch
 /// `g_Menu:IsHighlightedItemAtRoot()` readers answer "at root" for depth 0 or none stated.
 void refii_bridge_set_list_fold_depth(uint32_t screen, uint32_t depth);
 uint32_t refii_bridge_list_fold_depth(uint32_t screen);
-/// The world map's property row: the UID the host wants sampled, and the page's numbers for it.
-uint64_t refii_bridge_requested_property_estate(void);
-void refii_bridge_publish_property_estate(uint64_t uid, const void* estate);
+// EACH HERO'S OWNED PROPERTIES (src/core/property_list_state.cpp), as the guest's own calls state them
+// (hooks/src/property_list_hooks.cpp): keyed by the owner's CECPlayerProperties (hero component 69) and the
+// building's UID. A record's fields are "PlayerBuildingData"'s (the guest's serializer `sub_828CE118`
+// names them: +0/+4 BuildingID, +8 Name, +12 IsMaritalHome, +13 IsRentalProperty, +14 Dungeon, +15 IsHome,
+// +18 HasTenants, +19 HasWorkers, +28 Income, +44 CurrentValue, +48 BoughtFor).
+enum {
+  REFII_PROPERTY_MARITAL = 1u << 0,
+  REFII_PROPERTY_RENTED = 1u << 1,
+  REFII_PROPERTY_DUNGEON = 1u << 2,
+  REFII_PROPERTY_HOME = 1u << 3,
+  REFII_PROPERTY_TENANTS = 1u << 4,
+  REFII_PROPERTY_WORKERS = 1u << 5,
+};
+enum {
+  REFII_PROPERTY_FIELD_TENANTS = 0,
+  REFII_PROPERTY_FIELD_WORKERS = 1,
+  REFII_PROPERTY_FIELD_VALUE = 2,
+  REFII_PROPERTY_FIELD_INCOME = 3,
+};
+typedef struct RefiiStatedProperty {
+  uint64_t uid;
+  uint32_t flags;    // REFII_PROPERTY_*
+  int32_t income;    // +28
+  int32_t value;     // +44
+  int32_t bought;    // +48
+  char name[96];     // +8, the BuildingName tag
+} RefiiStatedProperty;
+/// Forgets every property of `props` (the loader empties the list, the component is destroyed).
+void refii_bridge_property_list_clear(uint32_t props);
+/// States one property of `props`, told by `record` (the guest's own record, 0 for none).
+void refii_bridge_property_list_put(uint32_t props, uint32_t record, const RefiiStatedProperty* property);
+void refii_bridge_property_list_remove(uint32_t props, uint64_t uid);
+/// Sets or clears one REFII_PROPERTY_* flag of `props`' property `uid`.
+void refii_bridge_property_list_flag(uint32_t props, uint64_t uid, uint32_t flag, int32_t on);
+/// One field (REFII_PROPERTY_FIELD_*) of the property `record` was told with.
+void refii_bridge_property_list_record_field(uint32_t record, int32_t field, int32_t value);
+/// `props`' properties in UID order, as many as fit; returns how many it holds.
+uint32_t refii_bridge_property_list_snapshot(uint32_t props, RefiiStatedProperty* out, uint32_t capacity);
 
 // What the guest TELLS a presentation's elements (refii_bridge_told_*) is shared state: its
 // entries are in core/payload_bridge.h, its queues in src/runtime/src/core/told_statements.cpp.

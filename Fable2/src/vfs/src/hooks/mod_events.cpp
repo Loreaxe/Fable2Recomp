@@ -6686,19 +6686,33 @@ extern "C" int32_t RefiiEstateBuyerOpens(PPCContext* ctx, uint8_t* base, int32_t
     return 0;
   }
   // WHO MAY ACT HERE (core/estate_owner_rule.h, coop_estate_owner.cpp): the building's owner, or the
-  // other hero while the two are partners — then the screen is the owner's, bound to their hero, which
-  // must carry what the binding reads of it (69, 77, 81, as above); else the page is the viewer's with
-  // Back alone. A building no hero owns is the guest's as shipped.
+  // other hero while the two are partners — then the screen is the owner's, bound to their hero as this
+  // machine has it; else the page is the viewer's with Back alone. A building no hero owns is the guest's
+  // as shipped. The partnership is the one this machine decides by (on an online joiner the host's,
+  // EstatePartnership). The owner's hero must carry what a screen bound to it reads (EstateOwnerCopyServes):
+  // its properties, the binding's `lbz r10,0x45(r11)` (TU1 0x826B1BCC / disc 0x82596E7C, comp69), and its
+  // targeting, `lbz r10,0x4D(r11)` (0x826B1ABC / 0x82596D6C, comp77; both pages and the rows read the same
+  // target). Its purse (81) is read only by the purchase helper `sub_826B2F20` / disc `sub_825981C0`
+  // (`lwz r11,0x90(r31)` then `lbz r10,0x51(r10)`, 0x826B2F3C / 0x826B2F64, disc 0x825981DC / 0x82598204),
+  // which OnMenuEvent calls only to buy (111 at 0x826B23CC, and 112 / 116 when the bound hero does not own
+  // the building, 0x826B2458 / 0x826B24E8; disc 0x82597678 / 0x82597700 / 0x82597790) — refused for a
+  // building a hero owns — and by Update's gold readout `sub_8246B5E8` / disc `sub_82837218` (0x826B1F2C /
+  // 0x825971DC), which tests for it first (`extrwi r9,r10,1,14` 0x8246B690 / 0x828372C0). So the purse is not
+  // asked of the owner: an online joiner's copy of the host's hero is the only owner's hero that is not this
+  // machine's own.
   const int32_t owner = refii::vfs::EstateOwnerPlayer(*ctx, base, building);
-  const int32_t partnership = owner != 0 && owner != buyer ? refii_bridge_partnership() : 0;
+  const int32_t partnership = owner != 0 && owner != buyer ? refii::vfs::EstatePartnership() : 0;
   refii::coop::EstateAccess access = refii::coop::EstateAccessFor(buyer, owner, partnership);
   int32_t acts_for = buyer;
   uint32_t owner_use = 0u;
+  uint32_t owner_hero = 0u;
+  bool owner_props = false;
   if (access == refii::coop::EstateAccess::kPartner) {
-    const uint32_t owner_hero = owner == 2 ? EstateHeroTwo(base) : refii_mod_player_hero(base, 1);
+    owner_hero = owner == 2 ? (RefiiCoopGetOwnHero() != 0 ? refii_mod_player_hero(base, 2) : 0u)
+                            : refii_mod_player_hero(base, 1);
     owner_use = owner_hero != 0u ? refii_mod_component(base, owner_hero, 77u) : 0u;
-    if (owner_use != 0u && refii_mod_component(base, owner_hero, 69u) != 0u &&
-        refii_mod_component(base, owner_hero, 81u) != 0u) {
+    owner_props = owner_hero != 0u && refii_mod_component(base, owner_hero, 69u) != 0u;
+    if (refii::coop::EstateOwnerCopyServes(owner_props, owner_use != 0u)) {
       acts_for = owner;
     } else {
       access = refii::coop::EstateAccess::kRefused;
@@ -6714,9 +6728,22 @@ extern "C" int32_t RefiiEstateBuyerOpens(PPCContext* ctx, uint8_t* base, int32_t
   session.owner_use = owner_use;
   refii::vfs::EstateSessionPending(session);
   if (owner != 0 && owner != buyer) {
-    REXLOG_INFO("Refii estate: player {} opens building {:08X}, player {}'s: {}", buyer, building, owner,
-                access == refii::coop::EstateAccess::kPartner ? "partners, the screen acts for its owner"
-                                                              : "not partners, the page only");
+    // Which test decided it, with the words behind the partnership.
+    std::string why;
+    if (access == refii::coop::EstateAccess::kPartner) {
+      why = "partners, the screen acts for its owner";
+    } else if (partnership == 0) {
+      why = "not partners, the page only";
+    } else {
+      char lacks[160];
+      std::snprintf(lacks, sizeof(lacks),
+                    "partners (%d), but player %d's hero %08X here has %s%s%s — the page only", partnership, owner,
+                    owner_hero, owner_hero == 0u ? "no hero" : "", owner_hero != 0u && !owner_props ? "no properties (69)" : "",
+                    owner_hero != 0u && owner_props && owner_use == 0u ? "no targeting (77)" : "");
+      why = lacks;
+    }
+    REXLOG_INFO("Refii estate: player {} opens building {:08X}, player {}'s: {} ({})", buyer, building, owner, why,
+                refii::vfs::EstatePartnershipWords());
   }
   return acts_for;
 }
@@ -6862,7 +6889,15 @@ REX_EXTERN(rex_CECPlayerProperties_SetRentedOut) {
       return;
     }
   }
+  const uint32_t props = ctx.r3.u32;
+  const uint32_t building = ctx.r4.u32;
+  const int32_t rented = ctx.r5.u8 != 0 ? 1 : 0;
   __imp__rex_CECPlayerProperties_SetRentedOut(ctx, base);
+  // The owner's stated property follows (`stb r5,0xD(record)` 0x828D29B8; core/property_list_state.cpp).
+  if (Plausible(building)) {
+    const uint64_t uid = (static_cast<uint64_t>(Load32(base, building + 20u)) << 32) | Load32(base, building + 24u);
+    refii_bridge_property_list_flag(props, uid, REFII_PROPERTY_RENTED, rented);
+  }
 }
 
 // Presentation the host never shows for the joiner's replayed action: the screen's message (here)
@@ -7176,7 +7211,7 @@ bool FurnitureMayUpgrade(PPCContext& ctx, uint8_t* base, int32_t player, int32_t
   int32_t refusing = 0;
   for (const auto& [building, starter] : g_redecorating) {
     const int32_t owner = refii::vfs::EstateOwnerPlayer(ctx, base, ComponentOwner(base, building));
-    const int32_t partnership = owner != 0 && owner != player ? refii_bridge_partnership() : 0;
+    const int32_t partnership = owner != 0 && owner != player ? refii::vfs::EstatePartnership() : 0;
     const refii::coop::EstateAccess access = refii::coop::EstateAccessFor(player, owner, partnership);
     if (access == refii::coop::EstateAccess::kRefused || (access == refii::coop::EstateAccess::kOpen && starter != player)) {
       refusing = owner != 0 ? owner : starter;
@@ -7567,13 +7602,40 @@ extern "C" int32_t refii_household_received_item(PPCContext* ctx, uint8_t* base,
   const uint32_t root = Load32(base, refii::guest::Address(0x83496B08u));
   const uint32_t gui = root >= 0x10000u ? Load32(base, root + 0x1Cu) : 0u;
   int32_t opened = 0;
-  if (FindHeroTwoItem(frame, base, inventory, handle, hash) != 0u && gui >= 0x10000u &&
-      Load8(base, refii::guest::Address(0x83319409u)) != 0u) {
+  bool made = false;
+  if (FindHeroTwoItem(frame, base, inventory, handle, hash) == 0u) {
+    // Not held here (a money item the host's AddItem turned into gold, or an item whose `invadd` has
+    // not landed yet): the card's item is made the guest's own way, as Inventory.AddItem's money branch
+    // makes the one it returns for the card — `Render_AllocD3DObject(0x34)`, `sub_82763E88(item,
+    // inventory, record)`, `sub_82452B20(handle, item, 0)` (TU1 0x824F0C90..0x824F0CBC, disc
+    // 0x8261A978..0x8261A9A4: sub_82740CA0, sub_8241D160). It is in no inventory; the handle's release
+    // below drops it once the card lets go.
+    PPCContext alloc = frame;
+    alloc.r3.u64 = 0x34u;
+    const uint32_t fresh =
+        CallGuest(alloc, base, refii::guest::Address(0x8221F258u)) && alloc.r3.u32 >= 0x10000u ? alloc.r3.u32 : 0u;
+    if (fresh != 0u) {
+      PPCContext make = frame;
+      make.r3.u64 = fresh;
+      make.r4.u64 = inventory;
+      make.r5.u64 = hash;
+      CallGuest(make, base, refii::guest::Address(0x82763E88u));
+      PPCContext wrap = frame;
+      wrap.r3.u64 = handle;
+      wrap.r4.u64 = fresh;
+      wrap.r5.u64 = 0u;
+      CallGuest(wrap, base, refii::guest::Address(0x82452B20u));
+      made = Load32(base, handle) == fresh;
+    }
+  }
+  if (Load32(base, handle) != 0u && gui >= 0x10000u && Load8(base, refii::guest::Address(0x83319409u)) != 0u) {
     PPCContext work = frame;
     work.r3.u64 = Load32(base, gui + 0x30u);
     work.r4.u64 = handle;
     opened = CallGuest(work, base, refii::guest::Address(0x823C4340u)) ? 1 : 0;
   }
+  REXLOG_INFO("Refii co-op use: the received card of item 0x{:08X} {} here ({})", hash, opened != 0 ? "opens" : "does not open",
+              made ? "made for the card: not held here" : "this hero's own item");
   ReleaseHandle(frame, base, handle);
   return opened;
 }
@@ -7668,8 +7730,20 @@ bool ReplayHouseholdOnline(PPCContext& ctx, uint8_t* base, std::string_view acti
     t_useat_replay = false;
     t_useat_use = 0u;
     t_useat_icon = 0u;
-    REXLOG_INFO("Refii co-op use: the joiner used {:08X} here for hero two (its icon {})", thing,
-                value != 0 ? "up" : "down");
+    // The thing's script name (`lwz r11,0xC(r24)` / `lwz r3,0(r11)`, the string the use routine compares
+    // with "OnActionUseDiveSpot", TU1 0x82821C28..0x82821C2C).
+    const uint32_t name_cell = Load32(base, use + 0xCu);
+    const uint32_t name_text = name_cell >= 0x10000u ? Load32(base, name_cell) : 0u;
+    std::string script;
+    for (uint32_t i = 0; name_text >= 0x10000u && i < 64u; ++i) {
+      const char c = static_cast<char>(Load8(base, name_text + i));
+      if (c == 0) {
+        break;
+      }
+      script.push_back(c);
+    }
+    REXLOG_INFO("Refii co-op use: the joiner used {:08X} ({}) here for hero two (its icon {})", thing,
+                script.empty() ? "no script" : script, value != 0 ? "up" : "down");
     return true;
   }
   if (action == "invadd" || action == "invdel") {

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using Godot;
 using Refii.Gdb;
 
@@ -7,45 +8,39 @@ namespace Refii.Titles.Fable2;
 using Refii.Ui;
 
 /// <summary>
-/// The world map's REGION MAP page — screen 23's `Page2`, the one a stick-right turns to from
-/// the region readout. Owned: the guest's own page sub-state (`screen+128`, refresh
-/// `sub_829ABFC0`) ticks only while ITS page index is 1, and the host owns the book, so this
-/// states everything the guest would have written.
-///
-/// What the guest writes (all from `sub_829ABFC0`):
+/// The world map's REGION MAP page — screen 23's `Page2`, the one a stick-right turns to from the region
+/// readout. EVERYTHING ON IT IS ITS OWN FILL'S STATEMENT: the page's vf +12 `sub_829ABFC0` (disc
+/// `sub_828FE480`), run by the world map's Update for the highlighted region row under the page-fill scope
+/// "row.minimap" (gui_screen_stub_world_map.cpp; page_fills_stated.cpp, minimap_page_stated.cpp), keyed by
+/// the row's spawned id (`index + 999`, `addi r31,r10,-0x3E7` 0x829AC05C). The fill resolves the region's
+/// `MinimapInfo` record itself and states:
 /// <list type="bullet">
-/// <item>`Page2.Contents.Bowerstone` — the map image: texture = the region's
-/// `MinimapBackgroundImage`, `rotation.z = MinimapDegreesRotationToNorth·π/180`.</item>
-/// <item>`Page2.Contents.Legend.KeyName{1..13}` / `KeyImage{1..13}` — a legend of up to nine
-/// rows, chosen by whether the hero is in this region and whether it has a proper minimap;
-/// the rest hidden.</item>
-/// <item>Markers — not elements but 24-unit sprites on the GUI draw list, riding
-/// `Page2.Contents`: hero (`minimap16`, turned to face), dog (`minimap11`), the primary quest's
-/// trail target (`minimap1`, or `minimap17` when the quest is in another region), other quests'
-/// objectives (`minimap3`), travelling merchants (`minimap10`).</item>
+/// <item>`Page2.Contents.Bowerstone` — the map image: its texture (the record's `MinimapBackgroundImage`,
+/// the inline store 0x829AC798..0x829AC7A0) and its rotation (`sub_824254C8`, z = degrees to north ·
+/// π/180, 0x829AC7C4).</item>
+/// <item>`Page2.Contents.Legend.KeyName{1..13}` / `KeyImage{1..13}` — the legend rows it shows, their
+/// texts and icons, and the ones it hides.</item>
+/// <item>The projection (`map`: north, icon rotation, icon offset, icon scale, proper, extent — the page's
+/// own fields at the first icon) and each icon it hands its builder `sub_829AE1C8` (`icon`: texture,
+/// world point, facing): hero, dog, the trail target, other quests, travelling merchants — 24-unit
+/// sprites riding `Page2.Contents`.</item>
 /// </list>
-///
-/// The record: `LevelData`'s `MinimapInfo` table (alias `Fnv1("MinimapInfo")` in globals.gdb),
-/// child `regionmap_&lt;firstLevel&gt;_&lt;scenario&gt;` lower-cased with ` ( ) / \` turned to `_`
-/// (`sub_821E6848` passes at 0x829AC3xx), falling back to `&lt;firstLevel&gt;` alone. Its fields:
-/// `MinimapBackgroundImage` (a resource path whose string hash IS the texture hash),
-/// `MinimapDegreesRotationToNorth`, `IconTransformRotation`, `IconTransformX/Y/Z`,
-/// `IconTransformScale`, `HasProperMinimap` — inherited through `parent`, which the guest's
-/// NGDB read does too.
-///
-/// The projection, `sub_829AEAB8` (0x829AEAE4..0x829AEC00), world metres to element units:
+/// The fill is edge-triggered (0x829AC064..0x829AC074); the Update re-arms it each time the cursor lands
+/// on a region row, so a statement is the page as it stood then. Placement is Godot's: an icon's world
+/// point goes through <see cref="Project"/>, the builder's own projection `sub_829AEAB8`
+/// (0x829AEAE4..0x829AEC00), with the stated fields:
 /// <code>
-///   n      = world / extent                       extent = max(maxX − minX, maxY − minY) of the
-///                                                 CURRENT level (L+152..164); raw, no min term
+///   n      = world / extent
 ///   m      = 240 · (n − 0.5)                      (x from world.x, y from world.y)
 ///   θ      = −(DegreesToNorth + IconRotation)·π/180
 ///   r      = Scale · (m.x·cosθ + m.y·sinθ, −m.x·sinθ + m.y·cosθ)
 ///   screen = Bowerstone.position + (IconTransformX, IconTransformZ) + r
 /// </code>
-/// Markers are plotted only when the current level's key equals the selected region's and the
-/// region has a proper minimap. The hero sprite's turn is
-/// `(270 − (IconRotation + DegreesToNorth))·π/180 − atan2(fwd.y, fwd.x)`, fwd the hero's
-/// rotation applied to (0, 1, 0).
+/// and an icon with a facing turns by `(270 − (IconRotation + DegreesToNorth))·π/180 − atan2(f.y, f.x)`
+/// (0x829AE34C..0x829AE380); one with none does not turn.
+///
+/// The record lookup (<see cref="Resolve(string, string, string)"/>) stays for the pause root's map and
+/// the minimap mod, which key the CURRENT level the same way (`sub_826A4388`).
 /// </summary>
 public static class Engine_UiMinimapPage
 {
@@ -57,12 +52,10 @@ public static class Engine_UiMinimapPage
 	/// <summary>The map image element — the guest's `dword_8349D70C`.</summary>
 	public const string MapImage = "Page2.Contents.Bowerstone";
 
-	private const string LegendName = "Page2.Contents.Legend.KeyName";
+	private const uint ScreenId = 23u;
 
-	private const string LegendImage = "Page2.Contents.Legend.KeyImage";
-
-	/// <summary>`KeyName1..13` / `KeyImage1..13` are authored; the guest hides the rest.</summary>
-	public const int LegendSlots = 13;
+	/// <summary>The page fill's scope (gui_screen_stub_world_map.cpp `kMinimap`).</summary>
+	private const string Scope = "row.minimap";
 
 	/// <summary>The guest's page-turn cooldown (`*(float*)(a1+44) > 0.5`).</summary>
 	private const float FlipCooldownSeconds = 0.5f;
@@ -72,8 +65,6 @@ public static class Engine_UiMinimapPage
 
 	/// <summary>`240.0`, the map's half-span in element units in `sub_829AEAB8`.</summary>
 	private const float MapHalfSpan = 240f;
-
-	private const string IconFolder = @"art\gui\wheelicons\minimap\minimap";
 
 	/// <summary>The region readout is `Page1`; `Page2` stands in its place while the player has
 	/// turned to the map. Host-owned, because the host owns the book.</summary>
@@ -137,10 +128,6 @@ public static class Engine_UiMinimapPage
 	private static readonly Dictionary<string, Info?> _resolved = new();
 
 	private static string _said = string.Empty;
-
-	/// <summary>The record for one sampled region, or null when the GDB names none for it.</summary>
-	public static Info? Resolve(in Refii.Host.HostBridge.WorldMapRegion region) =>
-		Resolve(region.LevelName, region.Scenario, region.Name);
 
 	/// <summary>The record for a level by name and scenario — the pause root's lookup
 	/// (`sub_826A4388`) keys the CURRENT level the same way.</summary>
@@ -247,146 +234,164 @@ public static class Engine_UiMinimapPage
 	public static bool Standing(Engine_UiExpandableMenu.Item? row) =>
 		Shown && Engine_UiWorldMapPage.RegionOf(row) >= 0;
 
-	/// <summary>
-	/// The sample is for the highlighted row (the pump answers a tick late). The row is the guest's own
-	/// region row, `sub_829A3A30`'s `index + 999` (0x829A3B4C), and the sample is asked for by that
-	/// index into the same walk `sub_82518330` (<see cref="Engine_UiWorldMapPage.RegionOf"/>).
-	/// </summary>
-	private static bool SampleIsFor(Engine_UiExpandableMenu.Item? row, in Refii.Host.HostBridge.WorldMapRegion region) =>
-		region.IsFor(Engine_UiWorldMapPage.RegionOf(row));
-
-	/// <summary>Whether the hero stands in the sampled region — the gate on every marker and on
-	/// the long legend (`*(L+180) == key(selected)`).</summary>
-	public static bool HeroHere(in Refii.Host.HostBridge.WorldMapRegion region, in Fable2Bridge.MinimapLive live) =>
-		live.Known && region.LevelKey != 0u && live.LevelKey == region.LevelKey;
-
-	// The legend rows, in the guest's order — (Babel tag, icon number).
-	private static readonly (string Tag, int Icon)[] LegendHere =
+	/// <summary>The highlighted region row's own minimap statement, when it has landed for that row; null
+	/// otherwise or while the page does not stand.</summary>
+	private static Engine_UiPageFills.Fill? Stated(Engine_UiExpandableMenu.Item? row)
 	{
-		("GUI_SCREEN_MAP_KEY_HERO", 16),
-		("GUI_SCREEN_MAP_KEY_DOG", 11),
-		("GUI_SCREEN_MAP_KEY_CURRENT_QUEST", 1),      // 17 and _EXIT when the quest is elsewhere
-		("GUI_SCREEN_MAP_KEY_QUEST", 3),
-		("GUI_SCREEN_MAP_KEY_TRAVELLING_MERCHANT", 10),
-		("GUI_SCREEN_MAP_KEY_REGION_EXIT", 18),
-		("SHOP_WEAPONS_CATEGORY", 22),
-		("GUI_SCREEN_MAP_MISCELLANOUS", 24),
-		("GUI_SCREEN_MAP_APPEARANCE", 23),
-	};
-
-	private static readonly (string Tag, int Icon)[] LegendElsewhere =
-	{
-		("GUI_SCREEN_MAP_KEY_REGION_EXIT", 18),
-		("SHOP_WEAPONS_CATEGORY", 22),
-		("GUI_SCREEN_MAP_MISCELLANOUS", 24),
-		("GUI_SCREEN_MAP_APPEARANCE", 23),
-	};
-
-	/// <summary>The legend rows the guest lists for a record — shared with the pause root's
-	/// `sub_826A3658`, which lists the same nine in the same order.</summary>
-	public static IReadOnlyList<(string Tag, int Icon)> Legend(Info info, bool heroHere, bool questHere)
-	{
-		if (!info.Proper)
+		if (!Standing(row))
 		{
-			return System.Array.Empty<(string, int)>();
+			_drawnFrom = null;
+			return null;
 		}
 
-		if (!heroHere)
-		{
-			return LegendElsewhere;
-		}
-
-		var rows = new List<(string, int)>(LegendHere);
-		if (!questHere)
-		{
-			rows[2] = ("GUI_SCREEN_MAP_KEY_CURRENT_QUEST_EXIT", 17);
-		}
-
-		return rows;
+		uint id = ((uint)row!.IdHigh << 16) | ((uint)row.IdLow & 0xFFFFu);
+		Engine_UiPageFills.Fill? fill = Engine_UiPageFills.ForRow(ScreenId, Scope, id);
+		SayDrawn(id, fill);
+		return fill;
 	}
 
-	public static uint IconHash(int icon) =>
-		Refii.Core.Engine_GameHash.ResourcePath(IconFolder + icon + ".tex");
+	/// <summary>The statement the standing page last said it was drawn from (one line each).</summary>
+	private static Engine_UiPageFills.Fill? _drawnFrom;
 
-	public static IReadOnlyDictionary<string, string> Values(
-		Engine_UiExpandableMenu.Item? row, in Refii.Host.HostBridge.WorldMapRegion region,
-		Refii.Text.Engine_BabelDatabase? strings)
+	/// <summary>
+	/// WHAT THE PAGE IS DRAWN FROM, once per statement while it stands: the region row's own minimap
+	/// statement (its map image's texture and turn, its legend's texts and rows, the projection and the
+	/// icons) — or, before that row's statement has landed, that the page is blank. A run reads the source
+	/// of every map it showed from this line (the native side's `the minimap fill stated` names the same).
+	/// </summary>
+	private static void SayDrawn(uint id, Engine_UiPageFills.Fill? fill)
 	{
-		var values = new Dictionary<string, string>();
-		if (!Standing(row) || !SampleIsFor(row, region) || Resolve(region) is not { } info)
+		// The test host has no Godot runtime to print through.
+		if (Refii.Core.Engine_AppRoot.IsTestHost)
+		{
+			return;
+		}
+
+		if (fill is null)
+		{
+			Say($"[minimap-page] region row {id}: no statement of its own yet — the page is blank until it lands");
+			return;
+		}
+
+		if (ReferenceEquals(fill, _drawnFrom))
+		{
+			return;
+		}
+
+		_drawnFrom = fill;
+		uint image = fill.Textures.TryGetValue(MapImage, out uint hash) ? hash : 0u;
+		float turn = fill.Rotations.TryGetValue(MapImage, out Vector3 rotation) ? rotation.Z : 0f;
+		int shown = 0;
+		foreach (bool on in fill.Shown.Values)
+		{
+			shown += on ? 1 : 0;
+		}
+
+		string projection = fill.Projection is { } map
+			? string.Create(CultureInfo.InvariantCulture,
+				$"north {map.DegreesToNorth:0.###} icon turn {map.IconRotation:0.###} offset ({map.IconOffset.X:0.###}, {map.IconOffset.Y:0.###}, {map.IconOffset.Z:0.###}) scale {map.IconScale:0.###} proper {map.Proper} extent {map.Extent:0.###}")
+			: "none";
+		Say(string.Create(CultureInfo.InvariantCulture,
+			$"[minimap-page] region row {id}: drawn from the guest's fill — map image {image:X8} turned {turn:0.###} rad, " +
+			$"{fill.Textures.Count} texture(s), {fill.Texts.Count} text(s), legend rows {shown} shown / " +
+			$"{fill.Shown.Count - shown} hidden, projection {projection}, {fill.Icons.Count} icon(s)"));
+	}
+
+	/// <summary>
+	/// The legend's texts as the fill wrote them, by path; a row it hid is blanked. Until the row's own
+	/// statement lands (a guest tick behind the cursor) every text the page's last statement wrote is blank
+	/// rather than another region's.
+	/// </summary>
+	public static IReadOnlyDictionary<string, string> Values(Engine_UiExpandableMenu.Item? row)
+	{
+		var values = new Dictionary<string, string>(System.StringComparer.Ordinal);
+		if (!Standing(row))
 		{
 			return values;
 		}
 
-		Fable2Bridge.MinimapLive live = Fable2Bridge.GetMinimapLive();
-		IReadOnlyList<(string Tag, int Icon)> legend = Legend(info, HeroHere(region, live), live.PrimaryQuestHere);
-		for (int i = 0; i < legend.Count && i < LegendSlots; ++i)
+		if (Stated(row) is { } fill)
 		{
-			values[LegendName + (i + 1)] =
-				strings is not null && strings.TryGetString(legend[i].Tag, out string text) && text.Length != 0
-					? text
-					: legend[i].Tag;
+			foreach ((string path, string text) in fill.Texts)
+			{
+				values[path] = text;
+			}
+
+			foreach ((string path, bool shown) in fill.Shown)
+			{
+				if (!shown)
+				{
+					values[path] = string.Empty;
+				}
+			}
+		}
+		else if (Engine_UiPageFills.Of(ScreenId, Scope) is { } last)
+		{
+			foreach (string path in last.Texts.Keys)
+			{
+				values[path] = string.Empty;
+			}
 		}
 
 		return values;
 	}
 
-	public static IReadOnlyDictionary<string, uint> Textures(
-		Engine_UiExpandableMenu.Item? row, in Refii.Host.HostBridge.WorldMapRegion region)
+	/// <summary>The map image's and the legend icons' textures as the fill stored them.</summary>
+	public static IReadOnlyDictionary<string, uint> Textures(Engine_UiExpandableMenu.Item? row)
 	{
-		var textures = new Dictionary<string, uint>();
-		if (!Standing(row) || !SampleIsFor(row, region) || Resolve(region) is not { } info)
+		var textures = new Dictionary<string, uint>(System.StringComparer.Ordinal);
+		if (Stated(row) is { } fill)
 		{
-			return textures;
-		}
-
-		if (info.Background != 0u)
-		{
-			textures[MapImage] = info.Background;
-		}
-
-		Fable2Bridge.MinimapLive live = Fable2Bridge.GetMinimapLive();
-		IReadOnlyList<(string Tag, int Icon)> legend = Legend(info, HeroHere(region, live), live.PrimaryQuestHere);
-		for (int i = 0; i < legend.Count && i < LegendSlots; ++i)
-		{
-			textures[LegendImage + (i + 1)] = IconHash(legend[i].Icon);
+			foreach ((string path, uint hash) in fill.Textures)
+			{
+				if (hash != 0u)
+				{
+					textures[path] = hash;
+				}
+			}
 		}
 
 		return textures;
 	}
 
-	public static IReadOnlyDictionary<string, bool> Active(
-		Engine_UiExpandableMenu.Item? row, in Refii.Host.HostBridge.WorldMapRegion region)
+	/// <summary>The legend rows the fill showed and hid; until the row's statement lands, the rows the last
+	/// statement showed are hidden.</summary>
+	public static IReadOnlyDictionary<string, bool> Active(Engine_UiExpandableMenu.Item? row)
 	{
-		var active = new Dictionary<string, bool>();
+		var active = new Dictionary<string, bool>(System.StringComparer.Ordinal);
 		if (!Standing(row))
 		{
 			return active;
 		}
 
-		int shown = 0;
-		if (SampleIsFor(row, region) && Resolve(region) is { } info)
+		if (Stated(row) is { } fill)
 		{
-			Fable2Bridge.MinimapLive live = Fable2Bridge.GetMinimapLive();
-			shown = Legend(info, HeroHere(region, live), live.PrimaryQuestHere).Count;
+			foreach ((string path, bool shown) in fill.Shown)
+			{
+				active[path] = shown;
+			}
 		}
-
-		for (int i = 1; i <= LegendSlots; ++i)
+		else if (Engine_UiPageFills.Of(ScreenId, Scope) is { } last)
 		{
-			active[LegendName + i] = i <= shown;
-			active[LegendImage + i] = i <= shown;
+			foreach (string path in last.Shown.Keys)
+			{
+				active[path] = false;
+			}
 		}
 
 		return active;
 	}
 
-	public static IReadOnlyDictionary<string, float> Rotations(
-		Engine_UiExpandableMenu.Item? row, in Refii.Host.HostBridge.WorldMapRegion region)
+	/// <summary>The map image's turn as the fill handed it (`sub_824254C8`'s z).</summary>
+	public static IReadOnlyDictionary<string, float> Rotations(Engine_UiExpandableMenu.Item? row)
 	{
-		var rotations = new Dictionary<string, float>();
-		if (Standing(row) && SampleIsFor(row, region) && Resolve(region) is { } info)
+		var rotations = new Dictionary<string, float>(System.StringComparer.Ordinal);
+		if (Stated(row) is { } fill)
 		{
-			rotations[MapImage] = Mathf.DegToRad(info.DegreesToNorth);
+			foreach ((string path, Vector3 turn) in fill.Rotations)
+			{
+				rotations[path] = turn.Z;
+			}
 		}
 
 		return rotations;
@@ -396,80 +401,43 @@ public static class Engine_UiMinimapPage
 	public readonly record struct Marker(uint Texture, Vector2 Position, float Rotation, float Depth);
 
 	/// <summary>
-	/// The markers for this frame, or an empty list — the guest's set, from the guest's state:
-	/// hero and dog from the entity feed, the trail target from the hero's components, other
-	/// quests from the log's objective entities. Nothing when the hero is elsewhere or the
-	/// region has no proper minimap.
+	/// The markers for this frame — the icons the fill handed its builder, in its order, each placed by
+	/// <see cref="Project"/> through the stated projection around the map image's authored position. None
+	/// before the row's statement lands; the fill hands none when the hero is not in the region or it has no
+	/// proper minimap (0x829AC888 / 0x829ACAF8).
 	/// </summary>
-	public static List<Marker> Markers(
-		Engine_UiExpandableMenu.Item? row, in Refii.Host.HostBridge.WorldMapRegion region,
-		Vector3? mapImagePosition)
+	public static List<Marker> Markers(Engine_UiExpandableMenu.Item? row, Vector3? mapImagePosition)
 	{
 		var markers = new List<Marker>();
-		if (!Standing(row) || !SampleIsFor(row, region) || Resolve(region) is not { } info ||
-			!info.Proper || mapImagePosition is not { } mapAt)
+		if (Stated(row) is not { Projection: { } projection } fill || mapImagePosition is not { } mapAt ||
+			projection.Extent <= 0f)
 		{
 			return markers;
 		}
 
-		Fable2Bridge.MinimapLive live = Fable2Bridge.GetMinimapLive();
-		if (!HeroHere(region, live) || live.Extent <= 0f)
-		{
-			return markers;
-		}
-
-		float depth = 0f;
+		var info = new Info(
+			0u, projection.DegreesToNorth, projection.IconRotation, projection.IconOffset, projection.IconScale,
+			projection.Proper);
 		Vector2 origin = new(mapAt.X, mapAt.Y);
-
-		// The hero — the menu owner's (`live.Hero`), so player two's map plots player two: the
-		// sprite is turned to face the way that hero does.
-		if (Place(info, origin, live.Hero, live.Extent) is { } heroAt)
-		{
-			float facing = Forward(live.Hero) is { } forward ? Mathf.Atan2(forward.Y, forward.X) : 0f;
-			float turn = Mathf.DegToRad(270f - (info.IconRotation + info.DegreesToNorth)) - facing;
-			markers.Add(new Marker(IconHash(16), heroAt, turn, depth));
-			depth += 0.1f;
-		}
-
-		if (Place(info, origin, live.Dog, live.Extent) is { } dogAt)
-		{
-			markers.Add(new Marker(IconHash(11), dogAt, 0f, depth));
-			depth += 0.1f;
-		}
-
-		if (live.HasTrailTarget)
+		float depth = 0f;
+		foreach (Engine_UiPageFills.MinimapIcon icon in fill.Icons)
 		{
 			markers.Add(new Marker(
-				IconHash(live.PrimaryQuestHere ? 1 : 17),
-				Project(info, origin, live.TrailTarget, live.Extent), 0f, depth));
-			depth += 0.1f;
-		}
-
-		foreach (Fable2Bridge.QuestEntry quest in Fable2Bridge.GetQuestLog())
-		{
-			if (quest.Primary || quest.ObjectiveEntity == 0u ||
-				!Refii.Game.GameEntities.TryGuestPosition(quest.ObjectiveEntity, out Vector3 at))
-			{
-				continue;
-			}
-
-			markers.Add(new Marker(IconHash(3), Project(info, origin, at, live.Extent), 0f, depth));
-			depth += 0.1f;
-		}
-
-		foreach (uint merchant in live.Merchants ?? System.Array.Empty<uint>())
-		{
-			if (!Refii.Game.GameEntities.TryGuestPosition(merchant, out Vector3 at))
-			{
-				continue;
-			}
-
-			markers.Add(new Marker(IconHash(10), Project(info, origin, at, live.Extent), 0f, depth));
+				icon.Texture, Project(info, origin, icon.World, projection.Extent), Turn(info, icon.Facing), depth));
 			depth += 0.1f;
 		}
 
 		return markers;
 	}
+
+	/// <summary>
+	/// An icon's turn, `sub_829AE1C8`: none for a zero facing (`vcmpeqfp` against zero, 0x829AE30C..0x829AE31C,
+	/// then the identity 0x829AE334), else `(270 − (IconRotation + DegreesToNorth))·π/180 − atan2(f.y, f.x)`.
+	/// </summary>
+	public static float Turn(Info info, Vector3 facing) =>
+		facing == Vector3.Zero
+			? 0f
+			: Mathf.DegToRad(270f - (info.IconRotation + info.DegreesToNorth)) - Mathf.Atan2(facing.Y, facing.X);
 
 	/// <summary>
 	/// An entity's place on a region map, in the map's element units around <paramref name="origin"/>:

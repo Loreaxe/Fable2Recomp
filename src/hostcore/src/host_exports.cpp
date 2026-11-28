@@ -819,7 +819,15 @@ extern "C" {
 /// 277 adds RefiiHostSetPlayerText: the shell writes a player's session TEXT (core/player_state.h) — the
 ///     achievements statement (core/achievement_statement.h) both mod surfaces and the co-op partner read.
 ///     RefiiHostAnswerHeroSaveChoice also takes -3: the joining player cancels the join.
-REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 277; }
+/// 278 removes RefiiHostGetWorldMapRegion (both titles; Fable 3 answered it empty) and (Fable 2)
+///     RefiiHostSetWorldMapRegion: the world map's minimap page is stated by its own fill (`@PageFill` scope
+///     row.minimap — its image, rotation, legend, projection and icons; minimap_page_stated.cpp).
+/// 279 removes (Fable 2) RefiiHostRequestPropertyEstate and RefiiHostGetPropertyEstate: the world map's
+///     Properties rows and pages are each hero's OWNED properties as the guest's own calls state them (the
+///     purchases, the loader's per-record read, the removal and the per-property setters; Fable 2
+///     hooks/src/property_list_hooks.cpp), which RefiiHostGetProperties now answers from; a property's page is
+///     its record, no sign's numbers sampled for it.
+REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 279; }
 
 extern "C" uint32_t RefiiSystemMessageBoxFront(char* out, uint32_t capacity);
 extern "C" void RefiiXamNotePad(uint32_t user, int32_t connected);

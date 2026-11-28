@@ -84,6 +84,8 @@ int32_t refii_bridge_safe_name_for_xuid(uint64_t xuid, char* out, uint32_t capac
 // name by the same rule); 0 when it names no known player. And this player's own name.
 int32_t refii_bridge_safe_name_for_sent(const char* sent, char* out, uint32_t capacity);
 int32_t refii_bridge_own_name(char* out, uint32_t capacity);
+// This player's own pseudonym (the profile name the game sends), for another machine to show by the rule above.
+int32_t refii_bridge_own_pseudonym(char* out, uint32_t capacity);
 
 // A member left the title's session (core/coop_channel.cpp): Refii's co-op channel forgets the
 // peer it learned, so nothing restates to an address whose player has gone.

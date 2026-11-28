@@ -148,6 +148,8 @@ PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetShown);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetOpacity);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetTextColour);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetQuadColour);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetTextureHash);
+PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_SetRotation);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiElement_GoToSlide);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiShopFrontPage_Fill);
 PPC_EXTERN_FUNC(__imp__rex_lhUpgradeableFurniture_Card);

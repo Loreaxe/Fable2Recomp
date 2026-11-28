@@ -1206,33 +1206,6 @@ uint32_t EntityComponentOf(const uint8_t* base, const EntityFields& fields, uint
 }  // namespace
 }  // extern "C++"
 
-/// The world map's MINIMAP KEYS for the region the host last asked for (SampleWorldMapRegion): the
-/// region's name, its first level, that level's world key and its scenario.
-///
-/// Two calls, one round trip: `RefiiHostSetWorldMapRegion` names the region and this reads back what
-/// the pump sampled, one tick later — the key and scenario come from guest calls on the guest thread.
-/// The region INFO page is not here: its own fill states it (page_fills_stated.cpp).
-///
-/// Returns the REGION COUNT, so a caller can bound its cursor; 0 means nothing sampled yet.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetWorldMapRegion(uint32_t* out_index,
-                                                          char* name, uint32_t name_capacity,
-                                                          char* level_name,
-                                                          uint32_t level_capacity,
-                                                          uint32_t* out_level_key,
-                                                          char* scenario,
-                                                          uint32_t scenario_capacity) {
-    const refii::vfs::WorldMapRegion region = refii::vfs::WorldMapRegionSnapshot();
-
-    // Which region this is; a caller that asked for another one is holding a stale answer.
-    if (out_index != nullptr) *out_index = region.index;
-    if (out_level_key != nullptr) *out_level_key = region.level_key;
-
-    WriteOut(region.name, name, name_capacity);
-    WriteOut(region.level_name, level_name, level_capacity);
-    WriteOut(region.scenario, scenario, scenario_capacity);
-    return region.count;
-}
-
 /// THE HIGHLIGHTED ROW GODOT STATES for an in-game screen's list (screen 0 clears it): the guest's
 /// highlighted-row reader `sub_826C1B50` answers with it (gui_menu_hooks.cpp) instead of asking
 /// its hidden Lua menu, so every screen handler acts on the row the player is on.
@@ -1308,11 +1281,6 @@ REFII_HOST_ABI_EXPORT int RefiiHostGetOptionsSliders(float* out_gamma, float* ou
     return known ? 1 : 0;
 }
 
-
-/// Names the region the pump should sample next — see RefiiHostGetWorldMapRegion.
-REFII_HOST_ABI_EXPORT void RefiiHostSetWorldMapRegion(uint32_t index) {
-    refii::vfs::RequestWorldMapRegion(index);
-}
 
 /// The hero's COMPLETED QUESTS — one entry per row of the logbook's quests page.
 ///
@@ -11391,15 +11359,15 @@ REFII_HOST_ABI_EXPORT int RefiiHostGetOpinionOfUid(uint64_t uid, int player, flo
     return 1;
 }
 
-/// A PLAYER'S PROPERTIES: the records of their hero's CECPlayerProperties (comp69: *(props+28) the
-/// list's sentinel, the record at node+8, "PlayerBuildingData": +0/+4 the building's UID, +8 its
-/// BuildingName tag, +12 marital home, +13 rented out, +14 dungeon, +15 home, +18 tenants,
-/// +19 workers, +28 income per drop, +44 value, +48 bought for), with each building's condition and
-/// a full repair's bill (core/property_condition.h). `player` 1 or 2, or 0 for the hero whose menus
-/// are open (ResolvePlayerHero). One record per line: `uid(hex) \t name tag \t flags \t income
-/// \t value \t condition \t repair bill \t bought for`, flags bit 0 marital, 1 rented, 2 dungeon, 3 home,
-/// 4 tenants, 5 workers, 6 shared with the holder's partner (core/hero_partners.cpp). Returns the
-/// byte count.
+/// A PLAYER'S PROPERTIES, as the guest's own calls stated them (core/property_list_state.cpp,
+/// hooks/src/property_list_hooks.cpp): the records of their hero's CECPlayerProperties (comp69) — each
+/// building's UID, BuildingName tag, flags, income per drop, value and bought-for price — with each
+/// building's condition and a full repair's bill (core/property_condition.h). `player` 1 or 2, or 0 for the
+/// hero whose menus are open (ResolvePlayerHero). One record per line: `uid(hex) \t name tag \t flags \t
+/// income \t value \t condition \t repair bill \t bought for`, flags bit 0 marital, 1 rented, 2 dungeon,
+/// 3 home, 4 tenants, 5 workers, 6 shared with the holder's partner (core/hero_partners.cpp), 7 held by that
+/// partner: a property the other hero bought while partnered with this one (its co-owner is this hero) is
+/// listed for both, its real owner's record. Returns the byte count.
 REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetProperties(int32_t player, char* out, uint32_t capacity) {
     auto* memory = SafeKernelMemory();
     const uint8_t* base = memory != nullptr ? memory->virtual_membase() : nullptr;
@@ -11414,45 +11382,42 @@ REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetProperties(int32_t player, char* out,
         return 0u;
     }
     const int32_t holder = hero == PlayerEntityForKey(base, 2u) ? 2 : 1;
-    std::string text;
-    const uint32_t head = GuestWordAt(base, props + 28u);
-    uint32_t node = heap(head) ? GuestWordAt(base, head) : 0u;
-    for (uint32_t n = 0; heap(node) && node != head && n < 256u; ++n, node = GuestWordAt(base, node)) {
-        const uint32_t record = GuestWordAt(base, node + 8u);
-        if (!heap(record)) {
-            continue;
-        }
-        const uint64_t uid = (static_cast<uint64_t>(GuestWordAt(base, record)) << 32) | GuestWordAt(base, record + 4u);
-        const uint32_t rep = GuestWordAt(base, record + 8u);
-        const uint32_t chars = heap(rep) ? GuestWordAt(base, rep) : 0u;
-        std::string name;
-        for (uint32_t i = 0; heap(chars) && i < 128u; ++i) {
-            const char c = static_cast<char>(GuestByteAt(base, chars + i));
-            if (c == '\0') {
-                break;
+    const auto stated = [](uint32_t of) {
+        std::vector<RefiiStatedProperty> list(refii_bridge_property_list_snapshot(of, nullptr, 0u));
+        list.resize(refii_bridge_property_list_snapshot(of, list.data(), static_cast<uint32_t>(list.size())));
+        return list;
+    };
+    std::vector<std::pair<RefiiStatedProperty, bool>> owned;
+    for (const RefiiStatedProperty& property : stated(props)) {
+        owned.emplace_back(property, false);
+    }
+    // The partner's purchases shared with this hero (Purchase, property_hooks.cpp: the co-owner is the
+    // buyer's partner's identity), from the partner hero's own stated list.
+    const uint64_t me = refii_bridge_hero_id(holder);
+    const uint32_t other = PlayerEntityForKey(base, static_cast<uint32_t>(3 - holder));
+    const uint32_t other_props = me != 0u && heap(other) && other != hero ? EntityComponent(base, other, 69u) : 0u;
+    if (heap(other_props) && refii_bridge_partner_kind(holder, refii_bridge_hero_id(3 - holder)) > 0) {
+        for (const RefiiStatedProperty& property : stated(other_props)) {
+            if (refii_bridge_coowner(property.uid) == me) {
+                owned.emplace_back(property, true);
             }
-            name.push_back(c == '\t' || c == '\n' ? ' ' : c);
         }
-        uint32_t flags = 0u;
-        flags |= GuestByteAt(base, record + 12u) != 0u ? 1u : 0u;
-        flags |= GuestByteAt(base, record + 13u) != 0u ? 2u : 0u;
-        flags |= GuestByteAt(base, record + 14u) != 0u ? 4u : 0u;
-        flags |= GuestByteAt(base, record + 15u) != 0u ? 8u : 0u;
-        flags |= GuestByteAt(base, record + 18u) != 0u ? 16u : 0u;
-        flags |= GuestByteAt(base, record + 19u) != 0u ? 32u : 0u;
-        const uint64_t co_owner = refii_bridge_coowner(uid);
+    }
+    std::string text;
+    for (const auto& [property, partners] : owned) {
+        uint32_t flags = property.flags & 0x3Fu;
+        const uint64_t co_owner = refii_bridge_coowner(property.uid);
         flags |= co_owner != 0u && refii_bridge_partner_kind(holder, co_owner) > 0 ? 64u : 0u;
-        const int32_t income = static_cast<int32_t>(GuestWordAt(base, record + 28u));
-        const int32_t value = static_cast<int32_t>(GuestWordAt(base, record + 44u));
+        flags |= partners ? (64u | 128u) : 0u;
         float condition = 1.0f;
-        const std::string key = refii::property::ConditionKey(uid);
+        const std::string key = refii::property::ConditionKey(property.uid);
         refii_bridge_player_get(1, key.c_str(), key.size(), &condition);
         condition = std::clamp(condition, 0.0f, 1.0f);
-        const int32_t bought = static_cast<int32_t>(GuestWordAt(base, record + 48u));
         char line[512];
         std::snprintf(line, sizeof(line), "%016llX\t%s\t%u\t%d\t%d\t%.4f\t%d\t%d\n",
-                      static_cast<unsigned long long>(uid), name.c_str(), flags, income, value, condition,
-                      refii::property::RepairCost(value, condition), bought);
+                      static_cast<unsigned long long>(property.uid), property.name, flags, property.income,
+                      property.value, condition, refii::property::RepairCost(property.value, condition),
+                      property.bought);
         text += line;
     }
     if (text.size() + 1u > capacity) {
@@ -11515,50 +11480,6 @@ REFII_HOST_ABI_EXPORT int32_t RefiiHostGetItemCount(int32_t player, uint32_t def
         node = GuestWordAt(base, node);
     }
     return count;
-}
-
-/// The world map's property row: names the UID the pump samples screen 28's numbers for (0 for
-/// none) — see SamplePropertyEstate.
-REFII_HOST_ABI_EXPORT void RefiiHostRequestPropertyEstate(uint64_t uid) {
-    refii::vfs::RequestPropertyEstate(uid);
-}
-
-/// The answer for `uid`, in fifteen words: record hash, type mask, owned, hasTenant, value, economy,
-/// decoration, income, salePrice, sellingFees, notVacant, ownerKilled, heroOpinion, the bonuses record
-/// and the hero's title record. Returns 1 when the building
-/// was sampled (its region is loaded), 0 when it was not or the answer is another row's.
-REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetPropertyEstate(uint64_t uid, uint32_t* out_words, uint32_t word_capacity,
-                                                         char* occupant, uint32_t occupant_capacity) {
-    uint64_t answered = 0u;
-    const refii::vfs::RealEstate estate = refii::vfs::PropertyEstateSnapshot(&answered);
-    if (answered != uid || !estate.known) {
-        return 0u;
-    }
-    WriteOut(estate.occupant, occupant, occupant_capacity);
-    const uint32_t words[] = {
-        estate.record,
-        estate.type_mask,
-        estate.owned ? 1u : 0u,
-        estate.has_tenant ? 1u : 0u,
-        static_cast<uint32_t>(estate.value),
-        static_cast<uint32_t>(estate.economy),
-        static_cast<uint32_t>(estate.decoration),
-        static_cast<uint32_t>(estate.income),
-        static_cast<uint32_t>(estate.sale_price),
-        static_cast<uint32_t>(estate.selling_fees),
-        static_cast<uint32_t>(estate.not_vacant),
-        static_cast<uint32_t>(estate.owner_killed),
-        static_cast<uint32_t>(estate.hero_opinion),
-        estate.bonuses_record,
-        estate.title_record,
-    };
-    if (out_words != nullptr) {
-        const uint32_t count = std::min<uint32_t>(word_capacity, sizeof(words) / sizeof(words[0]));
-        for (uint32_t i = 0; i < count; ++i) {
-            out_words[i] = words[i];
-        }
-    }
-    return 1u;
 }
 
 /// Sets the partnership in both heroes' saved values (0 ends it, 1 business, 2 married). Returns

@@ -49,6 +49,25 @@ constexpr bool EstateActionAllowed(bool purchase, int32_t viewer, int32_t owner,
   return access == EstateAccess::kOwner || access == EstateAccess::kPartner;
 }
 
+/// The partnership a machine decides by (`own` its own reading, refii_bridge_partnership: both heroes'
+/// saved words agree). The host decides every estate action an online joiner forwards, and states the
+/// partnership it reads to the joiner each second (coop_estate_statements.cpp); the joiner's screens take
+/// that statement once it has arrived, so both machines decide by one reading. A value outside 0..2 is
+/// none.
+constexpr int32_t EstatePartnershipHere(bool online_joiner, bool stated_known, int32_t stated, int32_t own) {
+  const int32_t kind = online_joiner && stated_known ? stated : own;
+  return kind >= 0 && kind <= 2 ? kind : 0;
+}
+
+/// Whether a screen may be bound to the owner's hero as this machine has it: what the property screen
+/// reads of its bound hero is the properties (69, the owned test and the record) and the targeting (77,
+/// the use target the binding and both pages read). The purse (81) is read only by the purchase helper,
+/// which a hero-owned building never runs (EstateActionAllowed refuses its purchase), and by the gold
+/// readout, which tests for it first.
+constexpr bool EstateOwnerCopyServes(bool has_properties, bool has_targeting) {
+  return has_properties && has_targeting;
+}
+
 }  // namespace refii::coop
 
 #endif

@@ -117,6 +117,7 @@
 #include "../../vfs/include/fable3_guest_build.h"
 
 REX_EXTERN(__imp__rex_GuiElement_Resolve);
+REX_EXTERN(rex_lhCharString_Dtor);
 REX_EXTERN(__imp__rex_GuiElement_SetState);
 REX_EXTERN(__imp__rex_GuiElement_SetOpacity);
 REX_EXTERN(__imp__rex_GuiElement_SetTextTag);
@@ -285,11 +286,20 @@ uint32_t BoxOwner(const uint8_t* base, uint32_t box) {
 
 }  // namespace
 
-/// The resolver: the path on entry, the element on exit.
+/// The resolver: the path on entry, the element on exit. GuiElement_Resolve(path, parent, pres)
+/// TU3 sub_82877B48 / disc sub_82819E40 owns its path: with no presentation it destroys it and
+/// answers 0 (`cmplwi r5,0; beq` 0x82877B5C..0x82877B60, `bl lhCharString_Dtor; li r3,0`
+/// 0x82877CA4..0x82877CAC). A Godot-owned screen's token takes that same exit: none of its
+/// elements exist.
 REX_EXTERN(rex_GuiElement_Resolve) {
   const uint32_t path_handle = ctx.r3.u32;
   const uint32_t parent = ctx.r4.u32;
   const uint32_t presentation = ctx.r5.u32;
+  if (IsPresentationToken(presentation)) {
+    rex_lhCharString_Dtor(ctx, base);
+    ctx.r3.u64 = 0u;
+    return;
+  }
   const std::string segment = base != nullptr ? ReadCharString(base, path_handle) : std::string();
 
   __imp__rex_GuiElement_Resolve(ctx, base);

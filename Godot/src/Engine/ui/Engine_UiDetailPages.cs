@@ -76,13 +76,12 @@ public static class Engine_UiDetailPages
 		Refii.Host.HostBridge.HeroDerived hero,
 		List<Refii.Host.HostBridge.CompletedQuest> quests,
 		Refii.Host.HostBridge.CrimeScreen crime,
-		Refii.Host.HostBridge.WorldMapRegion worldMap,
 		Refii.Host.HostBridge.OptionSliders sliders,
 		Refii.Text.Engine_BabelDatabase? strings,
 		bool optionsPageOpen = false)
 	{
 		Engine_UiPageContext page = Context(
-			screenId, row, vitals, hero, quests, crime, worldMap, sliders, strings,
+			screenId, row, vitals, hero, quests, crime, sliders, strings,
 			optionsPageOpen, false);
 		return Provider(screenId)?.Values(page) ?? Engine_UiPageProviders.NoValues;
 	}
@@ -91,19 +90,15 @@ public static class Engine_UiDetailPages
 	/// Quads this screen's provider textures itself — see
 	/// <see cref="Engine_UiOwnedBook.HostTextures"/>. Empty for a screen with none.
 	/// </summary>
-	public static IReadOnlyDictionary<string, uint> Textures(
-		uint screenId, Engine_UiExpandableMenu.Item? row,
-		Refii.Host.HostBridge.WorldMapRegion worldMap = default) =>
-		Provider(screenId)?.Textures(Row(screenId, row) with { WorldMap = worldMap }) ?? Engine_UiPageProviders.NoTextures;
+	public static IReadOnlyDictionary<string, uint> Textures(uint screenId, Engine_UiExpandableMenu.Item? row) =>
+		Provider(screenId)?.Textures(Row(screenId, row)) ?? Engine_UiPageProviders.NoTextures;
 
 	/// <summary>
 	/// Elements this screen's provider switches on or off outright — see
 	/// <see cref="Engine_UiOwnedBook.HostActive"/>. Empty for a screen with none.
 	/// </summary>
-	public static IReadOnlyDictionary<string, bool> Active(
-		uint screenId, Engine_UiExpandableMenu.Item? row,
-		Refii.Host.HostBridge.WorldMapRegion worldMap = default) =>
-		Provider(screenId)?.Active(Row(screenId, row) with { WorldMap = worldMap }) ?? Engine_UiPageProviders.NoActive;
+	public static IReadOnlyDictionary<string, bool> Active(uint screenId, Engine_UiExpandableMenu.Item? row) =>
+		Provider(screenId)?.Active(Row(screenId, row)) ?? Engine_UiPageProviders.NoActive;
 
 	/// <summary>
 	/// Elements whose opacity this screen's provider states outright — see
@@ -154,10 +149,8 @@ public static class Engine_UiDetailPages
 	}
 
 	/// <summary>Elements this screen's provider TURNS — see <see cref="Engine_UiOwnedBook.HostRotations"/>.</summary>
-	public static IReadOnlyDictionary<string, float> Rotations(
-		uint screenId, Engine_UiExpandableMenu.Item? row = null,
-		Refii.Host.HostBridge.WorldMapRegion worldMap = default) =>
-		Provider(screenId)?.Rotations(Row(screenId, row) with { WorldMap = worldMap }) ?? Engine_UiPageProviders.NoRotations;
+	public static IReadOnlyDictionary<string, float> Rotations(uint screenId, Engine_UiExpandableMenu.Item? row = null) =>
+		Provider(screenId)?.Rotations(Row(screenId, row)) ?? Engine_UiPageProviders.NoRotations;
 
 	/// <summary>Elements this screen's provider tints — see <see cref="Engine_UiOwnedBook.HostTints"/>.</summary>
 	public static IReadOnlyDictionary<string, Godot.Color> Tints(
@@ -181,7 +174,6 @@ public static class Engine_UiDetailPages
 	public static IReadOnlyDictionary<string, int> Slides(
 		uint screenId,
 		Engine_UiExpandableMenu.Item? row,
-		Refii.Host.HostBridge.WorldMapRegion worldMap,
 		bool hostRows,
 		Refii.Host.HostBridge.HeroVitals vitals = default,
 		Refii.Host.HostBridge.HeroDerived hero = default)
@@ -191,7 +183,6 @@ public static class Engine_UiDetailPages
 		// the logbook's dog star groups are goToSlide(level) off the dog's stats component.
 		Engine_UiPageContext page = Row(screenId, row) with
 		{
-			WorldMap = worldMap,
 			HostRows = hostRows,
 			Vitals = vitals,
 			Hero = hero,
@@ -226,7 +217,7 @@ public static class Engine_UiDetailPages
 	/// <summary>A context carrying only what the row-keyed questions need.</summary>
 	private static Engine_UiPageContext Row(uint screenId, Engine_UiExpandableMenu.Item? row) =>
 		Context(
-			screenId, row, default, default, EmptyQuests, default, default, default,
+			screenId, row, default, default, EmptyQuests, default, default,
 			null, false, false);
 
 	private static Engine_UiPageContext Context(
@@ -236,7 +227,6 @@ public static class Engine_UiDetailPages
 		Refii.Host.HostBridge.HeroDerived hero,
 		List<Refii.Host.HostBridge.CompletedQuest> quests,
 		Refii.Host.HostBridge.CrimeScreen crime,
-		Refii.Host.HostBridge.WorldMapRegion worldMap,
 		Refii.Host.HostBridge.OptionSliders sliders,
 		Refii.Text.Engine_BabelDatabase? strings,
 		bool optionsPageOpen,
@@ -249,7 +239,6 @@ public static class Engine_UiDetailPages
 			Hero = hero,
 			Quests = quests,
 			Crime = crime,
-			WorldMap = worldMap,
 			Sliders = sliders,
 			Strings = strings,
 			OptionsPageOpen = optionsPageOpen,

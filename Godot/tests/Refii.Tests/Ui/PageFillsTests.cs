@@ -196,6 +196,66 @@ public sealed class PageFillsTests
 		Engine_UiPageFills.Reset();
 	}
 
+	/// <summary>The minimap page's fill (minimap_page_stated.cpp): the map image's texture and turn, the legend, the
+	/// projection and the icons in call order, held for the region row that asked; each icon placed through the
+	/// stated projection, the hero's turned by its facing, the others not.</summary>
+	[TestCase]
+	public void TheMinimapPageIsItsRegionRowsOwnFill()
+	{
+		const string page2 = "Foreground.Book.Pages.Page2.Contents.";
+		Engine_UiPageFills.Reset();
+		Engine_UiMinimapPage.Reset();
+		Engine_UiPageFills.Filled(Call("23", "row.minimap", "1002",
+			"texture", page2 + "Bowerstone", "1A2B3C4D",
+			"rotation", page2 + "Bowerstone", "0 0 1.5708",
+			"text", page2 + "Legend.KeyName1", "Hero",
+			"shown", page2 + "Legend.KeyName1", "1",
+			"texture", page2 + "Legend.KeyImage1", "0000BEEF",
+			"shown", page2 + "Legend.KeyName10", "0",
+			"map", "Page2", "90 0 0 0 0 1 1 400",
+			"icon", "0000BEEF", "200 200 0 0 1 0",
+			"icon", "0000CAFE", "100 100 0 0 0 0"));
+
+		Engine_UiPageFills.Fill? fill = Engine_UiPageFills.ForRow(23, "row.minimap", 1002);
+		AssertThat(fill).IsNotNull();
+		AssertThat(fill!.Textures[page2 + "Bowerstone"]).IsEqual(0x1A2B3C4Du);
+		AssertThat(fill.Rotations[page2 + "Bowerstone"].Z).IsEqual(1.5708f);
+		AssertThat(fill.Projection).IsNotNull();
+		AssertThat(fill.Projection!.Value.Extent).IsEqual(400f);
+		AssertThat(fill.Icons.Count).IsEqual(2);
+		AssertThat(fill.Icons[1].Texture).IsEqual(0x0000CAFEu);
+
+		Engine_UiExpandableMenu.Item region = MapRow("Oakfield", 41, 1002);
+		AssertThat(Engine_UiMinimapPage.Values(region).Count).IsEqual(0);  // the page does not stand yet
+		Engine_UiMinimapPage.DriveFlip(true, 1, 1f);
+		AssertThat(Engine_UiMinimapPage.Values(region)[page2 + "Legend.KeyName1"]).IsEqual("Hero");
+		AssertThat(Engine_UiMinimapPage.Textures(region)[page2 + "Legend.KeyImage1"]).IsEqual(0x0000BEEFu);
+		AssertThat(Engine_UiMinimapPage.Active(region)[page2 + "Legend.KeyName10"]).IsFalse();
+		AssertThat(Engine_UiMinimapPage.Rotations(region)[page2 + "Bowerstone"]).IsEqual(1.5708f);
+
+		List<Engine_UiMinimapPage.Marker> markers = Engine_UiMinimapPage.Markers(region, new Godot.Vector3(10f, 20f, 0f));
+		AssertThat(markers.Count).IsEqual(2);
+		// The centre of the region (n = 0.5) sits on the map image's own position.
+		AssertThat(markers[0].Position.X).IsEqualApprox(10f, 0.001f);
+		AssertThat(markers[0].Position.Y).IsEqualApprox(20f, 0.001f);
+		// (270 − (0 + 90))·π/180 − atan2(1, 0) = π − π/2.
+		AssertThat(markers[0].Rotation).IsEqualApprox(System.MathF.PI / 2f, 0.0001f);
+		AssertThat(markers[1].Rotation).IsEqual(0f);
+		AssertThat(markers[1].Depth).IsEqualApprox(0.1f, 0.0001f);
+
+		// Another region before its statement lands: blank legend, no markers.
+		Engine_UiExpandableMenu.Item other = MapRow("Bowerstone Market", 41, 1003);
+		AssertThat(Engine_UiMinimapPage.Values(other)[page2 + "Legend.KeyName1"]).IsEqual(string.Empty);
+		AssertThat(Engine_UiMinimapPage.Active(other)[page2 + "Legend.KeyName1"]).IsFalse();
+		AssertThat(Engine_UiMinimapPage.Markers(other, new Godot.Vector3(10f, 20f, 0f)).Count).IsEqual(0);
+
+		// A malformed projection is dropped, not half-read.
+		Engine_UiPageFills.Filled(Call("23", "row.minimap", "1004", "map", "Page2", "90 0 nan"));
+		AssertThat(Engine_UiPageFills.ForRow(23, "row.minimap", 1004)!.Projection).IsNull();
+		Engine_UiMinimapPage.Reset();
+		Engine_UiPageFills.Reset();
+	}
+
 	/// <summary>The items book's row fill: its texts by path, a hidden path blank, the swatch's tint as a colour of its
 	/// own (blue, green, red, alpha in memory, stated RRGGBBAA), and nothing from another row's statement.</summary>
 	[TestCase]

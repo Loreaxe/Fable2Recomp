@@ -99,6 +99,9 @@ REX_EXTERN(__imp__rex_GuiElement_SetStateAt);
 REX_EXTERN(__imp__rex_GuiElement_RestartStateAt);
 REX_EXTERN(__imp__rex_GuiElement_SetTimeAt);
 REX_EXTERN(__imp__rex_GuiElement_SetColour);
+REX_EXTERN(__imp__rex_GuiElement_SetVisibleAt);
+REX_EXTERN(__imp__rex_GuiElement_SetTextNameAt);
+REX_EXTERN(__imp__rex_GuiElement_SetTextTagAt);
 
 namespace {
 
@@ -291,22 +294,7 @@ void StateTexture(uint32_t presentation, uint32_t element, const std::string& pa
   Post("@Ui.Texture", presentation, element, path, Text(texture), via);
 }
 
-}  // namespace refii::fable3
-
-/// `@Presentation.Load(pres, file)` when the load filled an empty slot; every stated value is
-/// forgotten, so the new document hears its texts again.
-REX_EXTERN(rex_GuiPresentation_Load) {
-  const uint32_t slot = ctx.r3.u32;
-  const bool empty = base != nullptr && Plausible(slot) && LoadGuestU32(base, slot) == 0u;
-  const std::string file = empty ? ReadCharString(base, ctx.r4.u32, 260u) : std::string();
-  __imp__rex_GuiPresentation_Load(ctx, base);
-  if (!empty) {
-    return;
-  }
-  const uint32_t presentation = LoadGuestU32(base, slot);
-  if (presentation == 0u) {
-    return;
-  }
+void NoteDocument(uint32_t presentation, const std::string& file) {
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_last.clear();
@@ -324,13 +312,36 @@ REX_EXTERN(rex_GuiPresentation_Load) {
   Statement("@Presentation.Load").Add(Text(Hex(presentation))).Add(Text(file)).Post();
 }
 
-/// sub_82876D78(path, pres, text): the text at entry.
+}  // namespace refii::fable3
+
+/// `@Presentation.Load(pres, file)` when the load filled an empty slot; every stated value is
+/// forgotten, so the new document hears its texts again.
+REX_EXTERN(rex_GuiPresentation_Load) {
+  const uint32_t slot = ctx.r3.u32;
+  const bool empty = base != nullptr && Plausible(slot) && LoadGuestU32(base, slot) == 0u;
+  const std::string file = empty ? ReadCharString(base, ctx.r4.u32, 260u) : std::string();
+  __imp__rex_GuiPresentation_Load(ctx, base);
+  if (!empty) {
+    return;
+  }
+  const uint32_t presentation = LoadGuestU32(base, slot);
+  if (presentation != 0u) {
+    NoteDocument(presentation, file);
+  }
+}
+
+/// sub_82876D78(path, pres, text): the text at entry. A Godot-owned screen's token is stated and
+/// the body skipped: it would make its path temporary (`bl sub_82225850` 0x82876D90) only to Find
+/// nothing.
 REX_EXTERN(rex_GuiElement_SetTextAt) {
   if (base != nullptr) {
     const std::string path = ReadCharString(base, ctx.r3.u32);
     if (!path.empty()) {
       StateText(ctx.r4.u32, 0u, path, ReadLhString(base, ctx.r5.u32), "82819070");
     }
+  }
+  if (IsPresentationToken(ctx.r4.u32)) {
+    return;
   }
   __imp__rex_GuiElement_SetTextAt(ctx, base);
 }
@@ -576,10 +587,16 @@ REX_EXTERN(rex_GuiElement_SetStateAt) {
     const std::string path = ReadCharString(base, ctx.r3.u32);
     if (!path.empty()) {
       StateState(ctx.r4.u32, 0u, path, static_cast<int32_t>(ctx.r5.u32), "8281A428");
+      if (IsPresentationToken(ctx.r4.u32)) {
+        return;
+      }
       StatedPathScope scope(ctx.r4.u32, path);
       __imp__rex_GuiElement_SetStateAt(ctx, base);
       return;
     }
+  }
+  if (IsPresentationToken(ctx.r4.u32)) {
+    return;
   }
   __imp__rex_GuiElement_SetStateAt(ctx, base);
 }
@@ -590,10 +607,16 @@ REX_EXTERN(rex_GuiElement_RestartStateAt) {
     const std::string path = ReadCharString(base, ctx.r3.u32);
     if (!path.empty()) {
       StateState(ctx.r4.u32, 0u, path, static_cast<int32_t>(ctx.r5.u32), "8281A500");
+      if (IsPresentationToken(ctx.r4.u32)) {
+        return;
+      }
       StatedPathScope scope(ctx.r4.u32, path);
       __imp__rex_GuiElement_RestartStateAt(ctx, base);
       return;
     }
+  }
+  if (IsPresentationToken(ctx.r4.u32)) {
+    return;
   }
   __imp__rex_GuiElement_RestartStateAt(ctx, base);
 }
@@ -612,7 +635,56 @@ REX_EXTERN(rex_GuiElement_SetTimeAt) {
       }
     }
   }
+  if (IsPresentationToken(ctx.r4.u32)) {
+    return;
+  }
   __imp__rex_GuiElement_SetTimeAt(ctx, base);
+}
+
+// THE OTHER PATH SETTERS, for a Godot-owned screen's token only: each is `(CCharString* path, pres,
+// value)`, copies its path (`bl sub_82225850`) and hands the copy to Find (sub_82877D40), which
+// destroys it — SetVisibleAt sub_82877898 / disc sub_82819B90 behind `cmplwi r4,0` (0x828778B4),
+// then sub_828777E8(elem, pres, r5) (0x828778E0); SetTextNameAt sub_82876F38 / disc sub_82819230
+// then GuiElement_SetTextName(elem, CCharString* r5) (0x82876F74); SetTextTagAt sub_82877030 / disc
+// sub_82819328 then GuiElement_SetTextTag(elem, tag r5) (0x8287706C) — the two builds instruction
+// for instruction. Under a token the value is the call's own argument, stated, and the body is
+// skipped whole (no temporary is made, nothing is found). Any other presentation runs the guest's
+// body as before: its element writes are stated where they land (gui_element_hooks.cpp).
+
+/// sub_82877898(path, pres, shown).
+REX_EXTERN(rex_GuiElement_SetVisibleAt) {
+  if (base != nullptr && IsPresentationToken(ctx.r4.u32)) {
+    const std::string path = ReadCharString(base, ctx.r3.u32);
+    if (!path.empty()) {
+      StateVisible(ctx.r4.u32, 0u, path, (ctx.r5.u32 & 0xFFu) != 0u, "82819B90");
+    }
+    return;
+  }
+  __imp__rex_GuiElement_SetVisibleAt(ctx, base);
+}
+
+/// sub_82876F38(path, pres, CCharString* name).
+REX_EXTERN(rex_GuiElement_SetTextNameAt) {
+  if (base != nullptr && IsPresentationToken(ctx.r4.u32)) {
+    const std::string path = ReadCharString(base, ctx.r3.u32);
+    if (!path.empty()) {
+      StateTextName(ctx.r4.u32, 0u, path, ReadCharString(base, ctx.r5.u32, 260u), "82819230");
+    }
+    return;
+  }
+  __imp__rex_GuiElement_SetTextNameAt(ctx, base);
+}
+
+/// sub_82877030(path, pres, tag).
+REX_EXTERN(rex_GuiElement_SetTextTagAt) {
+  if (base != nullptr && IsPresentationToken(ctx.r4.u32)) {
+    const std::string path = ReadCharString(base, ctx.r3.u32);
+    if (!path.empty()) {
+      StateTextTag(ctx.r4.u32, 0u, path, ctx.r5.u32, "82819328");
+    }
+    return;
+  }
+  __imp__rex_GuiElement_SetTextTagAt(ctx, base);
 }
 
 /// sub_82876DF0(elem, pres, colour*): an element's colour at entry — behind `elem && pres`

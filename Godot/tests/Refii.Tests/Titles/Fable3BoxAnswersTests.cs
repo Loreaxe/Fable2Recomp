@@ -159,6 +159,60 @@ public class Fable3BoxAnswersTests
 		AssertThat(Fable3BoxAnswers.OptionsValue(3, 3, -0.1f)).IsNull();
 	}
 
+	[TestCase]
+	public void OwnedScreensTakeTheirOwnersPresses()
+	{
+		var screen = new Fable3ScreenState();
+		AssertThat(Fable3BoxAnswers.TakesPlayer(Fable3ScreenModel.Stats, screen, 1)).IsTrue();
+		AssertThat(Fable3BoxAnswers.TakesPlayer(Fable3ScreenModel.Stats, screen, 2)).IsFalse();
+		screen.Owner = 2;
+		AssertThat(Fable3BoxAnswers.TakesPlayer(Fable3ScreenModel.Stats, screen, 1)).IsFalse();
+		AssertThat(Fable3BoxAnswers.TakesPlayer(Fable3ScreenModel.Stats, screen, 2)).IsTrue();
+		AssertThat(Fable3BoxAnswers.TakesPlayer(Fable3ScreenModel.Quests, screen, 2)).IsTrue();
+		screen.Owner = -1;
+		AssertThat(Fable3BoxAnswers.TakesPlayer(Fable3ScreenModel.Quests, screen, 1)).IsTrue();
+		AssertThat(Fable3BoxAnswers.TakesPlayer(Fable3ScreenModel.HeroStatus, screen, 2)).IsTrue();
+		AssertThat(Fable3BoxAnswers.TakesPlayer(Fable3ScreenModel.Promises, screen, 2)).IsFalse();
+	}
+
+	[TestCase]
+	public void StatsStatementsFillTheBoxsLists()
+	{
+		Fable3ScreenStatements.Clear();
+		Fable3ScreenStatements.Take(Statement("@Screen.StatsList", "40AB0020", 3f, 2f, 6f, 0f, true, "22", "50"));
+		Fable3ScreenStatements.Take(Statement("@Screen.StatsRow", "40AB0020", 3f, 1f, "31", "", "120", "3", "0"));
+		Fable3ScreenStatements.Take(Statement("@Screen.StatsBoard", "40AB0020", 2f, 2f, "Me", "120", "2"));
+		Fable3ScreenStatements.Take(Statement("@Screen.Owner", "40AB0020", 2f));
+		Fable3ScreenState state = Fable3ScreenStatements.Of(0x40AB0020u);
+		AssertThat(state.StatsLists[3] == new Fable3ScreenState.StatsList(2, 6, 0, true, 0x22u, 0x50u)).IsTrue();
+		AssertThat(state.StatsRows[3][1] == new Fable3ScreenState.StatsRow(0x31u, "", "120", "3", 0u)).IsTrue();
+		AssertThat(state.StatsBoard[2].Mine).IsTrue();
+		AssertThat(state.Owner).IsEqual(2);
+		// A new list for the page starts its rows and the board afresh.
+		Fable3ScreenStatements.Take(Statement("@Screen.StatsList", "40AB0020", 3f, 2f, 6f, 0f, true, "22", "50"));
+		AssertThat(state.StatsRows[3].Count).IsEqual(0);
+		AssertThat(state.StatsBoard.Count).IsEqual(0);
+		Fable3ScreenStatements.Clear();
+	}
+
+	/// <summary>A statement with mixed fields: strings, numbers (float) and booleans.</summary>
+	private static Engine_UiModel.GuiNativeCall Statement(string name, params object[] fields)
+	{
+		var arguments = new List<Engine_UiModel.GuiNativeArgument>();
+		foreach (object field in fields)
+		{
+			arguments.Add(field switch
+			{
+				bool flag => new Engine_UiModel.GuiNativeArgument(Engine_UiModel.GuiNativeArgumentKind.Boolean, flag ? "1" : "0"),
+				float number => new Engine_UiModel.GuiNativeArgument(Engine_UiModel.GuiNativeArgumentKind.Number,
+					number.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+				_ => new Engine_UiModel.GuiNativeArgument(Engine_UiModel.GuiNativeArgumentKind.String, field.ToString() ?? string.Empty),
+			});
+		}
+
+		return new Engine_UiModel.GuiNativeCall(name, arguments);
+	}
+
 	private static Engine_UiModel.GuiNativeCall Call(string name, params float[] fields)
 	{
 		var arguments = new List<Engine_UiModel.GuiNativeArgument>

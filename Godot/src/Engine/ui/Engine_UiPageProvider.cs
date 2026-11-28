@@ -18,8 +18,6 @@ public readonly struct Engine_UiPageContext
 
 	public required Refii.Host.HostBridge.CrimeScreen Crime { get; init; }
 
-	public required Refii.Host.HostBridge.WorldMapRegion WorldMap { get; init; }
-
 	public required Refii.Host.HostBridge.OptionSliders Sliders { get; init; }
 
 	public required Refii.Text.Engine_BabelDatabase? Strings { get; init; }

@@ -98,8 +98,16 @@ public partial class Engine_FxDepthCaptureEffect : CompositorEffect
         RenderingServer.GlobalShaderParameterSet(GlobalValidName, 0.0f);
     }
 
+    /// <remarks>
+    /// THE DEPTH IS ASKED FOR RESOLVED. `GetDepthLayer(0)` is the single-sample depth; under MSAA
+    /// Godot fills it only for an effect that sets <see cref="CompositorEffect.AccessResolvedDepth"/>
+    /// (or an unrelated feature that happens to need it), so with the launcher's `msaa` on and none
+    /// of those, every reader of `fx_scene_depth` — world markers, highlight, soft particles,
+    /// displacement — tested against a buffer the frame never wrote. No cost with MSAA off.
+    /// </remarks>
     public Engine_FxDepthCaptureEffect()
     {
+        AccessResolvedDepth = true;
         EffectCallbackType = Refii.AndroidRuntime.AndroidDepthCapture.CallbackType(RenderingServer.GetCurrentRenderingMethod());
         RegisterGlobals();
         RenderingServer.CallOnRenderThread(Callable.From(Initialise));

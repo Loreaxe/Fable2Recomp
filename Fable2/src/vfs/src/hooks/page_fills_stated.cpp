@@ -38,11 +38,22 @@
 //            0x82425C98) — blue, green, red, alpha in memory (the item page's dye swatch `stb r31,0 ; stb r29,1 ;
 //            stb r30,2 ; li 0xFF ; stb 3` 0x829B5400..0x829B5414, r30 the dye's Red) — noted at the entry, before
 //            its headless early return (`lwz r11,4(r3) ; cmplwi ; beq` 0x82425C70..0x82425C78), as `RRGGBBAA`;
+//   texture  `sub_82425C10(&hash r3, element r4)` (TU1; disc 0x823F80A8, 18 instructions, identical): the quad's
+//            texture `lwz r10,0(r3) ; ... stw r9,0x200(r11)` (0x82425C28 / 0x82425C44) behind the headless early
+//            return `lwz r11,4(r4) ; cmplwi ; beq` (0x82425C10..0x82425C18) — noted at the entry, the hash `*r3`
+//            in hex; and the minimap fill's inline stores of the same field (minimap_page_stated.cpp);
+//   rotation `sub_824254C8(element r3, presentation r4, f1, f2, f3)` (TU1; disc 0x823F7960, 68 instructions,
+//            identical): the three attribute writes `(*(*svc+0x48))(svc, element, attr, bits)` for
+//            `dword_834BE528 / 52C / 530` with f1 / f2 / f3 (0x82425560 / 0x82425588 / 0x824255B0) — stated
+//            as the three radians it is handed;
+//   marks    what a fill makes that is no element write (the minimap fill's projection `map` and its icons
+//            `icon`, minimap_page_stated.cpp), in call order;
 //
 // THE STATEMENT: `@PageFill <screen> <scope> <key>` then per write, in the fill's order, its kind
-// (`text`, `slide`, `shown`, `opacity`, `colour`, `tint`), the path the fill named and the value (UTF-8 text;
-// a decimal slide; 1 / 0; the opacity 0..100 as written; `RRGGBBAA` hex). Godot holds the last one per
-// screen and scope (Engine_UiPageFills).
+// (`text`, `slide`, `shown`, `opacity`, `colour`, `tint`, `texture`, `rotation`), the path the fill named
+// and the value (UTF-8 text; a decimal slide; 1 / 0; the opacity 0..100 as written; `RRGGBBAA` hex; the
+// texture hash `%08X`; `x y z` radians), then the records, then the marks (`<kind> <label> <value>`).
+// Godot holds the last one per screen and scope (Engine_UiPageFills).
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -75,6 +86,8 @@ struct Fill {
     std::unordered_map<uint32_t, std::string> names;
     std::vector<Written> writes;
     std::vector<std::pair<std::string, std::string>> records;
+    std::vector<Written> marks;
+    std::vector<std::string> mark_labels;
     uint32_t unnamed = 0u;
 };
 
@@ -86,8 +99,35 @@ thread_local uint32_t t_depth = 0u;
 /// A restated scope's last statement, by "screen/scope" (guest thread only).
 std::unordered_map<std::string, std::vector<std::string>> g_restated;
 
+/// Each outermost open's number on this thread (PageFillSerial).
+thread_local uint32_t t_serial = 0u;
+
 /// Inside `sub_82426260`: its opacity write states the flag, not a second value.
 thread_local bool t_in_shown = false;
+
+/// What the last outermost close did (LastPageFillClosed).
+thread_local refii::vfs::PageFillClosed t_closed;
+
+/// "kind n, kind n, …" over the stated triples, by kind in first-seen order.
+std::string CountKinds(const std::vector<std::string>& said) {
+    std::vector<std::pair<std::string, uint32_t>> counts;
+    for (size_t i = 0; i + 2 < said.size(); i += 3) {
+        auto it = counts.begin();
+        while (it != counts.end() && it->first != said[i]) {
+            ++it;
+        }
+        if (it == counts.end()) {
+            counts.emplace_back(said[i], 1u);
+        } else {
+            ++it->second;
+        }
+    }
+    std::string out;
+    for (const auto& [kind, n] : counts) {
+        out += (out.empty() ? "" : ", ") + kind + " " + std::to_string(n);
+    }
+    return out;
+}
 
 std::string Utf8(const std::vector<uint16_t>& units) {
     std::string out;
@@ -132,6 +172,8 @@ void OpenPageFill(uint32_t screen, const char* scope) {
     if (t_depth++ != 0u) {
         return;
     }
+    ++t_serial;
+    t_closed = PageFillClosed{};
     t_fill = Fill{};
     t_fill.open = true;
     t_fill.screen = screen;
@@ -140,6 +182,8 @@ void OpenPageFill(uint32_t screen, const char* scope) {
 
 bool PageFillOpen() { return t_fill.open; }
 
+uint32_t PageFillSerial() { return t_serial; }
+
 void ForgetRestatedPageFills(uint32_t screen) {
     const std::string prefix = std::to_string(screen) + "/";
     for (auto it = g_restated.begin(); it != g_restated.end();) {
@@ -147,10 +191,13 @@ void ForgetRestatedPageFills(uint32_t screen) {
     }
 }
 
+const PageFillClosed& LastPageFillClosed() { return t_closed; }
+
 void ClosePageFill(uint32_t key, bool restated) {
     if (t_depth == 0u || --t_depth != 0u || !t_fill.open) {
         return;
     }
+    t_closed = PageFillClosed{};
     Fill fill = std::move(t_fill);
     t_fill = Fill{};
 
@@ -171,6 +218,12 @@ void ClosePageFill(uint32_t key, bool restated) {
         said.push_back(what);
         said.push_back(hex);
     }
+    for (size_t i = 0; i < fill.marks.size(); ++i) {
+        said.emplace_back(fill.marks[i].kind);
+        said.push_back(fill.mark_labels[i]);
+        said.push_back(fill.marks[i].value);
+    }
+    t_closed.unnamed = fill.unnamed;
     if (fill.unnamed != 0u) {
         static uint32_t s_reported = 0u;
         if (s_reported < 8u) {
@@ -187,6 +240,7 @@ void ClosePageFill(uint32_t key, bool restated) {
         std::vector<std::string>& last = g_restated[prefix + fill.scope];
         said.insert(said.begin(), std::to_string(key));
         if (last == said) {
+            t_closed.unchanged = true;
             return;
         }
         last = said;
@@ -195,6 +249,14 @@ void ClosePageFill(uint32_t key, bool restated) {
         ForgetRestatedPageFills(fill.screen);
     }
 
+    t_closed.posted = true;
+    t_closed.counts = CountKinds(said);
+    for (size_t i = 0; i + 2 < said.size(); i += 3) {
+        if (said[i] == "map") {
+            t_closed.map = said[i + 2];
+            break;
+        }
+    }
     GuiNativeCall call;
     call.name = "@PageFill";
     Add(call, std::to_string(fill.screen));
@@ -207,6 +269,20 @@ void ClosePageFill(uint32_t key, bool restated) {
 }
 
 void NotePageFillText(uint32_t element, const std::vector<uint16_t>& units) { Note("text", element, Utf8(units)); }
+
+void NotePageFillTexture(uint32_t element, uint32_t hash) {
+    char hex[9];
+    std::snprintf(hex, sizeof hex, "%08X", hash);
+    Note("texture", element, hex);
+}
+
+void NotePageFillMark(const char* kind, std::string label, std::string value) {
+    if (!t_fill.open || label.empty()) {
+        return;
+    }
+    t_fill.marks.push_back(Written{kind, 0u, std::move(value)});
+    t_fill.mark_labels.push_back(std::move(label));
+}
 
 void NotePageFillRecord(const char* what, uint32_t record) {
     if (!t_fill.open || record == 0u) {
@@ -291,6 +367,32 @@ REX_EXTERN(rex_lhGuiElement_SetQuadColour) {
         Note("tint", ctx.r3.u32, value);
     }
     __imp__rex_lhGuiElement_SetQuadColour(ctx, base);
+}
+
+// `sub_82425C10(&hash r3, element r4)` (TU1; disc 0x823F80A8): the quad's texture, `*r3`. Its only callers are
+// the minimap fill's four legend rows for a region the hero is not in (`sub_829ABFC0` 0x829ADD94 / 0x829ADE4C /
+// 0x829ADF04 / 0x829ADFBC; disc `sub_828FE480` 0x82900254 / 0x8290030C / 0x829003C4 / 0x8290047C) — noted only
+// inside a fill.
+REX_EXTERN(rex_lhGuiElement_SetTextureHash) {
+    REX_FUNC_PROLOGUE();
+    if (t_fill.open && ctx.r3.u32 >= 0x10000u && ctx.r3.u32 < 0xC0000000u) {
+        refii::vfs::NotePageFillTexture(ctx.r4.u32, refii::vfs::LoadGuestU32(base, ctx.r3.u32));
+    }
+    __imp__rex_lhGuiElement_SetTextureHash(ctx, base);
+}
+
+// `sub_824254C8(element r3, presentation r4, f1, f2, f3)` (TU1; disc 0x823F7960): the element's rotation, the
+// three radians as handed (`fmr f31,f1 ; fmr f30,f2 ; fmr f29,f3` 0x824254EC..0x824254F4). Eleven callers; noted
+// only inside a fill (the minimap's map image, 0x829AC7C4 / disc 0x828FEC84).
+REX_EXTERN(rex_lhGuiElement_SetRotation) {
+    REX_FUNC_PROLOGUE();
+    if (t_fill.open && ctx.r4.u32 != 0u) {
+        char value[64];
+        std::snprintf(value, sizeof value, "%g %g %g", static_cast<float>(ctx.f1.f64), static_cast<float>(ctx.f2.f64),
+                      static_cast<float>(ctx.f3.f64));
+        Note("rotation", ctx.r3.u32, value);
+    }
+    __imp__rex_lhGuiElement_SetRotation(ctx, base);
 }
 
 // `lhGuiElement_GoToSlide(element r3, presentation r4, slide r5)` (TU1 0x82426BA8; disc 0x823F9040).

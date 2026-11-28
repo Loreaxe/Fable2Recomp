@@ -1497,12 +1497,11 @@ public partial class GameUi : Node, IGameTitleUi
 
 	/// <summary>
 	/// The world map's minimap page: the stick's page turn (host-owned, the guest's own page
-	/// index never sees our stick) and the markers the guest would have put on its GUI list —
-	/// see <see cref="Engine_UiMinimapPage"/>. Every other screen drops the turn, so the map
+	/// index never sees our stick) and the icons the page's fill handed its builder — see
+	/// <see cref="Engine_UiMinimapPage"/>. Every other screen drops the turn, so the map
 	/// opens on the readout next time.
 	/// </summary>
-	private void DriveMinimap(uint screenId, Engine_UiOwnedBook book,
-		HostBridge.WorldMapRegion worldMap, Engine_UiExpandableMenu.Item? row, double delta)
+	private void DriveMinimap(uint screenId, Engine_UiOwnedBook book, Engine_UiExpandableMenu.Item? row, double delta)
 	{
 		if (screenId != WorldMapScreenId)
 		{
@@ -1546,7 +1545,7 @@ public partial class GameUi : Node, IGameTitleUi
 		}
 
 		_minimapMarkers.Feed(Engine_UiMinimapPage.Markers(
-			row, worldMap, book.AuthoredPosition("Foreground.Book.Pages." + Engine_UiMinimapPage.MapImage)));
+			row, book.AuthoredPosition("Foreground.Book.Pages." + Engine_UiMinimapPage.MapImage)));
 	}
 
 	private bool DriveScreenMenu(double delta, Engine_UiModel.PauseState? pause)
@@ -1707,7 +1706,7 @@ public partial class GameUi : Node, IGameTitleUi
 				Engine_UiExpandableMenu.Item? pageRow = _screenMenu?.Script.Highlighted;
 				pageBook.HostValues = Engine_UiDetailPages.Values(
 					state.ScreenId, pageRow,
-					default, default, new(), default, default, pageSliders,
+					default, default, new(), default, pageSliders,
 					pageBook.Book?.Strings, optionsPageOpen: true);
 				// The page's placements, switches and slides follow the same row while the
 				// list is dormant — values alone left the picked page's contents where the
@@ -1836,7 +1835,6 @@ public partial class GameUi : Node, IGameTitleUi
 					? HostBridge.GetOptionSliders()
 					: _detailSliders;
 			_detailSliders = sliders;
-			HostBridge.WorldMapRegion worldMap = HostBridge.GetWorldMapRegion();
 			HostBridge.HeroVitals vitals = refill ? HostBridge.GetHeroVitals() : _detailVitals;
 			HostBridge.HeroDerived hero = refill ? Fable2Bridge.GetHeroDerived() : _detailHero;
 			_detailVitals = vitals;
@@ -1850,29 +1848,28 @@ public partial class GameUi : Node, IGameTitleUi
 					hero,
 					Fable2Bridge.GetCompletedQuests(),
 					Engine_UiCrimePage.Stated,
-					worldMap,
 					sliders,
 					abilityBook.Book?.Strings);
 				abilityBook.HostTextures =
-					Engine_UiDetailPages.Textures(state.ScreenId, _screenMenu?.Script.Highlighted, worldMap);
+					Engine_UiDetailPages.Textures(state.ScreenId, _screenMenu?.Script.Highlighted);
 				abilityBook.HostPositions =
 					Engine_UiDetailPages.Positions(state.ScreenId, sliders, _screenMenu?.Script.Highlighted, hero);
 				abilityBook.HostActive =
-					Engine_UiDetailPages.Active(state.ScreenId, _screenMenu?.Script.Highlighted, worldMap);
+					Engine_UiDetailPages.Active(state.ScreenId, _screenMenu?.Script.Highlighted);
 				// The opacity claims ride here too: this path marks the frame filled, so the owned
 				// screen driver that also sets them stands down, and without this line no item
 				// book ever received one (the clothing footer, the shop's front-page parchment).
 				abilityBook.HostOpacity =
 					Engine_UiDetailPages.Opacities(state.ScreenId, _screenMenu?.Script.Highlighted);
 				abilityBook.HostRotations =
-					Engine_UiDetailPages.Rotations(state.ScreenId, _screenMenu?.Script.Highlighted, worldMap);
+					Engine_UiDetailPages.Rotations(state.ScreenId, _screenMenu?.Script.Highlighted);
 				abilityBook.HostTints =
 					Engine_UiDetailPages.Tints(state.ScreenId, _screenMenu?.Script.Highlighted);
 				if (state.ScreenId == Engine_UiDetailPages.OptionsScreenId)
 					Engine_UiHostOptionsPage.Apply(abilityBook, _screenMenu?.Script.Highlighted);
 			}
 
-			DriveMinimap(state.ScreenId, abilityBook, worldMap, _screenMenu?.Script.Highlighted, delta);
+			DriveMinimap(state.ScreenId, abilityBook, _screenMenu?.Script.Highlighted, delta);
 
 			// THIS PATH FILLS THE BOOK TOO. DriveOwnedScreenProvider stands down on this flag,
 			// and it was only ever set by the page path above — so for the ability book it ran
@@ -1883,7 +1880,7 @@ public partial class GameUi : Node, IGameTitleUi
 			if (refill)
 			{
 				abilityBook.HostSlides = Engine_UiDetailPages.Slides(
-					state.ScreenId, _screenMenu?.Script.Highlighted, worldMap,
+					state.ScreenId, _screenMenu?.Script.Highlighted,
 					_screenMenu is not null, vitals, hero);
 			}
 
@@ -5924,7 +5921,7 @@ public partial class GameUi : Node, IGameTitleUi
 			: null;
 		book.HostValues = Engine_UiDetailPages.Values(
 			upId, row,
-			default, default, new(), default, default, default,
+			default, default, new(), default, default,
 			book.Book?.Strings, optionsPageOpen: false);
 		book.HostActive = Engine_UiDetailPages.Active(upId, row);
 		book.HostOpacity = Engine_UiDetailPages.Opacities(upId, row);

@@ -23,6 +23,7 @@ set(REFII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/xsession_leave_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/lua_binding_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/property_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/property_list_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/character_morph_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_world_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/coop_chest_hooks.cpp

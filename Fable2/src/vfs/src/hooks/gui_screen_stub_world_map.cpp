@@ -52,8 +52,8 @@ bool g_world_map_update_said = false;
 /// 0x820E820C `sub_829AB0E0` / `sub_828FD5A0`, quest 0x820ED850 / 0x820E852C `sub_829AF638` /
 /// `sub_82901AA0`, job 0x820EDB2C / 0x820E8808 `sub_829AFE58` / `sub_829022C0`, sale 0x820ECE6C /
 /// 0x820E7BF0 `sub_829AAB50` / `sub_828FD010`, family 0x820EDF70 / 0x820E8C48 `sub_829B04E0` /
-/// `sub_82902948` (each pair identical). The minimap (h+0x80, region mode's other page) is not a row's
-/// page here: Godot turns to it and draws it from its own source (Engine_UiMinimapPage).
+/// `sub_82902948` (each pair identical). A region row also has the minimap (h+0x80, region mode's other
+/// page; vtable 0x820ED590 / 0x820E8318, +12 `sub_829ABFC0` / `sub_828FE480`), run beside it: kMinimap.
 struct RowPage {
   uint32_t type;
   uint32_t page;
@@ -64,6 +64,18 @@ constexpr RowPage kRowPages[] = {
     {41u, 0x58u, "row.region"}, {42u, 0x100u, "row.quest"}, {43u, 0x11Cu, "row.job"},
     {44u, 0x138u, "row.sale"},  {45u, 0x154u, "row.family"},
 };
+
+/// THE MINIMAP PAGE (h+0x80). Its fill reads the highlight itself (`lhGuiMenu_GetHighlightedItemData`
+/// 0x829AC04C / 0x828FE50C), refuses all but a region row (`cmpwi cr6,r11,0x29` 0x829AC058) and runs only
+/// when the region changed: `lwz r11,0x64(r16) ; cmpw ; beq` (0x829AC064..0x829AC06C), `stw r31,0x64(r16)`
+/// (0x829AC074). The guest re-arms that edge with the page's vf +20, `li r11,-1 ; stw r11,0x64(r3) ; blr`
+/// (0x829ABFA8 / 0x828FE468), when the book turns to the page (`sub_82990D78` tail-calls the page's +20,
+/// 0x82990DD0); Godot turns the book, so the edge is re-armed here each time the cursor lands on a region
+/// row, and the fill states that row afresh. It finds "the hero" as `sub_8229EE78(sub_821C7CE0(G))`
+/// (0x829AC840 / 0x829AC850) — player one on the session host — so it runs under the screen's owner
+/// (OwnerScope: player two's map shows player two's hero, dog, trail and quests). What it writes is
+/// stated under "row.minimap" (page_fills_stated.cpp, minimap_page_stated.cpp).
+constexpr RowPage kMinimap = {41u, 0x80u, "row.minimap"};
 
 }  // namespace
 
@@ -186,8 +198,9 @@ REX_EXTERN(rex_lhGuiWorldMapScreen_OnEnter) {
 // 0x829AFF1C), the sale ordinal in `BuildSalesList` (0x829AAC10), the family ordinal in the page's own
 // `BuildFamilyList` vector at +32 (0x829B058C), the region `id - 999` into `sub_82518330` (0x829AB17C).
 // What it writes by name is stated (page_fills_stated.cpp) under the row's scope and id, restated: posted
-// when it changes. The quest and job fills also mark the row seen, `quest+78 = 1` (0x829AF7D0 /
-// 0x829B01A4), as the guest's own tick did for its cursor.
+// when it changes. A region row's minimap page fill runs after it (kMinimap). The quest and job fills
+// also mark the row seen, `quest+78 = 1` (0x829AF7D0 / 0x829B01A4), as the guest's own tick did for its
+// cursor.
 // THE STOP CHOOSER'S POLL while h+392 is set (0x826C6078..0x826C60F0) — the menu box controller
 // `*(QM+56)`: once it is shut (+12 clear and its close timer +4 not above 0.0), h+392 = 0 and the box
 // answered — the guest's `sub_8236FE38(QM, 4)` when cancelled (+13, 0x826C60DC / disc 0x82338030) else
@@ -206,7 +219,8 @@ REX_EXTERN(rex_lhGuiWorldMapScreen_Update) {
   HighlightedRow(ctx, base, s.frame, s.data, s.data + 0x40u, &type, &id);
   // The kept OnEnter states hero one's gold (0x826C5E38 `li r5,1` / disc 0x825A1DD0); player two's purse.
   RestatePurseForPlayerTwo(ctx, base, s.frame, BookPresentation(base), 0x8349B0E4u);
-  if (id != LoadU32(base, h + 0x18Cu)) {
+  const bool moved = id != LoadU32(base, h + 0x18Cu);
+  if (moved) {
     StoreU32(base, h + 0x18Cu, id);
   }
   if (type == 42u) {
@@ -222,6 +236,28 @@ REX_EXTERN(rex_lhGuiWorldMapScreen_Update) {
       CallSlot(ctx, base, s.frame, h + page.page, 3u, {});
       refii::vfs::ClosePageFill(id, true);
       break;
+    }
+  }
+  if (type == kMinimap.type) {
+    OwnerScope owner(base, 23u, false);
+    if (moved) {
+      CallSlot(ctx, base, s.frame, h + kMinimap.page, 5u, {});
+    }
+    refii::vfs::OpenPageFill(23u, kMinimap.scope);
+    CallSlot(ctx, base, s.frame, h + kMinimap.page, 3u, {});
+    refii::vfs::ClosePageFill(id, true);
+    // The minimap's statement, once per region it is made for (the fill re-arms on a new row and states
+    // nothing again for the same region, 0x829AC064..0x829AC06C), so a run shows the page's source.
+    const refii::vfs::PageFillClosed& closed = refii::vfs::LastPageFillClosed();
+    static uint32_t s_said_row = 0xFFFFFFFFu;
+    if (closed.posted && id != s_said_row) {
+      s_said_row = id;
+      REXLOG_INFO("Refii screen stub: world map (23) — region row {}: the minimap fill stated {}; map {}", id,
+                  closed.counts, closed.map.empty() ? std::string("none (no icon built)") : closed.map);
+    } else if (moved && !closed.posted && !closed.unchanged) {
+      REXLOG_INFO("Refii screen stub: world map (23) — region row {}: the minimap fill stated nothing ({} write(s) "
+                  "to elements it did not name)",
+                  id, closed.unnamed);
     }
   }
   if (LoadU32(base, h + 0x188u) != 0u) {

@@ -728,54 +728,21 @@ public static class Fable2PageProviders
 		public IReadOnlyDictionary<string, string> Values(in Engine_UiPageContext page) =>
 			Engine_UiMinimapPage.Merge(
 				Engine_UiWorldMapPage.Values(page.Row, page.Strings),
-				Engine_UiMinimapPage.Values(page.Row, page.WorldMap, page.Strings));
+				Engine_UiMinimapPage.Values(page.Row));
 
 		public IReadOnlyDictionary<string, uint> Textures(in Engine_UiPageContext page) =>
-			Engine_UiMinimapPage.Textures(page.Row, page.WorldMap);
+			Engine_UiMinimapPage.Textures(page.Row);
 
 		public IReadOnlyDictionary<string, bool> Active(in Engine_UiPageContext page) =>
 			Engine_UiMinimapPage.Merge(
 				Engine_UiWorldMapPage.Active(page.Row),
-				Engine_UiMinimapPage.Active(page.Row, page.WorldMap));
+				Engine_UiMinimapPage.Active(page.Row));
 
 		public IReadOnlyDictionary<string, float> Rotations(in Engine_UiPageContext page) =>
-			Engine_UiMinimapPage.Rotations(page.Row, page.WorldMap);
+			Engine_UiMinimapPage.Rotations(page.Row);
 
 		public IReadOnlyDictionary<string, int> Slides(in Engine_UiPageContext page) =>
 			Engine_UiWorldMapPage.Slides(page.Row);
-
-		/// <summary>Name the highlighted region so the pump's next minimap keys are this cursor's.</summary>
-		public void Prepare(in Engine_UiPageContext page)
-		{
-			int region = Engine_UiWorldMapPage.RegionOf(page.Row);
-			if (region >= 0)
-			{
-				Fable2Bridge.SetWorldMapRegion((uint)region);
-			}
-
-			// The property under the cursor, for its sign's numbers (0 when the row is not one).
-			ulong property = Engine_UiPropertySource.UidOf(page.Row?.Name);
-			if (property != _propertyAsked)
-			{
-				_propertyAsked = property;
-				Fable2Bridge.RequestPropertyEstate(property);
-			}
-
-			// Change-keyed: which row Prepare saw and what it asked for. A blank region page
-			// cannot say whether the request fired; this can.
-			string saw = page.Row is { } row
-				? $"'{row.Name}' type={row.EventType} id={(uint)row.IdHigh << 16 | (uint)row.IdLow & 0xFFFFu}"
-				: "no row";
-			if (saw != _preparedFor)
-			{
-				_preparedFor = saw;
-				Godot.GD.Print($"[worldmap-prepare] {saw} -> region {region}");
-			}
-		}
-
-		private string _preparedFor = string.Empty;
-
-		private ulong _propertyAsked;
 	}
 
 	private sealed class OptionsProvider : Engine_UiPageProvider

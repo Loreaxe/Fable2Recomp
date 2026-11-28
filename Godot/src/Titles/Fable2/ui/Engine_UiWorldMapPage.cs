@@ -65,7 +65,7 @@ public static class Engine_UiWorldMapPage
 	private const int StarSlides = 5;
 
 	/// <summary>Which region the highlighted row names, or -1: the row's own id less the 999 the
-	/// population added, the index the minimap's keys are asked for (SampleWorldMapRegion).</summary>
+	/// population added (the index the region and minimap fills take back, 0x829AB17C / 0x829AC05C).</summary>
 	public static int RegionOf(Engine_UiExpandableMenu.Item? row)
 	{
 		if (row is null || row.EventType != RegionEventType)

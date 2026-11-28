@@ -49,13 +49,22 @@
 // hears of them (its client skips every Lua update). So the host states its answer for hero two — a
 // session value of player one's store, kRulesKey, 1 while the rule is set — and the joiner's sign script
 // asks that instead of its own copy (CoopHeroLua.cs, Refii._estate_blocked).
+//
+// THE PARTNERSHIP. Who may act on the other hero's property (core/estate_owner_rule.h) turns on the
+// partnership, both heroes' saved words (core/hero_partners.cpp). The host decides every estate action an
+// online joiner forwards by its own reading of them (mod_events.cpp ReplayEstateIntent), so it states that
+// reading — a session value of player one's store, kPartnersKey, 0 none, 1 business partners, 2 married —
+// and the joiner's screens decide by it (EstatePartnership) once it has arrived: the joiner's property
+// screen at the host's building opens as the owner's exactly when the host will run what it forwards.
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <rex/logging.h>
@@ -69,6 +78,8 @@
 #include "vfs_hooks_private.h"
 
 extern "C" uint32_t refii_household_resolve_uid(PPCContext* ctx, uint8_t* base, uint64_t uid);
+PPC_EXTERN_FUNC(rex_lhNetManager_FindEntityByNetId);
+PPC_EXTERN_FUNC(rex_lhWideString_Dtor);
 /// `body` run as `hero`'s household (mod_events.cpp HouseholdScope).
 extern "C" void refii_household_scoped(PPCContext* ctx, uint8_t* base, uint32_t hero,
                                        void (*body)(PPCContext* ctx, uint8_t* base, void* arg), void* arg);
@@ -79,6 +90,7 @@ using refii::vfs::LoadGuestU32;
 
 constexpr char kBlobKey[] = "refii.estate.buildings";
 constexpr char kRulesKey[] = "refii.estate.no_property_two";
+constexpr char kPartnersKey[] = "refii.estate.partners";
 /// CUTSCENE_RULE_NO_PROPERTY_SCREEN (interactivecutsceneruleenum.lua).
 constexpr uint32_t kNoPropertyScreen = 65536u;
 constexpr uint32_t kValues = static_cast<uint32_t>(refii::vfs::EstateValue::kCount);
@@ -136,8 +148,85 @@ bool OnlineJoiner() { return refii_mod_player_here(1) == 0 && refii_mod_player_h
 struct Host {
   std::vector<uint64_t> looked;
   std::vector<uint8_t> stated;
+  std::unordered_map<std::string, std::string> owner_texts;  // what each owner / tenant text was stated as
   double restate_in = 0.0;
 };
+
+// THE OWNER'S AND THE TENANT'S NAMES, AS TEXT. Page 1 names a building's non-hero owner (0x829996EC) and its
+// tenant (0x82999770) by `sub_823C8510`'s wide display name; a joiner with no replica of that creature (a villager
+// not near it) found none and showed GUI_SCREEN_REAL_ESTATE_OWNER_OTHER / _TENANT_OTHER. So the host states the
+// text its own page would show, per building, as session texts of player one's store (kOwnerTextPrefix /
+// kTenantTextPrefix + the building's UID), LOSSLESS: the wide string's UTF-16 units (the rep's buffer and length,
+// `sub_82B3F5C8`: rep+0 the buffer, rep+4 the unit count, a 0 unit after them; disc `sub_82B395D8`, the same) as
+// UTF-8. The joiner makes them back into page 1's caption (coop_estate_owner.cpp EstateCaptionFromText). A hero
+// owner is named by its title (coop_estate_owner.cpp).
+constexpr char kOwnerTextPrefix[] = "refii.estate.owner.";
+constexpr char kTenantTextPrefix[] = "refii.estate.tenant.";
+
+std::string TextKey(const char* prefix, uint64_t uid) {
+  char key[48];
+  std::snprintf(key, sizeof(key), "%s%016llx", prefix, static_cast<unsigned long long>(uid));
+  return key;
+}
+
+void PutUtf8(std::string& out, uint32_t cp) {
+  if (cp < 0x80u) {
+    out.push_back(static_cast<char>(cp));
+  } else if (cp < 0x800u) {
+    out.push_back(static_cast<char>(0xC0u | (cp >> 6)));
+    out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+  } else if (cp < 0x10000u) {
+    out.push_back(static_cast<char>(0xE0u | (cp >> 12)));
+    out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+    out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+  } else {
+    out.push_back(static_cast<char>(0xF0u | (cp >> 18)));
+    out.push_back(static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu)));
+    out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+    out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+  }
+}
+
+/// A wide string object's text (its rep's UTF-16 units, big-endian in guest memory) as UTF-8.
+std::string WideUtf8(uint8_t* base, uint32_t handle) {
+  const uint32_t rep = Heap(handle) ? LoadGuestU32(base, handle) : 0u;
+  const uint32_t buffer = Heap(rep) ? LoadGuestU32(base, rep) : 0u;
+  const uint32_t count = Heap(rep) ? LoadGuestU32(base, rep + 4u) : 0u;
+  std::string out;
+  for (uint32_t i = 0; Heap(buffer) && i < count && i < 512u; ++i) {
+    uint32_t unit = refii::vfs::LoadGuestU16(base, buffer + 2u * i);
+    if (unit >= 0xD800u && unit < 0xDC00u && i + 1 < count) {
+      const uint32_t low = refii::vfs::LoadGuestU16(base, buffer + 2u * (i + 1));
+      if (low >= 0xDC00u && low < 0xE000u) {
+        unit = 0x10000u + ((unit - 0xD800u) << 10) + (low - 0xDC00u);
+        ++i;
+      }
+    }
+    PutUtf8(out, unit);
+  }
+  return out;
+}
+
+/// The text the host's page 1 shows for `creature` when it is no hero: its display name, or "" for none.
+std::string CreatureText(PPCContext& ctx, uint8_t* base, uint32_t creature) {
+  if (creature == 0u || refii_mod_entity_alive(base, creature) == 0 || creature == refii_mod_player_hero(base, 1) ||
+      creature == refii_mod_player_hero(base, 2)) {
+    return {};
+  }
+  PPCContext work = refii::mods::Frame(ctx, 0x200u);
+  const uint32_t out = (work.r1.u32 + 0x100u) & ~0xFu;
+  refii::mods::StoreU32(base, out, 0u);
+  work.r3.u64 = out;
+  work.r4.u64 = creature;
+  if (!refii::mods::CallGuest(work, base, refii::guest::Address(0x823C8510u))) {
+    return {};
+  }
+  std::string text = WideUtf8(base, out);
+  PPCContext drop = refii::mods::Frame(ctx, 0x200u);
+  drop.r3.u64 = out;
+  rex_lhWideString_Dtor(drop, base);
+  return text;
+}
 
 Host g_host;
 
@@ -158,6 +247,7 @@ void ListedBy(uint8_t* base, uint32_t hero, std::vector<uint64_t>& out) {
 struct Asked {
   std::vector<uint64_t> uids;
   std::vector<uint8_t> bytes;
+  std::vector<std::pair<std::string, std::string>> owner_texts;  // (key, text)
 };
 
 /// Every listed building's getters asked, as the screen there asks them (run under hero two's household).
@@ -176,7 +266,10 @@ void AskAll(PPCContext* ctx, uint8_t* base, void* arg) {
     };
     Record record;
     record.building = uid;
-    record.occupant = Uid(base, call(0x8282D5D8u));
+    const uint32_t occupant = call(0x8282D5D8u);
+    record.occupant = Uid(base, occupant);
+    asked.owner_texts.emplace_back(TextKey(kOwnerTextPrefix, uid), CreatureText(*ctx, base, call(0x8282D410u)));
+    asked.owner_texts.emplace_back(TextKey(kTenantTextPrefix, uid), CreatureText(*ctx, base, occupant));
     for (uint32_t i = 0; i < kValues; ++i) {
       record.values[i] = static_cast<int32_t>(call(kGetters[i]));
     }
@@ -211,6 +304,9 @@ void DriveHost(PPCContext& ctx, uint8_t* base, float seconds) {
                          (work.r3.u32 & 0xFFu) != 0u;
     refii_bridge_player_write(1, kRulesKey, sizeof(kRulesKey) - 1u, blocked ? 1.0f : 0.0f, 0, 0);
   }
+  // The partnership the host decides the joiner's estate actions by (head note).
+  refii_bridge_player_write(1, kPartnersKey, sizeof(kPartnersKey) - 1u, static_cast<float>(refii_bridge_partnership()),
+                            0, 0);
   Asked asked;
   ListedBy(base, refii_mod_player_hero(base, 1), asked.uids);
   ListedBy(base, two, asked.uids);
@@ -234,6 +330,15 @@ void DriveHost(PPCContext& ctx, uint8_t* base, float seconds) {
   }
   refii_household_scoped(&ctx, base, two, &AskAll, &twos);
   refii_household_scoped(&ctx, base, 0u, &AskAll, &ones);
+  for (const Asked* part : {&twos, &ones}) {
+    for (const auto& [key, text] : part->owner_texts) {
+      auto& held = g_host.owner_texts[key];
+      if (held != text) {
+        held = text;
+        refii_bridge_player_write_text(1, key.c_str(), key.size(), text.c_str(), text.size(), 0);
+      }
+    }
+  }
   asked.bytes = std::move(twos.bytes);
   asked.bytes.insert(asked.bytes.end(), ones.bytes.begin(), ones.bytes.end());
   if (asked.bytes == g_host.stated) {
@@ -388,7 +493,62 @@ bool EstateStatedOccupant(PPCContext& ctx, uint8_t* base, uint32_t building, uin
     return false;
   }
   *out = record->occupant != 0u ? refii_household_resolve_uid(&ctx, base, record->occupant) : 0u;
+  if (*out == 0u && record->occupant != 0u) {
+    // A creature the host made at run time has no UID here: its replica is the net manager's for the
+    // host's UID, which is its net id (`lhNetManager_FindEntityByNetId` TU1 0x82334A60 / disc 0x82317438:
+    // on the host, +52 and +53 set, the id IS the UID, `sub_82264488`; on a client, the replica map at
+    // +128). The manager is the game's +0x8C.
+    const uint32_t root = LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
+    const uint32_t game = Heap(root) ? LoadGuestU32(base, root + 0xCu) : 0u;
+    const uint32_t manager = Heap(game) ? LoadGuestU32(base, game + 0x8Cu) : 0u;
+    if (Heap(manager)) {
+      PPCContext find = refii::mods::Frame(ctx);
+      find.r3.u64 = manager;
+      find.r4.u64 = record->occupant;
+      rex_lhNetManager_FindEntityByNetId(find, base);
+      *out = refii_mod_entity_alive(base, find.r3.u32) != 0 ? find.r3.u32 : 0u;
+    }
+  }
   return true;
+}
+
+bool EstateStatedCaptionText(uint8_t* base, uint32_t building, bool tenant, std::string* out) {
+  if (out == nullptr || StatedFor(base, building) == nullptr) {
+    return false;
+  }
+  const std::string key =
+      TextKey(tenant ? kTenantTextPrefix : kOwnerTextPrefix, Uid(base, LoadGuestU32(base, building + 4u)));
+  char text[REFII_MOD_PLAYER_TEXT_MAX + 1];
+  const int32_t length = refii_bridge_player_get_text(1, key.c_str(), key.size(), text, sizeof(text));
+  if (length <= 0) {
+    return false;
+  }
+  *out = text;
+  return true;
+}
+
+int32_t EstatePartnership() {
+  float stated = 0.0f;
+  const bool joiner = OnlineJoiner();
+  const bool known = joiner && refii_bridge_player_get(1, kPartnersKey, sizeof(kPartnersKey) - 1u, &stated) != 0;
+  return refii::coop::EstatePartnershipHere(joiner, known, static_cast<int32_t>(stated), refii_bridge_partnership());
+}
+
+std::string EstatePartnershipWords() {
+  const uint64_t one = refii_bridge_hero_id(1);
+  const uint64_t two = refii_bridge_hero_id(2);
+  char text[160];
+  std::snprintf(text, sizeof(text), "hero one %012llX's word %d, hero two %012llX's word %d, this machine reads %d",
+                static_cast<unsigned long long>(one), refii_bridge_partner_kind(1, two),
+                static_cast<unsigned long long>(two), refii_bridge_partner_kind(2, one), refii_bridge_partnership());
+  std::string out(text);
+  if (OnlineJoiner()) {
+    float stated = 0.0f;
+    out += refii_bridge_player_get(1, kPartnersKey, sizeof(kPartnersKey) - 1u, &stated) != 0
+               ? ", the host states " + std::to_string(static_cast<int32_t>(stated))
+               : std::string(", the host has stated none yet");
+  }
+  return out;
 }
 
 bool EstateBlockedForTwo() {
@@ -440,10 +600,19 @@ REFII_ESTATE_GETTER(rex_CECBuilding_OwnerKilledAdjustment, kOwnerKilled)
 
 // The occupant, TU1 0x8282D5D8 / disc 0x8274F908.
 PPC_EXTERN_FUNC(__imp__rex_CECBuilding_Occupant);
+// Asked by page 1's renter caption (return address TU1 0x8299973C / disc 0x828EE04C) on an online joiner, the
+// host's stated tenant text is made into the caption (coop_estate_owner.cpp EstateCaptionFromText; the midasm
+// RefiiEstateTenantStatedText hands it over), whether or not the tenant resolves here.
 REX_EXTERN(rex_CECBuilding_Occupant) {
+  const PPCContext entry = ctx;
   uint32_t occupant = 0u;
   if (refii::vfs::EstateStatedOccupant(ctx, base, ctx.r3.u32, &occupant)) {
     ctx.r3.u64 = occupant;
+    std::string text;
+    if (static_cast<uint32_t>(entry.lr) == refii::guest::Address(0x8299973Cu) &&
+        refii::vfs::EstateStatedCaptionText(base, entry.r3.u32, true, &text) && !text.empty()) {
+      refii::vfs::EstateCaptionFromText(entry, base, text);
+    }
     return;
   }
   __imp__rex_CECBuilding_Occupant(ctx, base);

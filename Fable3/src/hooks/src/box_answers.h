@@ -148,6 +148,10 @@ void StateModalMessageBox(uint32_t manager, const std::string& text, bool downlo
 /// stated for `box` (`@Screen.StatsWindow`'s count, screen_stated_hooks.cpp); 0 before it.
 uint32_t StatsRowCount(uint32_t box, int32_t page);
 
+/// `@Screen.StatsWindow(box, page, start, count, rows)` as a stats page's writer decided it
+/// (stats_screen_stubs.cpp); the count is what StatsRowCount answers.
+void StateStatsWindow(uint32_t box, int32_t page, uint32_t start, uint32_t count, int32_t rows);
+
 /// Whether `box` is a queue's showing box, as the queue tick stated it.
 bool BoxIsShowing(uint32_t box);
 

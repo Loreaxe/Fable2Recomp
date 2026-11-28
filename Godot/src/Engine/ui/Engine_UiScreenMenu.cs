@@ -1408,6 +1408,47 @@ public sealed class Engine_UiScreenMenu
 
 		string label = row.StatedLabel ?? row.Name;
 
+		// A FOLDER IS ASKED AGAIN BEFORE IT IS JUDGED EMPTY. A category's children are its source's rows
+		// (the item book's `items:use:<category>`), re-synced on the samples; a press that lands before the
+		// re-sync has seen the guest's rows found the folder childless and committed it to the guest by
+		// identity (`items (15) OnMenuEvent (301 0)`), which opens nothing. So a childless submenu row whose
+		// template entry names a source is refreshed from it first, and folds when that gives it rows.
+		if (row.Children.Count == 0 && row.EventType == (int)Engine_UiMenuConstants.EventType.Submenu &&
+			_authoredFrom?.Entry(row.Name) is { Source.Length: > 0 } sourcedEntry)
+		{
+			uint boundWas = Engine_UiMenuSources.BoundScreen;
+			Engine_UiMenuSources.BoundScreen = CaptureKey;
+			try
+			{
+				if (_authoredFrom.RefreshSources(Menu))
+				{
+					PruneAuthoredDrops();
+					Script.UpdateAfterSpawning();
+					Script.UpdateAllGhosting();
+				}
+
+				if (row.Children.Count == 0)
+				{
+					int under = 0;
+					var parents = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+					foreach (Engine_UiModel.MenuRow captured in Engine_UiMenuSources.SpawnedRows())
+					{
+						parents.Add(captured.Parent);
+						under += string.Equals(captured.Parent, row.Name, System.StringComparison.Ordinal) ? 1 : 0;
+					}
+
+					GD.Print($"[screen-menu] folder '{row.Name}' is empty: its source '{sourcedEntry.Source}' gives " +
+						$"{Engine_UiMenuSources.Rows(sourcedEntry.Source, sourcedEntry.Name).Count} row(s); the capture " +
+						$"(screen {Engine_UiSource.Current.MenuScreenId()}, bound {CaptureKey}) holds {under} under it, " +
+						$"parents [{string.Join(", ", parents)}]");
+				}
+			}
+			finally
+			{
+				Engine_UiMenuSources.BoundScreen = boundWas;
+			}
+		}
+
 		// Declared before the host-row branch below, which folds through the same flag.
 		bool folds = row.Children.Count > 0;
 

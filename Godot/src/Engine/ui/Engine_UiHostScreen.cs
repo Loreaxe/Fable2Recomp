@@ -184,7 +184,7 @@ public sealed class Engine_UiHostScreen
 	{
 		Engine_UiExpandableMenu.Item? row = _menu?.Highlighted;
 		_book!.HostValues = Engine_UiDetailPages.Values(
-			ScreenId, row, default, default, EmptyQuests, default, default, default, _book.Book?.Strings);
+			ScreenId, row, default, default, EmptyQuests, default, default, _book.Book?.Strings);
 		_book.HostTextures = Engine_UiDetailPages.Textures(ScreenId, row);
 		_book.HostActive = Engine_UiDetailPages.Active(ScreenId, row);
 
@@ -192,7 +192,7 @@ public sealed class Engine_UiHostScreen
 		// host row inside a guest-driven book; this screen draws the whole book itself and its
 		// pages always stand. Naming `Foreground.Book` builds the whole slide array, every other
 		// element at 0 — logbookscreen's master — and took the achievements book to 0/677 drawn.
-		System.Collections.Generic.IReadOnlyDictionary<string, int> slides = Engine_UiDetailPages.Slides(ScreenId, row, default, hostRows: false);
+		System.Collections.Generic.IReadOnlyDictionary<string, int> slides = Engine_UiDetailPages.Slides(ScreenId, row, hostRows: false);
 		_book.HostSlides = slides.Count == 0 ? null : slides;
 
 		// THE DRAW GATE THE GUEST WOULD HAVE STATED, sized to the document once; the provider's

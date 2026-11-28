@@ -33,6 +33,8 @@ set(REFIII_HOOK_SOURCES
     # The UI's values stated at their writers' entry — texts, visibility, the presentation's
     # document, the interaction mode's panels, buttons and list — for Godot to draw headless.
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_stated_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/screen_cut_hooks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/stats_screen_stubs.cpp
     # Headless Gameface presentations through the shared core (core/headless_presentation.h):
     # the maker and destroy, the presentation's own slots, the parameter setters and the chunk
     # runner; Fable 3's Gameface table beside it.

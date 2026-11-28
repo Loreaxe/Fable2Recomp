@@ -1648,9 +1648,11 @@ public static class CoopHeroLua
 		if GUI ~= nil and GUI.DisplayRealEstateScreen ~= nil and GUI.DisplayRealEstateScreen ~= C.DisplayRealEstateScreen then
 			local shipped = GUI.DisplayRealEstateScreen
 			C.DisplayRealEstateScreen = C.Permanent(function(...)
+				C.EstatePageAsked = true
 				if Refii ~= nil and Refii._estate_buyer ~= nil then
 					local buyer = Refii.acting_player ~= nil and Refii.acting_player() or (C.Acting() ~= nil and 2 or 1)
 					if not Refii._estate_buyer(buyer == 2 and C.TwoIsHero() and 2 or 1) then
+						C.Say("the real-estate page is not opened: no building for its buyer")
 						return
 					end
 				end
@@ -1716,16 +1718,57 @@ public static class CoopHeroLua
 			return false
 		end
 
+		-- The shipped use classes by name (every `X = OnActionUseBase:new()` / `OnCarriedActionUseBase:new()`
+		-- in the shipped scripts). Iterating _G does not reach them (a run named none of them), while a
+		-- lookup by name does (C.JoinerRunsHere is built from `_G[name]`), so a class is named by lookup.
+		C.UseClassNames = { "OnActionUseBed", "OnActionUseBedScript", "OnActionUseClimb", "OnActionUseDiveSpot",
+			"OnActionUseDLCColosseumExit", "OnActionUseDLCCostumeExit", "OnActionUseDLCWraithRevisitExit",
+			"OnActionUseGamesMaster", "OnActionUseGuildDoor", "OnActionUseKillSelf", "OnActionUseKnockDoor",
+			"OnActionUseLookThrough", "OnActionUsePickUp", "OnActionUsePullPint", "OnActionUseRead", "OnActionUseSaleSign",
+			"OnActionUseScriptNull", "OnActionUseStartBarmanJob", "OnActionUseSwitch", "OnActionUseTakeItems",
+			"OnActionUseTombDoor", "OnActionUseTravelAgent", "OnCarriedActionUseArenaMiniature",
+			"OnCarriedActionUseBalverineSuit", "OnCarriedActionUseBedRoll", "OnCarriedActionUseBerserk",
+			"OnCarriedActionUseBonusEffects", "OnCarriedActionUseBook", "OnCarriedActionUseDarkGuildSeal",
+			"OnCarriedActionUseDig", "OnCarriedActionUseDogAccessory", "OnCarriedActionUseDogBall",
+			"OnCarriedActionUseDogTreat", "OnCarriedActionUseDye", "OnCarriedActionUseFishingRod",
+			"OnCarriedActionUseGuildSeal", "OnCarriedActionUseHobbeSuit", "OnCarriedActionUseHollowmanSuit",
+			"OnCarriedActionUseLantern", "OnCarriedActionUseLute", "OnCarriedActionUseMusicBoxAttack",
+			"OnCarriedActionUseMusicBoxShield", "OnCarriedActionUsePhoto", "OnCarriedActionUseRing",
+			"OnCarriedActionUseSexChange", "OnCarriedActionUseSkull", "OnCarriedActionUseSnowglobe",
+			"OnCarriedActionUseSpireStatue", "OnCarriedActionUseTrophy" }
+
 		function C.ClassName(class)
 			if C.JoinerRunsHere[class] ~= nil then
 				return C.JoinerRunsHere[class]
 			end
-			for name, value in pairs(_G) do
-				if value == class and type(name) == "string" then
+			for _, name in ipairs(C.UseClassNames) do
+				if rawequal(_G[name], class) then
 					return name
 				end
 			end
+			for name, value in pairs(_G) do
+				if rawequal(value, class) and type(name) == "string" then
+					return name
+				end
+			end
+			local env = getfenv ~= nil and getfenv(0) or nil
+			if type(env) == "table" and env ~= _G then
+				for name, value in pairs(env) do
+					if rawequal(value, class) and type(name) == "string" then
+						return name
+					end
+				end
+			end
 			return nil
+		end
+
+		-- A use script's thing, for a log line when its class has no global name to give.
+		function C.UseName(script)
+			local thing = type(script) == "table" and (script.ItemBeingUsed or script.InventoryItemBeingUsed) or nil
+			local ok, name = pcall(function()
+				return thing ~= nil and thing.GetName ~= nil and thing:GetName() or nil
+			end)
+			return "use of " .. tostring(ok and name or "an unnamed thing")
 		end
 
 		function C.HostsJoiner()
@@ -1782,8 +1825,11 @@ public static class CoopHeroLua
 					local aimed = target ~= nil and target:IsAlive() and Refii.uid(target) or nil
 					if name ~= nil and item ~= nil and Refii ~= nil and Refii._use_carried ~= nil
 						and Refii._use_carried(item, name, aimed) then
+						C.Say("joiner: the carried " .. name .. " goes to the host")
 						return
 					end
+					C.Say("joiner: the carried use is NOT sent (class " .. tostring(name) .. ", item "
+						.. tostring(item ~= nil and Refii._item_record ~= nil and Refii._item_record(item) or item) .. "); it runs here")
 					return shipped(script, ...)
 				end
 				if C.HostsJoiner() then
@@ -1791,7 +1837,7 @@ public static class CoopHeroLua
 					if class == OnActionUseSaleSign then
 						return
 					end
-					C.Say("the joiner's " .. tostring(C.ClassName(class)) .. " runs here for player two")
+					C.Say("the joiner's " .. tostring(C.ClassName(class) or C.UseName(script)) .. " runs here for player two")
 					C.WrapEntitySetPosition(two)
 					local target = Refii._use_stated_target ~= nil and Refii._use_stated_target() or nil
 					return C.Call1(C.JoinerUseAdded, { script = script, hero = two, target = target }, shipped, script, ...)
@@ -1799,6 +1845,41 @@ public static class CoopHeroLua
 				return shipped(script, ...)
 			end, "AddScript")
 			GeneralScriptManager.AddScript = C.AddScript
+		end
+
+		-- What the sale sign's script will test, on this machine, when it first runs (a log line; the
+		-- script's own tests decide): the property-screen rule, the sign, its building, a buyer standing in
+		-- it, a business's tutorial. OnActionUseSaleSign:Update, shipped.
+		function C.IsSignScript(script)
+			return OnActionUseSaleSign ~= nil and getmetatable(script) == OnActionUseSaleSign
+		end
+		function C.SignReport(script)
+			if not C.IsSignScript(script) then
+				return
+			end
+			local ok, text = pcall(function()
+				local sign = script.ItemBeingUsed
+				local hero = script.EntityUsingItem
+				local parts = { "the joiner's sale sign script starts:" }
+				parts[#parts + 1] = "rule " .. tostring(Refii._estate_blocked ~= nil and Refii._estate_blocked())
+				local alive = sign ~= nil and sign:IsAlive()
+				parts[#parts + 1] = "sign " .. tostring(alive)
+				local available = alive and BuildingSaleSign.IsAvailable(sign)
+				parts[#parts + 1] = "available " .. tostring(available)
+				local building = available and BuildingSaleSign.GetBuilding(sign) or nil
+				local live = building ~= nil and building:IsAlive()
+				parts[#parts + 1] = "building " .. tostring(live)
+				if live then
+					parts[#parts + 1] = "buyer inside " .. tostring(Building.CheckIfBuyerIsStandingInBuilding(building))
+					parts[#parts + 1] = "user in it " .. tostring(hero ~= nil and Whereabouts.GetBuildingWeAreInsideOf(hero) == building)
+					local other = C.ShippedGetPlayerHero ~= nil and C.ShippedGetPlayerHero() or nil
+					parts[#parts + 1] = "partner in it " .. tostring(other ~= nil and other:IsAlive()
+						and Whereabouts.GetBuildingWeAreInsideOf(other) == building)
+					parts[#parts + 1] = "business " .. tostring(Building.IsBusiness(building))
+				end
+				return table.concat(parts, " ")
+			end)
+			C.Say(ok and text or ("the joiner's sale sign report failed: " .. tostring(text)))
 		end
 
 		function C.JoinerSignTick()
@@ -1837,6 +1918,12 @@ public static class CoopHeroLua
 							return shipped_rule(hero, rule)
 						end
 					end
+					if entry.resumes == nil then
+						entry.resumes = 0
+						C.SignReport(script)
+					end
+					entry.resumes = entry.resumes + 1
+					C.EstatePageAsked = false
 					local ok, err = coroutine.resume(script.co_update, script)
 					if shipped_rule ~= nil then
 						Player.IsInteractiveCutsceneRuleSet = shipped_rule
@@ -1846,6 +1933,13 @@ public static class CoopHeroLua
 						keep = false
 					elseif coroutine.status(script.co_update) == "dead" then
 						keep = false
+						if C.IsSignScript(script) and not C.EstatePageAsked then
+							C.Say("the joiner's sale sign script ended without asking for the real-estate page (after "
+								.. tostring(entry.resumes) .. " resume(s))")
+						end
+					elseif entry.resumes % 90 == 0 then
+						C.Say("the joiner's sale sign script still waits after " .. tostring(entry.resumes)
+							.. " resumes (GUI.IsUIActive " .. tostring(GUI ~= nil and GUI.IsUIActive ~= nil and GUI.IsUIActive()) .. ")")
 					end
 				end
 				if keep then
@@ -1925,7 +2019,11 @@ public static class CoopHeroLua
 				if C.JoinerUse() == nil then
 					return shipped(item, ...)
 				end
-				local hash = Refii._item_record(item)
+				-- An InventoryItem cannot travel; its record does, and the joiner opens the card on its own
+				-- item of that record, or one made for the card as the guest makes it (mod_events.cpp
+				-- refii_household_received_item).
+				local co = coroutine.running()
+				local hash = Refii._item_record(item) or (co ~= nil and C.CoGet(co, "added") or nil)
 				C.Say("use run: the received card " .. tostring(hash) .. " goes to the joiner")
 				if hash ~= nil then
 					C.JoinerCommand("Refii._received_item", hash)
@@ -1994,11 +2092,29 @@ public static class CoopHeroLua
 					if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() then
 						return shipped(entity, ...)
 					end
+					-- A money item (Inventory.AddItem's money branch: CECMoney_Modify on the receiver, an item made
+					-- only for the card, TU1 0x824F0C8C..0x824F0CBC) adds gold, which the host's money message
+					-- carries to the joiner; no item is restated for it.
+					local gold = Money ~= nil and Money.IsAvailable(entity) and Money.Get(entity) or nil
+					local source = Refii._item_record((...))
 					local results = { pcall(shipped, entity, ...) }
 					if not results[1] then
 						error(results[2], 0)
 					end
-					C.UseInventoryNote("invadd", results[2] ~= nil and Refii._item_record(results[2]) or nil)
+					local hash = (results[2] ~= nil and Refii._item_record(results[2])) or source
+					local co = coroutine.running()
+					if co ~= nil and hash ~= nil then
+						C.CoSet(co, "added", hash)
+					end
+					local now = gold ~= nil and Money.Get(entity) or nil
+					if now ~= nil and now > gold then
+						C.Say("use run: " .. name .. " " .. tostring(hash) .. " was " .. tostring(now - gold)
+							.. " gold for player two; no item for the joiner")
+					elseif hash == nil then
+						C.Say("use run: " .. name .. " gave player two an item with no record here; nothing restated")
+					else
+						C.UseInventoryNote("invadd", hash)
+					end
 					return unpack(results, 2, table.maxn(results))
 				end
 			end)
@@ -2063,8 +2179,11 @@ public static class CoopHeroLua
 				Chest.Open(state.chest)
 			end
 			local chest = state.chest ~= nil and state.chest:IsAlive() and Chest.IsAvailable(state.chest)
+			-- Chest.Open starts the lid's "Open" animation (Lua_Chest_Open TU1 0x82593E08); the chest's update
+			-- sets IsOpen (+0x0C) when it ends (CECChest_vf14 `stb r30,0xC(r31)` 0x82295E20 → sub_82594730;
+			-- disc sub_8253DC80), so it reads false here and the script's own `while not Chest.IsOpen` waits.
 			C.Say("use run: the joiner answered its action: " .. tostring(played)
-				.. (chest and ("; the chest is open here: " .. tostring(Chest.IsOpen(state.chest))) or ""))
+				.. (chest and ("; the chest opens here (open yet: " .. tostring(Chest.IsOpen(state.chest)) .. ")") or ""))
 			return played
 		end, "JoinerActAfter")
 		C.JoinerShows(Action, "Action", "SetCurrentAction", function(shipped)
@@ -3765,7 +3884,8 @@ public static class CoopHeroLua
 		C.RouteSpecs = C.RouteSpecs or {
 			["GUI.DisplayMessageBox"] = { mode = "c", seat = true },
 			["GUI.DisplayReceivedMoney"] = { mode = "c" },
-			["GUI.DisplayReceivedItem"] = { mode = "c" },
+			-- GUI.DisplayReceivedItem is not here: an InventoryItem cannot travel; the joiner's card goes by
+			-- its record (C.JoinerShows GUI.DisplayReceivedItem).
 			["TutorialManager.DisplayTutorial"] = { mode = "c", answer = { true } },
 			["GUI.AskYesNoQuestion"] = { mode = "q", caller = 2, default = { false } },
 			["GUI.AskSetQuestPrimaryQuestion"] = { mode = "q", caller = 2, default = { false } },

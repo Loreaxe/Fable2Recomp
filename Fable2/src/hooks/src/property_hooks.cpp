@@ -67,6 +67,10 @@ extern "C" void refii_mod_raise_property_condition(PPCContext* ctx, uint8_t* bas
 /// price, 7 the sale price): 1 and `out` set when the host stated it.
 extern "C" int32_t refii_estate_stated_value(uint8_t* base, uint32_t building, int32_t value, int32_t* out);
 
+/// The owned list's statements around a purchase (property_list_hooks.cpp).
+extern "C" void RefiiPropertyListPurchaseBegin(void);
+extern "C" void RefiiPropertyListPurchaseEnd(uint8_t* base, uint32_t props);
+
 extern "C" REX_FUNC(__imp__rex_CECPlayerProperties_PayIncome);
 extern "C" REX_FUNC(__imp__rex_CECPlayerProperties_RecordIncome);
 extern "C" REX_FUNC(__imp__rex_CECBuilding_BuyPrice);
@@ -263,11 +267,12 @@ REX_EXTERN(rex_CECPlayerProperties_PayIncome) {
 }
 
 // A record's rent per drop (`sub_828CDD88`: r3 the record; the building's income when loaded,
-// its cached +28 when not, a dungeon's rent). Tenants of a home in disrepair pay nothing.
-// TU1 0x828CDD88.
+// its cached +28 when not, a dungeon's rent). Tenants of a home in disrepair pay nothing. The guest's
+// answer is that record's stated income (property_list_hooks.cpp). TU1 0x828CDD88.
 REX_EXTERN(rex_CECPlayerProperties_RecordIncome) {
   const uint32_t record = ctx.r3.u32;
   __imp__rex_CECPlayerProperties_RecordIncome(ctx, base);
+  refii_bridge_property_list_record_field(record, REFII_PROPERTY_FIELD_INCOME, static_cast<int32_t>(ctx.r3.u32));
   if (Heap(record) && base[record + 15u] != 0u && RefiiPropertyCondition(Uid(base, record)) <= 0.0f) {
     ctx.r3.u64 = 0u;
   }
@@ -334,11 +339,21 @@ namespace {
 
 /// A purchase by either of the guest's two adds: the mod API's `property_trade` (kind 0) before it — a mod
 /// may keep it unbought or set its price — and, once the record is on the buyer's list, the partnership's
-/// share. `buy` is the guest's body.
+/// share. `buy` is the guest's body. The record it builds is stated when it returns (property_list_hooks.cpp).
+struct PurchaseStatement {
+  PurchaseStatement(uint8_t* base, uint32_t props) : base_(base), props_(props) { RefiiPropertyListPurchaseBegin(); }
+  ~PurchaseStatement() { RefiiPropertyListPurchaseEnd(base_, props_); }
+  PurchaseStatement(const PurchaseStatement&) = delete;
+  PurchaseStatement& operator=(const PurchaseStatement&) = delete;
+  uint8_t* base_;
+  uint32_t props_;
+};
+
 template <typename Body>
 void Purchase(PPCContext& ctx, uint8_t* base, Body buy) {
   const uint32_t props = ctx.r3.u32;
   const uint32_t building = ctx.r4.u32;
+  PurchaseStatement statement(base, props);
   const uint64_t uid = Heap(building) ? Uid(base, building + 20u) : 0u;
   const bool owned = uid != 0u && RecordOf(base, props, uid) != 0u;
   int32_t price = -1;
@@ -424,49 +439,60 @@ extern "C" int32_t RefiiPropertyPayOwed(PPCContext& ctx, uint8_t* base, int32_t 
   return owed;
 }
 
-// The repair (the pump's Property:repair:<uid> for `hero`): the record of hero's CECPlayerProperties
-// (comp69) with that building; the bill from its value (+44); charged through the guest's money
-// change on hero's CECMoney (comp81, gold at +12) when the hero can pay; the condition then 1.
-// Returns 1 repaired, 0 not owned / nothing to repair, -1 not enough gold.
-extern "C" int32_t RefiiPropertyRepair(PPCContext& ctx, uint8_t* base, uint32_t hero, uint64_t uid) {
+namespace {
+
+/// The record `hero` may repair for `uid`: their own, or — the partner's purchase shared with them — the
+/// partner hero's (the co-owner of what the partner bought is this hero, SharedWith). 0 for neither.
+uint32_t RepairableRecord(uint8_t* base, uint32_t hero, uint64_t uid) {
   const uint32_t props = hero != 0u ? refii_mod_component(base, hero, 69u) : 0u;
-  const uint32_t money = hero != 0u ? refii_mod_component(base, hero, 81u) : 0u;
-  if (props == 0u || money == 0u) {
-    return 0;
+  const uint32_t own = props != 0u ? RecordOf(base, props, uid) : 0u;
+  const int32_t player = own == 0u && hero != 0u ? refii_mod_player_of(base, hero) : 0;
+  if (own != 0u || player == 0) {
+    return own;
   }
-  const uint32_t head = Load32(base, props + 28u);
-  uint32_t node = Heap(head) ? Load32(base, head) : 0u;
-  for (uint32_t n = 0; Heap(node) && node != head && n < 256u; ++n, node = Load32(base, node)) {
-    const uint32_t record = Load32(base, node + 8u);
-    if (!Heap(record) || Uid(base, record) != uid) {
-      continue;
-    }
-    const float condition = RefiiPropertyCondition(uid);
-    const int32_t cost = refii::property::RepairCost(static_cast<int32_t>(Load32(base, record + 44u)), condition);
-    if (condition >= 1.0f || cost <= 0) {
-      RefiiPropertySetCondition(uid, 1.0f);
-      return 0;
-    }
-    if (static_cast<int32_t>(Load32(base, money + 12u)) < cost) {
-      return -1;
-    }
-    PPCContext work = refii::mods::Frame(ctx);
-    work.r3.u64 = money;
-    work.r4.u64 = static_cast<uint32_t>(-cost);
-    work.r5.u64 = 1u;
-    work.r6.u64 = 1u;
-    work.r7.u64 = 0u;
-    refii::mods::CallGuest(work, base, refii::guest::Address(0x8242E578u));
-    RefiiPropertySetCondition(uid, 1.0f);
-    refii_mod_raise_property_condition(&ctx, base, uid, refii_mod_player_of(base, hero), 1.0f, condition, 1);
-    return 1;
-  }
-  return 0;
+  const uint32_t other = refii_mod_player_hero(base, 3 - player);
+  const uint32_t other_props = other != 0u && other != hero ? refii_mod_component(base, other, 69u) : 0u;
+  const uint64_t me = refii_bridge_hero_id(player);
+  return other_props != 0u && me != 0u && SharedWith(3 - player, uid) == me ? RecordOf(base, other_props, uid) : 0u;
 }
 
-// REPAIR ALL (the pump's Property:repairall:<player>): every record of `hero`'s below full condition,
-// cheapest first, each through RefiiPropertyRepair while the gold lasts. `repaired`, `spent` and
-// `left` (still in disrepair: not enough gold) are the outcome.
+}  // namespace
+
+// The repair (the pump's Property:repair:<uid> for `hero`): the record of hero's CECPlayerProperties
+// (comp69) with that building — or the partner's, for a purchase of theirs shared with hero
+// (RepairableRecord); the bill from its value (+44); charged through the guest's money change on hero's
+// CECMoney (comp81, gold at +12) when the hero can pay; the condition then 1.
+// Returns 1 repaired, 0 not owned / nothing to repair, -1 not enough gold.
+extern "C" int32_t RefiiPropertyRepair(PPCContext& ctx, uint8_t* base, uint32_t hero, uint64_t uid) {
+  const uint32_t money = hero != 0u ? refii_mod_component(base, hero, 81u) : 0u;
+  const uint32_t record = money != 0u ? RepairableRecord(base, hero, uid) : 0u;
+  if (record == 0u) {
+    return 0;
+  }
+  const float condition = RefiiPropertyCondition(uid);
+  const int32_t cost = refii::property::RepairCost(static_cast<int32_t>(Load32(base, record + 44u)), condition);
+  if (condition >= 1.0f || cost <= 0) {
+    RefiiPropertySetCondition(uid, 1.0f);
+    return 0;
+  }
+  if (static_cast<int32_t>(Load32(base, money + 12u)) < cost) {
+    return -1;
+  }
+  PPCContext work = refii::mods::Frame(ctx);
+  work.r3.u64 = money;
+  work.r4.u64 = static_cast<uint32_t>(-cost);
+  work.r5.u64 = 1u;
+  work.r6.u64 = 1u;
+  work.r7.u64 = 0u;
+  refii::mods::CallGuest(work, base, refii::guest::Address(0x8242E578u));
+  RefiiPropertySetCondition(uid, 1.0f);
+  refii_mod_raise_property_condition(&ctx, base, uid, refii_mod_player_of(base, hero), 1.0f, condition, 1);
+  return 1;
+}
+
+// REPAIR ALL (the pump's Property:repairall:<player>): every record of `hero`'s below full condition —
+// and of the partner's purchases shared with hero — cheapest first, each through RefiiPropertyRepair while
+// the gold lasts. `repaired`, `spent` and `left` (still in disrepair: not enough gold) are the outcome.
 extern "C" void RefiiPropertyRepairAll(PPCContext& ctx, uint8_t* base, uint32_t hero, int32_t* repaired, int32_t* spent,
                                        int32_t* left) {
   *repaired = 0;
@@ -477,19 +503,30 @@ extern "C" void RefiiPropertyRepairAll(PPCContext& ctx, uint8_t* base, uint32_t 
     return;
   }
   std::vector<std::pair<int32_t, uint64_t>> worn;
-  const uint32_t head = Load32(base, props + 28u);
-  uint32_t node = Heap(head) ? Load32(base, head) : 0u;
-  for (uint32_t n = 0; Heap(node) && node != head && n < 256u; ++n, node = Load32(base, node)) {
-    const uint32_t record = Load32(base, node + 8u);
-    if (!Heap(record)) {
-      continue;
+  const auto consider = [&](uint32_t list) {
+    const uint32_t head = list != 0u ? Load32(base, list + 28u) : 0u;
+    uint32_t node = Heap(head) ? Load32(base, head) : 0u;
+    for (uint32_t n = 0; Heap(node) && node != head && n < 256u; ++n, node = Load32(base, node)) {
+      const uint32_t record = Load32(base, node + 8u);
+      if (!Heap(record)) {
+        continue;
+      }
+      const uint64_t uid = Uid(base, record);
+      if (list != props && RepairableRecord(base, hero, uid) != record) {
+        continue;
+      }
+      const float condition = RefiiPropertyCondition(uid);
+      const int32_t cost = refii::property::RepairCost(static_cast<int32_t>(Load32(base, record + 44u)), condition);
+      if (condition < 1.0f && cost > 0) {
+        worn.emplace_back(cost, uid);
+      }
     }
-    const uint64_t uid = Uid(base, record);
-    const float condition = RefiiPropertyCondition(uid);
-    const int32_t cost = refii::property::RepairCost(static_cast<int32_t>(Load32(base, record + 44u)), condition);
-    if (condition < 1.0f && cost > 0) {
-      worn.emplace_back(cost, uid);
-    }
+  };
+  consider(props);
+  const int32_t player = refii_mod_player_of(base, hero);
+  const uint32_t other = player != 0 ? refii_mod_player_hero(base, 3 - player) : 0u;
+  if (other != 0u && other != hero) {
+    consider(refii_mod_component(base, other, 69u));
   }
   std::sort(worn.begin(), worn.end());
   for (const auto& [cost, uid] : worn) {

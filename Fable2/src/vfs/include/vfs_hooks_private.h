@@ -511,11 +511,23 @@ bool EstateStatedValue(uint8_t* base, uint32_t building, EstateValue value, int3
 /// Joiner: the host's occupant of a CECBuilding (this machine's entity for it, 0 none); false when
 /// the host stated nothing for the building.
 bool EstateStatedOccupant(PPCContext& ctx, uint8_t* base, uint32_t building, uint32_t* out);
+/// Joiner: the text (UTF-8) the host's property page shows for a CECBuilding's non-hero owner, or with
+/// `tenant` its tenant (coop_estate_statements.cpp); false when the host stated none for it.
+bool EstateStatedCaptionText(uint8_t* base, uint32_t building, bool tenant, std::string* out);
+/// Joiner: `text` (UTF-8) made into page 1's caption string in the caller's frame (`entry` the entry context
+/// of a getter page 1 called), for the next RefiiEstate*StatedText midasm (coop_estate_owner.cpp).
+bool EstateCaptionFromText(const PPCContext& entry, uint8_t* base, const std::string& text);
 /// Joiner: the host has stated the building of this sale sign (an entity with comp142).
 bool EstateStatedSign(PPCContext& ctx, uint8_t* base, uint32_t sign);
 /// Joiner: the host's own copy of hero two holds CUTSCENE_RULE_NO_PROPERTY_SCREEN (a cutscene there bars
 /// the property screen for this machine's hero); false when the host states it does not, or stated nothing.
 bool EstateBlockedForTwo();
+/// The partnership this machine decides who may act on a property by (core/estate_owner_rule.h
+/// EstatePartnershipHere): on an online joiner the host's statement once it has arrived, else this
+/// machine's own reading of both heroes' words (coop_estate_statements.cpp).
+int32_t EstatePartnership();
+/// The words behind it, for a log line: each hero's id and word, this machine's reading, the host's statement.
+std::string EstatePartnershipWords();
 /// Online: this machine's own hero's title, stated to the other machine (coop_estate_owner.cpp), once a second.
 void StateOwnTitle(const PPCContext& ctx, uint8_t* base);
 /// The DynamicWeather mod event, from the host's "ModWeather:" pump action (the body after the

@@ -25,7 +25,8 @@ public partial class Fable3StatedScreen : Fable3ListScreen
 	private string? _root;
 	private string? _boxRoot;
 	private Fable3ScreenPage? _page;
-	private uint _wasDown;
+	/// <summary>Each local player's presses, on that player's own pad.</summary>
+	private readonly Fable3ActingPlayer.Edges _edges = new();
 	private string? _panelRoot;
 	private Fable3ListPanel? _statedPanel;
 
@@ -118,35 +119,43 @@ public partial class Fable3StatedScreen : Fable3ListScreen
 	protected override void Frame(double delta)
 	{
 		base.Frame(delta);
-		uint down = Refii.Game.GameInput.Pad0.Buttons;
-		uint pressed = down & ~_wasDown;
-		_wasDown = down;
+		// Each local player's pad (pad 0 carries the bound keys and the pointer's leftovers too: a right
+		// click is its B, Engine_UiPointer.HandLeftoversToPad), edge-detected on its own.
+		uint pressedOne = _edges.Pressed(Fable3ActingPlayer.One, PadDown(Fable3ActingPlayer.One));
+		uint pressedTwo = _edges.Pressed(Fable3ActingPlayer.Two, PadDown(Fable3ActingPlayer.Two));
 		if (_page is null || _root is null || !Fable3BoxAnswers.OwnsScreen(_root) || !Refii.Host.HostBridge.IsGuestUp ||
 			Fable3HostOptions.IsOpen)
 		{
 			return;
 		}
 
-		// Pad 0's buttons carry the bound keys and the pointer's leftovers too (a right click is its B:
-		// Engine_UiPointer.HandLeftoversToPad).
-		var press = new Fable3BoxAnswers.Press(
-			(pressed & Refii.Game.GameInput.ButtonA) != 0, (pressed & Refii.Game.GameInput.ButtonB) != 0,
-			(pressed & Refii.Game.GameInput.ButtonX) != 0, (pressed & Refii.Game.GameInput.ButtonY) != 0,
-			(pressed & Refii.Game.GameInput.DpadUp) != 0, (pressed & Refii.Game.GameInput.DpadDown) != 0,
-			(pressed & Refii.Game.GameInput.DpadLeft) != 0, (pressed & Refii.Game.GameInput.DpadRight) != 0);
-		if (press.Any)
+		// A press counts for the player the screen takes it from (the box's own owner rule,
+		// Fable3BoxAnswers.TakesPlayer): Godot's cursor moves only for that player, and the lever carries them.
+		Fable3ScreenState screen = Fable3ScreenStatements.Of(Fable3ScreenBoxes.ScreenBox);
+		foreach ((int player, uint pressed) in new[] { (Fable3ActingPlayer.One, pressedOne), (Fable3ActingPlayer.Two, pressedTwo) })
 		{
-			// The presses are guest pad 0's (GameInput.Pad0): player one's.
-			Take(Fable3BoxAnswers.ForScreen(_root, Fable3ScreenBoxes.ScreenBox, press, Working(), Muted(), Fable3ActingPlayer.OfPad(0)));
+			var press = new Fable3BoxAnswers.Press(
+				(pressed & Refii.Game.GameInput.ButtonA) != 0, (pressed & Refii.Game.GameInput.ButtonB) != 0,
+				(pressed & Refii.Game.GameInput.ButtonX) != 0, (pressed & Refii.Game.GameInput.ButtonY) != 0,
+				(pressed & Refii.Game.GameInput.DpadUp) != 0, (pressed & Refii.Game.GameInput.DpadDown) != 0,
+				(pressed & Refii.Game.GameInput.DpadLeft) != 0, (pressed & Refii.Game.GameInput.DpadRight) != 0);
+			if (press.Any && Fable3BoxAnswers.TakesPlayer(_root, screen, player))
+			{
+				Take(Fable3BoxAnswers.ForScreen(_root, Fable3ScreenBoxes.ScreenBox, press, Working(), Muted(), player), player);
+				return;
+			}
 		}
 	}
+
+	/// <summary>The buttons down on local <paramref name="player"/>'s pad (GameInput.Seen: every source folded).</summary>
+	private static uint PadDown(int player) => Refii.Game.GameInput.Seen(Fable3ActingPlayer.PadOf(player)).Buttons;
 
 	private Fable3ScreenState Working() => Fable3ScreenStatements.Working(Fable3ScreenBoxes.ScreenBox);
 
 	private bool Muted() => Fable3BoxScreenModel.ChatMuted(Fable3ScreenStatements.Of(Fable3ScreenBoxes.ScreenBox));
 
 	/// <summary>Posts a step's lever and takes its working values (the page is composed again from them).</summary>
-	private void Take(Fable3BoxAnswers.ScreenStep step)
+	private void Take(Fable3BoxAnswers.ScreenStep step, int player)
 	{
 		if (!step.Any)
 		{
@@ -189,7 +198,7 @@ public partial class Fable3StatedScreen : Fable3ListScreen
 		{
 			// The host's category: the achievements page, for the player whose pad drives this screen.
 			Fable3Elements.Log($"[fable3-screens] {_root}: the Achievements category opens the achievements page");
-			Fable3AchievementsPage.Open(Fable3ActingPlayer.OfPad(0));
+			Fable3AchievementsPage.Open(player);
 		}
 
 		if (step.Lever is { } lever)
@@ -211,10 +220,11 @@ public partial class Fable3StatedScreen : Fable3ListScreen
 	{
 		if (Fable3BoxAnswers.OwnsScreen(_root))
 		{
-			if (_page is { } page && row >= 0 && row < page.Rows.Count)
+			if (_page is { } page && row >= 0 && row < page.Rows.Count &&
+				Fable3BoxAnswers.TakesPlayer(_root!, Fable3ScreenStatements.Of(Fable3ScreenBoxes.ScreenBox), Fable3ActingPlayer.Pointer))
 			{
 				Take(Fable3BoxAnswers.PointScreen(_root!, Fable3ScreenBoxes.ScreenBox, page.Rows[row].Name, clicked, Working(),
-					Muted(), Fable3ActingPlayer.One));
+					Muted(), Fable3ActingPlayer.Pointer), Fable3ActingPlayer.Pointer);
 			}
 
 			return;

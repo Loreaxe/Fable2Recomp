@@ -8,6 +8,7 @@
 #define REFII_VFS_HOOKS_PAGE_FILLS_STATED_H
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace refii::vfs {
@@ -22,6 +23,22 @@ void OpenPageFill(uint32_t screen, const char* scope);
 /// other close on the same screen (a new open) forgets that last statement.
 void ClosePageFill(uint32_t key, bool restated = false);
 
+/// What the last outermost ClosePageFill on this thread did, for a caller that reports it (the world map's
+/// minimap page states once per region change, gui_screen_stub_world_map.cpp).
+struct PageFillClosed {
+  /// A `@PageFill` statement went out.
+  bool posted = false;
+  /// A restated fill wrote exactly its last statement again: nothing went out.
+  bool unchanged = false;
+  /// Writes to elements the fill did not find by name (not stated).
+  uint32_t unnamed = 0u;
+  /// What went out, by kind in first-seen order: "texture 11, rotation 1, text 9, …".
+  std::string counts;
+  /// The first `map` mark's value (the minimap fill's projection), empty when none.
+  std::string map;
+};
+const PageFillClosed& LastPageFillClosed();
+
 /// Forgets every restated statement made on `screen`, so the next restated close posts what it wrote
 /// even when that equals the last statement: a screen whose fills are all restated (the world map's
 /// rows) calls it when it opens, the opening Godot drops nothing it was told.
@@ -30,6 +47,10 @@ void ForgetRestatedPageFills(uint32_t screen);
 /// True while a fill is open on this thread.
 bool PageFillOpen();
 
+/// The open fill's serial on this thread (each outermost open takes the next), for a hook that states
+/// something once per fill.
+uint32_t PageFillSerial();
+
 /// A text written to `element` while a fill is open (SetText / SetTextFromTag, noted where the
 /// headless element is told: gui_headless_presentation.cpp).
 void NotePageFillText(uint32_t element, const std::vector<uint16_t>& units);
@@ -37,6 +58,14 @@ void NotePageFillText(uint32_t element, const std::vector<uint16_t>& units);
 /// A GDB record the open fill names under `what` ("preview": the record its preview was set to,
 /// preview_item_stated.cpp; "card": the furniture card it took), stated as kind `record`.
 void NotePageFillRecord(const char* what, uint32_t record);
+
+/// A texture hash the open fill stored on `element` (`sub_82425C10`, or one of the inline quad stores
+/// the minimap fill makes, minimap_page_stated.cpp), stated as kind `texture` with the hash in hex.
+void NotePageFillTexture(uint32_t element, uint32_t hash);
+
+/// A mark the open fill made that is not an element write — the minimap fill's projection and each of
+/// its icons (minimap_page_stated.cpp) — stated in call order as `<kind> <label> <value>`.
+void NotePageFillMark(const char* kind, std::string label, std::string value);
 
 }  // namespace refii::vfs
 

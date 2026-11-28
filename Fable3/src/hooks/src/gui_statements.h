@@ -201,6 +201,17 @@ void StateGuiScreen(const uint8_t* base);
 /// The live headless presentation whose load named `document` (PresentationKey without its `=`), or 0.
 uint32_t PresentationOfDocument(const std::string& document);
 
+/// What a presentation's load does for Godot (ui_stated_hooks.cpp): every stated value forgotten,
+/// `presentation` keyed by `file`'s document, its readers reset, then `@Presentation.Load(pres,
+/// file)`. The real load (rex_GuiPresentation_Load) and the token of a Godot-owned screen
+/// (screen_cut_hooks.cpp) both end here.
+void NoteDocument(uint32_t presentation, const std::string& file);
+
+/// A Godot-owned screen's presentation token (screen_cut_hooks.cpp): what `Pres(box)` answers for a
+/// box whose screen the loader no longer makes. Never a guest address (below 0x10000); every path
+/// setter states it and returns, Find and Resolve answer no element for it.
+bool IsPresentationToken(uint32_t presentation);
+
 /// THE RUNTIME'S READERS ANSWERED FROM STATEMENTS (ui_reader_hooks.cpp).
 /// A slide the guest set through GuiElement_SetState (gui_element_hooks.cpp, after the setter ran):
 /// the path its path setter names the owner by, for the scroll gate.

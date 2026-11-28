@@ -58,36 +58,74 @@ public class Fable3ScreenModelTests
 	[TestCase]
 	public void StatsHighlightsTheStatedCursorInTheStatedWindow()
 	{
-		var stated = new Dictionary<string, Probe>
+		System.Func<uint, string?> before = Fable3Elements.TagText;
+		Fable3Elements.TagText = tag => tag switch
 		{
-			["StatsBox.Table.Categories.Details.CompStatisticCategories0.Categories.Category01"] = Text("Combat"),
-			["StatsBox.Table.Categories.Details.CompStatisticCategories1.Categories.Category01"] = Text("Money"),
-			["StatsBox.Table.Categories.Details.CompStatisticCategories2.Categories.Category01"] = Text("stale"),
+			0x10u => "Stats", 0x11u => "More", 0x21u => "Combat", 0x22u => "Money", 0x31u => "Gold earned",
+			0x32u => "Gold spent", 0x40u => "Offline", 0x50u => "Friends", _ => null,
 		};
-		var screen = new Fable3ScreenState { Cursor = 1 };
-		screen.StatsWindows[2] = (0, 2, 8);
+		try
+		{
+			var stated = new Dictionary<string, Probe>();
+			var screen = new Fable3ScreenState { Cursor = 1 };
+			// The categories writer's statements (stats_screen_stubs.cpp): two categories, window of eight.
+			screen.StatsLists[2] = new(2, 8, 0, false, 0x10u, 0x11u);
+			screen.StatsRows[2] = new() { [0] = new(0x21u, "", "", "", 0u), [1] = new(0x22u, "", "", "", 0u) };
+			screen.StatsWindows[2] = (0, 2, 8);
 
-		Fable3ScreenPage page = Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value;
-		// The guest's two categories, then the host's Achievements category (the list's end is in view).
-		AssertThat(page.Rows.Count).IsEqual(3);
-		AssertThat(page.Rows[0].Line).IsEqual("Combat");
-		AssertThat(page.Rows[2].Name).IsEqual(Fable3ScreenModel.StatsAchievementsRow);
-		AssertThat(page.Selected).IsEqual(1);
-		AssertThat(page.Title).IsEqual("<TEXT_GUI_STATS_SCREEN_TITLE>");
-		screen.StatsAchievements = true;
-		AssertThat(Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value.Selected).IsEqual(2);
-		screen.StatsAchievements = false;
+			Fable3ScreenPage page = Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value;
+			// The guest's two categories, then the host's Achievements category (the list's end is in view).
+			AssertThat(page.Rows.Count).IsEqual(3);
+			AssertThat(page.Rows[0].Line).IsEqual("Combat");
+			AssertThat(page.Rows[2].Name).IsEqual(Fable3ScreenModel.StatsAchievementsRow);
+			AssertThat(page.Selected).IsEqual(1);
+			AssertThat(page.Title).IsEqual("Stats");
+			AssertThat(page.Prompts[0].Label).IsEqual("More");
+			screen.StatsAchievements = true;
+			AssertThat(Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value.Selected).IsEqual(2);
+			screen.StatsAchievements = false;
 
-		stated["StatsBox.Table.FullStatistics.Details.CompStatisticDetails0.Statistics.Title.Statistic"] = Text("Gold earned");
-		stated["StatsBox.Table.FullStatistics.Details.CompStatisticDetails0.Statistics.Title.Score"] = Text("120");
-		stated["StatsBox.Table.FullStatistics.Details.CompStatisticDetails1.Statistics.Title.Statistic"] = Text("Gold spent");
-		screen.StatsPage = 3;
-		screen.Cursor = 7;
-		screen.StatsWindows[3] = (6, 12, 6);
-		page = Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value;
-		AssertThat(page.Rows.Count).IsEqual(2);
-		AssertThat(page.Rows[0].Line).IsEqual("Gold earned    120");
-		AssertThat(page.Selected).IsEqual(1);
+			// Offline statistics: nine rows from 6 (the cursor past the window), the offline rank's text, no A.
+			screen.StatsPage = 3;
+			screen.Cursor = 7;
+			screen.StatsLists[3] = new(12, 9, 6, false, 0x22u, 0u);
+			screen.StatsRows[3] = new() { [6] = new(0x31u, "", "120", "", 0x40u), [7] = new(0x32u, "", "1 d 2 h", "", 0x40u) };
+			screen.StatsWindows[3] = (6, 12, 9);
+			page = Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value;
+			AssertThat(page.Rows.Count).IsEqual(2);
+			AssertThat(page.Rows[0].Line).IsEqual("Gold earned    120    Offline");
+			AssertThat(page.Rows[0].Name).IsEqual("Statistic0");
+			AssertThat(page.Selected).IsEqual(1);
+			AssertThat(page.Title).IsEqual("Money");
+			AssertThat(page.Prompts.Count).IsEqual(1);
+			AssertThat(page.Prompts[0].Button).IsEqual("B");
+
+			// Online: the rank, the A caption and the board around the player.
+			screen.StatsLists[3] = new(2, 6, 0, true, 0x22u, 0x50u);
+			screen.StatsRows[3] = new() { [0] = new(0x31u, "", "120", "3", 0u), [1] = new(0x32u, "", "80", "1", 0u) };
+			screen.StatsWindows[3] = (0, 2, 6);
+			screen.Cursor = 0;
+			screen.StatsBoard[1] = new(false, "Ann", "300", "1");
+			screen.StatsBoard[2] = new(true, "Me", "120", "2");
+			page = Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value;
+			AssertThat(page.Rows[0].Line).IsEqual("Gold earned    120    #3");
+			AssertThat(page.Prompts[0].Label).IsEqual("Friends");
+			AssertThat(page.Description).IsEqual("#1    Ann    300\n> #2    Me    120");
+
+			// The friends' board: gamertag, score, rank.
+			screen.StatsPage = 4;
+			screen.StatsLists[4] = new(1, 9, 0, true, 0x31u, 0u);
+			screen.StatsRows[4] = new() { [0] = new(0u, "Ann", "300", "1", 0u) };
+			screen.StatsWindows[4] = (0, 1, 9);
+			page = Fable3ScreenModel.Compose(Fable3ScreenModel.Stats, stated, screen, Resolve)!.Value;
+			AssertThat(page.Rows[0].Line).IsEqual("Ann    300    #1");
+			AssertThat(page.Title).IsEqual("Gold earned");
+			AssertThat(page.Prompts.Count).IsEqual(1);
+		}
+		finally
+		{
+			Fable3Elements.TagText = before;
+		}
 	}
 
 	[TestCase]

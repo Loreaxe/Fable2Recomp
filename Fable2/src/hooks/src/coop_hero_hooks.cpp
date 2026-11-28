@@ -91,6 +91,7 @@ void Once(std::atomic<bool>& said, const char* what) {
 
 std::atomic<bool> g_said_use{false};
 std::atomic<bool> g_said_travel{false};
+std::atomic<bool> g_said_money_item{false};
 std::atomic<bool> g_said_shop{false};
 std::atomic<bool> g_said_experience{false};
 std::atomic<bool> g_said_gold{false};
@@ -172,6 +173,23 @@ bool RefiiCoopTravelAgentForHero(PPCRegister& r24) {
   }
   Once(g_said_travel, "a travel agent serves player two");
   return true;
+}
+
+// A MONEY ITEM GIVEN TO PLAYER TWO IS GOLD. Inventory.AddItem turns a record with a MoneyComponent into gold
+// only for a receiver with a player component (kind 33): `lwz r11,4(r29)` / `lwz r10,0x28(r11)` /
+// `extrwi r9,r10,1,30` / `cmplwi cr6,r9,0` / `beq` → the plain add (TU1 0x824F0B18..0x824F0B28, disc
+// 0x8261A800..0x8261A810); then CECMoney_Modify on the receiver's comp81 (0x824F0C8C / 0x8261A974). The
+// host's copy of an online joiner's hero has no kind 33, so a Money Bag became an ITEM in hero two's inventory
+// and no gold. Before the compare (TU1 0x824F0B24, disc 0x8261A80C; r11 the receiver): a hero two who
+// brought a hero passes as the player they are.
+void RefiiCoopMoneyItemForPlayerTwo(PPCRegister& r9, PPCRegister& r11) {
+  uint8_t* base = RefiiGuestBase();
+  if (r9.u32 != 0u || base == nullptr || RefiiCoopGetOwnHero() == 0 || r11.u32 == 0u ||
+      r11.u32 != refii_mod_player_hero(base, 2)) {
+    return;
+  }
+  r9.u64 = 1u;
+  Once(g_said_money_item, "a money item given to player two is gold");
 }
 
 // True: open the shop for player two (jump to the shopkeeper path); false: the shipped test.

@@ -747,26 +747,6 @@ public static class Fable2Bridge
 		uint RecordId, int Count, int Category, bool Viewed, uint Item = 0);
 
 	/// <summary>
-	/// Names the region whose minimap keys the pump samples: the region row's own id less 999. The
-	/// pump answers one tick later — the key and scenario are guest calls, made on its thread.
-	/// </summary>
-	public static void SetWorldMapRegion(uint index)
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp)
-		{
-			return;
-		}
-
-		try
-		{
-			RefiiHostSetWorldMapRegion(index);
-		}
-		catch (EntryPointNotFoundException)
-		{
-		}
-	}
-
-	/// <summary>
 	/// What the world map's minimap page plots from live state — see RefiiHostGetMinimapLive.
 	/// <see cref="Known"/> is false before a level stands.
 	/// </summary>
@@ -810,108 +790,6 @@ public static class Fable2Bridge
 			unchecked((int)words[3]), unchecked((int)words[4]),
 			words[5], words[6] != 0u, new Vector3(F(words[7]), F(words[8]), F(words[9])),
 			words[10] != 0u, words[11], merchants);
-	}
-
-	/// <summary>
-	/// Screen 28's one building. The screen's left column is a list of COMMANDS, not of
-	/// properties: there is a single building, resolved when it opens, and nothing to select.
-	///
-	/// Every number is the guest's own answer, because each walks something the host has no
-	/// business reproducing — a prosperity term off a world component, a GDB adjustment array
-	/// matched against <see cref="TypeMask"/>, an occupant-opinion term weighted over five
-	/// personality axes. The PRESENTATION is entirely ours: the star bin, the gold prefix, the
-	/// negative recolour, which Variable row stands and which legend Page 2 carries.
-	///
-	/// <paramref name="Record"/> is the GDB record the text hangs off — NOT the building
-	/// entity's own record. `sub_821DA3B0` takes the entity's def handle, then a property named
-	/// after the component's class, and the entry-ref that yields is this hash.
-	///
-	/// <paramref name="TitleRecord"/> is the hero's current title record (`heroComponent57+92`),
-	/// which is how the guest names the owner of a building the hero owns and is not renting
-	/// out: `HeroTitleComponent.TextTag` through Babel. <paramref name="Occupant"/> is the
-	/// creature name of the tenant, or of the owner when that is not the hero — empty in the
-	/// hero-owned case, because the hero has no creature name.
-	/// </summary>
-	public readonly record struct RealEstate(
-		bool Known, uint Record, uint TypeMask, bool Owned, bool HasTenant,
-		int Value, int Economy, int Decoration, int Income, int SalePrice, int SellingFees,
-		int NotVacant, int OwnerKilled, int HeroOpinion, uint BonusesRecord, string Occupant,
-		uint TitleRecord)
-	{
-		/// <summary>The guest's own "is a business" test — `mask &amp; 0xEFE` at 0x82999CF8.
-		/// Every type but HOME and UNIQUE.</summary>
-		public bool IsBusiness => (TypeMask & 0xEFEu) != 0u;
-
-		/// <summary>Which BuildingType this is: the FIRST set bit, as `sub_8299A550` decodes it.
-		/// 0 HOME, 1 DOCK, 2 FARM, 3 TOWNHALL, 4 WAREHOUSE, 5 SHOP, 6 BAR, 7 BORDELLO, 8 UNIQUE,
-		/// 9 STALL, 10 HOUSE, 11 TEMPLE; -1 when nothing is set.</summary>
-		public int Type
-		{
-			get
-			{
-				for (int bit = 0; bit < 12; ++bit)
-				{
-					if ((TypeMask & (1u << bit)) != 0u)
-					{
-						return bit;
-					}
-				}
-
-				return -1;
-			}
-		}
-
-		/// <summary>`sub_8299AF88`'s bins, over the building's current value.</summary>
-		public int Stars => Value <= 0 ? 0
-			: Value < 5000 ? 1
-			: Value < 12000 ? 2
-			: Value < 26000 ? 3
-			: Value < 55000 ? 4
-			: 5;
-	}
-
-	/// <summary>Names the property under the world map's cursor (0 for none); the pump samples it.</summary>
-	public static void RequestPropertyEstate(ulong uid)
-	{
-		if (TryGetAbiVersion() is null)
-		{
-			return;
-		}
-
-		try
-		{
-			RefiiHostRequestPropertyEstate(uid);
-		}
-		catch (EntryPointNotFoundException)
-		{
-		}
-	}
-
-	/// <summary>
-	/// Screen 28's numbers for the property <paramref name="uid"/>, sampled while its building's
-	/// region is loaded; not <see cref="RealEstate.Known"/> otherwise, or before the pump answers.
-	/// </summary>
-	public static RealEstate GetPropertyEstate(ulong uid)
-	{
-		if (TryGetAbiVersion() is null || !IsGuestUp || uid == 0ul)
-		{
-			return default;
-		}
-
-		uint[] words = _realEstateWords ??= new uint[15];
-		byte[] occupant = _realEstateOccupant ??= new byte[128];
-		occupant[0] = 0;
-		uint known;
-		try
-		{
-			known = RefiiHostGetPropertyEstate(uid, words, (uint)words.Length, occupant, (uint)occupant.Length);
-		}
-		catch (EntryPointNotFoundException)
-		{
-			return default;
-		}
-
-		return known == 0u ? default : DecodeRealEstate(true, words, occupant);
 	}
 
 	/// <summary>
@@ -1743,20 +1621,10 @@ public static class Fable2Bridge
 	private static extern uint RefiiHostGetMinimapLive(uint[] outWords, uint capacity);
 
 	[DllImport(Library)]
-	private static extern void RefiiHostSetWorldMapRegion(uint index);
-
-	[DllImport(Library)]
 	private static extern uint RefiiHostGetQuestTaskStates(uint recordId, byte[] completed, uint capacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetCoopState(uint[] words, uint capacity);
-
-	[DllImport(Library)]
-	private static extern void RefiiHostRequestPropertyEstate(ulong uid);
-
-	[DllImport(Library)]
-	private static extern uint RefiiHostGetPropertyEstate(
-		ulong uid, uint[] words, uint wordCapacity, byte[] occupant, uint occupantCapacity);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetCompletedQuests(

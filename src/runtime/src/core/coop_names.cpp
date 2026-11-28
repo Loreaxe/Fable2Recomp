@@ -123,6 +123,23 @@ extern "C" int32_t refii_bridge_safe_name_for_sent(const char* sent, char* out, 
 #endif
 }
 
+// This machine's own player's pseudonym — the name the game's profile carries and sends (its XamUserGetName),
+// which another machine shows by RexNet's rule (refii_bridge_safe_name_for_sent). 1 when RexNet is up.
+extern "C" int32_t refii_bridge_own_pseudonym(char* out, uint32_t capacity) {
+#if defined(REXGLUE_ENABLE_REXNET)
+  rex::net::RexNet* net = rex::net::RexNet::shared();
+  if (net == nullptr || out == nullptr || capacity == 0u) {
+    return 0;
+  }
+  std::snprintf(out, capacity, "%s", rex::net::Pseudonym(net->local_peer_id()).c_str());
+  return 1;
+#else
+  (void)out;
+  (void)capacity;
+  return 0;
+#endif
+}
+
 // This machine's own player's name, as they are shown it: their display name, else their
 // pseudonym. The game's profile name is the pseudonym (it travels); this is for the game's own
 // screens that name the local player. 1 when RexNet is up.
