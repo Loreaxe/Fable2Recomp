@@ -962,6 +962,11 @@
 0x82877898 = { name = "rex_GuiElement_SetVisibleAt" }
 0x82876F38 = { name = "rex_GuiElement_SetTextNameAt" }
 0x82877030 = { name = "rex_GuiElement_SetTextTagAt" }
+# The display box base ctor (box, name, text), wrapped: a box made where a token last named one gets
+# its document named again; the promise's Show (box), wrapped: its gamer name stated
+# (Fable3/src/hooks/src/screen_cut_hooks.cpp, owned_screen_texts.cpp).
+0x82958000 = { name = "rex_DisplayBox_Construct" }
+0x827DA840 = { name = "rex_PromiseBox_Show" }
 # The session boxes (session_boxes.cpp): the join / visibility options' and the friends channel's
 # Show and Update (box), replaced — their setting stated, no presentation made; the in-live-game
 # test the friends channel's Show calls (TU3) and the bed's cancel calls; the partners' window
@@ -1063,6 +1068,9 @@
 # The Limited Collector's Edition licence (Fable3/src/hooks/src/unlock_hooks.cpp): the Lua
 # PackageManager.IsPackagePremium thunk (namespace r3, CCharString* r4).
 0x822EE0A0 = { name = "rex_PackageManager_IsPackagePremium" }
+# Each hero's leaderboard-sync gate (Fable3/src/hooks/src/leaderboard_sync_gate.cpp): CECStats'
+# "user ready for the Live leaderboard" (stats r3, int* user r4), answered not ready.
+0x8227D400 = { name = "rex_StatsSync_UserReady" }
 # Engine preloads (Fable3/src/hooks/src/preload_hooks.cpp): the type-46 preload instance's apply
 # (inst, prim), slot 5 of vtable 0x82005498; the handle at inst+0x50 is answered complete.
 0x82CB8940 = { name = "rex_PreloadInstance_Apply" }
@@ -1675,6 +1683,13 @@ labels = [
 
 # The quest summary's owner, the player index its ctor stores at box+0x38 (`stw r11,0x38(r24)`)
 # (Fable3/src/hooks/src/screen_stated_hooks.cpp).
+# The quest summary row writer's texts before its Pres: box r29, slot r30, quest r28, the frame r1
+# (Fable3/src/hooks/src/owned_screen_texts.cpp).
+[[midasm_hook]]
+name = "RefiiF3QuestRowTexts"
+address = 0x829BCB70
+registers = ["r29", "r30", "r28", "r1"]
+
 [[midasm_hook]]
 name = "RefiiF3QuestSummaryOwner"
 address = 0x829BC23C
@@ -1722,25 +1737,9 @@ name = "RefiiF3StateCommit"
 address = 0x82973B68
 registers = ["r31", "r27"]
 
-[[midasm_hook]]
-name = "RefiiF3StateCommit"
-address = 0x829BCC0C
-registers = ["r3", "r29"]
 
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt54"
-address = 0x829BCC60
-registers = ["r3", "r1"]
 
-[[midasm_hook]]
-name = "RefiiF3StateCommitAt58"
-address = 0x829BCCAC
-registers = ["r3", "r1"]
 
-[[midasm_hook]]
-name = "RefiiF3StateCommit"
-address = 0x827DA8E0
-registers = ["r30", "r3"]
 
 [[midasm_hook]]
 name = "RefiiF3StateCommit"

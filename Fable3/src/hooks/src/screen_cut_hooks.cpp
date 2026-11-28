@@ -56,6 +56,7 @@
 REX_EXTERN(__imp__rex_ScreenLoader_Load);
 REX_EXTERN(__imp__rex_DisplayBox_Presentation);
 REX_EXTERN(__imp__rex_GuiElement_Find);
+REX_EXTERN(__imp__rex_DisplayBox_Construct);
 REX_EXTERN(rex_ScreenLoader_FileOf);
 REX_EXTERN(rex_lhCharString_Dtor);
 
@@ -84,6 +85,8 @@ constexpr Owned kOwned[] = {
     {0x0Eu, 13},  // HeroStatus.bgf, CHeroStatusBox: its three writers and slot writer, path setters only
     {0x1Bu, 23},  // CompWeddingPicker.bgf, CWeddingPickerBox: Show / Hide / highlight, path setters only
     {0x0Fu, 20},  // StatsScreen.bgf, CStatsBox: page slides by token, its three writers replaced (stats_screen_stubs.cpp)
+    {0x0Du, 12},  // Promises.bgf, CPromiseMessageBox: slides by token, the gamer name stated (owned_screen_texts.cpp)
+    {0x1Eu, 27},  // QuestSummary.bgf, CQuestSummaryBox: header by token, the rows' texts stated (owned_screen_texts.cpp)
     {0x1Au, -1},  // ChatChannel.bgf, COrbChatBox: Show and Update replaced (display_box_stubs.cpp)
     {0x1Du, -1},  // KingsSchedule.bgf, CKingsScheduleBox: Show replaced (display_box_stubs.cpp)
 };
@@ -141,7 +144,30 @@ bool IsPresentationToken(uint32_t presentation) {
   return presentation >= kTokenBase && presentation < kTokenBase + 0x100u;
 }
 
+uint32_t ScreenToken(uint32_t screen_id) { return kTokenBase + (screen_id & 0xFFu); }
+
+void NameScreenToken(PPCContext& ctx, uint8_t* base, uint32_t screen_id) {
+  NoteDocument(ScreenToken(screen_id), FileOf(ctx, base, screen_id));
+}
+
 }  // namespace refii::fable3
+
+/// The display box base ctor sub_82958000 / disc sub_8291ECD8 (box, CCharString* name, LHString*):
+/// every box class's ctor calls it first (59 callers, CPromiseMessageBox_ctor, CKingsScheduleBox_ctor,
+/// CQuestInfoBox_ctor, the stats ctor sub_829B5A68 at 0x829B5A9C, …), so a box made at an address a
+/// token last named is a new box: its first `Pres` names its document again.
+REX_EXTERN(rex_DisplayBox_Construct) {
+  const uint32_t box = ctx.r3.u32;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto& [id, named] : g_named_box) {
+      if (named == box) {
+        named = 0u;
+      }
+    }
+  }
+  __imp__rex_DisplayBox_Construct(ctx, base);
+}
 
 /// sub_825F26E8 / disc sub_825C79A0 (L, id): an owned screen is not loaded.
 REX_EXTERN(rex_ScreenLoader_Load) {
@@ -175,7 +201,7 @@ REX_EXTERN(rex_DisplayBox_Presentation) {
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     auto [it, inserted] = g_named_box.emplace(owned->id, box);
-    fresh = inserted || it->second != box;
+    fresh = inserted || it->second != box;  // 0 after the base ctor ran for this address
     it->second = box;
   }
   if (fresh) {

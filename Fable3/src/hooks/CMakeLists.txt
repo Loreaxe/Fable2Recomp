@@ -35,6 +35,7 @@ set(REFIII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_stated_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/screen_cut_hooks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/stats_screen_stubs.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/owned_screen_texts.cpp
     # Headless Gameface presentations through the shared core (core/headless_presentation.h):
     # the maker and destroy, the presentation's own slots, the parameter setters and the chunk
     # runner; Fable 3's Gameface table beside it.
@@ -153,6 +154,8 @@ set(REFIII_HOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crt_memory.cpp
     # The Limited Collector's Edition licence (IsPackagePremium of the Day One package).
     ${CMAKE_CURRENT_SOURCE_DIR}/src/unlock_hooks.cpp
+    # Each hero's leaderboard statistics stay in its save: no Live leaderboard service to sync with.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/leaderboard_sync_gate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preload_hooks.cpp
     # The root file system's Open and Exists: the host mount's override served as a guest memory
     # file (the decision is Fable3/src/vfs's, refiii_vfs). Its C ABI header is listed so the

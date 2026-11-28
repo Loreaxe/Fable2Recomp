@@ -21,9 +21,9 @@
 //   crime timer   fine sub_8260C4D0 0x8260C524 r11, r4; seconds sub_8260C568 0x8260C5BC r11, r4
 //   job           sub_82973E00 0x82973E70 r11, r4 (prefix + level, sub_82DA5E00 at 0x82973E54)
 //   look-at       sub_829739D8 0x82973B68 r31, r27
-//   quest summary sub_829BCA18 0x829BCC0C r3, r29; 0x829BCC60 r3, r1+0x54; 0x829BCCAC r3, r1+0x58
+//   (quest summary: its row texts are stated before its Pres, owned_screen_texts.cpp)
 //   (stats: its writers are replaced and state their rows, stats_screen_stubs.cpp)
-//   promise       CPromiseMessageBox_Show sub_827DA840 0x827DA8E0 r30, r3
+//   (promise: its gamer name is stated after its Show, owned_screen_texts.cpp)
 //   divorce       sub_8297F7F8 0x8297F84C / 0x8297F8A4 r3, r30; sub_8297F8D8 0x8297F97C r31, r4,
 //                 0x8297FB90 r3, r1+0x50; sub_8297FBC0 0x8297FCA0 r3, r1+0x50, 0x8297FCFC r3,
 //                 r30, 0x8297FDC0 r30, r4, 0x8297FE00 r28, r4, 0x8297FED4 r27, r1+0x5C,

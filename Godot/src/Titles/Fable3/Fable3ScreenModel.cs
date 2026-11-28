@@ -243,7 +243,11 @@ public static class Fable3ScreenModel
 			prompts.Add(new("A", Text(stated, Promises + ".Buttons.Buttons.A_Button.Group.Text") ?? resolve("GUI_ACCEPT")));
 		}
 
-		return new Fable3ScreenPage(resolve("GUI_PROMISE"), rows, -1, Text(stated, Promises + ".Promise.Promise") ?? string.Empty, prompts, false);
+		// The promise's text: its ctor's stated tag (`@Screen.Promise`); the Show's element write of it is
+		// gone with the presentation.
+		string promise = screen.Promise is { Tag: not 0u } stated2 && Fable3Elements.TagText(stated2.Tag) is { } text ? text
+			: Text(stated, Promises + ".Promise.Promise") ?? string.Empty;
+		return new Fable3ScreenPage(resolve("GUI_PROMISE"), rows, -1, promise, prompts, false);
 	}
 
 	/// <summary>
@@ -263,18 +267,19 @@ public static class Fable3ScreenModel
 		int selected = -1;
 		foreach ((int index, (uint quest, bool isSelected, bool last)) in screen.QuestRows)
 		{
-			string path = Quests + ".Details.QuestSummaryDetails" + index.ToString(CultureInfo.InvariantCulture);
-			if (quest != 0u && Text(stated, path + ".Text.QuestName") is { } name)
+			// The row's texts as its writer built them (`@Screen.QuestRowText`; the screen is never loaded).
+			if (quest != 0u && screen.QuestRowTexts.TryGetValue(index, out (string Name, string Location, string Seals) texts) &&
+				(Fable3Elements.TagNameText(texts.Name) ?? texts.Name) is { Length: > 0 } name)
 			{
 				string line = name;
-				if (Text(stated, path + ".Text.QuestLocation") is { } location)
+				if (texts.Location.Length > 0)
 				{
-					line += Gap + location;
+					line += Gap + texts.Location;
 				}
 
-				if (Text(stated, path + ".Text.GuildSealValue") is { } seals)
+				if (texts.Seals.Length > 0)
 				{
-					line += Gap + seals;
+					line += Gap + texts.Seals;
 				}
 
 				if (isSelected)

@@ -212,6 +212,11 @@ void NoteDocument(uint32_t presentation, const std::string& file);
 /// setter states it and returns, Find and Resolve answer no element for it.
 bool IsPresentationToken(uint32_t presentation);
 
+/// The token of the Godot-owned screen `screen_id` (the loader's id), and its document named for it
+/// from the loader's own file map (screen_cut_hooks.cpp): for a screen with no box (the credits).
+uint32_t ScreenToken(uint32_t screen_id);
+void NameScreenToken(PPCContext& ctx, uint8_t* base, uint32_t screen_id);
+
 /// THE RUNTIME'S READERS ANSWERED FROM STATEMENTS (ui_reader_hooks.cpp).
 /// A slide the guest set through GuiElement_SetState (gui_element_hooks.cpp, after the setter ran):
 /// the path its path setter names the owner by, for the scroll gate.

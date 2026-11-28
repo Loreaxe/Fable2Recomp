@@ -174,8 +174,9 @@ public static class Fable3BoxAnswers
 	/// <summary>
 	/// Whether an owned screen takes <paramref name="player"/>'s presses, by the box's own owner rule:
 	/// hero status any player's (its handler tests none, TU3 0x829BE438 `cmpwi r10,0x4B` alone); the
-	/// stats box and the quest summary their stated owner's (`@Screen.Owner`: stats +0x40 against r5,
-	/// TU3 0x829B62C4..0x829B62E0; quest summary +0x38, 0x829BD028..0x829BD030), player one until it is
+	/// stats box, the quest summary and the chat channel their stated owner's (`@Screen.Owner`: stats +0x40
+	/// against r5, TU3 0x829B62C4..0x829B62E0; quest summary +0x38, 0x829BD028..0x829BD030; chat the entity's
+	/// component 37, 0x829BB390..0x829BB3A8), player one until it is
 	/// stated; every other owned screen player one's (the promise's player record 1, the schedule's
 	/// `cmpwi r5,1` 0x829BBEB0, the wedding's +0x48 = player record 1's index; the session and family
 	/// boxes as before). A press the box would refuse moves no cursor of Godot's.
@@ -183,7 +184,7 @@ public static class Fable3BoxAnswers
 	public static bool TakesPlayer(string root, Fable3ScreenState screen, int player) => root switch
 	{
 		Fable3ScreenModel.HeroStatus => player is Fable3ActingPlayer.One or Fable3ActingPlayer.Two,
-		Fable3ScreenModel.Stats or Fable3ScreenModel.Quests =>
+		Fable3ScreenModel.Stats or Fable3ScreenModel.Quests or Fable3BoxScreenModel.ChatChannel =>
 			player == (screen.Owner is Fable3ActingPlayer.One or Fable3ActingPlayer.Two ? screen.Owner.Value : Fable3ActingPlayer.One),
 		_ => player == Fable3ActingPlayer.One,
 	};

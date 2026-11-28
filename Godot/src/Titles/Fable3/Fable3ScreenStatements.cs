@@ -33,6 +33,13 @@ public sealed class Fable3ScreenState
 	/// <summary>The quest summary's window rows 0..6: sub_82973FB0's quest, selected and last.</summary>
 	public SortedDictionary<int, (uint Quest, bool Selected, bool Last)> QuestRows { get; } = new();
 
+	/// <summary>
+	/// The quest summary's row texts by window slot, as the row writer built them before its `Pres`
+	/// (owned_screen_texts.cpp `@Screen.QuestRowText`): the quest's name (a text NAME, resolved as
+	/// `@Ui.TextName` is), its location and its guild seals (texts, "" for none).
+	/// </summary>
+	public SortedDictionary<int, (string Name, string Location, string Seals)> QuestRowTexts { get; } = new();
+
 	/// <summary>The stats page as sub_8296EC88 was asked to move it (2 categories, 3 statistics, 4 friends), null before.</summary>
 	public int? StatsPage { get; set; }
 
@@ -287,6 +294,8 @@ public static class Fable3ScreenStatements
 			((int)call.Argument(2).Number, Fable3Elements.Parse(call.Argument(3).Text)));
 		Add("@Screen.QuestRow", call => At(call).QuestRows[(int)call.Argument(1).Number] =
 			(Fable3Elements.Parse(call.Argument(2).Text), call.Argument(3).Boolean, call.Argument(4).Boolean));
+		Add("@Screen.QuestRowText", call => At(call).QuestRowTexts[(int)call.Argument(1).Number] =
+			(call.Argument(2).Text, call.Argument(3).Text, call.Argument(4).Text));
 		Add("@Screen.StatsPage", call =>
 		{
 			// The setter is stated as asked; it returns at once on the page it is on, and on a new one

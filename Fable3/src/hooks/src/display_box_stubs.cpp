@@ -405,6 +405,24 @@ REX_EXTERN(rex_OrbChatBox_Show) {
       .Add(Text(Hex(LoadGuestU32(base, kChatMutedDescriptionTag))))
       .Add(Text(Hex(LoadGuestU32(base, kChatAudibleDescriptionTag))))
       .Post();
+  // The owner its input handler tests a press's player against (TU3 sub_829BB230 / disc sub_829727C8,
+  // the two the same instruction for instruction): the entity `box+0x1C` (block `+0x20`, `lwz
+  // r11,0x20(r3)` 0x829BB23C) when it passes the live test (`lbz r11,0x94(r3)` bit 0x40, 0x829BB27C),
+  // its component 37's `*(+0x14)+0x24`, -1 with no +0x14 (0x829BB390..0x829BB3A4); 0 with no live
+  // entity or no component 37 (`li r29,0` 0x829BB250), which no player matches (`cmpw r29,r27`
+  // 0x829BB3A8 / 0x82972940). `@Screen.Owner(box, player)`.
+  {
+    const uint32_t entity = refii::fable3::seam::Deref(base, box + 0x1Cu);
+    int32_t owner = 0;
+    if (refii::fable3::seam::Live(base, entity)) {
+      const uint32_t player = refii::fable3::seam::Component(base, entity, 37u);
+      if (player != 0u) {
+        const uint32_t holder = LoadGuestU32(base, player + 0x14u);
+        owner = Plausible(holder) ? static_cast<int32_t>(LoadGuestU32(base, holder + 0x24u)) : -1;
+      }
+    }
+    Statement("@Screen.Owner").Add(Text(Hex(box))).Add(refii::fable3::Number(static_cast<float>(owner))).Post();
+  }
   {
     PPCContext work = refii::fable3::seam::Frame(ctx);
     work.r3.u64 = LoadGuestU32(base, LoadGuestU32(base, kGuiManager) + kGuiHud);

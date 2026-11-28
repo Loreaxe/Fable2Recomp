@@ -131,25 +131,50 @@ public class Fable3ScreenModelTests
 	[TestCase]
 	public void QuestRowsAreTheWritersCallsUpToTheLast()
 	{
-		var stated = new Dictionary<string, Probe>
+		System.Func<string, string?> before = Fable3Elements.TagNameText;
+		Fable3Elements.TagNameText = name => name == "QST_GATHERING" ? "The Gathering" : null;
+		try
 		{
-			["QuestSummary.Details.QuestSummaryDetails0.Text.QuestName"] = Text("The Gathering"),
-			["QuestSummary.Details.QuestSummaryDetails0.Text.QuestLocation"] = Text("Bowerstone"),
-			["QuestSummary.Details.QuestSummaryDetails1.Text.QuestName"] = Text("Rebel"),
-			["QuestSummary.Details.QuestSummaryDetails2.Text.QuestName"] = Text("stale"),
-			["QuestSummary.ObjectiveTitle"] = Text("Find Walter"),
-		};
-		var screen = new Fable3ScreenState();
-		screen.QuestRows[0] = (0x1000u, false, false);
-		screen.QuestRows[1] = (0x2000u, true, true);
-		screen.QuestRows[2] = (0x3000u, false, true);
+			var stated = new Dictionary<string, Probe> { ["QuestSummary.ObjectiveTitle"] = Text("Find Walter") };
+			var screen = new Fable3ScreenState();
+			screen.QuestRows[0] = (0x1000u, false, false);
+			screen.QuestRows[1] = (0x2000u, true, true);
+			screen.QuestRows[2] = (0x3000u, false, true);
+			// The row writer's texts before its Pres (owned_screen_texts.cpp): a name, a location, seals.
+			screen.QuestRowTexts[0] = ("QST_GATHERING", "Bowerstone", string.Empty);
+			screen.QuestRowTexts[1] = ("Rebel", string.Empty, "3");
+			screen.QuestRowTexts[2] = ("stale", string.Empty, string.Empty);
 
-		Fable3ScreenPage page = Fable3ScreenModel.Compose(Fable3ScreenModel.Quests, stated, screen, Resolve)!.Value;
-		AssertThat(page.Rows.Count).IsEqual(2);
-		AssertThat(page.Rows[0].Line).IsEqual("The Gathering    Bowerstone");
-		AssertThat(page.Selected).IsEqual(1);
-		AssertThat(page.Description).IsEqual("Find Walter");
-		AssertThat(page.Cursor).IsTrue();
+			Fable3ScreenPage page = Fable3ScreenModel.Compose(Fable3ScreenModel.Quests, stated, screen, Resolve)!.Value;
+			AssertThat(page.Rows.Count).IsEqual(2);
+			AssertThat(page.Rows[0].Line).IsEqual("The Gathering    Bowerstone");
+			AssertThat(page.Rows[1].Line).IsEqual("Rebel    3");
+			AssertThat(page.Selected).IsEqual(1);
+			AssertThat(page.Description).IsEqual("Find Walter");
+			AssertThat(page.Cursor).IsTrue();
+		}
+		finally
+		{
+			Fable3Elements.TagNameText = before;
+		}
+	}
+
+	[TestCase]
+	public void PromiseTextIsTheCtorsStatedTag()
+	{
+		System.Func<uint, string?> before = Fable3Elements.TagText;
+		Fable3Elements.TagText = tag => tag == 0x1234u ? "I will free the slaves." : null;
+		try
+		{
+			var stated = new Dictionary<string, Probe> { ["Promises.Player.GamerTag"] = Text("Hero") };
+			var screen = new Fable3ScreenState { Promise = (0x1234u, false) };
+			AssertThat(Fable3ScreenModel.Compose(Fable3ScreenModel.Promises, stated, screen, Resolve)!.Value.Description)
+				.IsEqual("I will free the slaves.");
+		}
+		finally
+		{
+			Fable3Elements.TagText = before;
+		}
 	}
 
 	[TestCase]
