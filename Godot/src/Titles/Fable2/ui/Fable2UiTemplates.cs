@@ -695,22 +695,29 @@ public static class Fable2UiTemplates
 			},
 		};
 
-		// THE TWO FURNITURE CONDITIONAL LISTS (screens 26 and 27) STAY UNBOUND.
-		// (Real estate, screen 28, now authors its command rows under `RealEstateMenu` below,
-		// gated by host-side `estate.*` row conditions from `Fable2Bridge.GetRealEstate()`.)
+		// THE THREE CONDITIONAL LISTS — real estate and the two furniture screens.
 		//
-		// Each furniture list names no population script and spawns rows that depend on whether
-		// the target has component 68 (upgrade) or 239 (replace) (`sub_8299D5B0`).
+		// Each names no population script and each spawns rows that depend on state we do not
+		// read: `sub_82998300` walks a decision tree over the property record and emits only the
+		// applicable actions, and `sub_8299D5B0` branches on whether the target has component 68
+		// (upgrade) or 239 (replace). Authoring their rows would show actions the game has
+		// disabled, so the rows come from the capture — but the MENU is a template record now,
+		// so a row can be dropped, renamed or reordered from `templates.json` exactly as on
+		// every other screen, and all of them go through one assembly path.
+		// REAL ESTATE AND THE TWO FURNITURE LISTS STAY UNBOUND, and that is a retraction.
 		//
-		// Binding them to templates sourced `capture:Root` bled: the spawn capture is ONE GLOBAL
-		// LIST (`Engine_UiSource.GetMenuRows` returns the last population with a generation and
-		// `Engine_UiModel.MenuRow` carries no presentation) — so `capture:Root` handed back
-		// whatever was spawned under `Root` most recently, including front-end rows.
+		// I bound all three to templates sourced `capture:Root`, and it bled: the real-estate
+		// screen came up showing `New Game`, `Continue`, `Downloadable Content`, `Language` and
+		// `Subtitles` above its own two rows. The spawn capture is ONE GLOBAL LIST —
+		// `Engine_UiSource.GetMenuRows` returns the last population with a generation and
+		// `Engine_UiModel.MenuRow` carries no presentation — so `capture:Root` hands back
+		// whatever was spawned under `Root` most recently, and the front end's rows were still
+		// in it.
 		//
 		// That is harmless for a screen whose parent names are its own (the shop's `BuyItems`,
-		// the weapons screen's `Melee`) and fatal for one asking for the bare root. The two
-		// furniture screens ask for the root, so they keep the per-presentation model path they
-		// had — which was working — until the capture is keyed by presentation.
+		// the weapons screen's `Melee`) and fatal for one asking for the bare root. These three
+		// ask for the root, so they keep the per-presentation model path they had — which was
+		// working — until the capture is keyed by presentation.
 		//
 		// The furniture rows carry event type 0 and `sub_826B65F0` handles only 140/141, so an
 		// identity push does nothing. All three commit by the screen's `RowAction`: upgrade
@@ -997,52 +1004,6 @@ public static class Fable2UiTemplates
 					Name = "QuitToDesktop", Tag = "REFII_QUIT_TO_DESKTOP", HostOnly = true,
 					Command = Engine_FrontEndMenu.QuitToDesktopCommand,
 				},
-			},
-		};
-
-		// 28 REAL ESTATE — THE COMMAND LIST THE GUEST NEVER HANDS US. `sub_82998300` spawns these
-		// rows off the resolved building record when the screen opens, and the host draws screen
-		// 28's list itself (the guest's population lands in its own presentation, which this
-		// build does not draw), so with no rows authored the left column came up empty and the
-		// property could not be bought at all. The rows are therefore AUTHORED, and the identity
-		// each one commits — `(name, eventType, 0)` — is the pair the guest's own handler
-		// switches on: 111 opens its "buy for N gold?" box (which the host draws and answers
-		// through the modal router), 110 its sell box. Both were measured on a live screen.
-		//
-		// THE CONDITIONS ARE THE GUEST'S OWN BRANCHES, run host-side (Engine_UiRowConditions,
-		// registered in GameUiCommands): the guest emits only the action that applies, so a row
-		// shown out of state would offer a verb the game has disabled. `Buy` is gated on
-		// `estate.known` so it does not flash before the building resolves.
-		//
-		// THE TAGS ARE BABEL KEYS (`GUI_SCREEN_REAL_ESTATE_*`): the text bank holds each row's
-		// localized label under these tags, so Babel translates them for every disc pressing.
-		static Engine_UiMenuEntry RealEstateAction(string tag, Engine_UiMenuConstants.EventType eventType, string when) => new()
-		{
-			Name = tag,
-			Tag = tag,
-			EventType = (int)eventType,
-			When = when,
-		};
-
-		menus["RealEstateMenu"] = new Engine_UiMenuTemplate
-		{
-			Name = "RealEstateMenu",
-			Entries =
-			{
-				RealEstateAction("GUI_SCREEN_REAL_ESTATE_BUY", Engine_UiMenuConstants.EventType.RealEstateBuy,
-					$"{Engine_UiRowConditions.EstateKnown},!{Engine_UiRowConditions.EstateOwned}"),
-				RealEstateAction("GUI_SCREEN_REAL_ESTATE_SELL", Engine_UiMenuConstants.EventType.RealEstateSell,
-					Engine_UiRowConditions.EstateOwned),
-				RealEstateAction("GUI_SCREEN_REAL_ESTATE_RENT_OUT", Engine_UiMenuConstants.EventType.RealEstateRentOut,
-					$"{Engine_UiRowConditions.EstateOwned},{Engine_UiRowConditions.EstateHome},{Engine_UiRowConditions.EstateVacant}"),
-				RealEstateAction("GUI_SCREEN_REAL_ESTATE_EVICT_TENNANT", Engine_UiMenuConstants.EventType.RealEstateEvictTennant,
-					$"{Engine_UiRowConditions.EstateOwned},{Engine_UiRowConditions.EstateTenanted}"),
-				RealEstateAction("GUI_SCREEN_REAL_ESTATE_ADJUST_RENT", Engine_UiMenuConstants.EventType.RealEstateAdjustRent,
-					$"{Engine_UiRowConditions.EstateOwned},{Engine_UiRowConditions.EstateTenanted}"),
-				RealEstateAction("GUI_SCREEN_REAL_ESTATE_ADJUST_PROFITS", Engine_UiMenuConstants.EventType.RealEstateAdjustProfits,
-					$"{Engine_UiRowConditions.EstateOwned},{Engine_UiRowConditions.EstateBusiness}"),
-				RealEstateAction("GUI_SCREEN_REAL_ESTATE_SET_BUDGET", Engine_UiMenuConstants.EventType.RealEstateAdjustBudget,
-					$"{Engine_UiRowConditions.EstateOwned},{Engine_UiRowConditions.EstateHome},{Engine_UiRowConditions.EstateVacant}"),
 			},
 		};
 

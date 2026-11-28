@@ -144,24 +144,6 @@ public partial class GameUi
 		Engine_UiRowConditions.Register(Engine_UiRowConditions.PlayerTwoHero, () => Fable2PageProviders.CoopOwnHero);
 		Engine_UiRowConditions.Register(Engine_UiRowConditions.HasGold,
 			() => HostBridge.GetHeroVitals() is { Known: true, Gold: > 0 });
-
-		// SCREEN 28'S OWN STATE. `sub_82998300` spawns the estate screen's command rows (Buy,
-		// Sell, Rent Out, Evict…) off the resolved building record, and this build never sees
-		// them: the host draws screen 28's list, the guest's population lands in its own
-		// presentation, so the rows are AUTHORED in the templates (Engine_UiGameTemplates) and
-		// each states the fact its own branch of the guest's decision tree tests against the
-		// cached _estateSnapshot sampled once per list pass.
-		Engine_UiRowConditions.Register(Engine_UiRowConditions.EstateKnown, () => _estateSnapshot.Known);
-		Engine_UiRowConditions.Register(Engine_UiRowConditions.EstateOwned,
-			() => _estateSnapshot is { Known: true, Owned: true });
-		Engine_UiRowConditions.Register(Engine_UiRowConditions.EstateVacant,
-			() => _estateSnapshot is { Known: true, HasTenant: false });
-		Engine_UiRowConditions.Register(Engine_UiRowConditions.EstateTenanted,
-			() => _estateSnapshot is { Known: true, HasTenant: true });
-		Engine_UiRowConditions.Register(Engine_UiRowConditions.EstateBusiness,
-			() => _estateSnapshot.Known && _estateSnapshot.IsBusiness);
-		Engine_UiRowConditions.Register(Engine_UiRowConditions.EstateHome,
-			() => _estateSnapshot.Known && !_estateSnapshot.IsBusiness);
 	}
 
 	/// <summary>

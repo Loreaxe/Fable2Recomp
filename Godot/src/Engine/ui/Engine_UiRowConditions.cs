@@ -37,24 +37,6 @@ public static class Engine_UiRowConditions
 	/// <summary>The menu's hero carries gold — the gift list's Gold row, spawned only then.</summary>
 	public const string HasGold = "has-gold";
 
-	/// <summary>Screen 28 has resolved a building record.</summary>
-	public const string EstateKnown = "estate.known";
-
-	/// <summary>Screen 28's resolved building is owned by the player.</summary>
-	public const string EstateOwned = "estate.owned";
-
-	/// <summary>Screen 28's resolved building currently has no tenant.</summary>
-	public const string EstateVacant = "estate.vacant";
-
-	/// <summary>Screen 28's resolved building currently has a tenant.</summary>
-	public const string EstateTenanted = "estate.tenanted";
-
-	/// <summary>Screen 28's resolved building is a business (not a home or unique building).</summary>
-	public const string EstateBusiness = "estate.business";
-
-	/// <summary>Screen 28's resolved building is a home or unique building (not a business).</summary>
-	public const string EstateHome = "estate.home";
-
 	/// <summary>The facts a list's builder states, for the validator and the Studio.</summary>
 	public static readonly string[] BuilderFacts = { PlayerTwo };
 

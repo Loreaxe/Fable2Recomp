@@ -41,12 +41,6 @@ public static class Fable2Bridge
 	[System.ThreadStatic]
 	private static uint[]? _minimapWords;
 
-	[ThreadStatic]
-	private static uint[]? _realEstateWords;
-
-	[ThreadStatic]
-	private static byte[]? _realEstateOccupant;
-
 	[DllImport("refii_hostbridge")]
 	private static extern int RefiiHostGetLoadingScreenText(
 		uint[] outWords, byte[] text, uint capacity);

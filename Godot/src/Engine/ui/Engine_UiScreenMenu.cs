@@ -603,12 +603,6 @@ public sealed class Engine_UiScreenMenu
 	/// <summary>The template this list was built from, so it is built once and then only joined.</summary>
 	private Engine_UiMenuTemplate? _authoredFrom;
 
-	/// <summary>Last state key passed to <see cref="InvalidateAuthoredIfChanged"/>.</summary>
-	private int _authoredStateKey;
-
-	/// <summary>Whether <see cref="_authoredStateKey"/> has been initialized on this menu instance.</summary>
-	private bool _hasAuthoredStateKey;
-
 	/// <summary>True while the row set is the TEMPLATE's rather than a read of the guest.</summary>
 	private bool _authored;
 
@@ -786,34 +780,6 @@ public sealed class Engine_UiScreenMenu
 		}
 
 		_statedVisible = Script.Visible.Count;
-		return true;
-	}
-
-	/// <summary>
-	/// Forces the next build to re-evaluate the template's row conditions, keeping the fold and
-	/// the cursor by name (the rebuild path carries both across). For a list whose rows depend
-	/// on state the guest resolves AFTER the first build: screen 28's estate state is answered a
-	/// sample or two after the screen opens, so a list built at open is one building behind.
-	/// </summary>
-	public void InvalidateAuthored() => _authoredFrom = null;
-
-	/// <summary>
-	/// Marks the authored row set stale when <paramref name="stateKey"/> differs from the key
-	/// last seen on this menu instance, forcing the next <see cref="Rebuild"/> to re-evaluate row
-	/// conditions while carrying the fold and cursor across by name.
-	/// </summary>
-	/// <param name="stateKey">Bitmask or version representing the external state backing row conditions.</param>
-	/// <returns><c>true</c> when the key changed and the authored build was invalidated.</returns>
-	public bool InvalidateAuthoredIfChanged(int stateKey)
-	{
-		if (_hasAuthoredStateKey && _authoredStateKey == stateKey)
-		{
-			return false;
-		}
-
-		_hasAuthoredStateKey = true;
-		_authoredStateKey = stateKey;
-		InvalidateAuthored();
 		return true;
 	}
 
