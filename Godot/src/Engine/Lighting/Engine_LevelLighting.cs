@@ -475,7 +475,9 @@ public static class Engine_LevelLighting
 	/// </remarks>
 	/// <param name="view">The view the chain draws (<see cref="Engine_PostFxEffect.View"/>): 0 the
 	/// window's or player one's, 1 player two's on split screen.</param>
-	public static Compositor? BuildCompositor(int view = 0)
+	/// <param name="splitCamera">Built for a split camera (GameSplitView): its per-view effects may hold their view's
+	/// slot while split; the window camera's may not (Refii.Core.Engine_Views.MayClaimViewSlot).</param>
+	public static Compositor? BuildCompositor(int view = 0, bool splitCamera = false)
 	{
 		if (RenderingServer.GetRenderingDevice() is null)
 		{
@@ -485,12 +487,12 @@ public static class Engine_LevelLighting
 
 		var effects = new Godot.Collections.Array<CompositorEffect>
 		{
-			new Refii.Fx.Engine_FxDepthCaptureEffect { View = view },
+			new Refii.Fx.Engine_FxDepthCaptureEffect { View = view, SplitCamera = splitCamera },
 		};
 		if (!Refii.AndroidRuntime.AndroidBakedShadows.KeepsOneBake &&
 			string.Equals(RenderingServer.GetCurrentRenderingMethod(), "forward_plus", StringComparison.Ordinal))
 		{
-			effects.Add(new Engine_ScreenSpaceAoEffect { View = view });
+			effects.Add(new Engine_ScreenSpaceAoEffect { View = view, SplitCamera = splitCamera });
 		}
 		if (Refii.Models.Engine_ClassicMaterial.Active)
 		{
@@ -501,7 +503,7 @@ public static class Engine_LevelLighting
 
 		if (Engine_PostFxParams.ChainRequested)
 		{
-			effects.Add(new Engine_PostFxEffect { View = view });
+			effects.Add(new Engine_PostFxEffect { View = view, SplitCamera = splitCamera });
 		}
 		else
 		{

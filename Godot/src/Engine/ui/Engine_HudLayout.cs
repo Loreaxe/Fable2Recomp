@@ -157,10 +157,13 @@ public sealed partial class Engine_HudLayout
     /// <para><paramref name="AnyNode"/> cuts an element of any type by that name, not only a
     /// component: Fable 3's box screens hold their frame art (`BlackBox`, `TopLine`, `BottomLine`) in
     /// a plain node (`BedMenu.Medium2`, `StatsBox.Large2`), cut under its named parent.</para>
+    /// <para><paramref name="Every"/> cuts every element of that name under the parent, each its own
+    /// piece (`group.{Label}.{Name}#{ordinal}`), not only the first: Fable 3's box screens author their
+    /// glints as siblings of one name (`TreasureAccounts.fx2` ×4, `DivorceMessageBox.fx2` ×3).</para>
     /// </remarks>
     public readonly record struct GroupSubtree(
         string Name, string Label, Anchor? Anchor, float Depth,
-        bool AnchorFromContents = false, string? Parent = null, bool AnyNode = false);
+        bool AnchorFromContents = false, string? Parent = null, bool AnyNode = false, bool Every = false);
 
     /// <summary>
     /// The active title's HUD rules (<see cref="Refii.Core.Engine_TitleGame.HudLayout"/>), which
@@ -530,7 +533,7 @@ public sealed partial class Engine_HudLayout
         //   Engine_UiTopBoxLayout from the text Godot draws; the guest's own fit (`sub_823FC8F0`,
         //   TopBoxX/TopBoxY via `sub_823FE638`) places nothing on a headless element and measures
         //   in its own font. Its faders are the guest's stated opacity.
-        foreach ((string name, string label, Anchor? fixedAnchor, float depth, bool fromContents, string? parent, bool anyNode)
+        foreach ((string name, string label, Anchor? fixedAnchor, float depth, bool fromContents, string? parent, bool anyNode, bool every)
             in groups ?? unstated!.Groups)
         {
             for (int i = 0; i < screen.Nodes.Length; ++i)
@@ -553,7 +556,7 @@ public sealed partial class Engine_HudLayout
                 Vector2 canvas = CanvasPositionWide(node);
                 Anchor anchor = fixedAnchor ??
                     (fromContents && ContentsCentre(node) is { } contents ? SnapAnchor(contents) : SnapAnchor(canvas));
-                string id = $"group.{label}.{name}";
+                string id = every ? $"group.{label}.{name}#{node.Ordinal}" : $"group.{label}.{name}";
                 Vector2 offset = OffsetFrom(anchor, canvas);
                 if (arrangement.TryGetValue(id, out (Anchor Anchor, Vector2 Offset) put))
                 {
@@ -574,7 +577,10 @@ public sealed partial class Engine_HudLayout
                     Depth: depth,
                     Placed: true,
                     LiveText: true));
-                break;
+                if (!every)
+                {
+                    break;
+                }
             }
         }
 

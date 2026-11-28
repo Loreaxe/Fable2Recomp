@@ -47,6 +47,7 @@ public class CoopLuaSaveSafeTests
 		("local results = { shipped(hero, ...) }", "Player.RemoveHUDSuggestionOfType: a native"),
 		("shipped(other, ...)", "Player.RemoveHUDSuggestionOfType: a native"),
 		("local result = shipped(...)", "BehaviourDogVariables.Reload: dog init, never yields"),
+		("local flagged = shipped(building, ...)", "Building.CheckIfBuyerIsStandingInBuilding: a native (its definition's bool)"),
 		("local module = shipped(name, ...)", "QuestManager.LoadQuestModule: require, never yields"),
 		("shipped(entity, C.CombatAcc[1][field], ...)", "Player.Set*Combat*: natives"),
 		("return shipped(one, b, ...) and shipped(two, b, ...)", "distance natives"),

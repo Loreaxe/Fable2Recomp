@@ -103,7 +103,8 @@ public static class ModText
 
 	/// <summary>
 	/// One key through the chain: the book, the mods' tables in <paramref name="culture"/> then en-uk, the
-	/// engine's words in <paramref name="culture"/> then en-uk; null when none knows it.
+	/// engine's words in <paramref name="culture"/> then en-uk, then our own words (<c>REFII_*</c>,
+	/// Refii.Text.Engine_OwnWords: the core Lua's notices); null when none knows it.
 	/// </summary>
 	public static string? Find(string key, Func<string, string?>? book, Tables tables, string culture)
 	{
@@ -117,7 +118,7 @@ public static class ModText
 			return said;
 		}
 
-		return tables.Find(culture, key) ?? EngineWord(culture, key);
+		return tables.Find(culture, key) ?? EngineWord(culture, key) ?? Refii.Text.Engine_OwnWords.Find(key, culture);
 	}
 
 	/// <summary>The engine's own word for <paramref name="key"/> in <paramref name="culture"/>, else en-uk's; null for none.</summary>

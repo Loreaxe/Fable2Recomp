@@ -202,6 +202,15 @@ void refii_bridge_menu_row_emphasis_last(int32_t level);
 // `g_Menu:SetItemEmphasis()` (`sub_823DFA98`: String1, Float1): the mark of the captured row so named.
 void refii_bridge_menu_row_emphasis_named(const char* name, int32_t level);
 
+// THE SPAWN SINK (state in src/core/guest_tick_pump_state.cpp), for the host's run of an online joiner's shop
+// (hooks/coop_shop_for_joiner.cpp): `begin` opens it on this thread — every refii_bridge_menu_spawn_* /
+// row_emphasis_* call above then goes into it, not into the capture; `end` closes it and makes its rows the
+// wire text of core/joiner_shop_statement.h (a statement holding only rows), returning that text's size; `read`
+// copies at most `capacity` bytes of it into `out` and returns how many. Not nested.
+void refii_bridge_menu_sink_begin(void);
+uint32_t refii_bridge_menu_sink_end(void);
+uint32_t refii_bridge_menu_sink_read(char* out, uint32_t capacity);
+
 enum {
   kMenuRowItem = 1,    // the row stands for an inventory item
   kMenuRowViewed = 2,  // that item's `+0x14` byte was set when the row was built

@@ -199,6 +199,11 @@ REX_EXTERN(rex_Xam_ShowKeyboardUI) {
 
 namespace refii::vfs {
 
+bool KeyboardUiPending() {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return g_pending.overlapped != 0u;
+}
+
 bool AnswerKeyboardUi(uint8_t* base, const char* text) {
   Pending pending;
   {

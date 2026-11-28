@@ -326,6 +326,10 @@ public static class Fable3Elements
 			element.StatedTexture = value.Text;
 			element.Texture = value.Text;
 		}));
+		// A one-shot GUI particle at an element (stated_element_hooks.cpp, sub_823CE408): an event for
+		// the document's view, not an element value (Fable3UiParticles).
+		Add("@Ui.Particle", Fable3UiParticles.Stated);
+		Add("@Ui.Particle2d", Fable3UiParticles.StatedAtPoint);
 
 		return routes;
 	}

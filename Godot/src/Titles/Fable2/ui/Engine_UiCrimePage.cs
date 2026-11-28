@@ -38,16 +38,51 @@ public static class Engine_UiCrimePage
 	/// <summary>What the opener last stated: `Charge` its charge text, `Service` its service key.</summary>
 	public static Refii.Host.HostBridge.CrimeScreen Stated { get; private set; }
 
-	/// <summary>`@CrimeScreen.Open`: charge, fine, payFine, communityService, service key.</summary>
+	/// <summary>The arrested player the opener stated (1, 2; 0 when its opener was no arrest).</summary>
+	public static int Arrested { get; private set; }
+
+	/// <summary>The opener's speaker (the guard) by its UniqueID ("0x…", Refii.uid's text), empty for none.</summary>
+	public static string GuardUid { get; private set; } = string.Empty;
+
+	/// <summary>
+	/// Each time the opener states a screen (after <see cref="Stated"/> is set): the co-op relay
+	/// (GameUiCoopConsent) answers an online host's arrest of player two on the joiner's screen.
+	/// </summary>
+	public static System.Action? Opened { get; set; }
+
+	/// <summary>
+	/// ON AN ONLINE JOINER: the host's arrest this machine's crime screen shows (its ticket), 0 for none.
+	/// A row's A there goes to the host as well (<see cref="Answered"/>), which posts the choice for player two.
+	/// </summary>
+	public static uint RelayedTicket { get; set; }
+
+	/// <summary>A row's choice ("pay", "resist", "service") on a relayed screen, for the co-op relay.</summary>
+	public static System.Action<string>? Answered { get; set; }
+
+	/// <summary>`@CrimeScreen.Open`: charge, fine, payFine, communityService, service key[, arrested, guard uid].</summary>
 	public static void Open(Engine_UiModel.GuiNativeCall call)
 	{
-		if (call.Arguments.Count == 5 &&
+		if (call.Arguments.Count is 5 or 7 &&
 			int.TryParse(call.Argument(1).Text, System.Globalization.NumberStyles.Integer,
 				System.Globalization.CultureInfo.InvariantCulture, out int fine))
 		{
 			Stated = new Refii.Host.HostBridge.CrimeScreen(
 				true, fine, call.Argument(2).Text == "1", call.Argument(3).Text == "1",
 				call.Argument(0).Text ?? string.Empty, call.Argument(4).Text ?? string.Empty);
+			Arrested = call.Arguments.Count == 7 && int.TryParse(call.Argument(5).Text,
+				System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
+				out int arrested) ? arrested : 0;
+			GuardUid = call.Arguments.Count == 7 ? call.Argument(6).Text ?? string.Empty : string.Empty;
+			Opened?.Invoke();
+		}
+	}
+
+	/// <summary>A crime row's lever (`Crime:&lt;p&gt;:&lt;choice&gt;`): on a relayed screen its choice goes to the host too.</summary>
+	public static void Chosen(string? lever)
+	{
+		if (RelayedTicket != 0u && lever is { Length: > 0 } && lever.LastIndexOf(':') is var colon and > 0)
+		{
+			Answered?.Invoke(lever[(colon + 1)..]);
 		}
 	}
 

@@ -145,6 +145,14 @@ public partial class FableFx : Node3D
 	public bool GuestDrawn { get; set; }
 	private bool _emitGuest;
 
+	/// <summary>
+	/// Drawn on a GUI stage (Engine_UiParticles): in the stage's own world, stepped by the stage with
+	/// its camera on the real clock. It joins no driver, freezes for no world view, samples no scene
+	/// light and puts nothing on the additive or displacement layers, which composite over the world
+	/// view. Set before the node enters the tree.
+	/// </summary>
+	public bool OnUiStage { get; set; }
+
 	private Engine_FxLayerInstance? _addInstance;
 	private ArrayMesh? _addMesh;
 
@@ -478,6 +486,7 @@ public partial class FableFx : Node3D
 	/// </summary>
 	public static FxBank? SharedBank()
 	{
+		AdoptWarmed();
 		if (_bank is not null &&
 			(_referenceBank || _bankOverlay == Engine_FxModEffects.Generation || _bankBytes is null))
 		{
@@ -498,8 +507,32 @@ public partial class FableFx : Node3D
 
 		_bankTried = true;
 		_bankRetryAtMsec = now + 2000;
-		// The SHIPPED bytes: with mods stating effects the mount serves the guest's composed bank
-		// under this name (Engine_FxModEffects.ComposeGuestBank), and this copy overlays them itself.
+		byte[]? bytes = ShippedBankBytes();
+		if (bytes is null)
+		{
+			GD.Print($"[fx] particle bank not found at {BankPath}");
+			return null;
+		}
+
+		FxBank? bank = Overlaid(bytes);
+		if (bank is null)
+		{
+			return null;
+		}
+
+		ReportLoaded(bank);
+		_bankBytes = bytes;
+		_bank = bank;
+		return bank;
+	}
+
+	/// <summary>
+	/// The SHIPPED bank's bytes: with mods stating effects the mount serves the guest's composed bank
+	/// under this name (Engine_FxModEffects.ComposeGuestBank), and the shared bank overlays them itself.
+	/// Safe off the main thread — the texture prefetch's worker reads through the same resolver.
+	/// </summary>
+	private static byte[]? ShippedBankBytes()
+	{
 		byte[]? bytes = Engine_FxModEffects.ShippedBank ??
 						Engine_BnkMeshLoader.ReadBytes(BankPath) ??
 						Engine_BnkMeshLoader.ReadBytes("data/" + BankPath);
@@ -526,31 +559,99 @@ public partial class FableFx : Node3D
 			}
 		}
 
-		if (bytes is null)
-		{
-			GD.Print($"[fx] particle bank not found at {BankPath}");
-			return null;
-		}
+		return bytes;
+	}
 
-		FxBank? bank = Overlaid(bytes);
-		if (bank is null)
-		{
-			return null;
-		}
-
+	private static void ReportLoaded(FxBank bank) =>
 		GD.Print(
 			$"[fx] bank loaded: {bank.Effects.Count} effects, " +
 			$"{bank.Emitters.Count} emitters, {bank.Systems.Count} systems; " +
 			$"{bank.Effects.Count(e => e.UpdateFrequency == 0)} authored in the 15 Hz group" +
 			(bank.FixedThirtyHertz ? " (stepped at 30 Hz: this title has no such group)" : string.Empty));
-		_bankBytes = bytes;
-		_bank = bank;
-		return bank;
+
+	/// <summary>A warm-up running or finished and not yet adopted (<see cref="WarmBank"/>).</summary>
+	private static System.Threading.Tasks.Task<(FxBank? Bank, byte[]? Bytes, int Generation)>? _warming;
+
+	/// <summary>
+	/// THE BANK, WARMED OFF THE FRAME. Reads and parses the shared bank on a worker — the same bytes,
+	/// parse and mod overlay <see cref="SharedBank"/> runs — so a screen that shows effects before any
+	/// world effect has loaded the bank (the title screen's glints) does not stall a frame on it; the
+	/// next <see cref="SharedBank"/> adopts the result. Once; nothing when the bank is loaded already.
+	/// </summary>
+	public static void WarmBank()
+	{
+		if (_bank is not null || _referenceBank || _warming is not null)
+		{
+			return;
+		}
+
+		_warming = System.Threading.Tasks.Task.Run(() =>
+		{
+			byte[]? bytes = ShippedBankBytes();
+			int generation = -1;
+			FxBank? bank = bytes is null ? null : Composed(bytes, out generation);
+			return (bank, bytes, generation);
+		});
+	}
+
+	/// <summary>
+	/// Whether <see cref="SharedBank"/> answers now without reading and parsing the bank on this
+	/// thread: loaded, or warmed. A caller that must not stall the frame (Engine_UiParticles) waits
+	/// for it, calling <see cref="WarmBank"/>.
+	/// </summary>
+	public static bool BankReady => _bank is not null || _referenceBank || _warming is { IsCompleted: true };
+
+	/// <summary>
+	/// Takes a warm-up's bank on the main thread. A caller that needs the bank before the worker is
+	/// done waits for it — never longer than loading it here would take.
+	/// </summary>
+	private static void AdoptWarmed()
+	{
+		if (_warming is not { } warming)
+		{
+			return;
+		}
+
+		_warming = null;
+		(FxBank? Bank, byte[]? Bytes, int Generation) warmed;
+		try
+		{
+			warmed = warming.Result;
+		}
+		catch (System.AggregateException failed)
+		{
+			GD.PushWarning($"[fx] warming the particle bank failed: {failed.InnerException?.Message}");
+			return;
+		}
+
+		if (_bank is not null || warmed.Bank is null)
+		{
+			return;
+		}
+
+		ReportLoaded(warmed.Bank);
+		_bank = warmed.Bank;
+		_bankBytes = warmed.Bytes;
+		_bankOverlay = warmed.Generation;
+		_bankTried = true;
 	}
 
 	/// <summary>The shipped bank parsed from <paramref name="bytes"/> with the mods' effects overlaid; null when it does not parse.</summary>
 	private static FxBank? Overlaid(byte[] bytes)
 	{
+		FxBank? bank = Composed(bytes, out int generation);
+		if (bank is not null)
+		{
+			_bankOverlay = generation;
+		}
+
+		return bank;
+	}
+
+	/// <summary><see cref="Overlaid"/>'s parse and overlay, touching no shared state: the mods' generation it overlaid.</summary>
+	private static FxBank? Composed(byte[] bytes, out int generation)
+	{
+		generation = -1;
 		var bank = new FxBank();
 		if (!Engine_FxBank.Parse(bytes, bank))
 		{
@@ -558,7 +659,7 @@ public partial class FableFx : Node3D
 			return null;
 		}
 
-		int generation = Engine_FxModEffects.Generation;
+		generation = Engine_FxModEffects.Generation;
 		IReadOnlyList<Engine_FxModEffects.Source> sources = Engine_FxModEffects.DrawnSources;
 		if (sources.Count != 0)
 		{
@@ -570,7 +671,6 @@ public partial class FableFx : Node3D
 			}
 		}
 
-		_bankOverlay = generation;
 		return bank;
 	}
 
@@ -597,10 +697,22 @@ public partial class FableFx : Node3D
 
 		// Godot turns processing on in NOTIFICATION_READY, after _EnterTree and before this
 		// body; the driver's say is applied again here so it survives that.
-		Engine_FxDriver.Register(this);
+		EnterDriver();
 	}
 
-	public override void _EnterTree() => Engine_FxDriver.Register(this);
+	public override void _EnterTree() => EnterDriver();
+
+	/// <summary>The driver steps every system but a GUI stage's, which its stage steps.</summary>
+	private void EnterDriver()
+	{
+		if (OnUiStage)
+		{
+			SetProcess(false);
+			return;
+		}
+
+		Engine_FxDriver.Register(this);
+	}
 
 	public override void _ExitTree()
 	{
@@ -863,7 +975,7 @@ public partial class FableFx : Node3D
 		Camera3D? cullCamera = sharedCamera ?? GetViewport()?.GetCamera3D();
 		// A far effect in view freezes only once it has something to show: one that has never
 		// been near would otherwise keep its empty first frame however long it is looked at.
-		bool frozen = cullCamera is not null && !InAnyView(cullCamera, sharedCameraPos, out bool farOnly) && (!farOnly || _emitted || HasGeometry || lightsOnly);
+		bool frozen = !OnUiStage && cullCamera is not null && !InAnyView(cullCamera, sharedCameraPos, out bool farOnly) && (!farOnly || _emitted || HasGeometry || lightsOnly);
 		if (frozen)
 		{
 			++FrozenThisFrame;
@@ -884,7 +996,7 @@ public partial class FableFx : Node3D
 			_saturationApplied = true;
 		}
 		Engine_FxSystem.FadeOut = !Refii.Lighting.Engine_LightingFrame.ModernModel || Refii.AndroidRuntime.AndroidLeanModern.Fx;
-		if (!lightsOnly)
+		if (!lightsOnly && !OnUiStage)
 		{
 			ApplyLit();
 		}
@@ -1084,7 +1196,7 @@ public partial class FableFx : Node3D
 		// the post chain composites it. Otherwise they draw into the scene. When the guest draws
 		// this effect's particles (`GuestDrawn`), only displacement stays here and `_addMesh`
 		// must be cleared so no earlier fallback frame stays frozen on the additive layer.
-		ArrayMesh? addMesh = Engine_FxSystem.ShouldUseAdditiveMesh(GuestDrawn, _addMesh is not null, Engine_FxAdditiveLayer.Present)
+		ArrayMesh? addMesh = Engine_FxSystem.ShouldUseAdditiveMesh(GuestDrawn, _addMesh is not null, Engine_FxAdditiveLayer.Present && !OnUiStage)
 			? _addMesh
 			: null;
 
@@ -1153,6 +1265,12 @@ public partial class FableFx : Node3D
 
 		foreach ((string path, Engine_FxSystem.MeshInstanceData data) in _meshData)
 		{
+			// The displacement layer is the world view's.
+			if (data.Displacement && OnUiStage)
+			{
+				continue;
+			}
+
 			if (!_meshNodes.TryGetValue(path, out MultiMeshInstance3D? node))
 			{
 				node = BuildMeshNode(data.MeshPath, data.Displacement);
@@ -1792,13 +1910,13 @@ public partial class FableFx : Node3D
 		// The additive and displacement surfaces live in the layers' own worlds as server
 		// instances (Engine_FxLayerInstance), created by EnsureLayerInstances once the layer
 		// node — added deferred — has a world.
-		if (_addMesh is null && _system.HasAdditive)
+		if (_addMesh is null && _system.HasAdditive && !OnUiStage)
 		{
 			_addMesh = new ArrayMesh();
 			Engine_FxAdditiveLayer.Ensure(this);
 		}
 
-		if (_dispMesh is null && _hasDisplacement)
+		if (_dispMesh is null && _hasDisplacement && !OnUiStage)
 		{
 			_dispMesh = new ArrayMesh();
 			Engine_FxDisplacement.Ensure(this);

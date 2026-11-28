@@ -802,6 +802,10 @@
 0x821C9ED0 = { name = "rex_GuiElement_FindAttribute" }
 0x822800B0 = { name = "rex_GuiElement_OwnerOf" }
 0x82B99D58 = { name = "rex_HudParticle_Update" }
+# The one-shot GUI particle at an element (see the TU3 config).
+0x823ABEB0 = { name = "rex_GuiParticle_AtElement" }
+# The one-shot GUI particle at a canvas point (see the TU3 config).
+0x823ABF28 = { name = "rex_GuiParticle_AtPoint" }
 # The readers of Gameface's per-frame runtime, answered from statements (Fable3/src/hooks/src/
 # ui_reader_hooks.cpp): CHUDExpandableBox vf+12 (box, f1 ms), the calibration whose extents Godot
 # states; GetCurrentSlide (elem, pres) from the slides the guest set; the world icons' fade timers

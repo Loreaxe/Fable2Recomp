@@ -827,7 +827,19 @@ extern "C" {
 ///     purchases, the loader's per-record read, the removal and the per-property setters; Fable 2
 ///     hooks/src/property_list_hooks.cpp), which RefiiHostGetProperties now answers from; a property's page is
 ///     its record, no sign's numbers sampled for it.
-REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 279; }
+/// 280 adds RefiiHostGetPartnerCameraAlphas (both titles): player two's camera's fades, its own book, stated by
+///     the core camera chunk (Refii._partner_camera_alphas; core/payload_bridge.h). Player two's camera no longer
+///     writes the renderable's camera alpha, which holds player one's camera's fades; the shell draws player
+///     two's book in player two's half alone.
+REFII_HOST_ABI_EXPORT int RefiiHostBridgeAbiVersion(void) { return 280; }
+
+/// Player two's camera's fade book: up to `capacity` guest entity addresses and the camera alpha it gives each;
+/// returns how many the book holds (may exceed `capacity`), `out_serial` (may be null) one more at every
+/// statement.
+REFII_HOST_ABI_EXPORT uint32_t RefiiHostGetPartnerCameraAlphas(uint32_t* out_entities, float* out_alphas,
+                                                               uint32_t capacity, uint32_t* out_serial) {
+    return refii_bridge_partner_camera_alphas_read(out_entities, out_alphas, capacity, out_serial);
+}
 
 extern "C" uint32_t RefiiSystemMessageBoxFront(char* out, uint32_t capacity);
 extern "C" void RefiiXamNotePad(uint32_t user, int32_t connected);

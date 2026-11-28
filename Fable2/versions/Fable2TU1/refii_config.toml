@@ -11818,6 +11818,10 @@
 0x823D6E18 = { name = "rex_CmdLevelChange_PlaceTravellers" }
 0x82519B08 = { name = "rex_FastTravelManager_TravelToStop" }
 0x8246B9E0 = { name = "rex_lhGuiWorldMap_FastTravel" }
+0x826C8FE8 = { name = "rex_lhWorldMap_FastTravelRefused" }
+0x824708D8 = { name = "rex_lhWorldMap_QuestActionCaption" }
+0x82470A78 = { name = "rex_lhWorldMap_TargetActionCaption" }
+0x82517010 = { name = "rex_FastTravelManager_IsEnabled" }
 0x828219F8 = { name = "rex_CECOnActionUse_Use" }
 0x8236EB68 = { name = "rex_lhGuiManager_EnterGuiMode" }
 0x8236E388 = { name = "rex_lhGuiManager_SetActiveScreen" }
@@ -11846,6 +11850,7 @@
 0x821E5970 = { name = "rex_GDBSchema_FindPropHash", size = 0x98 }
 0x829FFA80 = { name = "rex_GDBManager_MapInsert", size = 0x70 }
 0x827E1178 = { name = "rex_CECVillager_OnUse" }
+0x82175310 = { name = "rex_lhECTargeted_InteractPrompt" }
 0x82481760 = { name = "rex_lhCameraManager_ActivateCamera" }
 0x82481670 = { name = "rex_lhCameraManager_SpawnCameraEntities" }
 0x824834B0 = { name = "rex_lhCameraManager_Destroy" }
@@ -11925,6 +11930,7 @@
 0x8282C870 = { name = "rex_CECBuilding_OwnerKilledAdjustment" }
 0x821E66F0 = { name = "rex_CECUseTarget_Target" }
 0x823C8510 = { name = "rex_lhEntity_DisplayName" }
+0x824D8A10 = { name = "rex_lhStats_GetTitle" }
 0x82823498 = { name = "rex_CECOnActionUse_Hide" }
 0x823DD9E8 = { name = "rex_lhPromptManager_Witnessed" }
 0x821B5260 = { name = "rex_lhTutorials_Display" }
@@ -12019,6 +12025,10 @@
 0x82284948 = { name = "rex_lhGuiElement_ReadAttribute" }
 0x82284368 = { name = "rex_lhGuiElement_CompoundedOpacity" }
 0x82BB56A8 = { name = "rex_lhGuiAttributeService_CollectChildren" }
+# THE GLINTS (gui_element_hooks.cpp): CHUDParticle's per-frame update (particle, f1 seconds, r5
+# &changed) only clears the caller's byte — no guest particle; Godot draws the glints from the
+# document it draws (Engine_UiParticles).
+0x8283FB80 = { name = "rex_lhHudParticle_Update" }
 # The ranged aim cursor (r3 the aim, r4 its stick as two packed floats): the mouse's turn joins
 # the stick through the cursor's own gain (Fable2/src/vfs/src/hooks/mouse_look.cpp).
 0x8287B258 = { name = "rex_lhRangedAim_MoveCursor" }
@@ -12031,6 +12041,14 @@
 # A page fill's element writes, stated by the names it gave (page_fills_stated.cpp): the name
 # lookup, shown, opacity, text colour, the shop's front page fill, upgrade furniture's card, real estate's two page fills.
 0x82426798 = { name = "rex_lhGuiElement_FindByName" }
+# The shop's front page for an online joiner: its three write-by-name wrappers, taken while the host runs the
+# fill for the joiner (coop_shop_for_joiner.cpp RelayFront); otherwise as shipped.
+0x8246B888 = { name = "rex_lhGuiElement_TextByName" }
+0x82426D18 = { name = "rex_lhGuiElement_SlideByName" }
+0x82426328 = { name = "rex_lhGuiElement_ShownByName" }
+# The element position reader / writer: stopped at a relay's stand-in (page_fills_stated.cpp); otherwise as shipped.
+0x824252E8 = { name = "rex_lhGuiElement_GetPosition" }
+0x824251E0 = { name = "rex_lhGuiElement_SetPosition" }
 0x82426260 = { name = "rex_lhGuiElement_SetShown" }
 0x82426078 = { name = "rex_lhGuiElement_SetOpacity" }
 0x82425E58 = { name = "rex_lhGuiElement_SetTextColour" }
@@ -12153,6 +12171,36 @@ name = "RefiiCoopUseIconOfUser"
 address = 0x82821A30
 registers = ["r11", "r24", "r27"]
 
+# An online hero joiner uses a villager its client copy cannot (no comp 26): before `mr r11,r23` at the
+# interact action's no-villager branch, its use goes to the host and the villager path's r27 = 0 is taken
+# (Fable2/src/vfs/src/hooks/coop_villager_use.cpp RefiiCoopJoinerUsesVillager).
+[[midasm_hook]]
+name = "RefiiCoopJoinerUsesVillager"
+address = 0x82977064
+registers = ["r26", "r22", "r27"]
+
+# In the host's replay of an online joiner's use of a closed shop, the closed line is the joiner's HUD's: before
+# `bl sub_8230C908` (the HUD line) in the villager use's closed-shop arm, true skips it to the message's free
+# (Fable2/src/vfs/src/hooks/coop_shop_for_joiner.cpp RefiiCoopJoinerShopClosed).
+[[midasm_hook]]
+name = "RefiiCoopJoinerShopClosed"
+address = 0x827E14E8
+jump_address_on_true = 0x827E14EC
+
+# The dog's rename keyboard asks for player-map key 1 outright (`li r4,1` / `bl sub_82264230`); at the `bl`,
+# this machine's player (key 2 on an online joiner) (Fable2/src/hooks/src/coop_hero_hooks.cpp RefiiCoopRenameKeyboardUser).
+[[midasm_hook]]
+name = "RefiiCoopRenameKeyboardUser"
+address = 0x826CDF18
+registers = ["r4"]
+
+# A trick player two's new dog already knew is restored, not learnt: after the append, true skips the lesson
+# (tutorial, FX, the players' hero's achievement and Dog Lover title) (coop_dog_hooks.cpp RefiiCoopDogTrickRestored).
+[[midasm_hook]]
+name = "RefiiCoopDogTrickRestored"
+address = 0x82811564
+jump_address_on_true = 0x828119DC
+
 # Before `cmplwi cr6,r9,0` on Inventory.AddItem's player test (r11 the receiver): a money item given to
 # player two is gold (coop_hero_hooks.cpp RefiiCoopMoneyItemForPlayerTwo).
 [[midasm_hook]]
@@ -12180,15 +12228,6 @@ jump_address_on_true = 0x82999798
 name = "RefiiCoopShopForLocalPlayerTwo"
 address = 0x827E12F0
 jump_address_on_true = 0x827E1324
-
-# A travel agent (coach driver 14, ship captain 29) serves a player two who brought a hero; the plain
-# henchman keeps the reject line: before `clrlwi r11,r27,24` (r27 = the user is player two), true runs
-# the agent's script for the user r24 (coop_hero_hooks.cpp RefiiCoopTravelAgentForHero).
-[[midasm_hook]]
-name = "RefiiCoopTravelAgentForHero"
-address = 0x827E1540
-registers = ["r24"]
-jump_address_on_true = 0x827E1574
 
 # An online joiner also builds the household (69, 136), the sale sign's link (142), every use (78) and a
 # hero's guild messages (189) and drunkenness (157), which the client build loop drops
@@ -12256,6 +12295,14 @@ name = "RefiiCoopInlineLocalPlayer"
 address = 0x8299CFEC
 registers = ["r4"]
 # decoration page sub_8299CF80
+
+# The received card's Equip now (gui_screen_stub_receive_items.cpp DispatchCard): the local player picked inline
+# where it looks the card's record up in that player's inventory.
+[[midasm_hook]]
+name = "RefiiCoopInlineLocalPlayer"
+address = 0x82470068
+registers = ["r4"]
+# card equip sub_8246FFF0
 
 # The expression wheel's owner read before its close, and noted as the gift's opener when the gift opens
 # (gui_screen_stub_shared.cpp RefiiWheelGiftOwner / RefiiWheelGiftOpens).
@@ -12332,6 +12379,60 @@ registers = ["r3"]
 name = "RefiiCoopShopHero"
 address = 0x8246E0EC
 registers = ["r3"]
+
+# More sites where the shop judges its shopper on hero one (`bl sub_8222C1B8`, r3 after it): the buy and sell
+# prices' owner factor, a title free to buy, a carried weapon, the title held, the styles had (coop_hero_hooks.cpp
+# RefiiCoopShopHero).
+[[midasm_hook]]
+name = "RefiiCoopShopHero"
+address = 0x8296B8E8
+registers = ["r3"]
+
+[[midasm_hook]]
+name = "RefiiCoopShopHero"
+address = 0x8296BDF4
+registers = ["r3"]
+
+[[midasm_hook]]
+name = "RefiiCoopShopHero"
+address = 0x8296B388
+registers = ["r3"]
+
+[[midasm_hook]]
+name = "RefiiCoopShopHero"
+address = 0x82995FDC
+registers = ["r3"]
+
+[[midasm_hook]]
+name = "RefiiCoopShopHero"
+address = 0x82994EC0
+registers = ["r3"]
+
+[[midasm_hook]]
+name = "RefiiCoopShopHero"
+address = 0x829952D4
+registers = ["r3"]
+
+# The sell folders' count picks the local player inline: at its `bl sub_82264230` the number (RefiiCoopShopPlayer),
+# at the join after its inline hero read the hero (RefiiCoopInlineRecordHero).
+[[midasm_hook]]
+name = "RefiiCoopShopPlayer"
+address = 0x8299656C
+registers = ["r4"]
+
+[[midasm_hook]]
+name = "RefiiCoopInlineRecordHero"
+address = 0x8299659C
+registers = ["r11"]
+
+# The local player's hero (`sub_8229EE78`, first instruction after the frame; true goes to its own return with r3):
+# player one's record answers hero two for a call made for player two where player two holds no Player — the online
+# host's run of the joiner's shop (coop_hero_hooks.cpp RefiiCoopRecordHeroForPlayerTwo).
+[[midasm_hook]]
+name = "RefiiCoopRecordHeroForPlayerTwo"
+address = 0x8229EE84
+registers = ["r3"]
+jump_address_on_true = 0x8229EEA4
 
 [[midasm_hook]]
 name = "RefiiCoopExperienceOwnPool"

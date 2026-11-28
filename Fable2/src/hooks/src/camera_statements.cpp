@@ -347,7 +347,14 @@ REX_EXTERN(rex_lhCameraManager_Push) {
   State(statement);
 }
 
+/// A joiner's snap made before its own level change has loaded (Fable2/src/hooks/src/coop_hero_hooks.cpp
+/// owns the rule): not run, and so not stated.
+extern "C" int RefiiCoopSnapWaitsForLevel(uint8_t* base, uint32_t manager);
+
 REX_EXTERN(rex_lhCameraManager_Snap) {
+  if (RefiiCoopSnapWaitsForLevel(base, ctx.r3.u32) != 0) {
+    return;
+  }
   const Depth depth;
   const uint32_t manager = ctx.r3.u32;
   cam::Statement begin(cam::kSnapBegin, depth.at);

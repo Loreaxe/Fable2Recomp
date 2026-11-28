@@ -60,13 +60,25 @@ public partial class GameUi
 	private float _twoGift;
 	private bool _twoHudStated;
 
+	/// <summary>Player two's own statement for their half, held through hybrid's swap (Fable2PlayerTwoHudHold).</summary>
+	private Fable2PlayerTwoHudHold<Fable2Bridge.PlayerTwoHud> _twoHudHold;
+
+	/// <summary>No statement yet for player two's half: no title, every d-pad slot empty.</summary>
+	private static readonly Fable2Bridge.PlayerTwoHud NothingStatedTwo =
+		new(0u, string.Empty, new[] { string.Empty, string.Empty, string.Empty, string.Empty });
+
 	private void DrivePlayerTwoHud()
 	{
 		var overlay = _hudTwo?.Values;
-		bool split = Refii.Core.Engine_Views.Split && CoopSession.LocalCoop && overlay?.Under is not null &&
+
+		// Player two's half stands while two views are drawn — through all of hybrid's swap, though the
+		// guest's builders state hero two's d-pad and title only while it is told the screen is split.
+		// The half keeps its own last statement until it is parked; nothing in it falls back to the
+		// shared HUD's, which are player one's.
+		bool drawn = Refii.Core.Engine_Views.Split && CoopSession.LocalCoop && overlay?.Under is not null &&
 			_hud?.Bindings is not null;
-		Fable2Bridge.PlayerTwoHud? hud = split ? Fable2Bridge.GetPlayerTwoHud() : null;
-		if (hud is not { } stated || _hud?.Bindings is not { } bindings || overlay is null)
+		Fable2Bridge.PlayerTwoHud? hud = _twoHudHold.Take(drawn, drawn ? Fable2Bridge.GetPlayerTwoHud() : null);
+		if (!drawn || _hud?.Bindings is not { } bindings || overlay is null)
 		{
 			if (_twoHudStated)
 			{
@@ -82,6 +94,7 @@ public partial class GameUi
 		}
 
 		_twoHudStated = true;
+		Fable2Bridge.PlayerTwoHud stated = hud ?? NothingStatedTwo;
 		HostBridge.TargetedQuery query = Fable2Bridge.GetPlayerTwoTargetedQuery();
 		bool up = query.Known && query.Present;
 

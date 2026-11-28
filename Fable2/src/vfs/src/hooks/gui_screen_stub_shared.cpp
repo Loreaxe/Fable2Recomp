@@ -73,6 +73,7 @@ REX_EXTERN(rex_lhGuiQueryScreen_Close) {
     return;
   }
   base[h + 24u] = 0u;
+  refii::vfs::JoinerCardClosed(h);
   const Scratch s = Claim(ctx);
   const uint32_t g = Gui(base);
   Call(ctx, base, s.frame, 0x827F1A48u,

@@ -40,6 +40,7 @@
 #include "core/traced_mutex.h"
 #include "core/hero_derived.h"
 #include "core/guest_build.h"
+#include "core/joiner_shop_statement.h"
 
 namespace refii::vfs {
 
@@ -754,7 +755,42 @@ uint32_t PauseMarkers(uint32_t* out_tokens, float* out_world, uint32_t capacity)
   return count;
 }
 
+// THE SPAWN SINK. While the sink is open on this thread, a population's boundary, rows, items and marks
+// go into it and not into the capture: the host's run of the shop screen's own population for an online
+// joiner's hero two (hooks/coop_shop_for_joiner.cpp), whose rows are the joiner's to show, never the
+// host's. The payload reaches it through the C entries refii_bridge_menu_sink_begin / _end / _read
+// (core/payload_bridge_fable2.h); the rows cross as core/joiner_shop_statement.h's wire text.
+namespace {
+thread_local std::vector<refii::coop::ShopRow> t_menu_sunk;
+thread_local std::vector<refii::coop::ShopRow>* t_menu_sink = nullptr;
+thread_local std::string t_menu_sunk_wire;
+}  // namespace
+
 }  // namespace refii::vfs
+
+extern "C" void refii_bridge_menu_sink_begin(void) {
+  refii::vfs::t_menu_sunk.clear();
+  refii::vfs::t_menu_sunk_wire.clear();
+  refii::vfs::t_menu_sink = &refii::vfs::t_menu_sunk;
+}
+
+extern "C" uint32_t refii_bridge_menu_sink_end(void) {
+  refii::vfs::t_menu_sink = nullptr;
+  refii::coop::ShopStatement rows;
+  rows.rows = std::move(refii::vfs::t_menu_sunk);
+  refii::vfs::t_menu_sunk.clear();
+  refii::vfs::t_menu_sunk_wire = refii::coop::Encode(rows);
+  return static_cast<uint32_t>(refii::vfs::t_menu_sunk_wire.size());
+}
+
+extern "C" uint32_t refii_bridge_menu_sink_read(char* out, uint32_t capacity) {
+  const std::string& wire = refii::vfs::t_menu_sunk_wire;
+  const uint32_t n = out != nullptr ? std::min<uint32_t>(capacity, static_cast<uint32_t>(wire.size())) : 0u;
+  if (n != 0u) {
+    std::memcpy(out, wire.data(), n);
+  }
+  return n;
+}
 
 // --- The payload's side. C only; see core/payload_bridge.h. --------------------------------
 
@@ -793,6 +829,10 @@ void refii_bridge_note_coop_split_in_effect(int32_t in_effect) {
 }
 
 void refii_bridge_menu_spawn_begin_for(uint32_t screen_id) {
+  if (refii::vfs::t_menu_sink != nullptr) {
+    refii::vfs::t_menu_sink->clear();
+    return;
+  }
   std::lock_guard lock(refii::vfs::g_menu_mutex);
   refii::vfs::g_menu_building.clear();
   refii::vfs::g_menu_screen_id = screen_id;
@@ -1082,6 +1122,18 @@ void refii_bridge_menu_spawn_row_labelled(const char* name, const char* parent, 
   row.event_type = event_type;
   row.rating = rating;
 
+  if (refii::vfs::t_menu_sink != nullptr) {
+    refii::coop::ShopRow sunk;
+    sunk.name = row.name;
+    sunk.parent = row.parent;
+    sunk.label = row.label;
+    sunk.id = id;
+    sunk.event_type = event_type;
+    sunk.rating = rating;
+    refii::vfs::t_menu_sink->push_back(std::move(sunk));
+    return;
+  }
+
   std::lock_guard lock(refii::vfs::g_menu_mutex);
 
   // Every row the guest spawns is kept: a population is bounded by its own boundary
@@ -1099,6 +1151,18 @@ void refii_bridge_menu_spawn_row_labelled(const char* name, const char* parent, 
 
 void refii_bridge_menu_spawn_row_item(const char* icon, uint32_t item_flags, uint32_t record,
                                       uint32_t item, uint32_t count, uint32_t category) {
+  if (refii::vfs::t_menu_sink != nullptr) {
+    if (!refii::vfs::t_menu_sink->empty()) {
+      refii::coop::ShopRow& row = refii::vfs::t_menu_sink->back();
+      row.icon = icon != nullptr ? icon : "";
+      row.item_flags = item_flags;
+      row.record = record;
+      row.count = count;
+      row.category = category;
+    }
+    (void)item;  // the host's own address: nothing on the joiner's side
+    return;
+  }
   std::lock_guard lock(refii::vfs::g_menu_mutex);
   for (std::vector<refii::vfs::MenuRow>* rows : {&refii::vfs::g_menu_building, &refii::vfs::g_menu_rows}) {
     if (rows->empty()) {
@@ -1115,6 +1179,12 @@ void refii_bridge_menu_spawn_row_item(const char* icon, uint32_t item_flags, uin
 }
 
 void refii_bridge_menu_row_emphasis_last(int32_t level) {
+  if (refii::vfs::t_menu_sink != nullptr) {
+    if (!refii::vfs::t_menu_sink->empty()) {
+      refii::vfs::t_menu_sink->back().emphasis = level;
+    }
+    return;
+  }
   std::lock_guard lock(refii::vfs::g_menu_mutex);
   bool moved = false;
   for (std::vector<refii::vfs::MenuRow>* rows : {&refii::vfs::g_menu_building, &refii::vfs::g_menu_rows}) {
@@ -1130,6 +1200,14 @@ void refii_bridge_menu_row_emphasis_last(int32_t level) {
 
 void refii_bridge_menu_row_emphasis_named(const char* name, int32_t level) {
   if (name == nullptr || name[0] == '\0') {
+    return;
+  }
+  if (refii::vfs::t_menu_sink != nullptr) {
+    for (refii::coop::ShopRow& row : *refii::vfs::t_menu_sink) {
+      if (row.name == name) {
+        row.emphasis = level;
+      }
+    }
     return;
   }
   std::lock_guard lock(refii::vfs::g_menu_mutex);

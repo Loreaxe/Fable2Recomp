@@ -151,9 +151,14 @@ public static class Fable2UiVerbs
 
 		// The crime screen's rows and the villager card's buttons, the same way: `Crime:<p>:pay|resist|service`
 		// from the pressed row's event (50 / 51 / 52), `Query:<p>:close|rename`.
+		// On an online joiner's relayed screen the choice also goes to the host (Engine_UiCrimePage.Chosen).
 		set.Register(Fable2UiVerbs.Crime, (_, context) =>
-			Post(Fable2PortedScreens.RowLever(Fable2PortedScreens.Crime, Engine_UiSource.Current.ActingPlayer,
-				context.Command, context.RowEventType)));
+		{
+			string? lever = Fable2PortedScreens.RowLever(Fable2PortedScreens.Crime, Engine_UiSource.Current.ActingPlayer,
+				context.Command, context.RowEventType);
+			Engine_UiCrimePage.Chosen(lever);
+			return Post(lever);
+		});
 		set.Register(Fable2UiVerbs.Query, (_, context) =>
 			Post(Fable2PortedScreens.RowLever(Fable2PortedScreens.Query, Engine_UiSource.Current.ActingPlayer,
 				context.Command, context.RowEventType)));

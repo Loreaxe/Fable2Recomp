@@ -24,14 +24,15 @@
 //     user is player two). The shop then opens for the LOCAL player: the screen's buyer is
 //     `sub_8229EE78(sub_821C7CE0(gui))` (sub_826AF430), and sub_821C7CE0 is player one on the
 //     session host — solo and local co-op read as host — else player two. So the refusal is
-//     lifted exactly where player two IS the local player (an online joiner); on a host it would
-//     have player one pay. TRAVEL AGENTS: the same routine's job test (`lwz r11,0x9C(r25)`, 14 the
+//     lifted where player two IS the local player, and on the host for its replay of an online joiner's
+//     use, whose shop runs there with "the local player" answering player two for each of its steps and
+//     shows on the joiner (coop_shop_for_joiner.cpp). TRAVEL AGENTS: the same routine's job test (`lwz r11,0x9C(r25)`, 14 the
 //     coach driver, 29 the ship captain; 0x827E152C..0x827E153C / disc 0x827A84D4..0x827A84E4) then
 //     says the reject line to player two (`clrlwi r11,r27,24` 0x827E1540 → `sub_825D7060`) or runs the
 //     agent's script for the user (`sub_827E1668(r25, r24, OnActionUseTravelAgent)` 0x827E1574..
-//     0x827E1584 / disc 0x827A851C..0x827A852C). That reject is the 360's rule for the henchman and it
-//     stays theirs; a player two who brought a hero is served (RefiiCoopTravelAgentForHero; Fable 3
-//     refuses every partner, `sub_827E1C40`). The gamesmaster keeps its refusal: pub games refuse in
+//     0x827E1584 / disc 0x827A851C..0x827A852C). That reject stays every player two's, a hero's too:
+//     only player one fast-travels (user decision 2026-11-28; Fable 3 refuses every partner as well,
+//     `sub_827E1C40`). The gamesmaster keeps its refusal: pub games refuse in
 //     a multiplayer game anyway (onactionusegamesmaster.lua's `not IsMultiplayerGame()`).
 //
 //   PROGRESSION: each hero keeps what they earn. Experience (rex_CECExperience_Modify), gold
@@ -90,13 +91,14 @@ void Once(std::atomic<bool>& said, const char* what) {
 }
 
 std::atomic<bool> g_said_use{false};
-std::atomic<bool> g_said_travel{false};
 std::atomic<bool> g_said_money_item{false};
 std::atomic<bool> g_said_shop{false};
 std::atomic<bool> g_said_experience{false};
 std::atomic<bool> g_said_gold{false};
 std::atomic<bool> g_said_renown{false};
 std::atomic<bool> g_said_reaction{false};
+std::atomic<bool> g_said_rename{false};
+std::atomic<bool> g_said_record_hero{false};
 
 /// Set by the villager-use wrapper for the length of its call: the user is player two AND player
 /// two is this machine's local player. The midasm hook inside the same call reads it. Villager
@@ -117,6 +119,8 @@ bool Plausible(uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; }
 /// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
 extern "C" int RefiiCoopGetOwnHero(void);
 extern "C" uint8_t* RefiiGuestBase(void);
+/// The host is replaying an online joiner's villager use for hero two (coop_shop_for_joiner.cpp).
+extern "C" int RefiiCoopJoinerShopReplay(void);
 
 namespace {
 
@@ -146,6 +150,24 @@ bool LocalPlayerIsPlayerTwo(uint8_t* base) {
   return !host;
 }
 
+uint32_t PlayerForKey(uint8_t* base, uint32_t key);
+
+/// This machine holds a Player of player-map key 2. Only where player two plays on it: the scene's node update
+/// (`lhScene_UpdateNodes`, TU1 0x823168D8 / disc 0x82352C38) builds key 2 in local co-op (game+0x11C == 2) and on a
+/// network client, and on an online session HOST erases it — with keys 1 and 2 both found (`li r4,1` / `bl
+/// sub_82264230` 0x82316928, `li r4,2` / `bl sub_82264230` 0x82316934) and the host test passed (`lbz r9,0x34` /
+/// `lbz r11,0x35` 0x823169C8..0x823169F0), key 2's entry is found by its Player's own key (`lwz r6,0x24(r30)`
+/// 0x82316A8C), the entries above it are moved down over it (`bl sub_82528050` 0x82316B50) and the end pulled in
+/// (`addi r11,r11,-0xC` / `stw r11,8(r29)` 0x82316B7C..0x82316B80; disc 0x82352ED8..0x82352EE0). So the online
+/// joiner's hero, hero two on the host, has no Player there, and a lookup of key 2 answers 0.
+bool PlayerTwoRecordHere(uint8_t* base) { return PlayerForKey(base, 2u) != 0u; }
+
+/// The hero a Player names, as `sub_8229EE78` reads it: the handle at record+0xC, its target +4, the entity there.
+uint32_t RecordHero(uint8_t* base, uint32_t record) {
+  const uint32_t target = Plausible(record) ? refii::vfs::LoadGuestU32(base, record + 0x10u) : 0u;
+  return Plausible(target) ? refii::vfs::LoadGuestU32(base, target) : 0u;
+}
+
 }  // namespace
 
 // The real user's script path. Every user reaches the hook (r27 the user, r3 the henchman from
@@ -161,17 +183,6 @@ bool RefiiCoopUseByRealUser(PPCRegister& r27, PPCRegister& r3) {
     return false;
   }
   Once(g_said_use, "an object used by player two runs for player two");
-  return true;
-}
-
-// True: run the travel agent's script for player two (r24 the user), a hero; false: the shipped test
-// (the henchman's reject line).
-bool RefiiCoopTravelAgentForHero(PPCRegister& r24) {
-  uint8_t* base = RefiiGuestBase();
-  if (base == nullptr || RefiiCoopGetOwnHero() == 0 || r24.u32 == 0u || r24.u32 != refii_mod_player_hero(base, 2)) {
-    return false;
-  }
-  Once(g_said_travel, "a travel agent serves player two");
   return true;
 }
 
@@ -283,19 +294,70 @@ extern "C" int RefiiCoopShoppingPlayerTwo(void) {
   return g_shopping_player_two.load(std::memory_order_relaxed) ? 1 : 0;
 }
 
-/// Set by the pump around a guest call it makes FOR local player two (their drunk warp): "the
-/// local player" answers player two for that call. Guest tick thread only.
+/// Set around a guest call made FOR player two (local player two's drunk warp and screens; the host's run of an
+/// online joiner's shop step, coop_shop_for_joiner.cpp): "the local player" answers player two for that call — its
+/// record where this machine holds one (key 2), else its hero (RefiiCoopRecordHeroForPlayerTwo). Guest tick thread only.
 namespace {
 int g_local_player_two_call = 0;
 }  // namespace
 
 extern "C" void RefiiCoopLocalPlayerTwoCall(int on) { g_local_player_two_call += on != 0 ? 1 : -1; }
 
-// `sub_821C7CE0`'s tail (`li r4, 1` then `b sub_82264230`): r4 is the local player's number.
+// `sub_821C7CE0`'s tail (`li r4, 1` then `b sub_82264230`): r4 is the local player's number. Also the shop's
+// inline pick of the same number in the sell folders' count `sub_82996508` (disc `sub_828E1498`): `lbz r9,0x34` /
+// `lbz r11,0x35`, `li r4,1`, `li r4,2` when not both, `bl sub_82264230` 0x8299656C (disc `bl sub_822641F0`
+// 0x828E14FC). Key 2 only where this machine holds it (PlayerTwoRecordHere): on the online host the lookup would
+// answer 0 and `sub_8229EE78` read guest 0x10 (the joiner's shop, 2026-11-28 20:57:28, pc sub_8229EE78+0x44); there
+// the record stays player one's and its hero answers (RefiiCoopRecordHeroForPlayerTwo, RefiiCoopInlineRecordHero).
 void RefiiCoopShopPlayer(PPCRegister& r4) {
   uint8_t* base = RefiiGuestBase();
-  if (base != nullptr && r4.u32 == 1u && (g_local_player_two_call > 0 || Shopping(base))) {
+  if (base != nullptr && r4.u32 == 1u && (g_local_player_two_call > 0 || Shopping(base)) && PlayerTwoRecordHere(base)) {
     r4.u64 = 2u;
+  }
+}
+
+// THE LOCAL PLAYER'S HERO, FOR A CALL MADE FOR PLAYER TWO WHERE PLAYER TWO HAS NO PLAYER (the online host). The
+// local player's hero is `sub_8229EE78(sub_821C7CE0(gui))`: 35 sites call one right after the other (both builds),
+// among them the shop's buyer and seller (sub_826B0768 0x826B094C, sub_826B0D10 0x826B0D70, sub_826AFCF0 0x826AFEA8,
+// sub_826AF430 0x826AF674 / 0x826AF6E0, sub_826CB218 0x826CB250 / 0x826CB384, the sell rows sub_829955B0 0x82995764).
+// `sub_8229EE78` (disc `sub_82455F20`, the same 21 instructions): `addi r3,r3,0xC` / `lwz r11,4(r3)` / `lwz r10,0(r11)`
+// / `clrlwi r3,r10,0` (0x8229EE84..0x8229EEA0; disc 0x82455F2C..0x82455F48) then the frame's release and `blr`
+// (0x8229EEA4 / 0x82455F4C). At 0x8229EE84 / 0x82455F2C, r3 the record: while a call is made for player two and this
+// machine holds no Player of theirs, player one's record answers hero two — r3 hero two, on to the guest's own
+// return. Any other record (a component's handle, the same reader) is untouched.
+bool RefiiCoopRecordHeroForPlayerTwo(PPCRegister& r3) {
+  if (g_local_player_two_call <= 0) {
+    return false;
+  }
+  uint8_t* base = RefiiGuestBase();
+  if (base == nullptr || !Plausible(r3.u32) || PlayerTwoRecordHere(base) || r3.u32 != PlayerForKey(base, 1u)) {
+    return false;
+  }
+  const uint32_t two = refii_mod_player_hero(base, 2);
+  if (two == 0u) {
+    return false;
+  }
+  r3.u64 = two;
+  Once(g_said_record_hero, "the local player's hero is hero two for a call made for player two (no Player of theirs here)");
+  return true;
+}
+
+// The same read INLINED in the sell folders' count `sub_82996508` (disc `sub_828E1498`): after the pick's `bl`,
+// `addi r3,r3,0xC` / `lwz r11,4(r3)` / `lwz r10,0(r11)` / `clrlwi r11,r10,0` (0x82996570..0x8299658C; disc
+// 0x828E1500..0x828E151C), joined at `lwz r10,0x24(r11)` 0x8299659C / 0x828E152C, which tests the hero's
+// inventory (13). There, r11 the hero: player one's record's hero answers hero two as above.
+void RefiiCoopInlineRecordHero(PPCRegister& r11) {
+  if (g_local_player_two_call <= 0) {
+    return;
+  }
+  uint8_t* base = RefiiGuestBase();
+  if (base == nullptr || r11.u32 == 0u || PlayerTwoRecordHere(base) ||
+      r11.u32 != RecordHero(base, PlayerForKey(base, 1u))) {
+    return;
+  }
+  const uint32_t two = refii_mod_player_hero(base, 2);
+  if (two != 0u) {
+    r11.u64 = two;
   }
 }
 
@@ -306,10 +368,31 @@ void RefiiCoopShopPlayer(PPCRegister& r4) {
 // 0x8259B41C and its label `sub_826B6678` 0x826B66DC / 0x8259B844; the decoration's mount `sub_826B7128`
 // 0x826B718C / 0x8259C3A4; the furniture pages `sub_8299B6D8` 0x8299B780 / 0x828F12A8 and `sub_8299C710`
 // 0x8299C780 / 0x828F2328; the decoration pages `sub_8299C008` 0x8299C0AC / 0x828F1C5C and `sub_8299CF80`
-// 0x8299CFEC / 0x828F2B94. While a call is made for local player two, each answers player two.
+// 0x8299CFEC / 0x828F2B94; the received card's Equip now `sub_8246FFF0` 0x82470068 / disc `sub_8283BB90` 0x8283BC08
+// (gui_screen_stub_receive_items.cpp DispatchCard). While a call is made for local player two, each answers player
+// two — where this machine holds a Player of theirs (PlayerTwoRecordHere; each site reads the record unguarded).
 void RefiiCoopInlineLocalPlayer(PPCRegister& r4) {
   if (r4.u32 == 1u && g_local_player_two_call > 0) {
+    uint8_t* base = RefiiGuestBase();
+    if (base != nullptr && PlayerTwoRecordHere(base)) {
+      r4.u64 = 2u;
+    }
+  }
+}
+
+// THE DOG'S RENAME KEYBOARD IS THIS MACHINE'S PLAYER'S. The rename card's opener (`sub_826CDCD8` / disc
+// `sub_82584A00`, reached from Lua_Dog_TriggerRenameScreen 0x82811A58) asks for the keyboard's user as player-map
+// key 1 outright: `li r4,1` / `lwz r3,0x9C(r8)` / `bl sub_82264230` (TU1 0x826CDF08..0x826CDF18, disc
+// 0x82584C30..0x82584C40), then `lwz r3,0x28(r3)` (0x826CDF24) for XamShowKeyboardUI. An online joiner holds no
+// player of key 1 (its local player is key 2, sub_821C7CE0's rule): the lookup answered 0 and the read of +0x28
+// faulted (the collar's rename, 2026-11-28 18:52:37, guest 0x00000028). At the `bl`, the player this machine plays:
+// key 2 on an online joiner, and while a call is made for local player two (where key 2 is held: PlayerTwoRecordHere).
+void RefiiCoopRenameKeyboardUser(PPCRegister& r4) {
+  uint8_t* base = RefiiGuestBase();
+  if (r4.u32 == 1u && base != nullptr && (LocalPlayerIsPlayerTwo(base) || g_local_player_two_call > 0) &&
+      PlayerTwoRecordHere(base)) {
     r4.u64 = 2u;
+    Once(g_said_rename, "the dog's rename keyboard is this machine's player two's");
   }
 }
 
@@ -328,11 +411,23 @@ void RefiiCoopShopOwner(PPCRegister& r4) {
   }
 }
 
-// After `bl sub_8222C1B8` in the price and tattoo checks: r3 is hero one; player two's shop asks
-// about hero two.
+// After `bl sub_8222C1B8` (hero one, `**(*(game+0x58)+4)` +0x6C) wherever the shop judges its shopper: r3 is hero
+// one; player two's shop asks about hero two. The price and tattoo checks (0x8246DBB4 in sub_8246DB30, 0x8246E0EC in
+// sub_8246DE50; disc 0x828397D4 / 0x82839D0C); the buy price's owner factor — hero one's 69 owning the shop
+// (`sub_828D14E8(comp69, shop)`) multiplies by shop+60 — `sub_8296B890` 0x8296B8E8 (from CECShopkeeper_BuyPrice;
+// disc `sub_828E7F78` 0x828E7FD0); the sell price's (shop+64) `sub_8296BC38` 0x8296BDF4 (from SellPrice; disc
+// `sub_828E8320` 0x828E84DC); a title the hero may have free (`Lua_Stats_IsTitleFreeToBuy` on hero one's 57: price
+// 0) `sub_8296B310` 0x8296B388 (disc `sub_828E79F8` 0x828E7A70); a weapon the hero carries (hero one's 24, the
+// Carrying component: `sub_824FA240` — its carried and sheathed slots), read by the sell, the sell rows' eligibility
+// and the buy rows' refresh, `sub_82995EA8` 0x82995FDC (disc `sub_828E0E38` 0x828E0F6C); the
+// title held (`Lua_Stats_GetTitle` of hero one's 57) `sub_82994E80` 0x82994EC0 (disc `sub_828DFE10` 0x828DFE50); the
+// buy rows' styles already had (hero one's 15: ghosting and emphasis) `sub_829950E0` 0x829952D4 (disc `sub_828E0070`
+// 0x828E0264). Each function's mnemonics are identical on both builds.
 void RefiiCoopShopHero(PPCRegister& r3) {
   uint8_t* base = RefiiGuestBase();
-  if (base != nullptr && Shopping(base)) {
+  // Also inside a call made for player two: the host's run of an online joiner's shop
+  // (coop_shop_for_joiner.cpp, RefiiCoopLocalPlayerTwoCall around each step).
+  if (base != nullptr && (Shopping(base) || g_local_player_two_call > 0)) {
     const uint32_t two = refii_mod_player_hero(base, 2);
     if (two != 0u) {
       r3.u64 = two;
@@ -384,7 +479,10 @@ REX_EXTERN(rex_CECVillager_OnUse) {
   // A shop serves a player two who brought a hero; the henchman gets the shipped refusal.
   const bool two = Plausible(user) && RefiiCoopGetOwnHero() != 0 && user == refii_mod_player_hero(base, 2);
   g_shop_user_is_local_two = two && LocalCoopGame(base);
-  g_shop_for_local_player_two = two && (LocalPlayerIsPlayerTwo(base) || g_shop_user_is_local_two);
+  // And the host's replay of an online joiner's use (coop_villager_use.cpp): the shop runs on the host for hero
+  // two and shows on the joiner (coop_shop_for_joiner.cpp) — never the host's own screen.
+  g_shop_for_local_player_two =
+      two && (LocalPlayerIsPlayerTwo(base) || g_shop_user_is_local_two || RefiiCoopJoinerShopReplay() != 0);
   __imp__rex_CECVillager_OnUse(ctx, base);
   g_shop_for_local_player_two = previous;
   g_shop_user_is_local_two = previous_local;
@@ -478,6 +576,60 @@ bool RefiiCoopOwnCameraUpdate(PPCRegister& r26) {
 }
 
 bool RefiiCoopActivateCameraAsJoiner() { return g_activate_as_joiner; }
+
+// A JOINER'S CAMERA SNAP WAITS FOR ITS OWN LOAD. The settle pass lhCameraManager_Snap (TU1 sub_82482EB0,
+// disc sub_824246F0; r3 the manager) runs the active camera's Lua when the manager holds a wrapper: `lwz
+// r11,0x3C(r30)` .. `lwz r10,0x2C(r30)` .. `beq` past both `bl sub_8219A758` (0x82482F70..0x82482FC0;
+// disc 0x824247B0..0x82424800, sub_8219A800). Shipped, a joiner's manager held no Lua camera
+// (ActivateCamera refused it, above), so its snaps ran none. The host's "place the players" message
+// 0x11F (lhNetManager_ProcessInboundSessionPacket; TU1 `bl lhScene_TraverseNodes` 0x8232C640, disc
+// 0x8230F110) places every Player (sub_8238A7D8 / sub_8238FFA8) and snaps its manager whatever the
+// joiner's own level change has reached: a slow joiner is still in states 1..3 of CmdLevelChange_Update
+// (sub_823D5AA8 / sub_8245D088), its old level torn down and the new one not loaded, so the camera's
+// fade reached CameraManager.GetFadedCameraObjects (sub_821B8660 / sub_821B8728) over a null region
+// grid (`lwz r11,4(r3)`, `lwz r5,4(r11)` 0x82193354 / 0x8219346C) — disc 2026-11-29, and TU1 twice on
+// 2026-11-26 through the same frames. Those snaps are superseded by the level change's own: state 3
+// ends the blocking World_LoadLevel_Execute with state 4 on a client (`+ 4` of the host test), state 4
+// waits for the level and the 0x11F mark, sets up the henchman (sub_823276D0) and state 5 snaps the
+// local player's manager (`bl lhEntity_UpdateTransform` 0x823D64DC / 0x8245DABC, then `li r11,6`). So
+// a snap that would run camera Lua on the joiner while its queued CmdLevelChange (vtable 0x820AECE8,
+// state word +0x2C, set 1 by the constructor 0x823D56BC / 0x8245CC9C) is still in states 1..3 is not
+// run. The queue walk is Debug.IsLevelLoading's own (`lwz r9,0x80(r10)`, `lwz r8,4(r9)`, `lwz
+// r7,4(r8)`, `lwz r11,4(r7)`, `lwz r3,8(r11)` 0x82350128..0x8235014C / 0x8234A0D0..), through every
+// node, as World_RequestLevelChange queues a command in front of it.
+extern "C" int RefiiCoopSnapWaitsForLevel(uint8_t* base, uint32_t manager) {
+  if (base == nullptr || !Plausible(manager) || !IsJoiner(base)) {
+    return 0;
+  }
+  if (refii::vfs::LoadGuestU32(base, manager + 0x3Cu) == 0u && refii::vfs::LoadGuestU32(base, manager + 0x2Cu) == 0u) {
+    return 0;
+  }
+  const uint32_t root = refii::vfs::LoadGuestU32(base, refii::guest::Address(0x83496AB8u));
+  const uint32_t game = Plausible(root) ? refii::vfs::LoadGuestU32(base, root + 0xCu) : 0u;
+  const uint32_t holder = Plausible(game) ? refii::vfs::LoadGuestU32(base, game + 0x80u) : 0u;
+  const uint32_t flow = Plausible(holder) ? refii::vfs::LoadGuestU32(base, holder + 0x4u) : 0u;
+  const uint32_t sentinel = Plausible(flow) ? refii::vfs::LoadGuestU32(base, flow + 0x4u) : 0u;
+  if (!Plausible(sentinel)) {
+    return 0;
+  }
+  const uint32_t vtable = refii::guest::Address(0x820AECE8u);
+  uint32_t node = refii::vfs::LoadGuestU32(base, sentinel + 0x4u);
+  for (uint32_t step = 0; step < 64u && Plausible(node) && node != sentinel; ++step) {
+    const uint32_t command = refii::vfs::LoadGuestU32(base, node + 0x8u);
+    if (Plausible(command) && refii::vfs::LoadGuestU32(base, command) == vtable) {
+      const uint32_t state = refii::vfs::LoadGuestU32(base, command + 0x2Cu);
+      if (state < 1u || state > 3u) {
+        return 0;
+      }
+      REXLOG_INFO("Refii co-op heroes: the joiner's camera snap of manager 0x{:08X} waits for its level change "
+                  "(state {}); the level change snaps it once its load is in",
+                  manager, state);
+      return 1;
+    }
+    node = refii::vfs::LoadGuestU32(base, node + 0x4u);
+  }
+  return 0;
+}
 
 // PLAYER TWO'S D-PAD FILL LEAVES THE DIG HINT ALONE. `sub_823E51A0`'s third argument also shows
 // and dismisses the shared tutorial hints 14 and 15 (`bl sub_821B5260` 0x823E5EE0, `bl

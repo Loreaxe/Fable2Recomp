@@ -59,7 +59,9 @@ std::unordered_map<uint64_t, uint32_t> g_said;
 void State(uint8_t* base, uint32_t registry, uint32_t hash, uint32_t slide, bool played) {
     const int index = RegistryIndex(base, registry);
     if (index < 0) return;
-    {
+    // A capture (refii_bridge_gui_capture_begin) takes every statement and leaves this machine's own
+    // "said" record alone: what it captures is another machine's, not this screen's.
+    if (refii_bridge_gui_capturing() == 0) {
         const uint64_t key = (static_cast<uint64_t>(index) << 32) | hash;
         std::lock_guard<std::mutex> lock(g_said_lock);
         auto found = g_said.find(key);
@@ -120,7 +122,7 @@ namespace {
 std::unordered_map<uint32_t, uint32_t> g_images;
 
 void StateImage(uint32_t hash, uint32_t texture) {
-    {
+    if (refii_bridge_gui_capturing() == 0) {
         std::lock_guard<std::mutex> lock(g_said_lock);
         auto found = g_images.find(hash);
         if (found != g_images.end() && found->second == texture) return;
@@ -202,7 +204,7 @@ void PostValue(uint8_t* base, const char* name, uint32_t registry, uint32_t hash
         said += value;
         said += '\x1f';
     }
-    {
+    if (refii_bridge_gui_capturing() == 0) {
         const uint64_t key = (static_cast<uint64_t>(index) << 32) | hash;
         std::lock_guard<std::mutex> lock(g_said_lock);
         auto found = g_values_said.find(key);

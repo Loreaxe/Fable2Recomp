@@ -35,6 +35,7 @@ std::string ReadStatedWideLhString(uint8_t* base, uint32_t handle);
 }  // namespace refii::vfs
 
 PPC_EXTERN_FUNC(__imp__rex_lhGuiNumericAdjuster_Render);
+PPC_EXTERN_FUNC(rex_lhWideString_Dtor);
 extern "C" uint8_t* RefiiGuestBase(void);
 PPC_EXTERN_FUNC(__imp__rex_lhGuiGamerCard_SetName);
 
@@ -136,6 +137,16 @@ REX_EXTERN(rex_lhGuiManager_OpenModal) {
     const uint32_t text = ctx.r4.u32;
     const uint32_t kind = ctx.r5.u32;
     const uint32_t id = ctx.r6.u32;
+    // The host's run of the shop for an online joiner's hero two (coop_shop_for_joiner.cpp): the box is the
+    // joiner's, stated to it and not opened here; the text is released as the opener releases it on its way out
+    // (`mr r3,r27` / `bl LHString_CCharString_CCharString_0`, 0x8236FC94 / 0x8236FC98; disc 0x82337E90 / 0x82337E94).
+    if (refii::vfs::JoinerShopRunning()) {
+        refii::vfs::JoinerShopModal(kind, id, refii::vfs::ReadStatedWideLhString(base, text));
+        PPCContext drop = ctx;
+        drop.r3.u64 = text;
+        rex_lhWideString_Dtor(drop, base);
+        return;
+    }
     const bool opens = refii::vfs::LoadGuestU32(base, owner + 40u) == 1u;
     const std::string said = opens ? refii::vfs::ReadStatedWideLhString(base, text) : std::string();
     refii::vfs::StatedScreenBoxOpening(1);

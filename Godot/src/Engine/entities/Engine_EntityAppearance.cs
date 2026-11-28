@@ -357,7 +357,7 @@ public static class Engine_EntityAppearance
             if (Refii.Models.Engine_ClassicMaterial.Active)
             {
                 classic = new Vector4(visual.TintLanes.X, visual.TintLanes.Y, visual.TintLanes.Z, 1f);
-                node.SetInstanceShaderParameter(ClassicTintParameter, classic.Value);
+                Refii.Core.Engine_InstanceParams.Set(node, ClassicTintParameter, classic.Value);
             }
             else if (Tints.TryGetValue(node, out (Vector4 Modern, Vector4? Classic) held))
             {
@@ -446,6 +446,41 @@ public static class Engine_EntityAppearance
     }
 
     /// <summary>The node is going away.</summary>
+    /// <summary>
+    /// The overlay a drawing of <paramref name="node"/> carries at a fade of its own (Engine_ViewFade: one split
+    /// half's camera's): the node's saturation mask as it stands, with the kept depth where <paramref name="blended"/>.
+    /// </summary>
+    internal static ShaderMaterial? OverlayFor(MeshInstance3D node, bool blended)
+    {
+        Overlays.TryGetValue(node, out int carried);
+        return OverlayMaterial((carried & OverlayMask) | (blended ? OverlayDepth : 0));
+    }
+
+    /// <summary>
+    /// Puts back the fade and overlay <see cref="Apply"/> last gave <paramref name="node"/> (Engine_ViewFade set
+    /// another one view's for a while).
+    /// </summary>
+    internal static void Reapply(MeshInstance3D node)
+    {
+        float transparency = 0f;
+        if (Applied.TryGetValue(node, out HostBridge.EntityAppearance look) && node.Visible)
+        {
+            transparency = TransparencyFor(Mathf.Clamp(look.Opacity, 0f, 1f));
+        }
+
+        if (node.Transparency != transparency)
+        {
+            node.Transparency = transparency;
+        }
+
+        Overlays.TryGetValue(node, out int carried);
+        ShaderMaterial? overlay = OverlayMaterial(carried);
+        if (node.MaterialOverlay != overlay)
+        {
+            node.MaterialOverlay = overlay;
+        }
+    }
+
     /// <summary>
     /// The overlay for a combination. The depth writer draws ahead of every other transparent
     /// surface (render priority -128), so the faded body's own surfaces then pass only where they

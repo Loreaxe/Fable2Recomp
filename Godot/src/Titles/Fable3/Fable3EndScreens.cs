@@ -45,6 +45,10 @@ public static class Fable3EndScreens
 	{
 		new("elements", "Epilogue", null, 0f, true, AnyNode: true),
 		new("Buttons", "EpilogueButtons", null, 0f, true),
+
+		// The epilogue's glint (`Layer.FX.fx2`, CHUDParticle `fxgui_glint_hero_status_01`), a childless
+		// component cut alone so the view's glints (Engine_UiParticles) stand on it.
+		new("fx2", "EpilogueGlint", Engine_HudLayout.Anchor.Centre, 0f, false, "FX", AnyNode: true, Every: true),
 	};
 
 	/// <summary>

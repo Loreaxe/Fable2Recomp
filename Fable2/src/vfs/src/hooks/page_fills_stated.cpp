@@ -66,7 +66,9 @@
 #include <rex/logging.h>
 
 #include "vfs_hooks_private.h"
+#include "core/guest_build.h"
 #include "core/guest_state.h"
+#include "core/refii_mod.h"
 #include "core/gui_native_calls.h"
 #include "hooks/page_fills_stated.h"
 #include "hooks/ppc_externs.h"
@@ -88,8 +90,19 @@ struct Fill {
     std::vector<std::pair<std::string, std::string>> records;
     std::vector<Written> marks;
     std::vector<std::string> mark_labels;
+    std::vector<std::pair<std::string, std::string>> named;  // kind, then "path\x1Fvalue" (NotePageFillNamed)
     uint32_t unnamed = 0u;
 };
+
+/// The relay (OpenPageFillRelay): on, the stand-in block, how many stand-ins are handed out.
+struct Relay {
+    bool on = false;
+    uint32_t block = 0u;
+    uint32_t used = 0u;
+};
+thread_local Relay t_relay;
+constexpr uint32_t kStandIns = 96u;
+constexpr uint32_t kStandInSize = 16u;
 
 thread_local Fill t_fill;
 
@@ -213,6 +226,12 @@ void ClosePageFill(uint32_t key, bool restated) {
         said.push_back(name->second);
         said.push_back(write.value);
     }
+    for (const auto& [kind, joined] : fill.named) {
+        const size_t cut = joined.find('\x1F');
+        said.push_back(kind);
+        said.push_back(joined.substr(0, cut));
+        said.push_back(cut == std::string::npos ? std::string() : joined.substr(cut + 1u));
+    }
     for (const auto& [what, hex] : fill.records) {
         said.emplace_back("record");
         said.push_back(what);
@@ -270,6 +289,53 @@ void ClosePageFill(uint32_t key, bool restated) {
 
 void NotePageFillText(uint32_t element, const std::vector<uint16_t>& units) { Note("text", element, Utf8(units)); }
 
+void OpenPageFillRelay(PPCContext& ctx, uint8_t* base) {
+    if (t_relay.block == 0u) {
+        t_relay.block = CallLhMalloc(ctx, base, kStandIns * kStandInSize);
+    }
+    if (t_relay.block != 0u) {
+        std::memset(base + t_relay.block, 0, kStandIns * kStandInSize);
+    }
+    t_relay.on = t_relay.block != 0u;
+    t_relay.used = 0u;
+}
+
+void ClosePageFillRelay() {
+    t_relay.on = false;
+    t_relay.used = 0u;
+}
+
+bool PageFillRelaying() { return t_relay.on; }
+
+bool PageFillStandIn(uint32_t element) {
+    return t_relay.on && element >= t_relay.block && element < t_relay.block + kStandIns * kStandInSize;
+}
+
+void NotePageFillNamed(const char* kind, std::string path, std::string value) {
+    if (!t_fill.open || path.empty()) {
+        return;
+    }
+    t_fill.named.emplace_back(kind, path + '\x1F' + value);
+}
+
+void StatePageFillTexts(uint32_t screen, const char* scope, uint32_t key,
+                        const std::vector<std::pair<std::string, std::string>>& texts) {
+    if (texts.empty()) {
+        return;
+    }
+    GuiNativeCall call;
+    call.name = "@PageFill";
+    Add(call, std::to_string(screen));
+    Add(call, scope);
+    Add(call, std::to_string(key));
+    for (const auto& [path, text] : texts) {
+        Add(call, "text");
+        Add(call, path);
+        Add(call, text);
+    }
+    PostGuiNativeCall(std::move(call));
+}
+
 void NotePageFillTexture(uint32_t element, uint32_t hash) {
     char hex[9];
     std::snprintf(hex, sizeof hex, "%08X", hash);
@@ -299,6 +365,22 @@ void NotePageFillRecord(const char* what, uint32_t record) {
 // elements by. Read at the entry — the call consumes its copy (0x824267d4).
 REX_EXTERN(rex_lhGuiElement_FindByName) {
     REX_FUNC_PROLOGUE();
+    // A relay (no presentation here): the name answers a stand-in, and the copy the caller handed is released
+    // as the finder releases it (`mr r3,r31` / `bl lhCharString_Dtor` 0x824267D0..0x824267D4; disc 0x823F8C30's).
+    if (t_relay.on && t_fill.open) {
+        std::string name = refii::vfs::ReadGuestLhString(base, ctx.r3.u32);
+        const uint32_t handed = ctx.r3.u32;
+        uint32_t element = 0u;
+        if (t_relay.used < kStandIns && !name.empty()) {
+            element = t_relay.block + kStandInSize * t_relay.used++;
+            t_fill.names[element] = std::move(name);
+        }
+        PPCContext drop = ctx;
+        drop.r3.u64 = handed;
+        refii::mods::CallGuest(drop, base, refii::guest::Address(0x82214DD8u));  // lhCharString_Dtor
+        ctx.r3.u64 = element;
+        return;
+    }
     if (!t_fill.open) {
         __imp__rex_lhGuiElement_FindByName(ctx, base);
         return;
@@ -317,8 +399,11 @@ REX_EXTERN(rex_lhGuiElement_SetShown) {
         __imp__rex_lhGuiElement_SetShown(ctx, base);
         return;
     }
-    if (ctx.r4.u32 != 0u) {
+    if (ctx.r4.u32 != 0u || refii::vfs::PageFillStandIn(ctx.r3.u32)) {
         Note("shown", ctx.r3.u32, (ctx.r5.u32 & 0xFFu) != 0u ? "1" : "0");
+    }
+    if (refii::vfs::PageFillStandIn(ctx.r3.u32)) {
+        return;  // its attribute writes (`sub_82284948` 0x82426294) would reach the presentation
     }
     const bool outer = t_in_shown;
     t_in_shown = true;
@@ -329,10 +414,13 @@ REX_EXTERN(rex_lhGuiElement_SetShown) {
 // `GuiElement_SetOpacity_p(element r3, presentation r4, f1)` (TU1 0x82426078; disc 0x823F8510).
 REX_EXTERN(rex_lhGuiElement_SetOpacity) {
     REX_FUNC_PROLOGUE();
-    if (t_fill.open && !t_in_shown && ctx.r4.u32 != 0u) {
+    if (t_fill.open && !t_in_shown && (ctx.r4.u32 != 0u || refii::vfs::PageFillStandIn(ctx.r3.u32))) {
         char value[32];
         std::snprintf(value, sizeof value, "%g", static_cast<float>(ctx.f1.f64));
         Note("opacity", ctx.r3.u32, value);
+    }
+    if (refii::vfs::PageFillStandIn(ctx.r3.u32)) {
+        return;
     }
     __imp__rex_lhGuiElement_SetOpacity(ctx, base);
 }
@@ -341,13 +429,17 @@ REX_EXTERN(rex_lhGuiElement_SetOpacity) {
 // alpha bytes, stated as RRGGBBAA.
 REX_EXTERN(rex_lhGuiElement_SetTextColour) {
     REX_FUNC_PROLOGUE();
-    if (t_fill.open && ctx.r4.u32 != 0u && ctx.r5.u32 >= 0x10000u && ctx.r5.u32 < 0xC0000000u) {
+    if (t_fill.open && (ctx.r4.u32 != 0u || refii::vfs::PageFillStandIn(ctx.r3.u32)) && ctx.r5.u32 >= 0x10000u &&
+        ctx.r5.u32 < 0xC0000000u) {
         const uint32_t at = ctx.r5.u32;
         char value[16];
         std::snprintf(value, sizeof value, "%02X%02X%02X%02X", refii::vfs::LoadGuestU8(base, at + 2u),
                       refii::vfs::LoadGuestU8(base, at + 1u), refii::vfs::LoadGuestU8(base, at),
                       refii::vfs::LoadGuestU8(base, at + 3u));
         Note("colour", ctx.r3.u32, value);
+    }
+    if (refii::vfs::PageFillStandIn(ctx.r3.u32)) {
+        return;
     }
     __imp__rex_lhGuiElement_SetTextColour(ctx, base);
 }
@@ -398,10 +490,41 @@ REX_EXTERN(rex_lhGuiElement_SetRotation) {
 // `lhGuiElement_GoToSlide(element r3, presentation r4, slide r5)` (TU1 0x82426BA8; disc 0x823F9040).
 REX_EXTERN(rex_lhGuiElement_GoToSlide) {
     REX_FUNC_PROLOGUE();
-    if (t_fill.open && ctx.r3.u32 != 0u && ctx.r4.u32 != 0u) {
+    if (t_fill.open && ctx.r3.u32 != 0u && (ctx.r4.u32 != 0u || refii::vfs::PageFillStandIn(ctx.r3.u32))) {
         Note("slide", ctx.r3.u32, std::to_string(static_cast<int32_t>(ctx.r5.u32)));
     }
+    if (refii::vfs::PageFillStandIn(ctx.r3.u32)) {
+        return;  // the presentation's own vf+0x24 with the element (`bctrl` 0x82426BE0)
+    }
     __imp__rex_lhGuiElement_GoToSlide(ctx, base);
+}
+
+// An element's position, read and written by the shop's stats page to lay its rows out (`sub_82993408`
+// 0x82993DAC / 0x82993DC4 and 0x82993ED8 / 0x82993EF8; disc `sub_828E4DD8` 0x828E577C / 0x828E5794, 0x828E58A8 /
+// 0x828E58C8): the reader `sub_824252E8(&xyz r3, element r4)` (disc `sub_823F7780`, 45 instructions, identical)
+// stores 0.0 (`flt_82099484`) into all three first (0x8242530C..0x82425318) and then asks the attribute service
+// (`bl sub_82284948` 0x82425330); the writer `sub_824251E0(element r3, presentation r4, f1, f2, f3)` (disc
+// `sub_823F7678`, 65, identical) calls the presentation's vf+0x20 with the element (0x82425218..0x82425228). Layout
+// is not stated (Godot lays the page out); inside a relay both stop at the stand-in: the reader with its own zeros.
+REX_EXTERN(rex_lhGuiElement_GetPosition) {
+    REX_FUNC_PROLOGUE();
+    if (refii::vfs::PageFillStandIn(ctx.r4.u32)) {
+        if (ctx.r3.u32 >= 0x10000u && ctx.r3.u32 < 0xC0000000u) {
+            for (uint32_t i = 0u; i < 12u; i += 4u) {
+                refii::vfs::StoreGuestU32(base, ctx.r3.u32 + i, 0u);
+            }
+        }
+        return;
+    }
+    __imp__rex_lhGuiElement_GetPosition(ctx, base);
+}
+
+REX_EXTERN(rex_lhGuiElement_SetPosition) {
+    REX_FUNC_PROLOGUE();
+    if (refii::vfs::PageFillStandIn(ctx.r3.u32)) {
+        return;
+    }
+    __imp__rex_lhGuiElement_SetPosition(ctx, base);
 }
 
 // THE SHOP'S FRONT PAGE (22). Its fill `sub_82991800(page)` (TU1; disc 0x828E31B0, 1002 instructions,

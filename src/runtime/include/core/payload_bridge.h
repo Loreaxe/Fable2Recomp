@@ -352,6 +352,12 @@ void refii_bridge_note_gui_native_entry(uint32_t implementation);
 uint32_t refii_bridge_current_gui_native_entry(void);
 // - one intercepted call, flattened by core/gui_native_calls.h's blob codec.
 void refii_bridge_post_gui_native_call(const uint8_t* blob, size_t length);
+// - a capture on this thread: while it is open every posted call is kept (each as a 16-bit little-endian
+//   length and its flattened bytes) instead of reaching this machine's host; end copies them into `out`
+//   when `capacity` holds them and returns their size, 0 when none was open.
+void refii_bridge_gui_capture_begin(void);
+int32_t refii_bridge_gui_capturing(void);
+uint32_t refii_bridge_gui_capture_end(uint8_t* out, uint32_t capacity);
 
 // WHAT A TITLE'S GUEST TELLS ITS PRESENTATIONS' ELEMENTS (src/runtime/src/core/told_statements.cpp;
 // the host side's C++ API core/told_statements.h). `kind` 1 slide entry, 2 paused, 3 attribute,
@@ -473,6 +479,17 @@ int32_t refii_bridge_camera_screen_read(int32_t* split);
 // to the guest, never saved.
 void refii_bridge_camera_offset_set(int32_t player, const float* seven, int32_t on);
 int32_t refii_bridge_camera_offset_read(int32_t player, float* out7);
+
+// PLAYER TWO'S CAMERA FADE (src/runtime/src/core/stated_camera_fade.cpp): the entities player two's camera has
+// faded and the camera alpha it gives each, as the core camera chunk states its own book whole at the end of
+// each of player two's fade-ups (Refii._partner_camera_alphas, both titles). The guest's field (the
+// renderable's camera alpha) keeps player one's camera's fades; this is player two's half's. Read by the shell.
+// - replaces the book: `count` entities (guest addresses) and their alphas; 0 empties it;
+void refii_bridge_partner_camera_alphas_set(const uint32_t* entities, const float* alphas, uint32_t count);
+// - up to `capacity` entries into the arrays; returns how many the book holds (may exceed capacity), and
+//   `serial` (may be null) one more at every statement.
+uint32_t refii_bridge_partner_camera_alphas_read(uint32_t* entities, float* alphas, uint32_t capacity,
+                                                 uint32_t* serial);
 
 // THE WORLD A TITLE STATES (src/runtime/src/core/stated_world.cpp): what its hooks see the guest's
 // own entry points called with; its host bridge reads each back for the shell.

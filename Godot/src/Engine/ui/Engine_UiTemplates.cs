@@ -642,6 +642,12 @@ public sealed class Engine_UiScreenTemplate
 	public bool RestFromFile;
 
 	/// <summary>
+	/// THE GUI GLINTS the book draws (Engine_UiParticles): the title's opacity channel, null for
+	/// none. The glint elements must stand in the book's units (<see cref="ChromeUnits"/>).
+	/// </summary>
+	public Engine_UiParticles.OpacityChannel? Glints;
+
+	/// <summary>
 	/// Where the guest's open leaves an element that its rest slide does not: path → the six
 	/// transform slots (position x/y/z, scale x/y/z), null keeping the slid value. Measured with
 	/// the `rest:` check; only read while <see cref="RestFromFile"/> stands the book.

@@ -773,6 +773,7 @@ public partial class GameEntities : Node3D
         _attached.Clear();
         Refii.Entities.Engine_EntityHighlight.BeginWalk();
         Refii.Entities.Engine_EntityAppearance.BeginWalk();
+        Refii.Entities.Engine_ViewFade.BeginWalk();
 
         // The half-res surface the highlight silhouettes are drawn into. Idempotent; builds
         // nothing until the post chain is up, since the layer reaches the screen only through it.
@@ -1737,7 +1738,8 @@ public partial class GameEntities : Node3D
             HostBridge.EntityAppearance effectiveAppearance =
                 ResolveEffectiveAppearance(in entity, title, out DeadCorpseTrack? corpseTrack);
 
-            if (Refii.Entities.Engine_EntityAppearance.NeedsOwnNode(effectiveAppearance) || Engine_TitleGame.Active.WantsOwnNode(entity))
+            if (Refii.Entities.Engine_EntityAppearance.NeedsOwnNode(effectiveAppearance) || Engine_TitleGame.Active.WantsOwnNode(entity) ||
+                Refii.Entities.Engine_ViewFade.WantsOwnNode(entity.Address))
             {
                 if (adopted && _adoptions.TryGetValue(entity.Address, out var marriage))
                 {
@@ -1756,6 +1758,9 @@ public partial class GameEntities : Node3D
                 node.Visible = false;
                 Refii.Entities.Engine_ShadowProxy.SyncHidden(node);
             }
+
+            // Each split half at its own camera's fade (player two's camera's book; Engine_ViewFade).
+            Refii.Entities.Engine_ViewFade.Sync(node, entity.Address, effectiveAppearance, IsPrincipal(entity.Address));
             if (!_heroTraceLogged && entity.Address == _principals.Hero && entity.Address != 0u && node.Mesh is { } heroMesh)
             {
                 _heroTraceLogged = true;

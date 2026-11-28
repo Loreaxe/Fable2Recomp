@@ -203,6 +203,12 @@ public static class Engine_EntityHighlight
 
     private static void Walk(Node node, int slot)
     {
+        // A split half's own drawing of the body (Engine_ViewFade) is the body: the body's outline serves it.
+        if (node is MeshInstance3D { Name: var name } && name == Engine_ViewFade.NodeName)
+        {
+            return;
+        }
+
         // `GetChildren` returns a copy in C#, so adding a proxy while this walks is safe.
         foreach (Node child in node.GetChildren())
         {

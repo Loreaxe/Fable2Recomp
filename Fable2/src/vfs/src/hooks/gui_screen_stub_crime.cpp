@@ -73,6 +73,8 @@ void CrimeScreenOpening() {
   g_crime_arrest_stated = 0u;
 }
 
+uint32_t CrimeArrestedPlayer() { return g_crime_arrested; }
+
 }  // namespace refii::vfs
 
 // OnEnter TU1 0x826A8C78 / disc 0x825914F0. Kept, in the guest's order:
@@ -193,12 +195,28 @@ REX_EXTERN(rex_lhGuiCrimeScreen_OnMenuEvent) {
     if ((type == 50u && base[h + 0x2Cu] == 0u) || (type == 52u && base[h + 0x2Du] == 0u)) {
       return;
     }
-    if (type == 52u) {
-      const uint32_t hero = Call(ctx, base, s.frame, 0x8229EE78u, {Call(ctx, base, s.frame, 0x821C7CE0u, {g})});
+    // THE ARRESTED PLAYER'S SAFETY. The guest turns safety on for the local player's hero, the one it
+    // posts as. For player two's arrest that is player two's: their hero's here, in local co-op; on an online
+    // host, the joiner's own answer has already set it on its hero (the safety is that machine's, the
+    // stated query IsSafetyModeEnabled), so nothing here.
+    const int32_t mode = refii_mod_coop_mode(base);
+    if (type == 52u && !(mode == 2 && g_crime_arrested == 2u)) {
+      uint32_t hero = Call(ctx, base, s.frame, 0x8229EE78u, {Call(ctx, base, s.frame, 0x821C7CE0u, {g})});
+      if (g_crime_arrested == 2u && refii_mod_player_hero(base, 2) != 0u) {
+        hero = refii_mod_player_hero(base, 2);
+      }
       const uint32_t comp33 = refii_mod_component(base, hero, 33u);
       if (comp33 != 0u) {
         Call(ctx, base, s.frame, 0x823E0788u, {comp33, 1u});
       }
+    }
+    // AN ONLINE JOINER'S CRIME SCREEN is the host's arrest shown here (Engine_UiCrimePage): the guard's
+    // script that reads the world message runs on the host, which posts it as hero two when this
+    // machine's choice reaches it. Here the choice leaves the screen and nothing is posted.
+    if (mode == 3) {
+      REXLOG_INFO("Refii crime screen: this joiner's choice {} goes to the host, which posts it as player two's", type);
+      Call(ctx, base, s.frame, 0x8236ED98u, {LoadU32(base, Gui(base) + 28u), 1u});
+      return;
     }
     const uint32_t pos = s.data;  // the hero's position, 16 bytes
     const uint32_t hero = Call(ctx, base, s.frame, 0x8229EE78u, {Call(ctx, base, s.frame, 0x821C7CE0u, {g})});

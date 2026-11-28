@@ -1007,6 +1007,10 @@ constexpr const char* kActionModWeatherPrefix = "ModWeather:";
 /// A malformed payload (bad magic, short buffer, a count past the end, version 0) is logged
 /// once and ignored; the stores keep the last good version.
 constexpr const char* kActionHeroStatePrefix = "HeroState:";
+/// `CoopHeroTitle:2:<worn>|<unlocked>,<unlocked>…` — player two's hero's titles by GDB record name, from the save
+/// their machine read their hero from (CoopHeroKit): the title they wear and the ones they hold. Applied with
+/// the hero (ApplyCoopTitle).
+constexpr const char* kActionCoopHeroTitlePrefix = "CoopHeroTitle:";
 
 /// `CoopHeroHeld:<1|2>:<meleeNetId>,<rangedNetId>` — net ids of the item entities the host's
 /// player holds; a client attaches the replicas (CoopAttachHeld). Stored; the tick attaches.
@@ -2922,6 +2926,8 @@ struct CoopHeroRecord {
 CoopHeroRecord g_coop_record[2];
 std::map<uint32_t, std::string> g_coop_skills_applied;  // body -> ranks last applied
 std::map<uint32_t, std::string> g_coop_build_applied;   // body -> morphs last applied
+std::string g_coop_title;                                // player two's CoopHeroTitle text, empty for none
+std::map<uint32_t, std::string> g_coop_title_applied;   // body -> title text last applied
 
 /// The ability ranks — CoopHeroRecord::skills, hex ids 0..14 in order (0 unused).
 ///
@@ -3853,6 +3859,8 @@ void CoopForgetBody(uint32_t entity) {
 
 /// See kActionCoopHeroReset: the whole session's hero data and every latch.
 void CoopResetSession() {
+  g_coop_title.clear();
+  g_coop_title_applied.clear();
   for (CoopHeroRecord& record : g_coop_record) {
     record = CoopHeroRecord{};
   }
@@ -5125,6 +5133,55 @@ bool DispatchHeroState(const std::string& text) {
   return true;
 }
 
+/// PLAYER TWO'S TITLE. A hero's title is their stats' (comp57) title record at +0x5C, written only by
+/// `Lua_Stats_SetTitleRecord` (TU1 0x824D8568 / disc 0x8249F6E0), which takes it from the titles the hero holds
+/// (the unlocked list, +0x68..+0x6C) — the stats load of a hero save (`sub_824E63C8`, 0x824E7070) sets it. Player
+/// two's hero is made in the host's world and given only the HeroSave block (ApplyStats: money, gender, morality,
+/// purity, renown, ranks, experience — no title), and no net message writes a title record; so player two's hero
+/// read no title anywhere — page 1 of their own property (its own-building branch, `Lua_Stats_GetTitle` on the
+/// viewer's comp57, 0x829995DC / disc 0x828EDEEC) showed an empty Owner, and `refii.title` was stated empty. The
+/// machine that plays player two states the titles of the save it read their hero from (`CoopHeroTitle:`), and
+/// they are given to the body here as a new game gives a saved hero its titles (Engine_NewGameScript:
+/// `Stats.AddUnlockedTitle`, then `Stats.SetTitleRecord`), once per body and text, after the rest of the hero.
+/// A name outside [A-Za-z0-9_] is not a record name and is dropped.
+void ApplyCoopTitle(PPCContext& ctx, uint8_t* base, uint32_t entity) {
+  if (g_coop_title.empty() || g_coop_title_applied[entity] == g_coop_title) {
+    return;
+  }
+  g_coop_title_applied[entity] = g_coop_title;
+  const auto record_name = [](const std::string& name) {
+    return !name.empty() && name.size() < 96u &&
+           std::all_of(name.begin(), name.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
+  };
+  const std::size_t bar = g_coop_title.find('|');
+  const std::string worn = g_coop_title.substr(0, bar);
+  std::string chunk = "local h = Refii.entity(Refii.player_hero(2)) if h ~= nil then ";
+  uint32_t held = 0u;
+  if (bar != std::string::npos) {
+    std::size_t at = bar + 1u;
+    while (at <= g_coop_title.size()) {
+      const std::size_t comma = g_coop_title.find(',', at);
+      const std::string name = g_coop_title.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+      if (record_name(name)) {
+        chunk += "Stats.AddUnlockedTitle(h, \"" + name + "\") ";
+        ++held;
+      }
+      if (comma == std::string::npos) {
+        break;
+      }
+      at = comma + 1u;
+    }
+  }
+  const bool wears = record_name(worn);
+  if (wears) {
+    chunk += "Stats.SetTitleRecord(h, \"" + worn + "\") ";
+  }
+  chunk += "end";
+  const bool ran = (wears || held != 0u) && RunGameLua(ctx, base, chunk);
+  REXLOG_INFO("Refii guest-tick pump: CoopHeroTitle — player two's hero 0x{:08X} holds {} title(s), wears '{}': {}",
+              entity, held, wears ? worn : std::string(), ran ? "given" : "nothing given");
+}
+
 /// THE ONE APPLY. Give the inventory, wear the outfit, dye what is worn, give the scars, draw
 /// the weapons, then for player two the HeroSave block, ranks, body morphs and face — in that
 /// order, because wear needs the records held, a dye needs the item worn, equip needs the
@@ -5141,6 +5198,9 @@ void CoopApplyHero(PPCContext& ctx, uint8_t* base, int player, uint32_t entity) 
   }
 
   if (g_coop_applied_generation[entity] == record.generation) {
+    if (player == 2) {
+      ApplyCoopTitle(ctx, base, entity);
+    }
     return;
   }
 
@@ -5176,6 +5236,9 @@ void CoopApplyHero(PPCContext& ctx, uint8_t* base, int player, uint32_t entity) 
   refii_bridge_publish_herostate_applied(static_cast<uint32_t>(player), record.generation);
   REXLOG_INFO("Refii guest-tick pump: CoopApplyHero — generation (HeroState version) {} applied "
               "to player {} 0x{:08X}", record.generation, player, entity);
+  if (player == 2) {
+    ApplyCoopTitle(ctx, base, entity);
+  }
 }
 
 /// PLAYER TWO'S SAVE PICKER PAST THE SIXTH SAVE (kActionCoopPickSavePrefix /
@@ -7897,6 +7960,13 @@ void DrainOnGuestThread(PPCContext& ctx, uint8_t* base, DrainPass pass) {
       ran = true;
     } else if (name.rfind(kActionHeroStatePrefix, 0) == 0) {
       ran = DispatchHeroState(name.substr(std::strlen(kActionHeroStatePrefix)));
+    } else if (name.rfind(kActionCoopHeroTitlePrefix, 0) == 0) {
+      // Only player two's: player one's hero is this machine's own (or the host's, whose title it has).
+      const std::string rest = name.substr(std::strlen(kActionCoopHeroTitlePrefix));
+      if (rest.rfind("2:", 0) == 0) {
+        g_coop_title = rest.substr(2);
+      }
+      ran = true;
     } else if (name.rfind(kActionCoopHeroHeldPrefix, 0) == 0) {
       ran = DispatchCoopHeroHeld(name.substr(std::strlen(kActionCoopHeroHeldPrefix)));
     } else if (name == kActionCoopLeave) {

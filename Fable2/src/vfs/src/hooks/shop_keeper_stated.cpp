@@ -11,6 +11,12 @@
 
 REX_EXTERN(rex_lhGuiShopScreen_Open) {
     REX_FUNC_PROLOGUE();
+    // The host's replay of an online joiner's use of a shopkeeper (coop_shop_for_joiner.cpp): the shop runs here
+    // for hero two and shows on the joiner; no screen opens on this machine.
+    if (refii::vfs::JoinerShopOpensOnHost(ctx.r4.u32)) {
+        REXLOG_INFO("Refii shop: keeper {:08X} serves the online joiner's hero; its shop runs here unseen", ctx.r4.u32);
+        return;
+    }
     REXLOG_INFO("Refii shop: opened on keeper {:08X}", ctx.r4.u32);
     __imp__rex_lhGuiShopScreen_Open(ctx, base);
 }

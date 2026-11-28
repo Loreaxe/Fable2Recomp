@@ -615,6 +615,13 @@ REX_EXTERN(rex_lhGuiPresentation_GetRootElement) {
 void RefiiHeadlessSetText(PPCRegister& r3, PPCRegister& r4, PPCRegister& r5) {
     (void)r4;
     uint8_t* base = RefiiGuestBase();
+    // A relay's stand-in (page_fills_stated.cpp): the text is the fill's; the writer returns at its own test.
+    if (base != nullptr && refii::vfs::PageFillStandIn(r3.u32)) {
+        if (r5.u32 != 0u) {
+            refii::vfs::NotePageFillText(r3.u32, WideUnits(base, r5.u32));
+        }
+        return;
+    }
     if (t_entry_states) {
         if (base != nullptr && r5.u32 != 0u) {
             t_entry_text = WideUnits(base, r5.u32);
@@ -641,6 +648,10 @@ void RefiiHeadlessSetText(PPCRegister& r3, PPCRegister& r4, PPCRegister& r5) {
 // then the wide string's dtor (`LHString_CCharString_CCharString_0`).
 void RefiiHeadlessSetTextFromTag(PPCRegister& r3, PPCRegister& r4) {
     uint8_t* base = RefiiGuestBase();
+    if (base != nullptr && refii::vfs::PageFillStandIn(r3.u32) && Plausible(r4.u32)) {
+        refii::vfs::NotePageFillText(r3.u32, TagText(ContextOf(r3), base, r4.u32));
+        return;
+    }
     uint32_t presentation = 0;
     uint32_t serial = 0;
     uint32_t id = 0;

@@ -145,6 +145,7 @@ public partial class GameUi
 	/// <summary>Takes the scripts' questions and keeps every one moving. Called once a frame.</summary>
 	private void DriveCoopConsent(double delta)
 	{
+		DriveCoopCrime(delta);
 		Engine_UiPropertySource.AskPartner ??= AskPartnerConsent;
 		Engine_UiPropertySource.Told ??= _coopNotices.Tell;
 		while (Fable2Bridge.ConsentTake() is { } taken)
@@ -285,6 +286,11 @@ public partial class GameUi
 	/// </summary>
 	private bool TakeConsentMessage(string message)
 	{
+		if (TakeCrimeMessage(message))
+		{
+			return true;
+		}
+
 		if (message.StartsWith(ConsentAskPrefix, System.StringComparison.Ordinal))
 		{
 			string[] parts = message[ConsentAskPrefix.Length..].Split(':', 5);
@@ -322,5 +328,264 @@ public partial class GameUi
 		}
 
 		return false;
+	}
+
+	// THE CRIME PAGE IS THE ARRESTED PLAYER'S. An arrest is the host's (the crime records, the guard and
+	// its script that reads the screen's world message run there), and the screen it opens comes up on the
+	// host's guest, its gold and its post already player two's for player two's crime
+	// (gui_screen_stub_crime.cpp: RefiiCrimeArrested, the sender, Update's purse restatement). Online, the
+	// page is the joiner's to see and answer:
+	//   host    the opener states the arrested player and the guard (@CrimeScreen.Open, crime_screen_stated.cpp);
+	//           for player two's, `crime.open=` goes to the joiner (restated until `crime.shown=`) and this
+	//           machine reports the screen as not up (HostBridge.ScreenOnPeer) — nothing draws it or takes input
+	//           for it here; the joiner's `crime.answer=` is posted as player two's choice (`Crime:2:<choice>`,
+	//           the handler's own answer: the message as hero two, the exit). No `crime.shown=` within
+	//           CrimeShownTimeoutSeconds, or the peer gone: the screen is this machine's again.
+	//   joiner  opens its own crime screen with the host's arguments through the opener itself
+	//           (`Refii._crime_screen`, crime_screen_stated.cpp: `sub_823C4128` with the host's composed charge, the
+	//           GUI owner stated as the arrest states it, player two) — `GUI.DisplayCrimeScreen` takes crime KEYS one
+	//           a line and composes them (Lua_GUI_DisplayCrimeScreen 0x82304F90), so the host's text went through it
+	//           twice — its speaker the guard's copy here, so its page, its gold and its pad are this player's;
+	//           `crime.shown=` once it opens; a row's choice goes back as `crime.answer=` (its own OnMenuEvent
+	//           leaves the screen and posts nothing on a client).
+	// Local co-op is untouched: the arrest's owner statement already gives player two's pad the screen.
+	private const string CrimeOpenPrefix = "crime.open=";
+	private const string CrimeShownPrefix = "crime.shown=";
+	private const string CrimeAnswerPrefix = "crime.answer=";
+	private const double CrimeShownTimeoutSeconds = 5.0;
+	private const double CrimeRestateSeconds = 0.5;
+	private const int CrimeMessageRestates = 4;
+
+	/// <summary>The crime screen's Godot key (screen 21; 20 on the disc build natively).</summary>
+	private const uint CrimeScreenKey = 21u;
+
+	private sealed class CrimeRelay
+	{
+		public uint Ticket;
+		public string Message = string.Empty;
+		public double Age;
+		public double Restate;
+		public bool Shown;
+		public int LastAnswer;
+		public double Gone;
+	}
+
+	/// <summary>Host: the arrest of player two the joiner's screen answers.</summary>
+	private CrimeRelay? _crimeRelay;
+
+	private uint _crimeTicket;
+
+	/// <summary>Joiner: the last host arrest this machine opened, and the one waiting for its screen.</summary>
+	private uint _crimeOpenedTicket;
+
+	private uint _crimePendingTicket;
+
+	/// <summary>Joiner: a message for the host restated a few times (`crime.shown=` / `crime.answer=`).</summary>
+	private readonly List<(string Message, int Left)> _crimeOut = new();
+
+	private double _crimeRestate;
+
+	private int _crimeAnswerSeq;
+
+	private double _crimeRelayedGone;
+
+	private bool _crimeHooked;
+
+	private static bool OnlineHost => CoopSession.PeerStanding && !CoopSession.LocalCoop && !CoopSession.IsClient;
+
+	private void DriveCoopCrime(double delta)
+	{
+		if (!_crimeHooked)
+		{
+			_crimeHooked = true;
+			Engine_UiCrimePage.Opened += CrimeOpened;
+			Engine_UiCrimePage.Answered += CrimeAnswered;
+		}
+
+		if (_crimeRelay is { } relay)
+		{
+			uint? up = HostBridge.StatedScreenRaw();
+			relay.Gone = up == CrimeScreenKey ? 0.0 : relay.Gone + delta;
+			relay.Age += delta;
+			if (!CoopSession.PeerStanding || relay.Gone > CrimeRestateSeconds ||
+				(!relay.Shown && relay.Age > CrimeShownTimeoutSeconds))
+			{
+				GD.Print($"[coop-crime] arrest {relay.Ticket}: " + (relay.Gone > CrimeRestateSeconds
+					? "the screen left"
+					: !CoopSession.PeerStanding
+						? "the joiner left — the page is this machine's"
+						: "the joiner did not open it — the page is this machine's"));
+				HostBridge.ScreenOnPeer = 0u;
+				_crimeRelay = null;
+			}
+			else if (!relay.Shown)
+			{
+				relay.Restate -= delta;
+				if (relay.Restate <= 0.0)
+				{
+					relay.Restate = CrimeRestateSeconds;
+					HostBridge.CoopSend(relay.Message);
+				}
+			}
+		}
+
+		// The joiner's relayed screen is done when its own crime screen leaves.
+		if (Engine_UiCrimePage.RelayedTicket != 0u)
+		{
+			_crimeRelayedGone = HostBridge.StatedScreenRaw() == CrimeScreenKey ? 0.0 : _crimeRelayedGone + delta;
+			if (_crimeRelayedGone > 1.0)
+			{
+				Engine_UiCrimePage.RelayedTicket = 0u;
+				_crimeRelayedGone = 0.0;
+			}
+		}
+
+		_crimeRestate -= delta;
+		if (_crimeOut.Count != 0 && _crimeRestate <= 0.0 && CoopSession.PeerStanding)
+		{
+			_crimeRestate = CrimeRestateSeconds;
+			for (int i = _crimeOut.Count - 1; i >= 0; --i)
+			{
+				HostBridge.CoopSend(_crimeOut[i].Message);
+				_crimeOut[i] = (_crimeOut[i].Message, _crimeOut[i].Left - 1);
+				if (_crimeOut[i].Left <= 0)
+				{
+					_crimeOut.RemoveAt(i);
+				}
+			}
+		}
+	}
+
+	/// <summary>The crime screen's opener stated a screen (Engine_UiCrimePage.Opened).</summary>
+	private void CrimeOpened()
+	{
+		Refii.Host.HostBridge.CrimeScreen crime = Engine_UiCrimePage.Stated;
+		if (OnlineHost && Engine_UiCrimePage.Arrested == 2 && Engine_UiCrimePage.GuardUid.Length != 0)
+		{
+			uint ticket = ++_crimeTicket;
+			_crimeRelay = new CrimeRelay
+			{
+				Ticket = ticket,
+				Message = string.Create(CultureInfo.InvariantCulture,
+						$"{CrimeOpenPrefix}{ticket}:{crime.Fine}:{(crime.CanPayFine ? 1 : 0)}:{(crime.CanServe ? 1 : 0)}:") +
+					$"{Base64(crime.Charge)}:{Base64(crime.Service)}:{Engine_UiCrimePage.GuardUid}",
+			};
+			HostBridge.ScreenOnPeer = CrimeScreenKey;
+			GD.Print($"[coop-crime] arrest {ticket}: player two's — the crime page is the joiner's (guard {Engine_UiCrimePage.GuardUid})");
+			return;
+		}
+
+		if (CoopSession.IsClient && _crimePendingTicket != 0u)
+		{
+			Engine_UiCrimePage.RelayedTicket = _crimePendingTicket;
+			_crimeRelayedGone = 0.0;
+			_crimeOut.Add((string.Create(CultureInfo.InvariantCulture, $"{CrimeShownPrefix}{_crimePendingTicket}"),
+				CrimeMessageRestates));
+			_crimeRestate = 0.0;
+			GD.Print($"[coop-crime] the host's arrest {_crimePendingTicket} is up here");
+			_crimePendingTicket = 0u;
+		}
+	}
+
+	/// <summary>Joiner: a row's choice on the relayed screen (Engine_UiCrimePage.Answered).</summary>
+	private void CrimeAnswered(string choice)
+	{
+		uint ticket = Engine_UiCrimePage.RelayedTicket;
+		int seq = ++_crimeAnswerSeq;
+		_crimeOut.Add((string.Create(CultureInfo.InvariantCulture, $"{CrimeAnswerPrefix}{ticket}:{seq}:{choice}"),
+			CrimeMessageRestates));
+		_crimeRestate = 0.0;
+		GD.Print($"[coop-crime] arrest {ticket}: '{choice}' goes to the host");
+	}
+
+	private bool TakeCrimeMessage(string message)
+	{
+		if (message.StartsWith(CrimeOpenPrefix, System.StringComparison.Ordinal))
+		{
+			string[] parts = message[CrimeOpenPrefix.Length..].Split(':');
+			if (CoopSession.IsClient && parts.Length == 7 &&
+				uint.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint ticket) &&
+				int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fine) &&
+				ticket != _crimeOpenedTicket && Unbase64(parts[4]) is { } charge && Unbase64(parts[5]) is { } service)
+			{
+				_crimeOpenedTicket = ticket;
+				_crimePendingTicket = ticket;
+				string guard = LuaQuote(parts[6]);
+				string amount = fine.ToString(CultureInfo.InvariantCulture);
+				HostBridge.PostFrontEndAction(
+					$"debug-gamelua:local g = Refii._by_uid({guard}) if g ~= nil then if not Refii._crime_screen(" +
+					$"{LuaQuote(charge)}, {amount}, {(parts[2] == "1" ? "true" : "false")}, {(parts[3] == "1" ? "true" : "false")}, " +
+					$"{LuaQuote(service)}, g) then Refii.log(\"the host's arrest did not open here\") end " +
+					$"else Refii.log(\"the host's arrest: its guard \" .. {guard} .. \" is not here; the host shows it\") end");
+				GD.Print($"[coop-crime] the host's arrest {ticket} opens here (fine {fine}, guard {parts[6]})");
+			}
+
+			return true;
+		}
+
+		if (message.StartsWith(CrimeShownPrefix, System.StringComparison.Ordinal))
+		{
+			if (_crimeRelay is { Shown: false } relay &&
+				uint.TryParse(message[CrimeShownPrefix.Length..], NumberStyles.Integer, CultureInfo.InvariantCulture,
+					out uint ticket) && ticket == relay.Ticket)
+			{
+				relay.Shown = true;
+				GD.Print($"[coop-crime] arrest {ticket}: the joiner's page is up");
+			}
+
+			return true;
+		}
+
+		if (message.StartsWith(CrimeAnswerPrefix, System.StringComparison.Ordinal))
+		{
+			string[] parts = message[CrimeAnswerPrefix.Length..].Split(':');
+			if (_crimeRelay is { } relay && parts.Length == 3 &&
+				uint.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint ticket) &&
+				int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int seq) &&
+				ticket == relay.Ticket && seq > relay.LastAnswer && parts[2] is "pay" or "resist" or "service")
+			{
+				relay.LastAnswer = seq;
+				HostBridge.PostFrontEndAction("Crime:2:" + parts[2]);
+				GD.Print($"[coop-crime] arrest {ticket}: the joiner chose '{parts[2]}' — answered for player two");
+			}
+
+			return true;
+		}
+
+		return false;
+	}
+
+	private static string Base64(string text) =>
+		System.Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text));
+
+	private static string? Unbase64(string text)
+	{
+		try
+		{
+			return System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String(text));
+		}
+		catch (System.FormatException)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>A Lua string literal of <paramref name="text"/>: every byte but letters, digits and the space as `\ddd`.</summary>
+	private static string LuaQuote(string text)
+	{
+		var quoted = new System.Text.StringBuilder("\"");
+		foreach (byte b in System.Text.Encoding.UTF8.GetBytes(text))
+		{
+			if (b is >= (byte)'a' and <= (byte)'z' or >= (byte)'A' and <= (byte)'Z' or >= (byte)'0' and <= (byte)'9' or (byte)' ')
+			{
+				quoted.Append((char)b);
+			}
+			else
+			{
+				quoted.Append('\\').Append(((int)b).ToString("D3", CultureInfo.InvariantCulture));
+			}
+		}
+
+		return quoted.Append('"').ToString();
 	}
 }

@@ -185,6 +185,7 @@ public sealed partial class Fable3HudDocument
 			AuthoredTextBoxPanels = true,
 			// A mod's HUD pieces and meters are drawn once, on the HUD's own view.
 			HostsMods = Document == Fable3Elements.HudDocument,
+			Glints = GlintChannel,
 		};
 		View.Values.Strings = host.Strings ?? Fable3Strings.Current;
 		parent.AddChild(View);
@@ -394,6 +395,7 @@ public sealed partial class Fable3HudDocument
 
 		View.Window = window;
 		SeatPlayers(window);
+		PlayStatedParticles();
 
 		// The mini-game bar's cloned segments (minigamebarcontrol.lua `clone`), only once its script ran here.
 		if (Fable3LuaContracts.BarOf(Document) is { Elements.Count: > 0 } bar)
@@ -559,6 +561,58 @@ public sealed partial class Fable3HudDocument
 		}
 	}
 
+	/// <summary>
+	/// Fable 3's GUI glints (Engine_UiParticles): every `ParticleEffect` element the view's pieces hold —
+	/// the box frames' glass glints, the d-pad's, the epilogue's, the weapon panel's — drawn from the
+	/// document's own playback. Fable 3's particle system takes the element's opacity as its live
+	/// alpha (command 15, `sub_831C15E8`).
+	/// </summary>
+	private const Engine_UiParticles.OpacityChannel GlintChannel = Engine_UiParticles.OpacityChannel.Alpha;
+
+	private readonly List<Fable3UiParticles.Shot> _shots = new();
+
+	/// <summary>
+	/// The one-shots the guest stated on this document, each on the view that DRAWS its element: a
+	/// player-two element (the guild seal tick names `FollowerCollection2`, its `"2"` suffix from the
+	/// tick's player byte, TU3 0x8261FC54..0x8261FC64 / disc 0x825F82DC..0x825F82EC) on player two's half
+	/// while the views are split — that view's widgets are keyed to player two's elements — and on the
+	/// whole screen's view otherwise. A point (the position form) is the whole canvas's.
+	/// </summary>
+	private void PlayStatedParticles()
+	{
+		_shots.Clear();
+		Fable3UiParticles.Drain(Document, _shots);
+		foreach (Fable3UiParticles.Shot shot in _shots)
+		{
+			bool played = false;
+			if (shot.Point is { } point)
+			{
+				played = View?.GlintDriver is { } whole &&
+					whole.BurstAt(new Vector3(point.X, point.Y, point.Z), shot.Effect, shot.Scale);
+			}
+			else if (_statements is not null)
+			{
+				foreach (int ordinal in _statements.Resolve(shot.Path))
+				{
+					foreach (Engine_HudView? view in new[] { View, ViewTwo })
+					{
+						if (view is not null && GodotObject.IsInstanceValid(view) && view.IsVisibleInTree() &&
+							view.GlintDriver is { } glints && glints.Burst(ordinal, shot.Effect, shot.Scale))
+						{
+							played = true;
+							break;
+						}
+					}
+				}
+			}
+
+			if (!played)
+			{
+				Fable3UiParticles.Unplaced(shot);
+			}
+		}
+	}
+
 	private void BuildViewTwo()
 	{
 		if (View is null || _parent is null || _host is null || !GodotObject.IsInstanceValid(_parent))
@@ -581,6 +635,7 @@ public sealed partial class Fable3HudDocument
 			AuthoredTextBoxPanels = true,
 			// The mods' pieces are drawn once, on player one's view.
 			HostsMods = false,
+			Glints = GlintChannel,
 			// Player one's registry values; the view's own statements (its TopBox height) over them.
 			Values = new Engine_HudValues { Under = View.Values },
 			ReadsValues = false,

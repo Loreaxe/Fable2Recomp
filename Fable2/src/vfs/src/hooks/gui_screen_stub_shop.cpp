@@ -47,6 +47,12 @@ using refii::mods::StoreU32;
 // trees behind OnMenuEvent and OnModalAnswer (`sub_826AFF48`, `sub_826B0D10`, `sub_826AF430`,
 // `sub_826AFB98`, `sub_826AF888`) are the guest's own helpers, called whole, with the guest's own boxes
 // (0, 16..22), on the row Godot pushes by its ticket (`MenuEvent`, types 30 / 31).
+//
+// AN ONLINE JOINER'S SHOP IS THE HOST'S (coop_shop_for_joiner.cpp): its keeper here is a copy with no 26, 27 or
+// stock, so where this machine's screen shows the host's statement (JoinerShopStated) the population, the row
+// edge and the transactions are the host's run of these same routines — the rows go in where the population
+// ran, the highlighted row's asking price is stated as the edge states it, the buy, sale, header and question
+// answers go to the host, and the host's boxes open here.
 
 namespace {
 
@@ -85,7 +91,12 @@ REX_EXTERN(rex_lhGuiShopScreen_OnEnter) {
   const uint32_t pres = BookPresentation(base);
   g_shop_update_said = false;
 
-  CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
+  const bool stated = refii::vfs::JoinerShopStated();
+  if (stated) {
+    refii::vfs::JoinerShopEnter();
+  } else {
+    CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
+  }
   base[h + 0x1B9u] = 0u;
   const uint32_t head = LoadU32(base, h + 0x1C0u);
   Call(ctx, base, s.frame, 0x82B54BC0u, {h + 0x1BCu, LoadU32(base, head + 4u)});
@@ -116,7 +127,7 @@ REX_EXTERN(rex_lhGuiShopScreen_OnEnter) {
     }
   }
   const uint32_t comp26 = Plausible(keeper) ? refii_mod_component(base, keeper, 26u) : 0u;
-  const bool titles = comp26 != 0u && LoadU32(base, comp26 + 156u) == 31u;
+  const bool titles = stated ? refii::vfs::JoinerShopTitles() : comp26 != 0u && LoadU32(base, comp26 + 156u) == 31u;
   if (titles) {
     MakeString(ctx, base, s.frame, tag, s.data + 0x80u, "GUI_SCREEN_TITLE_TITLES");
     const uint32_t said = Call(ctx, base, s.frame, 0x8230E0E8u, {wide, tag});
@@ -197,12 +208,19 @@ REX_EXTERN(rex_lhGuiShopScreen_Update) {
   const uint32_t type = LoadU32(base, row);
   // The edge's fills state the row's pages (page_fills_stated.cpp): scope "row", keyed by the row's
   // ticket, the id the edge compares with h+408 (0x826B13D0..0x826B13DC).
-  refii::vfs::OpenPageFill(22u, "row");
-  Call(ctx, base, s.frame, 0x826B13B8u, {h, Call(ctx, base, s.frame, 0x826AE560u, {copy, row})});
-  refii::vfs::ClosePageFill(LoadU32(base, row + 4u));
+  const bool stated = refii::vfs::JoinerShopStated();
+  if (stated) {
+    refii::vfs::JoinerShopUpdate(ctx, base, type, LoadU32(base, row + 4u));
+  } else {
+    refii::vfs::OpenPageFill(22u, "row");
+    Call(ctx, base, s.frame, 0x826B13B8u, {h, Call(ctx, base, s.frame, 0x826AE560u, {copy, row})});
+    refii::vfs::ClosePageFill(LoadU32(base, row + 4u));
+  }
   Call(ctx, base, s.frame, 0x8246B5E8u, {pres, Address(0x8349ADD8u), 1u});
-  RestatePurseForPlayerTwo(ctx, base, s.frame, pres, 0x8349ADD8u, RefiiCoopShoppingPlayerTwo() != 0);
-  if (base[h + 0x1B9u] != 0u && type == 301u && LoadU32(base, qm + 40u) == 1u) {
+  // The purse is the shopper's: local player two's, and an online joiner's own hero (hero two here) — the
+  // guest's `li r5,1` asks hero one, the host's hero's copy on a joiner.
+  RestatePurseForPlayerTwo(ctx, base, s.frame, pres, 0x8349ADD8u, RefiiCoopShoppingPlayerTwo() != 0 || stated);
+  if (!stated && base[h + 0x1B9u] != 0u && type == 301u && LoadU32(base, qm + 40u) == 1u) {
     base[h + 0x1B9u] = 0u;
     CallSlot(ctx, base, s.frame, h + 24u, 1u, {});
     Call(ctx, base, s.frame, 0x822F8640u, {h + 0x1BCu});
@@ -247,7 +265,9 @@ REX_EXTERN(rex_lhGuiShopScreen_OnMenuEvent) {
   StoreU32(base, qm + 88u, LoadU32(base, event + 8u));
   const uint32_t type = LoadU32(base, event + 4u);
   Said("shop (22)", "OnMenuEvent", h, type, LoadU32(base, event + 8u));
-  if (type == 30u) {
+  if (refii::vfs::JoinerShopStated() && (type == 30u || type == 31u || type == 301u)) {
+    refii::vfs::JoinerShopEvent(ctx, base, type, LoadU32(base, event + 8u));
+  } else if (type == 30u) {
     Call(ctx, base, s.frame, 0x826AFF48u, {h, event});
   } else if (type == 31u) {
     Call(ctx, base, s.frame, 0x826B0D10u, {h, event});
@@ -288,6 +308,8 @@ REX_EXTERN(rex_lhGuiShopScreen_OnModalAnswer) {
       AnswerBox(ctx, base, s.frame, qm, 2u);
       RunMenuLua(ctx, base, s.frame, s.data, "g_Menu:SetExpandableMenuDisabled(false)", BookPresentation(base));
     }
+  } else if (mode == 3u && refii::vfs::JoinerShopStated()) {
+    refii::vfs::JoinerShopAnswer(ctx, base, box, code);
   } else if (mode == 3u) {
     if (box == 17u) {
       Call(ctx, base, s.frame, 0x826AF430u, {h, code, ctx.r5.u32});

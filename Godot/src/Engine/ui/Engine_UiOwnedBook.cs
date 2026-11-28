@@ -1033,6 +1033,8 @@ public sealed partial class Engine_UiOwnedBook : Node3D
 			}
 		}
 
+		TrackGlints();
+
 		int units = Template.ChromeUnits.Count - CountMissingUnits();
 
 		GD.Print($"[owned-book] '{Template.Name}' built: {units}/{Template.ChromeUnits.Count} " +
@@ -3142,6 +3144,39 @@ public sealed partial class Engine_UiOwnedBook : Node3D
 	/// <summary>Each top-level unit's authored canvas transform — unit roots are not restated
 	/// by the binding, so anything that moves one starts from here.</summary>
 	private readonly System.Collections.Generic.Dictionary<Node3D, Transform3D> _unitAuthored = new();
+
+	private Engine_UiParticles? _glints;
+
+	/// <summary>
+	/// The template's glints (<see cref="Engine_UiScreenTemplate.Glints"/>) on the book's units, drawn
+	/// from the book's own resolve.
+	/// </summary>
+	private void TrackGlints()
+	{
+		if (Template?.Glints is not { } channel || Document is not { } document)
+		{
+			return;
+		}
+
+		if (_glints is null)
+		{
+			if (System.Array.TrueForAll(Engine_UiParticles.EffectsOf(document), effect => effect is null))
+			{
+				return;
+			}
+
+			_glints = new Engine_UiParticles { Name = "Glints", Channel = channel, Label = Template.Name, Resolve = () => _resolve };
+			AddChild(_glints);
+		}
+
+		var roots = new System.Collections.Generic.List<(Node3D Root, System.Func<int, int>? StateOf)>(_unitAuthored.Count);
+		foreach (Node3D unit in _unitAuthored.Keys)
+		{
+			roots.Add((unit, null));
+		}
+
+		_glints.Track(document, roots);
+	}
 
 	private readonly System.Collections.Generic.List<MeshInstance3D> _textMeshes = new();
 

@@ -40,6 +40,18 @@ public static class Engine_Views
 	public static bool Split => _drawn && Open;
 
 	/// <summary>
+	/// TWO INDEPENDENT CAMERAS. Whether a per-view effect may take its view's slot (the AO, depth and exposure
+	/// globals): a split camera's only while the halves are drawn, the window camera's only while they are not. So
+	/// view 0 is player one's split camera's alone while split, and the window's alone otherwise; a claim one of
+	/// them queued on its last frame before a split or a merge is dropped, not applied over the other's first frame.
+	/// Pure.
+	/// </summary>
+	public static bool MayClaimViewSlot(bool splitCamera, bool splitDrawn) => splitCamera == splitDrawn;
+
+	/// <summary><see cref="MayClaimViewSlot"/> now. Main thread (the effects' deferred claims).</summary>
+	public static bool MayClaim(bool splitCamera) => MayClaimViewSlot(splitCamera, Split);
+
+	/// <summary>
 	/// How the split view divides the window: false side by side (player one left, player two
 	/// right), true stacked (player one top, player two bottom). Stated by the split view as it
 	/// lays the views out; every half of the UI (Refii.Ui.Engine_UiSeats) follows it.

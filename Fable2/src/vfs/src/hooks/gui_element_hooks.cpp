@@ -373,6 +373,29 @@ REX_EXTERN(rex_lhGuiElement_CompoundedOpacity) {
 // or 0, r8 / r9 two bytes): the record the original fills (0x82bb0654..0x82bb06c8) — words r5, r4,
 // *r6, *r7, then r8, r9 and 0xC0 in the last word's bytes — written to a host-owned guest record,
 // which is the answer.
+// THE GLINTS. CHUDParticle's per-frame update TU1 `sub_8283FB80` / disc `sub_828C95E8` (instruction-
+// identical; r3 the particle, f1 seconds, r5 &changed — callers TU1 0x82201C78 / 0x8228502C, disc
+// 0x82201D38 / 0x82284B94: `addi r3,r31,-4 ; addi r5,r1,… ; bl`) clears the caller's byte (`stb r10,
+// 0(r29)` 0x8283FBB4 / 0x828C961C, `mr r29,r5`), then makes, places, fades and kills a guest particle
+// system in the GUI world from the element's active bit, cumulative opacity and scale.x and its drawn
+// point (sub_82427030 `lwz r11,4(r3)` 0x82427044, 0 on a handle). The create / kill TU1 `sub_8283FDF8` /
+// disc `sub_828C9860` makes an instance only with r4 = 1, which only this update passes (the
+// destructor TU1 0x8283FB3C / disc 0x828C95A4 and vf1 TU1 0x8283FDF0 / disc 0x828C9858 pass
+// `li r4,0`). The glints are Godot's to draw from the document it draws (Engine_UiParticles): the
+// update only clears the byte, so no instance is made.
+REX_EXTERN(rex_lhHudParticle_Update) {
+    const uint32_t changed = ctx.r5.u32;
+    if (base != nullptr && changed >= 0x10000u) {
+        base[changed] = 0u;
+    }
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true)) {
+        REXLOG_INFO("Refii stated elements: CHUDParticle update reached (particle 0x{:08X}) — no guest glint, "
+                    "Godot draws it",
+                    ctx.r3.u32);
+    }
+}
+
 REX_EXTERN(rex_CPresentation_QueueEvent) {
     REX_FUNC_PROLOGUE();
     static std::atomic<uint32_t> record{0u};

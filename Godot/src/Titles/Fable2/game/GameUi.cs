@@ -26,6 +26,10 @@ using Refii.Game;
 /// </summary>
 public partial class GameUi : Node, IGameTitleUi
 {
+	// The kit's authored record names (CoopHeroKit.AuthoredNames), built once per database.
+	private static Refii.Gdb.GdbMulti? _kitAuthoredFor;
+	private static System.Collections.Generic.Dictionary<uint, string>? _kitAuthored;
+
 	/// <summary>
 	/// Screen to show before the guest says otherwise — the title, which is what the guest puts
 	/// up first. <see cref="FollowGuest"/> takes over once it reports a front end.
@@ -1405,9 +1409,9 @@ public partial class GameUi : Node, IGameTitleUi
 
 	/// <summary>
 	/// The banner's plane: in front of every presentation slab (depth × <see cref="Engine_UiPresentationDepth.Step"/>)
-	/// and the owned book and list over it, under the menu owner tag (<see cref="TagDepth"/>).
+	/// and the owned book and list over it, under the achievement toast (9000).
 	/// </summary>
-	private const float BannerDepth = TagDepth - 100f;
+	private const float BannerDepth = 8800f;
 
 	private Node3D? _pauseBanner;
 	private uint _cyclerAddress;
@@ -2436,6 +2440,13 @@ public partial class GameUi : Node, IGameTitleUi
 	/// <summary>The presentation the rebuilt HUD replaces. Never mirrored.</summary>
 	private const string HudPresentation = "hud";
 
+	/// <summary>
+	/// `hud.bgf`'s glints (Engine_UiParticles): the health bar's ends and heart, the spell slots' red and
+	/// blue, the experience orbs' suck. Fable 2's particle system takes the element's opacity as the
+	/// instance intensity (`sub_832323E0`, handle +0x34).
+	/// </summary>
+	private const Engine_UiParticles.OpacityChannel HudGlints = Engine_UiParticles.OpacityChannel.Intensity;
+
 	private void EnsureRebuiltHud()
 	{
 		if (_hud is not null && GodotObject.IsInstanceValid(_hud))
@@ -2463,6 +2474,8 @@ public partial class GameUi : Node, IGameTitleUi
 		{
 			Name = "HudPlayerTwo",
 			Theme = _presentation.Theme,
+			// Player two's half's glints, on the widgets keyed to player two's elements.
+			Glints = HudGlints,
 			TopBoxWrapWidth = Engine_UiHudTopBox.WrapWidth,
 			TopBoxHeightRange = Engine_UiHudTopBox.HeightRange,
 			Screen = screen,
@@ -2517,6 +2530,7 @@ public partial class GameUi : Node, IGameTitleUi
 		{
 			Name = "Hud",
 			Theme = _presentation.Theme,
+			Glints = HudGlints,
 			TopBoxWrapWidth = Engine_UiHudTopBox.WrapWidth,
 			TopBoxHeightRange = Engine_UiHudTopBox.HeightRange,
 			Screen = screen,
@@ -2730,7 +2744,7 @@ public partial class GameUi : Node, IGameTitleUi
 	/// input and masks on the pad of whoever owns the open menu. A shared screen and solo play take
 	/// none of this — every seat is the whole window and the menu owner is not stated. The menus
 	/// (<see cref="Engine_UiPresentationHost.MenuLayer"/>) fill the whole window on either screen,
-	/// as the original's one screen draws them, and say whose they are (<see cref="DriveMenuOwnerTag"/>).
+	/// as the original's one screen draws them; whose they are is logged (<see cref="SayMenuOwner"/>).
 	/// </summary>
 	private void SeatPlayerUi(Vector2 window)
 	{
@@ -2759,7 +2773,7 @@ public partial class GameUi : Node, IGameTitleUi
 		// pause is player two's too.
 		Fable2Input.MenuOwner = CoopSession.LocalCoop ? StatedMenuOwner() : 0;
 
-		DriveMenuOwnerTag(window);
+		SayMenuOwner();
 		if (Fable2Input.MenuOwner != _menuOwnerSaid)
 		{
 			_menuOwnerSaid = Fable2Input.MenuOwner;
@@ -6178,6 +6192,28 @@ public partial class GameUi : Node, IGameTitleUi
 				globals.TryLookup(id, out GdbCursor cursor)
 					? cursor.View.RecordName(cursor.Record)
 					: string.Empty;
+			// The name a record was authored under, below the new-game carry aliases that shadow it
+			// (the worn title is worn by that name: CoopHeroKit.TitleName).
+			CoopHeroKit.AuthoredName ??= id =>
+			{
+				if ((Engine_UiInventorySource.Globals ?? Refii.Gdb.Engine_GameGdb.Database) is not { } globals)
+				{
+					return string.Empty;
+				}
+				if (!ReferenceEquals(_kitAuthoredFor, globals))
+				{
+					_kitAuthoredFor = globals;
+					_kitAuthored = CoopHeroKit.AuthoredNames(
+						System.Linq.Enumerable.SelectMany(globals.Views, view => view.AliasPairs()),
+						alias => globals.NameOf(alias));
+				}
+				return _kitAuthored!.TryGetValue(id, out string? name) ? name : globals.NameOf(id);
+			};
+			CoopHeroKit.RecordOfName ??= name =>
+				(Engine_UiInventorySource.Globals ?? Refii.Gdb.Engine_GameGdb.Database) is { } globals &&
+				globals.TryLookup(Refii.Core.Engine_GameHash.Fnv1(name), out GdbCursor named)
+					? named.View.RecordHash(named.Record)
+					: 0u;
 
 			// THE JOINER'S HERO IS THE ONE THEY WERE PLAYING. A joiner who loads a save and joins
 			// from the pause menu has a live capture of that hero (`Sample` ran while the role was
@@ -6576,6 +6612,15 @@ public partial class GameUi : Node, IGameTitleUi
 				HostBridge.PostFrontEndAction("HeroState:2:" + record);
 				GD.Print($"[game-ui] co-op — HeroState v{version} posted for player two " +
 					$"({(role == 1u ? "the joiner's record" : "own record")})");
+
+				// PLAYER TWO'S TITLES, from the machine that read their hero's save (the joiner's own, or local
+				// player two's): no net message carries a title, and the HeroSave block holds none.
+				if ((CoopSession.LocalCoop || role == 2u) && (CoopSession.LocalCoop ? CoopHeroKit.Remote : CoopHeroKit.Local).TitleStatement
+					is { } titles)
+				{
+					HostBridge.PostFrontEndAction("CoopHeroTitle:2:" + titles);
+					GD.Print($"[game-ui] co-op — player two's titles posted: {titles}");
+				}
 			}
 		}
 

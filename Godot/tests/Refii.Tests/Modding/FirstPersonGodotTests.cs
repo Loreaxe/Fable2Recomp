@@ -135,7 +135,9 @@ public class FirstPersonGodotTests
             AssertThat(core.Contains(applied, StringComparison.Ordinal)).OverrideFailureMessage("the core camera chunk lacks " + applied).IsTrue();
         }
 
-        AssertThat(core.Contains("FadeEntityBasedOnPositionIfNeeded", StringComparison.Ordinal)).IsFalse();
+        // The first-person functions never call the game's fade themselves; the one mention is player two's fade book.
+        AssertThat(core.Contains(":FadeEntityBasedOnPositionIfNeeded(", StringComparison.Ordinal)).IsFalse();
+        AssertThat(core.Contains(".FadeEntityBasedOnPositionIfNeeded(", StringComparison.Ordinal)).IsFalse();
     }
 
     [TestCase]

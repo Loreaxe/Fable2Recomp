@@ -210,6 +210,30 @@ REX_EXTERN(rex_lhGuiWorldMapScreen_OnEnter) {
 // book's page state for a region row against a category row (0x826C5F90..0x826C5FF4), the pages' show /
 // hide `sub_826C6840` / `sub_826C6698`, the book's clock and page index (0x8299076C / 0x82990774) and
 // slide `sub_82990A98` (0x826C6038) — Godot turns the book's pages.
+namespace {
+// ONLY PLAYER ONE TRAVELS (coop_world_state.cpp): the region pages' "Travel" A-button is the document's own
+// (worldmapscreen.bgf: `Page1` and `Page2` each carry `AButton` / `ButtonText` "Travel"
+// GUI_SCREEN_WORLD_MAP_MISC_TRAVEL), which no guest code writes — the region fill `sub_829AB0E0` and the
+// minimap fill name no A-button, and on the 360 it always stands. For a player who is not player one the
+// region fill's statement says it is not shown: a mark of the fill (`shown <path> 0`, the kind and path the
+// other pages' own hide states, page_fills_stated.cpp), the HOST'S statement of this rule, not a guest write.
+// (JM1r3 made the guest's `sub_82426328(&name, pres, 0)` do it here; the run logged the region fill's
+// write as "wrote N element(s) it did not find by name — not stated", so Godot never heard it.)
+void HideRegionTravel() {
+  static constexpr const char* kButtons[] = {"Foreground.Book.Pages.Page1.Contents.AButton",
+                                             "Foreground.Book.Pages.Page2.Contents.AButton"};
+  for (const char* name : kButtons) {
+    refii::vfs::NotePageFillMark("shown", name, "0");
+  }
+  static bool s_said = false;
+  if (!s_said) {
+    s_said = true;
+    REXLOG_INFO("Refii screen stub: world map (23) — the region pages' Travel A-button is stated not shown for a "
+                "player who is not player one");
+  }
+}
+}  // namespace
+
 REX_EXTERN(rex_lhGuiWorldMapScreen_Update) {
   REX_FUNC_PROLOGUE();
   const uint32_t h = ctx.r3.u32;
@@ -234,6 +258,9 @@ REX_EXTERN(rex_lhGuiWorldMapScreen_Update) {
     if (page.type == type) {
       refii::vfs::OpenPageFill(23u, page.scope);
       CallSlot(ctx, base, s.frame, h + page.page, 3u, {});
+      if (type == 41u && refii::vfs::MapTravelRefusedNow(base)) {
+        HideRegionTravel();
+      }
       refii::vfs::ClosePageFill(id, true);
       break;
     }
@@ -253,7 +280,10 @@ REX_EXTERN(rex_lhGuiWorldMapScreen_Update) {
     if (closed.posted && id != s_said_row) {
       s_said_row = id;
       REXLOG_INFO("Refii screen stub: world map (23) — region row {}: the minimap fill stated {}; map {}", id,
-                  closed.counts, closed.map.empty() ? std::string("none (no icon built)") : closed.map);
+                  closed.counts,
+                  closed.map.empty() ? std::string("none (no icons: the hero is not in this region, or it has no proper "
+                                                   "minimap)")
+                                     : closed.map);
     } else if (moved && !closed.posted && !closed.unchanged) {
       REXLOG_INFO("Refii screen stub: world map (23) — region row {}: the minimap fill stated nothing ({} write(s) "
                   "to elements it did not name)",
@@ -323,10 +353,24 @@ REX_EXTERN(rex_lhGuiWorldMapScreen_OnMenuEvent) {
       rex_lhGuiWorldMapScreen_AskStopTravel(ask, base);
       break;
     }
-    case 42u: Call(ctx, base, s.frame, 0x826C6940u, {h, event}); break;
-    case 43u: Call(ctx, base, s.frame, 0x826C6B10u, {h, event}); break;
-    case 44u: Call(ctx, base, s.frame, 0x826C6CF0u, {h, event}); break;
-    case 45u: Call(ctx, base, s.frame, 0x826C6F40u, {h, event}); break;
+    case 42u:
+    case 43u:
+    case 44u:
+    case 45u:
+      // ONLY PLAYER ONE SELECTS QUESTS AND TRAVELS: a quest, job, sale or family row's answer is the
+      // primary-quest question (box 3..6, `lhGuiManager_OpenModal(QM, text, 3, 3, 1)` in `sub_826C6940`),
+      // the trail or the travel question; for a player who is not player one the row is for reading only
+      // (its A-button hidden, coop_world_state.cpp), and its A answers nothing.
+      if (refii::vfs::MapTravelRefusedNow(base)) {
+        REXLOG_INFO("Refii screen stub: world map (23) — row type {}'s A is player one's (primary, trail, travel): "
+                    "nothing for this player",
+                    type);
+        break;
+      }
+      Call(ctx, base, s.frame, type == 42u ? 0x826C6940u : type == 43u ? 0x826C6B10u : type == 44u ? 0x826C6CF0u
+                                                                                                    : 0x826C6F40u,
+           {h, event});
+      break;
     default: break;
   }
 }

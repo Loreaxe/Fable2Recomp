@@ -65,8 +65,20 @@ public static class CoopHeroKit
 		uint[]? DogWorn = null,
 		string? DogName = null,
 		Fable2Bridge.WornDye[]? WornDyes = null,
-		Fable2Bridge.Scar[]? Scars = null)
+		Fable2Bridge.Scar[]? Scars = null,
+		string? Title = null,
+		string[]? UnlockedTitles = null)
 	{
+		/// <summary>
+		/// The titles as the pump takes them (`CoopHeroTitle:2:&lt;worn&gt;|&lt;held&gt;,…`, GDB record names), or
+		/// null when the kit knows none. Only the machine that plays player two states it: the title is that
+		/// hero's own and no net message carries one.
+		/// </summary>
+		public string? TitleStatement =>
+			Title is { Length: > 0 } || UnlockedTitles is { Length: > 0 }
+				? (Title ?? string.Empty) + "|" + string.Join(",", UnlockedTitles ?? System.Array.Empty<string>())
+				: null;
+
 		/// <summary>The creature this hero's body is, in the guest's own naming.</summary>
 		public string Creature => Female ? "CreatureHeroFemale" : "CreatureHero";
 	}
@@ -76,6 +88,133 @@ public static class CoopHeroKit
 	/// it, or when the instance has no GDB view (a joiner on the front end).
 	/// </summary>
 	public static Func<uint, string>? RecordName { get; set; }
+
+	/// <summary>
+	/// GDB record id → the name the record was authored under (the database's first view that names it,
+	/// <c>GdbMulti.NameOf</c>), supplied by the shell. <see cref="RecordName"/> reads the TOP layer, and the
+	/// new-game carry aliases (Engine_NewGameInventory) shadow every named record with a copy named
+	/// <c>RefiiCarry_&lt;id&gt;</c> — the worn title came out as one of those.
+	/// </summary>
+	public static Func<uint, string>? AuthoredName { get; set; }
+
+	/// <summary>
+	/// A record name → the record it names (the database's FNV-1 name pair table, as the game's by-name
+	/// lookups ride it), 0 for none; supplied by the shell.
+	/// </summary>
+	public static Func<string, uint>? RecordOfName { get; set; }
+
+	/// <summary>The prefix the new-game carry aliases name their record copies with (Engine_NewGameInventory).</summary>
+	internal const string CarryAliasPrefix = "RefiiCarry_";
+
+	/// <summary>
+	/// THE NAME A RECORD IS GIVEN TO THE GUEST BY: its authored name, never the new-game carry alias that shadows
+	/// it in the top layer; the top layer's name only when nothing else names it. Every record this kit sends by
+	/// name goes through here (the dog's tricks; the worn title through <see cref="TitleName"/>); everything else
+	/// travels as a record id.
+	/// </summary>
+	internal static string GuestRecordName(uint record, Func<uint, string>? topName, Func<uint, string>? authoredName)
+	{
+		if (record == 0u)
+		{
+			return string.Empty;
+		}
+		string? authored = authoredName?.Invoke(record);
+		if (authored is { Length: > 0 } && !authored.StartsWith(CarryAliasPrefix, StringComparison.Ordinal))
+		{
+			return authored;
+		}
+		return topName?.Invoke(record) ?? authored ?? string.Empty;
+	}
+
+	/// <summary>
+	/// Every record's authored name from the database's name pairs (FNV-1(name) → record, the table the game's own
+	/// by-name lookups ride), first pair first, a carry alias never: the mounted globals.gdb.tu carries the carry
+	/// patch merged in (Engine_NewGameRuntime), so its record-name table names every shadowed record
+	/// <c>RefiiCarry_&lt;id&gt;</c> and <c>GdbMulti.NameOf</c> answered that, while the original name's pair still
+	/// stands (the game's scripts look records up by it).
+	/// </summary>
+	internal static Dictionary<uint, string> AuthoredNames(IEnumerable<(uint Alias, uint Target)> pairs, Func<uint, string?> text)
+	{
+		var names = new Dictionary<uint, string>();
+		foreach ((uint alias, uint target) in pairs)
+		{
+			if (names.ContainsKey(target) || text(alias) is not { Length: > 0 } name ||
+				name.StartsWith(CarryAliasPrefix, StringComparison.Ordinal))
+			{
+				continue;
+			}
+			names[target] = name;
+		}
+		return names;
+	}
+
+	/// <summary>
+	/// THE DOG'S TRICKS GO BY RECORD ID (<c>0x&lt;id&gt;</c>, X8). Neither the save (its dog's trick list holds
+	/// record ids) nor the mounted database names them: the carry patch is merged into globals.gdb.tu
+	/// (Engine_NewGameRuntime), so its record-name table calls every shadowed record <c>RefiiCarry_&lt;id&gt;</c>,
+	/// and the retail data keeps no other text for a record's name — so JG6/JG9's names were carry aliases on
+	/// every path (local player two from the host's own read of the save, the online joiner's posted kit). The
+	/// guest teaches a trick by its record (<c>Dog.UnlockTrickIfNecessary</c> compares the pair's hash,
+	/// `cmplw cr6,r8,r9` TU1 0x82811530), so the id is the trick; coop_dog_hooks.cpp Spawn teaches an id token
+	/// through the guest's own record handle (`sub_821DA348`).
+	/// </summary>
+	internal static string[] DogTrickTokens(IEnumerable<uint> ids)
+	{
+		var tokens = new List<string>();
+		foreach (uint id in ids)
+		{
+			if (id != 0u)
+			{
+				tokens.Add("0x" + id.ToString("X8", System.Globalization.CultureInfo.InvariantCulture));
+			}
+		}
+		return tokens.ToArray();
+	}
+
+	/// <summary>This instance's <see cref="GuestRecordName"/>.</summary>
+	private static string GuestName(uint record) => GuestRecordName(record, RecordName, AuthoredName);
+
+	/// <summary>
+	/// The worn title's record name as the pump gives it to the hero. `Lua_Stats_SetTitleRecord` (TU1
+	/// 0x824D8568 / disc 0x8249F6E0) takes a NAME and wears it only when that name is one of the hero's
+	/// unlocked titles (comp57 +0x68..+0x6C, compared as strings, `LHString_CBasicString_char_operator`), so
+	/// the held name that NAMES this record wins (its FNV-1 pair), then a held name equal to the authored or
+	/// the top layer's name; else the authored name, else the top layer's. Null for none.
+	/// </summary>
+	internal static string? TitleName(uint record, System.Collections.Generic.IReadOnlyList<string>? held,
+		Func<uint, string>? topName, Func<uint, string>? authoredName, Func<string, uint>? recordOf = null)
+	{
+		if (record == 0u)
+		{
+			return null;
+		}
+		if (held is not null && recordOf is not null)
+		{
+			foreach (string name in held)
+			{
+				if (name.Length != 0 && recordOf(name) == record)
+				{
+					return name;
+				}
+			}
+		}
+		string? authored = GuestRecordName(record, null, authoredName);
+		string? top = topName?.Invoke(record);
+		foreach (string? candidate in new[] { authored, top })
+		{
+			if (candidate is { Length: > 0 } && held is not null)
+			{
+				foreach (string name in held)
+				{
+					if (string.Equals(name, candidate, StringComparison.Ordinal))
+					{
+						return candidate;
+					}
+				}
+			}
+		}
+		return authored is { Length: > 0 } ? authored : top is { Length: > 0 } ? top : null;
+	}
 
 	/// <summary>
 	/// This instance's display name, off the node — independent of whether a hero was ever
@@ -212,6 +351,11 @@ public static class CoopHeroKit
 		// and only this instance's GDB view names them. Taken with the stats: once the joiner is
 		// in the host's world, the dog it reads is the host's.
 		HostBridge.HeroDerived derived = Fable2Bridge.GetHeroDerived();
+		string? liveTitle = derived.Known &&
+			uint.TryParse(derived.TitleTag, System.Globalization.NumberStyles.HexNumber,
+				System.Globalization.CultureInfo.InvariantCulture, out uint titleRecord) && titleRecord != 0u
+			? TitleName(titleRecord, before.UnlockedTitles, RecordName, AuthoredName, RecordOfName)
+			: null;
 		uint dogDefinition = 0u;
 		int dogSearching = 0, dogCombat = 0;
 		string[]? dogTricks = null;
@@ -231,16 +375,7 @@ public static class CoopHeroKit
 			dogName = derived.DogName;
 			dogSearching = derived.DogSearching;
 			dogCombat = derived.DogCombat;
-			var names = new List<string>();
-			foreach (uint id in derived.DogTrickIds ?? Array.Empty<uint>())
-			{
-				if (RecordName?.Invoke(id) is { Length: > 0 } trick)
-				{
-					names.Add(trick);
-				}
-			}
-
-			dogTricks = names.ToArray();
+			dogTricks = DogTrickTokens(derived.DogTrickIds ?? Array.Empty<uint>());
 		}
 
 		// An empty worn walk or inventory read on a standing hero is a read that missed (the
@@ -293,7 +428,14 @@ public static class CoopHeroKit
 			// so the previous dyes stand exactly when the previous outfit does; an empty scar read
 			// on a standing hero is the same kind of miss (a scar is never restated away).
 			WornDyes: keep && worn.Count == 0 ? before.WornDyes : dyes,
-			Scars: keep && scars.Length == 0 && before.Scars is { Length: > 0 } ? before.Scars : scars);
+			Scars: keep && scars.Length == 0 && before.Scars is { Length: > 0 } ? before.Scars : scars,
+			// The worn title, live: the stats' title record (the pump's sample, `c57+92` as hex), by name. The
+			// held list is not sampled; a save's stands, else the worn one alone.
+			Title: keep ? before.Title : liveTitle,
+			UnlockedTitles: keep || liveTitle is null
+				? before.UnlockedTitles
+				: before.UnlockedTitles is { Length: > 0 } held && System.Array.IndexOf(held, liveTitle) >= 0 ? held
+				: new[] { liveTitle });
 	}
 
 	/// <summary>
@@ -411,13 +553,16 @@ public static class CoopHeroKit
 			DogDefinition: hero.DogRecord,
 			DogSearching: hero.DogSniffing,
 			DogCombat: hero.DogCombat,
-			DogTricks: hero.DogTricks.ConvertAll(id => RecordName?.Invoke(id) ?? string.Empty)
-				.FindAll(trick => trick.Length != 0).ToArray(),
+			DogTricks: DogTrickTokens(hero.DogTricks),
 			DogWorn: hero.DogWorn.ToArray(),
 			DogName: hero.DogName,
 			WornDyes: hero.WornDyes.ConvertAll(dye => new Fable2Bridge.WornDye(
 				dye.Record, SlotOf(dye.Primary), SlotOf(dye.Secondary))).ToArray(),
-			Scars: hero.Scars.ConvertAll(scar => new Fable2Bridge.Scar(scar.Area, scar.Record, scar.Permanent)).ToArray());
+			Scars: hero.Scars.ConvertAll(scar => new Fable2Bridge.Scar(scar.Area, scar.Record, scar.Permanent)).ToArray(),
+			// The save's titles (its stats' TitleRecordID and UnlockedTitleRecordName list), as a new game
+			// gives them (Engine_NewGameScript): the worn one by its record name.
+			Title: TitleName(hero.Title, hero.UnlockedTitles, RecordName, AuthoredName, RecordOfName),
+			UnlockedTitles: hero.UnlockedTitles.ToArray());
 
 		Godot.GD.Print($"[coop-kit] chosen save '{name}' read: {hero.Worn.Count} worn, " +
 			$"{hero.Inventory.Count} inventory record(s), melee '{Name(hero.Melee)}' (0x{hero.Melee:X8}), " +
@@ -433,7 +578,7 @@ public static class CoopHeroKit
 
 	/// <summary>A record's def name for a log line; empty without a GDB view.</summary>
 	private static string Name(uint record) =>
-		record != 0u && RecordName is { } resolve ? resolve(record) ?? string.Empty : string.Empty;
+		GuestName(record);
 
 	/// <summary>
 	/// REFII_MOD_HOST_HERO_KIND (core/refii_mod_events.h): an online joiner's weapon pick a native

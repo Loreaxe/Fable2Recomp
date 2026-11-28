@@ -29,7 +29,13 @@
 // every component the script drives; only a sale sign's runs on the joiner (its screen). The update
 // reads a component only behind the entity's component bit for it (its 13 `extrwi` tests, TU1
 // 0x8282203C..0x82822DD8), so a thing whose other components a client does not build stays quiet.
-// A HERO (a definition that lists 69) also gets its guild messages (189) and its drunkenness (157):
+// A HERO (a definition that lists 69) also gets its quest tracker (102), its guild messages (189) and its
+// drunkenness (157). The tracker is where the world's quests live (QuestManager.HeroEntity is hero one,
+// gameflow.lua): the host states hero one's with the tracker's own serializer and the joiner loads them
+// onto the tracker its own world map's quest and job lists read — its own hero's, the only player record
+// a joiner holds (vfs coop_world_state.cpp). Built on any hero copy (one definition). Before this the guest's own kind switch
+// sent 102 to the default (TU1 0x8238DF3C index 101, disc 0x8239370C the same), so a joiner's map listed
+// no quest or job at all. The other two:
 // the joiner's book texts are its own hero's guild messages, and its drunk warp is read off the LOCAL
 // player's 157 (`sub_822B62F0`: `sub_821C7CE0` at TU1 0x822B6360 — player two on a joiner — then that
 // hero's +12 >= +36). The host's run of its use states both to it (core Lua: GuildMessages.PostWithNarrator
@@ -57,20 +63,24 @@ constexpr uint32_t kProperties = 69u;
 constexpr uint32_t kUse = 78u;
 constexpr uint32_t kFamily = 136u;
 constexpr uint32_t kSaleSign = 142u;
+constexpr uint32_t kQuestTracker = 102u;
 constexpr uint32_t kDrunkenness = 157u;
 constexpr uint32_t kGuildMessages = 189u;
 
 /// The kinds a client builds beyond the guest's list: the household on any entity that has one (only
-/// the heroes do), the sale sign's link, every use, and a hero's guild messages and drunkenness.
+/// the heroes do), the sale sign's link, every use, and a hero's quest tracker, guild messages and
+/// drunkenness.
+constexpr bool HeroKind(uint32_t kind) { return kind == kQuestTracker || kind == kDrunkenness || kind == kGuildMessages; }
+
 constexpr bool ClientKeeps(uint32_t kind, bool hero) {
-  return kind == kProperties || kind == kFamily || kind == kSaleSign || kind == kUse ||
-         ((kind == kDrunkenness || kind == kGuildMessages) && hero);
+  return kind == kProperties || kind == kFamily || kind == kSaleSign || kind == kUse || (HeroKind(kind) && hero);
 }
 
 static_assert(ClientKeeps(69u, false) && ClientKeeps(136u, false), "the household is built on a client");
 static_assert(ClientKeeps(142u, false) && ClientKeeps(78u, false), "every use and a sale sign's link are built");
 static_assert(ClientKeeps(157u, true) && ClientKeeps(189u, true) && !ClientKeeps(157u, false) && !ClientKeeps(189u, false),
               "a hero's drunkenness and guild messages, nobody else's");
+static_assert(ClientKeeps(102u, true) && !ClientKeeps(102u, false), "a hero's quest tracker, nobody else's");
 static_assert(!ClientKeeps(1u, true) && !ClientKeeps(77u, true) && !ClientKeeps(0u, true) && !ClientKeeps(79u, true) &&
                   !ClientKeeps(36u, true) && !ClientKeeps(182u, true),
               "nothing else changes: the guest's table decides the rest");
@@ -154,28 +164,30 @@ bool DefinitionLists(uint8_t* base, uint32_t sp, uint32_t want) {
 std::atomic<bool> g_said_household{false};
 std::atomic<bool> g_said_use{false};
 std::atomic<bool> g_said_hero{false};
+std::atomic<bool> g_said_quests{false};
 
 }  // namespace
 
 bool RefiiCoopClientKeepsComponent(PPCRegister& r11, PPCRegister& r1) {
   const uint32_t kind = r11.u32;
-  if (kind != kProperties && kind != kFamily && kind != kSaleSign && kind != kUse && kind != kDrunkenness &&
-      kind != kGuildMessages) {
+  if (kind != kProperties && kind != kFamily && kind != kSaleSign && kind != kUse && !HeroKind(kind)) {
     return false;
   }
   uint8_t* base = RefiiGuestBase();
   if (base == nullptr) {
     return false;
   }
-  const bool hero_kind = kind == kDrunkenness || kind == kGuildMessages;
+  const bool hero_kind = HeroKind(kind);
   const bool keep = ClientKeeps(kind, hero_kind && DefinitionLists(base, r1.u32, kProperties));
   if (keep) {
     std::atomic<bool>& said = kind == kProperties || kind == kFamily ? g_said_household
+                              : kind == kQuestTracker                ? g_said_quests
                               : hero_kind                            ? g_said_hero
                                                                      : g_said_use;
     if (!said.exchange(true, std::memory_order_relaxed)) {
       REXLOG_INFO("Refii co-op client: this joiner builds component {} ({})", kind,
                   kind == kProperties || kind == kFamily ? "the hero's household"
+                  : kind == kQuestTracker                ? "the hero's quest tracker, for the world's quests"
                   : hero_kind                            ? "the hero's guild messages and drunkenness"
                                                          : "a usable thing");
     }

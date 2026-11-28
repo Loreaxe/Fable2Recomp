@@ -299,3 +299,76 @@ REX_EXTERN(rex_HudParticle_Update) {
     base[ctx.r4.u32] = 0u;
   }
 }
+
+// THE ONE-SHOTS AT AN ELEMENT. `sub_823CE408`(name, element, f1 scale) TU3 / `sub_823ABEB0` disc (29
+// instructions, identical): no element (`cmplwi cr6,r4,0 ; beq` 0x823CE424 / 0x823ABECC) does
+// nothing; else the element's drawn point (`bl sub_82878420` 0x823CE430 / `bl sub_8281A718` 0x823ABED8,
+// the zero vector on a handle) goes with the name and the scale (`fmr f4,f31`) to `sub_823CE480` /
+// `sub_823ABF28`, which hashes the name (`lwz r11,0(r3)` the CCharString's rep, `lwz r3,0(r11)` its
+// chars, `bl sub_83165FC0`), makes, starts and registers a GUI particle and sets its scale (`bl
+// sub_831C1828`) and position once, never killing it. Its three callers are UI, each with a
+// CCharString global and an element its resolver named: the job press success TU3 0x827161B8 / disc
+// 0x826EC860 (`fxgui_job_press_success` at `Bar.Elements.pip.Icon.success`, f1 0.028
+// `flt_8206F7B4`), the fail 0x827162A8 / 0x826EC950, the guild seal's follower tick 0x8261FCC0 /
+// 0x825F8348. A full replacement: `@Ui.Particle(pres, elem, path, name, scale, via)` and no guest
+// instance — Godot plays the effect at that element's drawn place (Engine_UiParticles.Burst).
+REX_EXTERN(rex_GuiParticle_AtElement) {
+  const uint32_t name = ctx.r3.u32;
+  const uint32_t element = ctx.r4.u32;
+  if (base == nullptr || element == 0u) {
+    return;
+  }
+  const std::string effect = ReadCharString(base, name);
+  uint32_t presentation = 0u;
+  std::string path;
+  ElementName(element, presentation, path);
+  Statement("@Ui.Particle")
+      .Add(Text(PresentationKey(presentation)))
+      .Add(Text(Hex(element)))
+      .Add(Text(path))
+      .Add(Text(effect))
+      .Add(Number(static_cast<float>(ctx.f1.f64)))
+      .Add(Text(Hex(static_cast<uint32_t>(ctx.lr))))
+      .Post();
+  static std::atomic<uint64_t> stated{0};
+  const uint64_t n = ++stated;
+  if (Milestone(n)) {
+    REXLOG_INFO("Refii stated elements (Fable 3): one-shot '{}' at {} (0x{:08X}) scale {} from 0x{:08X} — "
+                "no guest particle, Godot plays it (#{})",
+                effect, path.empty() ? "<unnamed>" : path, element, ctx.f1.f64, static_cast<uint32_t>(ctx.lr), n);
+  }
+}
+
+// THE ONE-SHOTS AT A POINT. `sub_823CE480`(name, f1 x, f2 −z, f3 y, f4 scale) TU3 / `sub_823ABF28`
+// disc: the position form (`fmr f31,f1 ; fmr f30,f2 ; fmr f29,f3 ; fmr f28,f4` 0x823CE4A8..0x823CE4B8),
+// the GUI-world point in the canvas's own units under the 10.2° GUI camera at −4000 (one unit about a
+// pixel at 720: Engine_UiSceneBuilder.PixelsPerUnit), hashed name (`bl sub_83165FC0` 0x823CE4D0),
+// `bl ParticleSystem_Create` 0x823CE584 whether or not the point is on screen, `bl sub_831C1828`
+// (scale), `bl ParticleSystem_SetPosition` once, never killed. Callers: `Lua_GUI_Create2dParticle`
+// (TU3 0x825535BC / disc 0x82523614), which no shipped script calls (no `Create2dParticle` in the
+// retail, debug or GUI chunks), and the relationship bar's change `sub_82605A28` / `sub_825DAAC0`
+// (0x82605D20 / 0x825DADB8: `fxgui_expression_bar_change` at y −289, scale 0.444, x −4, or 196 / −205
+// by the caller's +28 / +29 bytes when `*(*(mode + 16) + 128)` (disc +124) is 1 — the same constants on
+// both builds). A full replacement: `@Ui.Particle2d(name, x, −z, y, scale,
+// via)`, no guest instance.
+REX_EXTERN(rex_GuiParticle_AtPoint) {
+  if (base == nullptr) {
+    return;
+  }
+  const std::string effect = ReadCharString(base, ctx.r3.u32);
+  Statement("@Ui.Particle2d")
+      .Add(Text(effect))
+      .Add(Number(static_cast<float>(ctx.f1.f64)))
+      .Add(Number(static_cast<float>(ctx.f2.f64)))
+      .Add(Number(static_cast<float>(ctx.f3.f64)))
+      .Add(Number(static_cast<float>(ctx.f4.f64)))
+      .Add(Text(Hex(static_cast<uint32_t>(ctx.lr))))
+      .Post();
+  static std::atomic<uint64_t> stated{0};
+  const uint64_t n = ++stated;
+  if (Milestone(n)) {
+    REXLOG_INFO("Refii stated elements (Fable 3): one-shot '{}' at ({}, {}, {}) scale {} from 0x{:08X} — no guest "
+                "particle, Godot plays it (#{})",
+                effect, ctx.f1.f64, ctx.f2.f64, ctx.f3.f64, ctx.f4.f64, static_cast<uint32_t>(ctx.lr), n);
+  }
+}

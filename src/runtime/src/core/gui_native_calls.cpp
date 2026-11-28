@@ -2,6 +2,7 @@
 #include "core/queue_put_back.h"
 
 #include <atomic>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -209,7 +210,42 @@ extern "C" void refii_bridge_note_gui_native_entry(uint32_t implementation) {
 
 extern "C" uint32_t refii_bridge_current_gui_native_entry() { return t_entry; }
 
+// A capture on this thread (refii_bridge_gui_capture_begin): each call posted while it is open is kept,
+// flattened, instead of going to this machine's host — the statements another machine will make its own
+// (Fable 2's villager card for an online joiner, coop_villager_use.cpp).
+namespace {
+thread_local std::vector<uint8_t>* t_capture = nullptr;
+}
+
+extern "C" void refii_bridge_gui_capture_begin(void) {
+    delete t_capture;
+    t_capture = new std::vector<uint8_t>();
+}
+
+extern "C" int32_t refii_bridge_gui_capturing(void) { return t_capture != nullptr ? 1 : 0; }
+
+extern "C" uint32_t refii_bridge_gui_capture_end(uint8_t* out, uint32_t capacity) {
+    if (t_capture == nullptr) {
+        return 0u;
+    }
+    const uint32_t size = static_cast<uint32_t>(t_capture->size());
+    if (out != nullptr && capacity >= size && size != 0u) {
+        std::memcpy(out, t_capture->data(), size);
+    }
+    delete t_capture;
+    t_capture = nullptr;
+    return size;
+}
+
 extern "C" void refii_bridge_post_gui_native_call(const uint8_t* data, size_t length) {
+    if (t_capture != nullptr) {
+        if (data != nullptr && length != 0u && length <= 0xFFFFu) {
+            t_capture->push_back(static_cast<uint8_t>(length & 0xFFu));
+            t_capture->push_back(static_cast<uint8_t>(length >> 8));
+            t_capture->insert(t_capture->end(), data, data + length);
+        }
+        return;
+    }
     GuiNativeCall call;
     if (!blob::ReadCall(data, length, call)) {
         return;

@@ -177,9 +177,12 @@ set(REFII_VFS_PPC_HOOK_SOURCES
     # The mod event bus: typed events on the game's seams, and the mods' Lua handlers.
     ${REFII_VFS_ROOT}/src/hooks/mod_events.cpp
     ${REFII_VFS_ROOT}/src/hooks/household_persist.cpp
+    ${REFII_VFS_ROOT}/src/hooks/coop_world_state.cpp
     # Co-op property: who owns a building, and the host's buildings stated to an online joiner.
     ${REFII_VFS_ROOT}/src/hooks/coop_estate_owner.cpp
     ${REFII_VFS_ROOT}/src/hooks/coop_estate_statements.cpp
+    ${REFII_VFS_ROOT}/src/hooks/coop_villager_use.cpp
+    ${REFII_VFS_ROOT}/src/hooks/coop_shop_for_joiner.cpp
     # Player state's saves: a hero's saved mod values beside the save the game writes it into.
     ${REFII_VFS_ROOT}/src/hooks/player_state_hooks.cpp
     # The host's queued helper calls and queries (Godot scripts), run in the guest tick.

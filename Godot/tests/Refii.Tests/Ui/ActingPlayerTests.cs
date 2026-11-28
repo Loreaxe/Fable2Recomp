@@ -53,27 +53,27 @@ public class ActingPlayerTests
 
 	/// <summary>
 	/// Player two's arrest (int7, 13:26): the crime screen was up a frame before the owner the arrest
-	/// stated reached the host (`menu owner tag: player 1 over screen 21`, then `the open menu is player
-	/// 2's`), and the tag latched that first frame. It follows the stated owner instead.
+	/// stated reached the host (`menu owner: player 1 over screen 21`, then `the open menu is player
+	/// 2's`), and the owner latched that first frame. It follows the stated owner instead.
 	/// </summary>
 	[TestCase]
-	public void TheTagFollowsTheOwnerStatedAfterTheScreenOpened()
+	public void TheOwnerFollowsTheOneStatedAfterTheScreenOpened()
 	{
-		int shown = Fable2ActingPlayer.TagOwner(0, menuUp: true, inputOwner: 1, statedOwner: 1);
+		int shown = Fable2ActingPlayer.OpenMenuOwner(0, menuUp: true, inputOwner: 1, statedOwner: 1);
 		AssertThat(shown).IsEqual(1);
-		shown = Fable2ActingPlayer.TagOwner(shown, menuUp: true, inputOwner: 2, statedOwner: 2);
+		shown = Fable2ActingPlayer.OpenMenuOwner(shown, menuUp: true, inputOwner: 2, statedOwner: 2);
 		AssertThat(shown).IsEqual(2);
-		AssertThat(Fable2ActingPlayer.TagOwner(shown, menuUp: false, inputOwner: 2, statedOwner: 2)).IsEqual(0);
+		AssertThat(Fable2ActingPlayer.OpenMenuOwner(shown, menuUp: false, inputOwner: 2, statedOwner: 2)).IsEqual(0);
 	}
 
-	/// <summary>A box over player one's menu states no input owner (Answerer 0): the tag keeps naming
-	/// player one; with nothing named yet it names the GUI's stated owner.</summary>
+	/// <summary>A box over player one's menu states no input owner (Answerer 0): the owner stays
+	/// player one; with nothing named yet it is the GUI's stated owner.</summary>
 	[TestCase]
-	public void TheTagKeepsItsPlayerThroughABoxThatStatesNone()
+	public void TheOwnerKeepsItsPlayerThroughABoxThatStatesNone()
 	{
-		AssertThat(Fable2ActingPlayer.TagOwner(1, menuUp: true, inputOwner: 0, statedOwner: 2)).IsEqual(1);
-		AssertThat(Fable2ActingPlayer.TagOwner(2, menuUp: true, inputOwner: 0, statedOwner: 1)).IsEqual(2);
-		AssertThat(Fable2ActingPlayer.TagOwner(0, menuUp: true, inputOwner: 0, statedOwner: 2)).IsEqual(2);
+		AssertThat(Fable2ActingPlayer.OpenMenuOwner(1, menuUp: true, inputOwner: 0, statedOwner: 2)).IsEqual(1);
+		AssertThat(Fable2ActingPlayer.OpenMenuOwner(2, menuUp: true, inputOwner: 0, statedOwner: 1)).IsEqual(2);
+		AssertThat(Fable2ActingPlayer.OpenMenuOwner(0, menuUp: true, inputOwner: 0, statedOwner: 2)).IsEqual(2);
 	}
 
 	[TestCase]

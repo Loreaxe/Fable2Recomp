@@ -1791,7 +1791,15 @@ public static class Fable2UiTemplates
 			// at z 0 it sits IN FRONT of the logo at z -1 and PressStart at z -2 — the logo's
 			// white flash, authored at full opacity with its fade in the Anark scene and in no
 			// script. Engine_FrontEndTitle runs that fade.
-			ChromeUnits = { "logo", "White", "PressStart", "Legal" },
+			//
+			// `Component`, `Component2` and `Component3` (Layer children 17, 21, 22) are the logo's
+			// three glints — `FXGUI_Logomain` (on the root's 'started' slide), `FXGUI_Logomain_Fadein`
+			// ('legal') and `FXGUI_Logomain_Ambient` ('legal' and 'press start', its opacity track
+			// 0 -> 100 over 2896..3540 ms) — CHUDParticle elements with no art, cut so the book's
+			// glints (Engine_UiParticles) stand on them; the effect is the bank's, its intensity the
+			// element's opacity (Fable 2's channel).
+			ChromeUnits = { "logo", "White", "PressStart", "Legal", "Component", "Component2", "Component3" },
+			Glints = Engine_UiParticles.OpacityChannel.Intensity,
 
 			// The guest's dialog is drawn once, by the host's warning box (GameUi.DriveGuestDialog)
 			// with its told texts, as on the main menu. Its behaviours still fire from the book's

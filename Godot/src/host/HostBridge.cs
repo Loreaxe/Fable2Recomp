@@ -23,7 +23,7 @@ public static partial class HostBridge
 	/// ABI this binding expects; bump together with the native `RefiiHostBridgeAbiVersion`.
 	/// The check is exact and `GameSession` treats a mismatch as fatal before the guest initialises.
 	/// </summary>
-	public const int ExpectedAbiVersion = 279;
+	public const int ExpectedAbiVersion = 280;
 
 	[DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
 	private static extern uint RefiiHostGetSaveRoot(byte[] output, uint capacity);
@@ -2397,7 +2397,52 @@ public static partial class HostBridge
 		_pauseState = RefiiHostGetPauseState(out uint screen, out uint modal, out uint mode, out uint tab) == 0
 			? null
 			: new PauseState(screen, modal, mode, tab);
+		if (_pauseState is { } up && _screenOnPeer != 0u && up.ScreenId == _screenOnPeer)
+		{
+			_pauseState = null;
+		}
+
 		return _pauseState;
+	}
+
+	/// <summary>
+	/// A SCREEN THE CO-OP PEER SHOWS FOR ITS PLAYER: this machine's guest has it up, but it is answered on
+	/// the other machine — an online host's arrest of player two, whose crime page is the joiner's
+	/// (GameUiCoopConsent). While set, this machine reports that screen as not up (the pause state and the
+	/// screen manager's current screen and presentation), so nothing here draws it or takes input for it. 0 none.
+	/// </summary>
+	public static uint ScreenOnPeer
+	{
+		get => _screenOnPeer;
+		set
+		{
+			if (_screenOnPeer != value)
+			{
+				_screenOnPeer = value;
+				_screenCache = null;
+				_pauseStateFrame = ulong.MaxValue;
+			}
+		}
+	}
+
+	private static uint _screenOnPeer;
+
+	/// <summary>The screen the guest states as up, whatever <see cref="ScreenOnPeer"/> hides; null outside the game.</summary>
+	public static uint? StatedScreenRaw()
+	{
+		if (TryGetAbiVersion() is null || !IsInGame)
+		{
+			return null;
+		}
+
+		try
+		{
+			return RefiiHostStatedScreen();
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return null;
+		}
 	}
 
 	private static PauseState? _pauseState;
@@ -2458,6 +2503,41 @@ public static partial class HostBridge
 	/// <summary>The word the guest's own call last stated under <paramref name="key"/>; 0 until one is.</summary>
 	public static uint Stated(StatedValue key) =>
 		TryGetAbiVersion() is null ? 0u : RefiiHostStatedValue((uint)key);
+
+	private static uint[] _partnerFadeEntities = new uint[64];
+	private static float[] _partnerFadeAlphas = new float[64];
+
+	/// <summary>
+	/// Player two's camera's fade book (both titles): each entity player two's camera has faded, by guest address,
+	/// and the camera alpha it gives it, as the core camera chunk stated it at the end of player two's last fade-up
+	/// (Refii._partner_camera_alphas). The renderable's own camera alpha is player one's camera's. Fills
+	/// <paramref name="into"/> (cleared first); returns the statement serial, 0 before the first or without a guest.
+	/// </summary>
+	public static uint PartnerCameraAlphas(System.Collections.Generic.Dictionary<uint, float> into)
+	{
+		into.Clear();
+		if (TryGetAbiVersion() is null || !IsGuestUp)
+		{
+			return 0u;
+		}
+
+		uint held = RefiiHostGetPartnerCameraAlphas(_partnerFadeEntities, _partnerFadeAlphas, (uint)_partnerFadeEntities.Length, out uint serial);
+		if (held > _partnerFadeEntities.Length)
+		{
+			int grown = (int)System.Math.Min(System.Numerics.BitOperations.RoundUpToPowerOf2(held), 4096u);
+			_partnerFadeEntities = new uint[grown];
+			_partnerFadeAlphas = new float[grown];
+			held = RefiiHostGetPartnerCameraAlphas(_partnerFadeEntities, _partnerFadeAlphas, (uint)grown, out serial);
+		}
+
+		int n = (int)System.Math.Min(held, (uint)_partnerFadeEntities.Length);
+		for (int i = 0; i < n; i++)
+		{
+			into[_partnerFadeEntities[i]] = _partnerFadeAlphas[i];
+		}
+
+		return serial;
+	}
 
 
 
@@ -3294,13 +3374,18 @@ public static partial class HostBridge
 		var owned = new System.Collections.Generic.Dictionary<uint, int>();
 		foreach (Presentation p in GetPresentations())
 		{
-			if (p.Screen >= 0)
+			if (p.Screen >= 0 && (_screenOnPeer == 0u || (uint)p.Screen != _screenOnPeer))
 			{
 				owned[p.Address] = p.Screen;
 			}
 		}
 
 		uint stated = RefiiHostStatedScreen();
+		if (_screenOnPeer != 0u && stated == _screenOnPeer)
+		{
+			stated = NoStatedScreen;
+		}
+
 		var built = new InGameScreens(
 			stated == NoStatedScreen ? InGameScreen.None : (InGameScreen)stated, owned);
 		_screenGeneration = generation;
@@ -8934,6 +9019,10 @@ public static partial class HostBridge
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostStatedValue(uint key);
+
+	[DllImport(Library)]
+	private static extern uint RefiiHostGetPartnerCameraAlphas(
+		uint[] outEntities, float[] outAlphas, uint capacity, out uint outSerial);
 
 	[DllImport(Library)]
 	private static extern uint RefiiHostGetScreenFade(

@@ -12,6 +12,8 @@ using refii::coop::EstateAccessFor;
 using refii::coop::EstateActionAllowed;
 using refii::coop::EstateActsFor;
 using refii::coop::EstateOwnerCopyServes;
+using refii::coop::EstatePartnerBinding;
+using refii::coop::EstatePartnerBindingFor;
 using refii::coop::EstatePartnershipHere;
 
 int main() {
@@ -69,6 +71,14 @@ int main() {
   assert(EstateOwnerCopyServes(true, true));
   assert(!EstateOwnerCopyServes(true, false));
   assert(!EstateOwnerCopyServes(false, true));
+  // A partner's binding: the owner's hero when it serves; else the viewer's with the owner's properties
+  // lent (the joiner's copy of the host's hero has no targeting); else the page only.
+  assert(EstatePartnerBindingFor(true, true, false, false) == EstatePartnerBinding::kOwner);
+  assert(EstatePartnerBindingFor(true, false, true, true) == EstatePartnerBinding::kViewerOwnersProperties);
+  assert(EstatePartnerBindingFor(true, false, true, false) == EstatePartnerBinding::kNone);
+  assert(EstatePartnerBindingFor(true, false, false, true) == EstatePartnerBinding::kNone);
+  assert(EstatePartnerBindingFor(false, false, true, true) == EstatePartnerBinding::kNone);
+  assert(EstatePartnerBindingFor(false, true, true, true) == EstatePartnerBinding::kNone);
   std::puts("estate owner rule: ok");
   return 0;
 }

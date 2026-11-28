@@ -62,6 +62,8 @@ add_library(refii_runtime SHARED
     # The camera a title states and the host's world-build hold, between its hooks and its
     # host bridge.
     ${REFII_RUNTIME_ROOT}/src/core/stated_view.cpp
+    # Player two's camera's fades, stated by the core camera chunk, drawn in player two's half.
+    ${REFII_RUNTIME_ROOT}/src/core/stated_camera_fade.cpp
     # The world a title states between its hooks and its host bridge: its levels' up and down,
     # its effects by handle, its decals.
     ${REFII_RUNTIME_ROOT}/src/core/stated_world.cpp

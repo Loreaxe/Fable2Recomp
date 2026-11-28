@@ -143,19 +143,55 @@ public static class Fable3ScreenFrames
 		return null;
 	}
 
+	/// <summary>
+	/// THE FRAMES' GLINTS: the parents each box screen's `fx2` glints stand under (every glint in these
+	/// files is a childless component named `fx2`, CHUDParticle `fxgui_glass_glint_01` or, on the hero
+	/// status, `fxgui_glint_hero_status_01`): beside the frame art under the screen root, or alone in an
+	/// `FX` / `fx` node. Each is cut as a piece of its own beside the frame (same anchor), so the view's
+	/// glints (Engine_UiParticles) stand on it; the playback's own tracks (opacity and scale 100 -> 0 at
+	/// 440..450 ms) sweep it once each time the screen comes live. Read from the files (2026-11-28,
+	/// both builds ship the same documents).
+	/// </summary>
+	public static readonly IReadOnlyDictionary<string, string[]> GlintParents = new Dictionary<string, string[]>(System.StringComparer.Ordinal)
+	{
+		["herostatus"] = new[] { "FX" },
+		["statsscreen"] = new[] { "StatsBox", "FX" },
+		["questsummary"] = new[] { "QuestSummary" },
+		["joinoptions"] = new[] { "FX" },
+		["visability"] = new[] { "fx" },
+		["friendschannel"] = new[] { "fx" },
+		["chatchannel"] = new[] { "ChatChannel" },
+		["treasureaccounts"] = new[] { "TreasureAccounts" },
+		["bedmenubox"] = new[] { "fx" },
+		["foodquerybox"] = new[] { "InfoBox" },
+		["compweddingpicker"] = new[] { "WeddingPicker" },
+		["cooppartnersscreen"] = new[] { "CoopPartnersInfoBox" },
+		["proposalquerybox"] = new[] { "MarriageProposal" },
+		["divorcemessagebox"] = new[] { "DivorceMessageBox" },
+	};
+
 	/// <summary>One frame document per box screen, for <see cref="Fable3Hud"/> to stand beside the HUD.</summary>
 	public static IEnumerable<Fable3HudDocument> Documents()
 	{
 		foreach (Frame frame in Frames)
 		{
-			var groups = new Engine_HudLayout.GroupSubtree[frame.Art.Length];
+			var groups = new List<Engine_HudLayout.GroupSubtree>(frame.Art.Length + 2);
 			for (int i = 0; i < frame.Art.Length; ++i)
 			{
-				groups[i] = new Engine_HudLayout.GroupSubtree(frame.Art[i], "Frame_" + frame.Document,
-					Engine_HudLayout.Anchor.Centre, 0f, false, frame.Parent, AnyNode: true);
+				groups.Add(new Engine_HudLayout.GroupSubtree(frame.Art[i], "Frame_" + frame.Document,
+					Engine_HudLayout.Anchor.Centre, 0f, false, frame.Parent, AnyNode: true));
 			}
 
-			yield return new Fable3HudDocument(frame.Document, groups, layouts: false, groupsOnly: true);
+			if (GlintParents.TryGetValue(frame.Document, out string[]? parents))
+			{
+				foreach (string parent in parents)
+				{
+					groups.Add(new Engine_HudLayout.GroupSubtree("fx2", "Glint_" + frame.Document + "_" + parent,
+						Engine_HudLayout.Anchor.Centre, 0f, false, parent, AnyNode: true, Every: true));
+				}
+			}
+
+			yield return new Fable3HudDocument(frame.Document, groups.ToArray(), layouts: false, groupsOnly: true);
 		}
 	}
 

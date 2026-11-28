@@ -24,6 +24,7 @@
 #include "vfs_hook_constants.h"
 #include "vfs_hook_types.h"
 #include "core/native_lua_hooks.h"
+#include "core/joiner_shop_statement.h"
 #include "hooks/ppc_externs.h"
 
 #include <algorithm>
@@ -38,6 +39,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <initializer_list>
 #include <limits>
@@ -460,6 +462,31 @@ void StashHouseholdForSave(PPCContext& ctx, uint8_t* base);
 bool HouseholdIsMirror(uint8_t* base, uint32_t hero);
 /// The host's household changed (a replayed estate action): stash it at the next tick.
 void HouseholdChanged();
+/// THE GUEST'S OWN ARCHIVE FOR OTHER STATE (hooks/household_persist.cpp): the snapshot's zlib stream and
+/// tagged tree the household travels in, under the top element `top` (under 32 bytes). The body gets the
+/// writer or the reader (`archive`), 0x100 bytes of guest scratch for element names (`names`) and the
+/// context its guest calls take (`frame`). Saving returns the bytes, empty on failure; loading returns
+/// whether the top element was there.
+struct GuestArchive {
+  PPCContext frame;
+  uint32_t archive = 0u;
+  uint32_t names = 0u;
+  bool saving = false;
+};
+std::vector<uint8_t> GuestArchiveSave(const PPCContext& ctx, uint8_t* base, const char* top,
+                                      const std::function<void(const GuestArchive&)>& body);
+bool GuestArchiveLoad(const PPCContext& ctx, uint8_t* base, const char* top, const std::vector<uint8_t>& bytes,
+                      const std::function<void(const GuestArchive&)>& body);
+/// Online, the host world's quests (hero one's comp 102), sales and fast-travel stops, stated by the host
+/// and loaded onto the joiner's copies (hooks/coop_world_state.cpp). Called from RunModTicks.
+void DriveWorldState(PPCContext& ctx, uint8_t* base, float seconds);
+/// ONLY PLAYER ONE FAST-TRAVELS: whether the world map's travel is refused here now (an online joiner, or
+/// local player two's menus; hooks/coop_world_state.cpp).
+bool MapTravelRefusedNow(uint8_t* base);
+/// ONLY PLAYER ONE MOVES THE SESSION: player two's (local or online) use of a carried item whose script
+/// changes level (core/joiner_world_rule.h kSessionTravelItems) is refused with that script's own
+/// refusal box; true when refused. `user` / `holder` / `script_at` are lhEntity_UseInventoryItem's r3..r5.
+bool SessionTravelItemRefused(PPCContext& ctx, uint8_t* base, uint32_t user, uint32_t holder, uint32_t script_at);
 /// A joiner's estate intent (`<action>:<sign uid hex>:<value>`) run on the host for hero two.
 /// Defined in hooks/mod_events.cpp.
 bool ReplayEstateIntent(PPCContext& ctx, uint8_t* base, const std::string& text);
@@ -477,6 +504,10 @@ struct EstateSession {
   uint8_t access = 0u;     // refii::coop::EstateAccess
   uint32_t target = 0u;    // the sale sign the viewer used
   uint32_t owner_use = 0u; // a partner's screen: the bound owner's comp77, answered as `target`
+  /// A partner's screen bound to the viewer (core/estate_owner_rule.h kViewerOwnersProperties): the
+  /// viewer's hero, and the owner's properties (comp69) lent in place of the viewer's while it runs.
+  uint32_t lend_hero = 0u;
+  uint32_t lend_props = 0u;
 };
 void EstateSessionPending(const EstateSession& facts);
 void EstateSessionBegin(uint32_t screen);
@@ -494,6 +525,11 @@ public:
 private:
   uint32_t use_;
   uint32_t target_;
+  /// The viewer's comp69 pair slot this scope lent the owner's properties into, and what it held.
+  uint32_t lent_slot_ = 0u;
+  uint32_t lent_was_ = 0u;
+  bool counted_ = false;  // the outermost lending scope
+  bool nested_ = false;   // inside an outer one
 };
 /// The building getters the host states to an online joiner (hooks/coop_estate_statements.cpp), in
 /// the statement's order: base value, economy bonus, rent, the not-for-sale, hero-opinion and
@@ -504,6 +540,66 @@ enum class EstateValue : uint32_t { kBaseValue, kEconomy, kRent, kNotForSale, kO
 void DriveEstateStatements(PPCContext& ctx, uint8_t* base, float seconds);
 /// Host: an estate action ran; restate at the next tick.
 void EstateStatementsChanged();
+/// A guest wide string object's text (its rep's UTF-16 units) as UTF-8 (hooks/coop_estate_statements.cpp).
+std::string WideTextUtf8(uint8_t* base, uint32_t wide);
+/// A guest wide string object made at `out` from UTF-8 `text`, losslessly (hooks/coop_estate_owner.cpp);
+/// false for an empty or over-long text. The caller releases it (`rex_lhWideString_Dtor`).
+bool WideFromText(const PPCContext& ctx, uint8_t* base, uint32_t out, const std::string& text);
+/// Host: states the online hero joiner's targeted villager's prompt; called with DriveHouseholds
+/// (hooks/coop_villager_use.cpp).
+void DriveVillagerUse(PPCContext& ctx, uint8_t* base, float seconds);
+/// Host: the joiner's hero used villager `uid` (`villuse`): its use runs here for hero two.
+void VillagerUseForJoiner(PPCContext& ctx, uint8_t* base, uint64_t uid);
+/// Host: the joiner's villager card asked for its target's opinion block (`cardask`): stated as player one's blob.
+void CardForJoiner(PPCContext& ctx, uint8_t* base, uint64_t uid);
+/// Joiner: the villager card's Update (`card` its handler): asks for and posts the host's opinion block once per
+/// opening when the target has no opinion component here.
+void JoinerCardTick(PPCContext& ctx, uint8_t* base, uint32_t card);
+/// Joiner: the villager card `card` closed.
+void JoinerCardClosed(uint32_t card);
+/// THE ONLINE JOINER'S SHOP (hooks/coop_shop_for_joiner.cpp). Host: inside a step of the shop run for the
+/// joiner's hero two (the spawn and modal sinks take what it makes).
+bool JoinerShopRunning();
+/// Host: the ordinal of the run's last spawned row (`g_Menu:GetLastItemIndex()`'s answer inside the run).
+uint32_t JoinerShopLastSpawnOrdinal();
+/// Host: a box the run opened, stated to the joiner instead of opened here.
+void JoinerShopModal(uint32_t kind, uint32_t id, const std::string& text);
+/// Host: around VillagerUseForJoiner's villager use (the shopkeeper's opener and closed line are the joiner's).
+void JoinerShopReplay(bool on);
+/// Host: the shop's opener in that replay — taken (true): no screen opens here.
+bool JoinerShopOpensOnHost(uint32_t keeper);
+/// Host: after that use — the session begins, or the closed line goes to the joiner.
+void JoinerShopAfterUse(PPCContext& ctx, uint8_t* base, uint32_t keeper_entity);
+/// Both: a `shop…` intent (ReplayHouseholdOnline); false when `action` is not one.
+bool JoinerShopIntent(PPCContext& ctx, uint8_t* base, std::string_view action, uint64_t uid, int32_t value);
+/// Both: once a household tick (DriveHouseholds).
+void DriveJoinerShop(PPCContext& ctx, uint8_t* base, float seconds);
+/// Joiner: this machine's shop screen shows the host's statement.
+bool JoinerShopStated();
+/// Joiner: the stated shop is a titles shop (the OnEnter header).
+bool JoinerShopTitles();
+/// Joiner: the shop screen's OnEnter — the stated rows where the population ran.
+void JoinerShopEnter();
+/// Joiner: the shop screen's Update — a newer list, the header ask, the highlighted row's price, a new box.
+void JoinerShopUpdate(PPCContext& ctx, uint8_t* base, uint32_t type, uint32_t id);
+/// Joiner: the shop screen's OnMenuEvent — a buy or sale to the host, a header.
+void JoinerShopEvent(PPCContext& ctx, uint8_t* base, uint32_t type, uint32_t id);
+/// Joiner: a question's answer to the host; the question here closes as the helper closes it.
+void JoinerShopAnswer(PPCContext& ctx, uint8_t* base, uint32_t box, uint32_t code);
+/// Host: while it runs the shop's highlight edge for the online joiner's row, that row (type, ticket, name) — the
+/// highlight reader answers it (gui_menu_hooks.cpp).
+bool JoinerShopLookRow(uint32_t* type, uint32_t* id, std::string* name);
+/// The spawn sink (core/guest_tick_pump_state.cpp, which links into librefii_vfs; the shop hooks compile into
+/// the payload, so they cross by the C entries in core/payload_bridge_fable2.h): opened, a population goes into it,
+/// not the capture; closed, its rows.
+inline void OpenMenuSpawnSink() { refii_bridge_menu_sink_begin(); }
+
+inline std::vector<refii::coop::ShopRow> CloseMenuSpawnSink() {
+  std::string wire(refii_bridge_menu_sink_end(), '\0');
+  wire.resize(refii_bridge_menu_sink_read(wire.data(), static_cast<uint32_t>(wire.size())));
+  std::optional<refii::coop::ShopStatement> rows = refii::coop::Decode(wire);
+  return rows ? std::move(rows->rows) : std::vector<refii::coop::ShopRow>();
+}
 /// Host: the joiner is about to open the sale sign `sign_uid`; its building is stated from now on.
 void EstateLook(PPCContext& ctx, uint8_t* base, uint64_t sign_uid);
 /// Joiner: the host's answer of a getter for a CECBuilding; false when the host stated none.

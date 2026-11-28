@@ -1519,7 +1519,7 @@ public static partial class ModValidate
 	{
 		"name", "menuScript", "previewAnchor", "pageElement", "menu", "provider", "revealedAccept", "revealedBack",
 		"flipAction", "xAction", "rowAction", "scrollContent", "scrollMask", "scrollBar", "flowMeasured", "flowBase", "flowTailAnchor",
-		"presentation", "pageRootUnit", "backdropUnit", "boxPresentation",
+		"presentation", "pageRootUnit", "backdropUnit", "boxPresentation", "glints",
 	};
 
 	private static readonly string[] ScreenFlagKeys =

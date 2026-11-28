@@ -86,6 +86,7 @@
 //   (set_menu_rows is the preamble's: it writes the rows table as the bus text)
 //   _write(kind, field, value) · _error(text)
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -93,16 +94,19 @@
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <rex/logging.h>
 
 #include "core/achievement_statement.h"
+#include "core/coop_item_rule.h"
 #include "core/guest_build.h"
 #include "core/joiner_use_text.h"
 #include "core/mod_values.h"
 #include "core/refii_mod.h"
 #include "core/payload_bridge.h"
 #include "core/rex_payload_bridge.h"
+#include "hooks/keyboard_ui.h"
 #include "hooks/ppc_externs.h"
 
 /// The local co-op screen mode (guest_tick_pump.cpp).
@@ -111,6 +115,7 @@ extern "C" uint32_t RefiiCoopPlayerDog(uint8_t* base, int player);
 extern "C" void RefiiCoopSetPartnerDog(uint32_t dog);
 /// Player two brought a hero (a character from a save), not the plain henchman (guest_tick_pump.cpp).
 extern "C" int RefiiCoopGetOwnHero(void);
+extern "C" void RefiiCoopLocalPlayerTwoCall(int on);
 extern "C" void RefiiCoopSetJobWorker(int player);
 extern "C" void RefiiCoopPartnerScreen(int on);
 extern "C" int RefiiCoopPartnerCameraUpdating(void);
@@ -127,6 +132,10 @@ extern "C" void refii_household_context(int32_t on);
 extern "C" int32_t refii_household_received_item(PPCContext* ctx, uint8_t* base, uint32_t hash);
 extern "C" int32_t refii_household_carry_target(char* out, uint32_t capacity);
 extern "C" void refii_household_state_use_target(PPCContext* ctx, uint8_t* base);
+extern "C" int32_t refii_crime_screen_open_here(PPCContext* ctx, uint8_t* base, const char* charge, int32_t fine,
+                                                int32_t pay_fine, int32_t community_service, const char* service_key,
+                                                uint32_t guard);
+extern "C" uint64_t refii_household_shared_uid(uint8_t* base, uint32_t entity);
 extern "C" void refii_household_forward_speech(uint8_t* base, uint32_t speaker, float seconds);
 extern "C" int32_t refii_household_follower_two(PPCContext* ctx, uint8_t* base, int32_t index, uint32_t* entity,
                                                 uint32_t* flags);
@@ -171,6 +180,8 @@ void ModCameraHeld(uint8_t* base, uint32_t hero, int32_t bits);
 void NoteLuaCancelled();
 void BoxSeatEnter(uint8_t* base, int32_t player);
 void BoxSeatLeave(uint8_t* base);
+// gui_screen_stub_receive_items.cpp: the open received card's owner, until it closes.
+void StateReceivedCardOwner(PPCContext& ctx, uint8_t* base, bool player_two);
 uint32_t PlayModFxOnHandle(const char* name, const float* xyz, uint32_t handle, const refii_mod_fx_options* options);
 uint32_t PlaceModLightOnHandle(uint32_t handle, const float* xyz, const float* rgb, float energy, float range,
                                const refii_mod_light_options* options);
@@ -1306,6 +1317,31 @@ REFII_LUA_NATIVE(NativePartnerPlayerIcons) {
   RESULTS(0);
 }
 
+// Refii._partner_camera_alphas(e1, a1, e2, a2, ...): player two's camera's fade book, stated whole at the end of
+// each of its fade-ups by the core camera chunk's wrap (CoopHeroLua.cs; its SetCameraAlpha calls write no guest
+// field); no arguments empties it. Each entity is a game Entity userdata or a handle (EntityArgument); one that
+// resolves to nothing is left out. Read by the shell for player two's half (core/payload_bridge.h).
+uint32_t EntityArgument(Lua& lua, int32_t index);
+REFII_LUA_NATIVE(NativePartnerCameraAlphas) {
+  constexpr int32_t kMaxPairs = 512;
+  uint32_t entities[kMaxPairs];
+  float alphas[kMaxPairs];
+  uint32_t count = 0u;
+  const int32_t top = lua.Top();
+  for (int32_t index = 1; index + 1 <= top && count < static_cast<uint32_t>(kMaxPairs); index += 2) {
+    const uint32_t entity = EntityArgument(lua, index);
+    if (entity == 0u) {
+      continue;
+    }
+    const double alpha = lua.Number(index + 1);
+    entities[count] = entity;
+    alphas[count] = static_cast<float>(alpha < 0.0 ? 0.0 : alpha > 1.0 ? 1.0 : alpha);
+    ++count;
+  }
+  refii_bridge_partner_camera_alphas_set(entities, alphas, count);
+  RESULTS(0);
+}
+
 // Refii._camera_player_icons(on): true around a camera's own GUI.SetShouldDrawPlayerIcons (SACCamera:Activate /
 // :Deactivate, the core camera chunk's wrap), so the native's send to the session's partner is skipped: a
 // camera's switch is its own machine's (coop_player_icons.cpp RefiiPlayerIconsStayHere).
@@ -1397,7 +1433,7 @@ constexpr int32_t kTypeUserdata = 7;
 /// `lwz r11,0(r4)`). The record hash is item+4 (`sub_821DA348` stores it there, with the GDB entry at
 /// +8; `CECInventory_FindItemByRecordHash` compares it, 0x824F1CE4), the count item+12. 0 for anything
 /// else, an Entity userdata included.
-uint32_t ItemRecord(Lua& lua, int32_t index) {
+uint32_t ItemAddress(Lua& lua, int32_t index) {
   if (lua.Type(index) != kTypeUserdata) {
     return 0u;
   }
@@ -1419,7 +1455,23 @@ uint32_t ItemRecord(Lua& lua, int32_t index) {
     return 0u;
   }
   const uint32_t count = refii::mods::LoadU32(lua.base, item + 12u);
-  return count >= 1u && count <= 0xFFFFu ? refii::mods::LoadU32(lua.base, item + 4u) : 0u;
+  return count >= 1u && count <= 0xFFFFu ? item : 0u;
+}
+
+uint32_t ItemRecord(Lua& lua, int32_t index) {
+  const uint32_t item = ItemAddress(lua, index);
+  return item != 0u ? refii::mods::LoadU32(lua.base, item + 4u) : 0u;
+}
+
+/// The player (1, 2) whose hero holds the item, else 0. The item's first word is the inventory it was made
+/// in (the InventoryItem constructor `stw r4,0(r31)`, TU1 sub_82763E88 0x82763EA0 / disc sub_82740CA0, r4 the
+/// CECInventory CECInventory_AddOneOfRecord hands it, 0x824F0988), and the inventory's +4 its entity (the
+/// receiver Inventory.AddItem tests, `lwz r11,4(r29) ; lwz r10,0x28(r11)` TU1 0x824F0B18 / disc 0x8261A800).
+int32_t ItemHolder(Lua& lua, uint32_t item) {
+  const auto plausible = [](uint32_t at) { return at >= 0x10000u && at < 0xC0000000u; };
+  const uint32_t inventory = plausible(item) ? refii::mods::LoadU32(lua.base, item) : 0u;
+  const uint32_t entity = plausible(inventory) ? refii::mods::LoadU32(lua.base, inventory + 4u) : 0u;
+  return plausible(entity) ? refii_mod_player_of(lua.base, entity) : 0;
 }
 }  // namespace
 
@@ -1433,6 +1485,201 @@ REFII_LUA_NATIVE(NativeItemRecord) {
     lua.PushNil();
   }
   RESULTS(1);
+}
+
+// ---- WHO RECEIVES AN ITEM IN CO-OP (core/coop_item_rule.h) -----------------------------------------
+
+extern "C" uint32_t RefiiGdbRecordId(PPCContext* ctx, uint8_t* base, const char* name);
+
+namespace {
+
+/// The story records (core/coop_story_items.inc) as the game names them: each script name resolved the
+/// way Inventory.AddItemOfType resolves it (`NGDB_CRecord_Get_int(g_GDBManager, name, 0)`, TU1 0x823FE948
+/// in `sub_823FE8B8`), a family's prefix with 0..99 appended as `"Prefix" ..i` builds it. Asked once, when
+/// the database answers (the silver key's record is its test). Guest tick thread only.
+struct StoryRecords {
+  bool ready = false;
+  uint32_t silver_key = 0u;
+  std::vector<uint32_t> ids;
+
+  bool Has(uint32_t id) const { return std::binary_search(ids.begin(), ids.end(), id); }
+};
+
+const StoryRecords& Story(PPCContext* ctx, uint8_t* base) {
+  static StoryRecords records;
+  if (records.ready) {
+    return records;
+  }
+  records.silver_key = RefiiGdbRecordId(ctx, base, "ObjectInventorySilverKey");
+  if (records.silver_key == 0u) {
+    return records;
+  }
+  const auto add = [&](const std::string& name) {
+    if (const uint32_t id = RefiiGdbRecordId(ctx, base, name.c_str()); id != 0u) {
+      records.ids.push_back(id);
+    }
+  };
+#define REFII_STORY_ITEM(name) add(name);
+#define REFII_STORY_FAMILY(prefix)        \
+  for (int32_t n = 0; n < 100; ++n) {     \
+    add(prefix + std::to_string(n));      \
+  }
+#include "core/coop_story_items.inc"
+#undef REFII_STORY_ITEM
+#undef REFII_STORY_FAMILY
+  std::sort(records.ids.begin(), records.ids.end());
+  records.ids.erase(std::unique(records.ids.begin(), records.ids.end()), records.ids.end());
+  records.ready = true;
+  REXLOG_INFO("Refii co-op items: {} story record(s) resolved from the quest scripts' table", records.ids.size());
+  return records;
+}
+
+}  // namespace
+
+// Core co-op only. Refii._coop_item(record, source, receiver) -> to, copy, id, category, rating, story: who
+// receives one add (core/coop_item_rule.h); or nil, why. `record` is the item's id ("0x…": Refii._item_record,
+// Refii._pickup_record) or a script's item name, which the database resolves as Inventory.AddItemOfType does;
+// `source` 1 placed, 2 granted, 3 a silver-key chest; `receiver` the player (1 or 2) the script named. `to` is
+// the player whose hero takes it, `copy` the player who gets their own copy (0 none), `id` the record's id,
+// `story` 1 / 0 (-1 while the story table is not resolved yet).
+// THE ITEM'S DATA IS ITS InventoryItemComponent's, as the game reads it: an item's record (the entity
+// record) holds a reference to that component and none of the item's own properties. The InventoryItem
+// constructor takes its category from it — `addi r7,…"InventoryItemComponent"` / `bl sub_821B24F8` / `bl
+// sub_822A99E8` (the reference by name, `GDBEntry_GetPropTyped(entry, fnv, 6)` + FindEntryByHash) / `li r5,5`
+// / `bl GDBEntry_GetPropTyped` "Category" / `stw r11,0x10(r31)` (TU1 sub_82763E88 0x82763F08..0x82763F3C,
+// disc sub_82740CA0 0x82740D20..0x82740D54) — and the item description its rating, `mr r3,r29` (the component)
+// / "Rating" / `bl sub_823BF820` (TU1 sub_824698D8 0x82469900..0x8246998C, disc sub_82835508 0x82835530..
+// 0x828355BC). Asked of the record itself, both are absent (the first build of this rule did that and decided
+// nothing).
+REFII_LUA_NATIVE(NativeCoopItem) {
+  uint32_t record = 0u;
+  if (lua.Type(1) == kTypeString) {
+    char text[96];
+    lua.String(1, text, sizeof(text));
+    record = text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? static_cast<uint32_t>(std::strtoul(text, nullptr, 16))
+                                                                  : RefiiGdbRecordId(&lua.ctx, lua.base, text);
+  } else {
+    record = lua.Hash(1);
+  }
+  const auto refuse = [&](const char* why) {
+    lua.PushNil();
+    lua.PushString(why);
+    RESULTS(2);
+  };
+  if (record == 0u) {
+    refuse("no record of that name in the database");
+    return;
+  }
+  uint32_t component = 0u;
+  if (refii_mod_record_ref(&lua.ctx, lua.base, record, "InventoryItemComponent", &component) == 0 || component == 0u) {
+    refuse("the record has no InventoryItemComponent");
+    return;
+  }
+  int32_t category = -1;
+  if (refii_mod_record_int(&lua.ctx, lua.base, component, "Category", &category) == 0) {
+    refuse("its InventoryItemComponent states no Category");
+    return;
+  }
+  int32_t rating = 0;
+  refii_mod_record_int(&lua.ctx, lua.base, component, "Rating", &rating);
+  const StoryRecords& story = Story(&lua.ctx, lua.base);
+  const bool listed = story.ready && story.Has(record);
+  const uint32_t flags = refii::coop::ItemRuleFlags(category, rating, story.ready && record == story.silver_key, listed,
+                                                    lua.Int(2));
+  const int32_t receiver = lua.Int(3) == 2 ? 2 : 1;
+  const refii::coop::ItemReceivers who = refii::coop::Receivers(flags, receiver);
+  lua.PushNumber(static_cast<double>(who.to));
+  lua.PushNumber(static_cast<double>(who.copy));
+  lua.PushHash(record);
+  lua.PushNumber(static_cast<double>(category));
+  lua.PushNumber(static_cast<double>(rating));
+  lua.PushNumber(!story.ready ? -1.0 : (listed ? 1.0 : 0.0));
+  RESULTS(6);
+}
+
+// Core co-op only. Refii._pickup_record(e) -> the id ("0x…") of the item Inventory.AddEntity makes of the
+// world entity e, or nil: CECInventory_AddEntity's own choice (TU1 0x824F0E38..0x824F0E64 / disc
+// 0x8261AB20..0x8261AB4C) — `lwz r11,0x18 ; lwz r5,0x1C ; cmplwi r11,0 ; ble`: the entity's record +0x1C,
+// or, when +0x18 is set, the "parent" of the entry the pair {+0x1C, +0x20} names (`sub_821B24F8` /
+// `sub_821B2710`, then `sub_82A00658` / `sub_829FB908`: GDBEntry_GetPropTyped(entry, "parent", 6)).
+REFII_LUA_NATIVE(NativePickupRecord) {
+  const uint32_t entity = lua.Entity(1);
+  uint32_t record = 0u;
+  if (entity >= 0x10000u && entity < 0xC0000000u) {
+    record = refii::mods::LoadU32(lua.base, entity + 0x1Cu);
+    if (refii::mods::LoadU32(lua.base, entity + 0x18u) != 0u) {
+      PPCContext work = refii::mods::Frame(lua.ctx);
+      const uint32_t pair = (work.r1.u32 + 0x80u) & ~0xFu;
+      refii::mods::StoreU32(lua.base, pair, record);
+      refii::mods::StoreU32(lua.base, pair + 4u, refii::mods::LoadU32(lua.base, entity + 0x20u));
+      work.r3.u64 = pair;
+      record = 0u;
+      if (refii::mods::CallGuest(work, lua.base, refii::guest::Address(0x821B24F8u)) && work.r3.u32 >= 0x10000u) {
+        const uint32_t entry = work.r3.u32;
+        work = refii::mods::Frame(lua.ctx);
+        work.r3.u64 = entry;
+        if (refii::mods::CallGuest(work, lua.base, refii::guest::Address(0x82A00658u))) {
+          record = work.r3.u32;
+        }
+      }
+    }
+  }
+  if (record != 0u) {
+    lua.PushHash(record);
+  } else {
+    lua.PushNil();
+  }
+  RESULTS(1);
+}
+
+// Core co-op only. Refii._received_card_fill(item, on) -> bracketed: THE CARD'S TEXT IS ITS RECEIVER'S. The card's fill
+// takes the title and description from the item it finds in the LOCAL player's bag: `sub_82538DF8` (disc
+// `sub_82404598`, the same 153 instructions) writes +60 / +64 the empty text first (`stw r6,0x3C(r31)` 0x82538E70,
+// `stw r5,0x40(r31)` 0x82538E80), then `sub_8229EE78(sub_821C7CE0(G))` (0x82538E88 / 0x82538E94; disc 0x82404628 /
+// 0x82404634), its component 13, `CECInventory_FindItemByRecordHash` (0x82538FDC) and, found, the item's name and
+// description keys (`stw r10,0x3C(r31)` 0x8253900C, `stw r8,0x40(r31)` 0x82539038). Player two's item is in player
+// two's bag, so its card had no title. `on` true, around the shipped GUI.DisplayReceivedItem: in local co-op with
+// player two a hero and player two holding the item, the call is made for player two (RefiiCoopLocalPlayerTwoCall:
+// `sub_821C7CE0` answers player two, RefiiCoopShopPlayer) and true comes back; `on` false closes that bracket.
+REFII_LUA_NATIVE(NativeReceivedCardFill) {
+  if (lua.Boolean(2)) {
+    const uint32_t item = ItemAddress(lua, 1);
+    const bool two = item != 0u && ItemHolder(lua, item) == 2 && refii_mod_coop_mode(lua.base) == 1 &&
+                     RefiiCoopGetOwnHero() != 0;
+    if (two) {
+      RefiiCoopLocalPlayerTwoCall(1);
+    }
+    lua.PushBoolean(two);
+  } else {
+    RefiiCoopLocalPlayerTwoCall(0);
+    lua.PushBoolean(false);
+  }
+  RESULTS(1);
+}
+
+// Core co-op only. Refii._received_card_owner(item) -> player, stated | nil, why: THE RECEIVED CARD IS ITS
+// RECEIVER'S. The card's opener (`sub_823C4340`: SetScreen(8), SetActiveScreen, CGUIReceiveItems_SetItem,
+// EnterGuiMode, TU1 0x823C4378..0x823C43AC) states no GUI owner, so the card inherits the last statement — player
+// one's, whoever received (the 2026-11-28 run: both of player two's cards 'menu owner: player 1 over screen 8').
+// Called just after GUI.DisplayReceivedItem(item) opened it: the item's holder (ItemHolder) is stated the GUI's
+// owner the way a world screen's opener states it (StateReceivedCardOwner, gui_screen_stub_receive_items.cpp),
+// in local co-op with player two a hero; `stated` false where nothing was stated (online, solo, the henchman).
+REFII_LUA_NATIVE(NativeReceivedCardOwner) {
+  const uint32_t item = ItemAddress(lua, 1);
+  const int32_t holder = item != 0u ? ItemHolder(lua, item) : 0;
+  if (holder == 0) {
+    lua.PushNil();
+    lua.PushString(item == 0u ? "no item" : "no hero holds the item");
+    RESULTS(2);
+    return;
+  }
+  const bool state = refii_mod_coop_mode(lua.base) == 1 && RefiiCoopGetOwnHero() != 0;
+  if (state) {
+    refii::vfs::StateReceivedCardOwner(lua.ctx, lua.base, holder == 2);
+  }
+  lua.PushNumber(static_cast<double>(holder));
+  lua.PushBoolean(state);
+  RESULTS(2);
 }
 
 // Core co-op only, an online joiner. Refii._received_item(hash) opens the received card on this
@@ -1630,6 +1877,26 @@ REFII_LUA_NATIVE(NativeForwardSpeech) {
   RESULTS(0);
 }
 
+
+// Core co-op only: Refii._keyboard_pending() — a platform keyboard request is up and unanswered (keyboard_ui.cpp);
+// the joiner's dog rename waits on it (CoopHeroLua.cs RefiiCoop.JoinerRenameDog).
+REFII_LUA_NATIVE(NativeKeyboardPending) {
+  lua.PushBoolean(refii::vfs::KeyboardUiPending());
+  RESULTS(1);
+}
+
+// Core co-op only: Refii._crime_screen(charge, fine, pay, serve, key, guard) — the online joiner opens the host's
+// arrest with the host's own charge text (crime_screen_stated.cpp refii_crime_screen_open_here); true when opened.
+REFII_LUA_NATIVE(NativeCrimeScreen) {
+  char charge[2048];
+  char key[256];
+  lua.String(1, charge, sizeof(charge));
+  lua.String(5, key, sizeof(key));
+  const bool opened = refii_crime_screen_open_here(&lua.ctx, lua.base, charge, lua.Int(2), lua.Boolean(3) ? 1 : 0,
+                                                   lua.Boolean(4) ? 1 : 0, key, lua.Entity(6)) != 0;
+  lua.PushBoolean(opened);
+  RESULTS(1);
+}
 
 REFII_LUA_NATIVE(NativeLocalHero) {
   lua.PushHandle(refii_mod_local_hero(lua.base));
@@ -1955,14 +2222,16 @@ REFII_LUA_NATIVE(NativePerceivedRenown) {
 
 // Refii.uid(e): the entity's own 64-bit UniqueID (+0x14 high, +0x18 low) as "0x…": the same on
 // both co-op machines and across saves, unlike a handle; nil for no entity.
+// Refii.uid(e): the UID both machines know `e` by — its own UniqueID on the session host, a replica's net id (the
+// host's UID) on a client (mod_events.cpp SharedUid, the guest's `sub_821B2390`); Refii._by_uid takes it back.
 REFII_LUA_NATIVE(NativeUid) {
   const uint32_t entity = lua.Entity(1);
   if (entity == 0u) {
     lua.PushNil();
   } else {
+    const uint64_t uid = refii_household_shared_uid(lua.base, entity);
     char text[24];
-    std::snprintf(text, sizeof(text), "0x%08x%08x", refii::mods::LoadU32(lua.base, entity + 0x14u),
-                  refii::mods::LoadU32(lua.base, entity + 0x18u));
+    std::snprintf(text, sizeof(text), "0x%08x%08x", static_cast<uint32_t>(uid >> 32), static_cast<uint32_t>(uid));
     lua.PushString(text);
   }
   RESULTS(1);
@@ -3264,6 +3533,10 @@ Native g_natives[] = {
     {"_estate_ready", &NativeEstateReady, 0},
     {"_estate_blocked", &NativeEstateBlocked, 0},
     {"_item_record", &NativeItemRecord, 0},
+    {"_coop_item", &NativeCoopItem, 0},
+    {"_pickup_record", &NativePickupRecord, 0},
+    {"_received_card_owner", &NativeReceivedCardOwner, 0},
+    {"_received_card_fill", &NativeReceivedCardFill, 0},
     {"_use_carried", &NativeUseCarried, 0},
     {"_use_stated_target", &NativeUseStatedTarget, 0},
     {"_use_target_state", &NativeUseTargetState, 0},
@@ -3277,8 +3550,11 @@ Native g_natives[] = {
     {"_followers_two", &NativeFollowersTwo, 0},
     {"_household_context", &NativeHouseholdContext, 0},
     {"_forward_speech", &NativeForwardSpeech, 0},
+    {"_keyboard_pending", &NativeKeyboardPending, 0},
+    {"_crime_screen", &NativeCrimeScreen, 0},
     {"_partner_screen", &NativePartnerScreen, 0},
     {"_partner_player_icons", &NativePartnerPlayerIcons, 0},
+    {"_partner_camera_alphas", &NativePartnerCameraAlphas, 0},
     {"_camera_player_icons", &NativeCameraPlayerIcons, 0},
     {"_partner_camera_update", &NativePartnerCameraUpdate, 0},
     {"_partner_camera_manager", &NativePartnerCameraManager, 0},

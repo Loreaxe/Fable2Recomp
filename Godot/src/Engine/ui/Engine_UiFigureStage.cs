@@ -132,8 +132,7 @@ public partial class Engine_UiFigureStage : Node3D
 		}
 
 		// The angle that puts `height` canvas units at the canvas plane across the full view.
-		_camera.Fov = Mathf.RadToDeg(
-			2f * Mathf.Atan(0.5f * height * MetresPerCanvasUnit / CanvasPlaneDistance));
+		_camera.Fov = Engine_UiParticleRule.FieldOfViewDegrees(height);
 	}
 
 	/// <summary>

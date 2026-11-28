@@ -64,6 +64,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -131,6 +132,8 @@ struct Scratch {
   uint32_t Top() const { return area + 0x100u; }
   uint32_t FamilyTag() const { return area + 0x120u; }
   uint32_t PropertiesTag() const { return area + 0x128u; }
+  /// 0x100 bytes the body of a GuestArchiveSave / GuestArchiveLoad names its elements in.
+  uint32_t Names2() const { return area + 0x140u; }
 
   void Names(uint8_t* base) const {
     std::memcpy(base + Top(), "RefiiHousehold", 15u);
@@ -663,6 +666,8 @@ void DriveHouseholds(PPCContext& ctx, uint8_t* base, float seconds) {
   }
   // Online, the host's buildings as the host has them, for the joiner's screens.
   DriveEstateStatements(ctx, base, seconds);
+  DriveVillagerUse(ctx, base, seconds);
+  DriveJoinerShop(ctx, base, seconds);
   if (refii_mod_player_here(1) == 0 && refii_mod_player_here(2) != 0) {
     g_household = Household{};
     DriveMirror(ctx, base);
@@ -746,6 +751,68 @@ void DriveHouseholds(PPCContext& ctx, uint8_t* base, float seconds) {
 }
 
 void HouseholdChanged() { g_household.stash_in = 0.0; }
+
+std::vector<uint8_t> GuestArchiveSave(const PPCContext& ctx, uint8_t* base, const char* top,
+                                      const std::function<void(const GuestArchive&)>& body) {
+  Scratch s(ctx);
+  const size_t top_size = std::strlen(top) + 1u;
+  if (top_size > 0x20u) {
+    return {};
+  }
+  std::memcpy(base + s.Top(), top, top_size);
+  s.Call(base, 0x82B4AF88u, s.File());  // an empty memory file, AddRef'd
+  const uint32_t file = LoadU32(base, s.File());
+  if (!Heap(file)) {
+    return {};
+  }
+  std::vector<uint8_t> bytes;
+  if (s.Open(base, file, 0x82C89940u)) {
+    const uint32_t writer = s.Archive();
+    s.Call(base, 0x82C8A910u, writer, s.Top());
+    body(GuestArchive{s.frame, writer, s.Names2(), true});
+    s.Call(base, 0x82C892E0u, writer);  // the top element's end and the end-of-stream token
+    s.Call(base, 0x82C89880u, writer);  // the writer goes: the zlib stream flushes into the file
+    const uint32_t data = LoadU32(base, file + 20u);
+    const uint32_t size = LoadU32(base, file + 32u);
+    if (Heap(data) && size != 0u && size < (4u << 20)) {
+      bytes.assign(base + data, base + data + size);
+    }
+  }
+  s.Virtual(base, file, kRelease);
+  return bytes;
+}
+
+bool GuestArchiveLoad(const PPCContext& ctx, uint8_t* base, const char* top, const std::vector<uint8_t>& bytes,
+                      const std::function<void(const GuestArchive&)>& body) {
+  const size_t top_size = std::strlen(top) + 1u;
+  if (bytes.empty() || top_size > 0x20u) {
+    return false;
+  }
+  Scratch s(ctx);
+  std::memcpy(base + s.Top(), top, top_size);
+  s.Call(base, 0x82B4AF20u, s.File(), static_cast<uint32_t>(bytes.size()), 0u);  // a file that size
+  const uint32_t file = LoadU32(base, s.File());
+  const uint32_t data = Heap(file) ? LoadU32(base, file + 20u) : 0u;
+  if (!Heap(data)) {
+    if (Heap(file)) {
+      s.Virtual(base, file, kRelease);
+    }
+    return false;
+  }
+  std::memcpy(base + data, bytes.data(), bytes.size());
+  bool found = false;
+  if (s.Open(base, file, 0x82C8BF70u)) {
+    const uint32_t reader = s.Archive();
+    if ((s.Call(base, 0x82C8A910u, reader, s.Top()) & 0xFFu) != 0u) {
+      found = true;
+      body(GuestArchive{s.frame, reader, s.Names2(), false});
+      s.Virtual(base, reader, kLeave);
+    }
+    s.Call(base, 0x82C8B610u, reader);
+  }
+  s.Virtual(base, file, kRelease);
+  return found;
+}
 
 bool HouseholdIsMirror(uint8_t* base, uint32_t hero) {
   return hero != 0u && refii_mod_player_here(1) == 0 && refii_mod_player_here(2) != 0 &&

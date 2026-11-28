@@ -409,12 +409,28 @@ void RealEstateScreenUpdate(PPCContext& ctx, uint8_t* base) {
 // 0x82583490) and the book's release `sub_829912B0(h+44)` (0x826B19EC / 0x828CED00: each page's vf+8,
 // `sub_828C2F90`, a buffer free). It frees only and reads no household, so it runs outside the wrappers'
 // scope.
+//
+// THE NUMERIC BOX EXITS THE SCREEN AND KEEPS IT. Budget, rent and profits (115 / 117 / 118) open
+// `lhGuiManager_OpenNumericAdjuster` (TU1 0x8236FCA8 / disc 0x82337EA0): it stores the box id at QM+44 and
+// the mode 5 at QM+40 (`stw r5,0x2C(r31)` / `li r11,5` / `stw r11,0x28(r31)` 0x8236FCE0..0x8236FCEC, disc
+// 0x82337ED8..0x82337EE4), saves the current screen (`lwz r21,4(r10)` 0x8236FCFC / 0x82337EF4), calls
+// `lhGuiManager_SetScreen(QM, 4, 0)` (0x8236FD00 / 0x82337EF8) — whose flag 0 runs the current screen's vf+36,
+// this OnExit (`lwz r9,0x24(r10)` / `bctrl` 0x8236E684..0x8236E68C, disc 0x8233688C..0x82336894) — and puts the
+// screen back (`stw r21,4(r5)` 0x8236FD64 / 0x82337F5C). The screen goes on: its Update and the box's answer
+// (OnModalAnswer 36 / 37 writes the level) run on the same handler, so its session — a partner's lend of the
+// owner's properties among it — stands. A confirm (`lhGuiManager_OpenModal`, flag 1) runs no OnExit.
 REX_EXTERN(rex_lhGuiRealEstateScreen_OnExit) {
   REX_FUNC_PROLOGUE();
   const uint32_t h = ctx.r3.u32;
   const Scratch s = Claim(ctx);
   Call(ctx, base, s.frame, 0x826D5C30u, {h});
   Call(ctx, base, s.frame, 0x829912B0u, {h + 0x2Cu});
+  const uint32_t qm = LoadU32(base, Gui(base) + 28u);
+  const uint32_t box = qm != 0u && LoadU32(base, qm + 40u) == 5u ? LoadU32(base, qm + 44u) : 0u;
+  if (box >= 35u && box <= 37u) {
+    Said("real estate (28)", "OnExit under its numeric box", h, box);
+    return;
+  }
   refii::vfs::EstateSessionEnd(h);
   Said("real estate (28)", "OnExit", h);
 }

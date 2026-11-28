@@ -94,6 +94,8 @@ public static class CoopHeroLua
 		--   hud_both    a HUD suggestion leaves both heroes
 		--   joiner_use  the host's run of a joiner's use   bonus_host  its bonus effects (the joiner's own)
 		--   mirror      the joiner's own run of a bonus
+		--   per_player  a silver-key chest's script: its loot is each player's own (C.ItemRule)
+		--   to_one      the record of the story item the script just gave player one (its card is theirs)
 		-- SAVED WITH THE GAME for every thread the save holds (below): a thread loaded mid-scope
 		-- resumes inside it. An outer scope's value waits in the Call1 frame that puts it back, which
 		-- the save carries too, so the innermost value is all a record keeps.
@@ -924,7 +926,7 @@ public static class CoopHeroLua
 				local loot = Refii.inventory(handle) or {}
 				local money = Money.IsAvailable(chest) and Money.Get(chest) or 0
 				return C.Call1(C.TakeItemsAfter, { chest = chest, player = player, partner = partner, handle = handle, key = key,
-					loot = loot, money = money, other = player == 1 and 2 or 1 }, shipped, self, ...)
+					loot = loot, money = money, other = player == 1 and 2 or 1 }, C.WithFlag, "per_player", true, shipped, self, ...)
 			end, "OnActionUseTakeItems.Update")
 			OnActionUseTakeItems.Update = C.TakeItems
 		end
@@ -1796,6 +1798,9 @@ public static class CoopHeroLua
 			C.AddScript = C.Permanent(function(script, ...)
 				local two = C.HeroTwo()
 				if two == nil or type(script) ~= "table" or script.EntityUsingItem ~= two then
+					if two ~= nil and C.IsSignScript(script) then
+						return C.Call1(C.SignAdded, script, shipped, script, ...)
+					end
 					return shipped(script, ...)
 				end
 				local class = C.UseClass(script)
@@ -1805,6 +1810,7 @@ public static class CoopHeroLua
 				if C.IsJoiner() then
 					if C.JoinerRunsHere[class] ~= nil and type(script.Update) == "function" then
 						script.co_update = coroutine.create(script.Update)
+						C.SignUser(script)
 						local wait = 0
 						if class == OnActionUseSaleSign then
 							local sign = script.ItemBeingUsed
@@ -1842,9 +1848,46 @@ public static class CoopHeroLua
 					local target = Refii._use_stated_target ~= nil and Refii._use_stated_target() or nil
 					return C.Call1(C.JoinerUseAdded, { script = script, hero = two, target = target }, shipped, script, ...)
 				end
+				if C.IsSignScript(script) then
+					return C.Call1(C.SignAdded, script, shipped, script, ...)
+				end
 				return shipped(script, ...)
 			end, "AddScript")
 			GeneralScriptManager.AddScript = C.AddScript
+		end
+
+		-- A SALE SIGN BLOCKED BY THE OTHER HERO. The shipped script (OnActionUseSaleSign:Update) opens no page
+		-- while its building's definition says `CheckIfBuyerIsStandingInside`
+		-- (Lua_Building_CheckIfBuyerIsStandingInBuilding, TU1 0x8282F1D0: the def's bool) and either
+		-- GetPlayerHero() or GetPlayerHenchman() stands inside it (Whereabouts.GetBuildingWeAreInsideOf) — the
+		-- henchman test is the 360's follower, who walked in behind the hero. A partner who brought their own hero
+		-- is no follower: their being inside does not stop the other player at the sign. So, inside a sale sign's
+		-- script with a hero player two, "the buyer is standing in it" is answered for the sign's user alone (the
+		-- script's EntityUsingItem, kept on its coroutine): the user inside still stops it, as shipped. The plain
+		-- henchman keeps the 360's rule.
+		function C.SignUser(script)
+			if type(script.co_update) == "thread" then
+				C.CoSet(script.co_update, "sign_user", script.EntityUsingItem)
+			end
+		end
+
+		C.SignAdded = C.Permanent(function(script, ...)
+			C.SignUser(script)
+			C.SignReport(script)
+			return ...
+		end, "SignAdded")
+
+		if Building ~= nil and Whereabouts ~= nil then
+			C.Wrap("Building", "CheckIfBuyerIsStandingInBuilding", "Sign", function(shipped)
+				return function(building, ...)
+					local flagged = shipped(building, ...)
+					local user = C.CoGet(coroutine.running(), "sign_user")
+					if not flagged or user == nil or not C.TwoIsHero() then
+						return flagged
+					end
+					return user:IsAlive() and Whereabouts.GetBuildingWeAreInsideOf(user) == building
+				end
+			end)
 		end
 
 		-- What the sale sign's script will test, on this machine, when it first runs (a log line; the
@@ -1860,7 +1903,8 @@ public static class CoopHeroLua
 			local ok, text = pcall(function()
 				local sign = script.ItemBeingUsed
 				local hero = script.EntityUsingItem
-				local parts = { "the joiner's sale sign script starts:" }
+				local parts = { "the sale sign script starts for " .. tostring(C.IsHero(hero) and hero ~= nil
+					and (hero == C.HeroTwo() and "player two" or "player one") or "nobody") .. ":" }
 				parts[#parts + 1] = "rule " .. tostring(Refii._estate_blocked ~= nil and Refii._estate_blocked())
 				local alive = sign ~= nil and sign:IsAlive()
 				parts[#parts + 1] = "sign " .. tostring(alive)
@@ -1870,11 +1914,13 @@ public static class CoopHeroLua
 				local live = building ~= nil and building:IsAlive()
 				parts[#parts + 1] = "building " .. tostring(live)
 				if live then
-					parts[#parts + 1] = "buyer inside " .. tostring(Building.CheckIfBuyerIsStandingInBuilding(building))
+					local flagged = rawget(Building, "RefiiShippedSignCheckIfBuyerIsStandingInBuilding")
+					parts[#parts + 1] = "buyer-inside rule " .. tostring((flagged or Building.CheckIfBuyerIsStandingInBuilding)(building))
 					parts[#parts + 1] = "user in it " .. tostring(hero ~= nil and Whereabouts.GetBuildingWeAreInsideOf(hero) == building)
-					local other = C.ShippedGetPlayerHero ~= nil and C.ShippedGetPlayerHero() or nil
+					local other = C.Other(hero)
 					parts[#parts + 1] = "partner in it " .. tostring(other ~= nil and other:IsAlive()
 						and Whereabouts.GetBuildingWeAreInsideOf(other) == building)
+					parts[#parts + 1] = "partner counts " .. tostring(not C.TwoIsHero())
 					parts[#parts + 1] = "business " .. tostring(Building.IsBusiness(building))
 				end
 				return table.concat(parts, " ")
@@ -2014,10 +2060,44 @@ public static class CoopHeroLua
 			end
 		end, "UseSleepAnswered")
 
+		-- THE RECEIVED CARD IS ITS RECEIVER'S: in local co-op with player two a hero, the card the shipped
+		-- GUI.DisplayReceivedItem(item) just opened is stated the GUI owner's of the hero whose bag holds the
+		-- item (Refii._received_card_owner; the card's own opener states none), so that player's pad answers
+		-- it; the owner before it comes back when the card leaves. The native never yields (pcall is safe).
+		function C.CardForReceiver(shipped, item, ...)
+			if item == nil or not C.TwoIsHero() or Refii._received_card_owner == nil then
+				return shipped(item, ...)
+			end
+			-- Its text too: the card's fill names the item it finds in "the local player's" bag, so the card of an
+			-- item player two holds is filled from player two's (Refii._received_card_fill).
+			local fill = Refii._received_card_fill ~= nil and Refii._received_card_fill(item, true)
+			local results = { pcall(shipped, item, ...) }
+			if fill then
+				Refii._received_card_fill(item, false)
+			end
+			if not results[1] then
+				error(results[2], 0)
+			end
+			local player, stated = Refii._received_card_owner(item)
+			if player == nil then
+				C.Say("items: the received card names no hero's item (" .. tostring(stated) .. "); its owner stays")
+			elseif stated then
+				C.Say("items: the received card of " .. tostring(Refii._item_record(item)) .. " is player "
+					.. tostring(player) .. "'s (their hero holds it)")
+			end
+			return unpack(results, 2, table.maxn(results))
+		end
+
 		C.JoinerShows(GUI, "GUI", "DisplayReceivedItem", function(shipped)
 			return function(item, ...)
-				if C.JoinerUse() == nil then
-					return shipped(item, ...)
+				-- A story item the run gave player one (C.ItemRule) is player one's card, on this machine.
+				local co = coroutine.running()
+				local to_one = C.CoGet(co, "to_one")
+				if to_one ~= nil then
+					C.CoSet(co, "to_one", nil)
+				end
+				if C.JoinerUse() == nil or (to_one ~= nil and item ~= nil and Refii._item_record(item) == to_one) then
+					return C.CardForReceiver(shipped, item, ...)
 				end
 				-- An InventoryItem cannot travel; its record does, and the joiner opens the card on its own
 				-- item of that record, or one made for the card as the guest makes it (mod_events.cpp
@@ -2086,34 +2166,172 @@ public static class CoopHeroLua
 				Refii._household(action, hash, count or 1)
 			end
 		end
+		-- Hero two's add, restated to the joiner when the host runs a joiner's use: the shipped add, then
+		-- `invadd` of what it gave (results as pcall's).
+		function C.AddNoted(name, shipped, entity, ...)
+			if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() then
+				return { pcall(shipped, entity, ...) }
+			end
+			-- A money item (Inventory.AddItem's money branch: CECMoney_Modify on the receiver, an item made
+			-- only for the card, TU1 0x824F0C8C..0x824F0CBC) adds gold, which the host's money message
+			-- carries to the joiner; no item is restated for it.
+			local gold = Money ~= nil and Money.IsAvailable(entity) and Money.Get(entity) or nil
+			local source = Refii._item_record((...))
+			local results = { pcall(shipped, entity, ...) }
+			if not results[1] then
+				return results
+			end
+			local hash = (results[2] ~= nil and Refii._item_record(results[2])) or source
+			local co = coroutine.running()
+			if co ~= nil and hash ~= nil then
+				C.CoSet(co, "added", hash)
+			end
+			local now = gold ~= nil and Money.Get(entity) or nil
+			if now ~= nil and now > gold then
+				C.Say("use run: " .. name .. " " .. tostring(hash) .. " was " .. tostring(now - gold)
+					.. " gold for player two; no item for the joiner")
+			elseif hash == nil then
+				C.Say("use run: " .. name .. " gave player two an item with no record here; nothing restated")
+			else
+				C.UseInventoryNote("invadd", hash)
+			end
+			return results
+		end
+
+		-- WHO RECEIVES A STORY OR A UNIQUE ITEM (core/coop_item_rule.h, Refii._coop_item), at the receiver of
+		-- the add every shipped script makes: the chests, drawers and cupboards (onactionusetakeitems.lua
+		-- `Inventory.AddItem(entity_using_item, item_by_index)`), the dive and dig spots (`AddItem(self.EntityUsingItem,
+		-- …)`), a pickup (onactionusepickup.lua `AddEntity(self.EntityUsingItem, self.ItemBeingUsed, true, true)`),
+		-- a cutscene's or a quest's grant (`AddItemOfType(GetPlayerHero() | QuestManager.HeroEntity, name)`).
+		--   * A STORY item goes to player one's hero whoever was to receive it: the quests ask hero one's
+		--     bag. Its card is player one's (shown here: the coroutine's to_one), and player two is told where
+		--     it went.
+		--   * A UNIQUE item (a legendary weapon from anywhere; any Rating-5 item from a placed source) is
+		--     duplicated: the receiver takes it as shipped, and the other hero gets their own copy
+		--     (Refii.add_item, `invadd` to a joiner) and is told so. A silver-key chest copies nothing: it
+		--     opens once per player already (C.TakeItems marks its run per_player).
+		-- Only where this machine runs the world, with player two a hero they brought: the plain henchman
+		-- keeps the 360's rules. Ordinary loot and gold are as shipped.
+
+		-- One line per decision, wherever the rule is in force (player two a hero, the world here, a hero
+		-- receiving): what was read and what it decided, "as shipped" included.
+		C.ItemSourceWords = { "a placed source", "a script's grant", "a silver-key chest" }
+		function C.ItemRule(name, entity, item)
+			local one = C.ShippedGetPlayerHero and C.ShippedGetPlayerHero()
+			local two = C.HeroTwo()
+			if one == nil or two == nil or entity == nil or item == nil or Refii == nil or Refii._coop_item == nil
+				or not C.WorldHere() then
+				return nil
+			end
+			local receiver = (entity == two and 2) or (entity == one and 1) or 0
+			if receiver == 0 then
+				return nil
+			end
+			local record, source = nil, 1
+			if name == "AddItemOfType" then
+				record, source = type(item) == "string" and item or nil, 2
+			elseif name == "AddEntity" then
+				record = Refii._pickup_record ~= nil and Refii._pickup_record(Refii.handle(item)) or nil
+			else
+				record = Refii._item_record(item)
+			end
+			local head = "items: " .. name .. " " .. tostring(record) .. " for player " .. tostring(receiver)
+			if record == nil then
+				C.Say(head .. ": no record read from the " .. (name == "AddEntity" and "pickup" or "item") .. "; as shipped")
+				return nil
+			end
+			if source == 1 and C.CoGet(coroutine.running(), "per_player") then
+				source = 3
+			end
+			local to, copy, id, category, rating, story = Refii._coop_item(record, source, receiver)
+			if to == nil then
+				C.Say(head .. ": " .. tostring(copy) .. "; as shipped")
+				return nil
+			end
+			head = head .. " (" .. tostring(id) .. ", category " .. tostring(category) .. ", rating " .. tostring(rating)
+				.. ", from " .. tostring(C.ItemSourceWords[source]) .. (story == 1 and ", a story record" or "")
+				.. (story == -1 and ", the story table not resolved yet" or "") .. ")"
+			copy = copy or 0
+			if to == receiver and copy == 0 then
+				C.Say(head .. (story == 1 and ": a story item, player one's already; as shipped" or ": ordinary; as shipped"))
+				return nil
+			end
+			local said = {}
+			if to ~= receiver then
+				said[#said + 1] = "a story item: player one's hero takes it"
+			else
+				said[#said + 1] = "player " .. tostring(receiver) .. " keeps it"
+			end
+			if copy ~= 0 then
+				said[#said + 1] = "unique: player " .. tostring(copy) .. " gets their own copy"
+			end
+			C.Say(head .. ": " .. table.concat(said, "; "))
+			return { name = name, receiver = receiver, to = to, copy = copy, id = id }
+		end
+
+		-- A notice for player p (the item's own name as the title, our words as the text), on the machine
+		-- that plays them.
+		function C.ItemNotice(p, id, key)
+			-- The item's name is its InventoryItemComponent's NameTag (the record itself carries none).
+			local component = Refii.record_ref ~= nil and Refii.record_ref(id, "InventoryItemComponent") or nil
+			local tag = component ~= nil and Refii.record_string ~= nil and Refii.record_string(component, "NameTag") or nil
+			local title = tag ~= nil and ("{" .. tag .. "}") or ""
+			if p == 2 and C.RouteRemote(2) then
+				C.JoinerCommand("Refii.notice", title, "{" .. key .. "}", 6)
+			elseif Refii.notice ~= nil then
+				Refii.notice(title, "{" .. key .. "}", 6, p)
+			end
+		end
+
+		-- Player p's own copy of a unique item.
+		function C.ItemCopy(p, id)
+			local hero = p == 1 and C.ShippedGetPlayerHero() or C.HeroTwo()
+			if hero == nil or Refii.add_item == nil then
+				return
+			end
+			local _, added = Refii.add_item(Refii.handle(hero), id)
+			if (added or 0) < 1 then
+				C.Say("items: player " .. tostring(p) .. "'s own copy of " .. tostring(id) .. " could not be added")
+				return
+			end
+			if p == 2 and C.RouteRemote(2) then
+				C.UseInventoryNote("invadd", id)
+			end
+			C.ItemNotice(p, id, "REFII_F2_COOP_ITEM_OWN_COPY")
+		end
+
+		function C.ItemRuleAfter(rule, added)
+			if rule.to ~= rule.receiver then
+				local hash = added ~= nil and Refii._item_record(added) or nil
+				if hash ~= nil then
+					C.CoSet(coroutine.running(), "to_one", hash)
+				else
+					C.Say("items: " .. rule.name .. " " .. tostring(rule.id) .. " went to player one with no item back")
+				end
+				C.ItemNotice(rule.receiver, rule.id, "REFII_F2_COOP_ITEM_TO_PLAYER_ONE")
+			end
+			if rule.copy ~= 0 then
+				C.ItemCopy(rule.copy, rule.id)
+			end
+		end
+
 		for _, name in ipairs({ "AddItem", "AddItemOfType", "AddEntity" }) do
 			C.JoinerShows(Inventory, "Inventory", name, function(shipped)
 				return function(entity, ...)
-					if C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo() then
+					local rule = C.ItemRule(name, entity, (...))
+					if rule == nil and (C.JoinerUse() == nil or entity == nil or entity ~= C.HeroTwo()) then
 						return shipped(entity, ...)
 					end
-					-- A money item (Inventory.AddItem's money branch: CECMoney_Modify on the receiver, an item made
-					-- only for the card, TU1 0x824F0C8C..0x824F0CBC) adds gold, which the host's money message
-					-- carries to the joiner; no item is restated for it.
-					local gold = Money ~= nil and Money.IsAvailable(entity) and Money.Get(entity) or nil
-					local source = Refii._item_record((...))
-					local results = { pcall(shipped, entity, ...) }
+					local target = entity
+					if rule ~= nil and rule.to ~= rule.receiver then
+						target = C.ShippedGetPlayerHero()
+					end
+					local results = C.AddNoted(name, shipped, target, ...)
 					if not results[1] then
 						error(results[2], 0)
 					end
-					local hash = (results[2] ~= nil and Refii._item_record(results[2])) or source
-					local co = coroutine.running()
-					if co ~= nil and hash ~= nil then
-						C.CoSet(co, "added", hash)
-					end
-					local now = gold ~= nil and Money.Get(entity) or nil
-					if now ~= nil and now > gold then
-						C.Say("use run: " .. name .. " " .. tostring(hash) .. " was " .. tostring(now - gold)
-							.. " gold for player two; no item for the joiner")
-					elseif hash == nil then
-						C.Say("use run: " .. name .. " gave player two an item with no record here; nothing restated")
-					else
-						C.UseInventoryNote("invadd", hash)
+					if rule ~= nil then
+						C.ItemRuleAfter(rule, results[2])
 					end
 					return unpack(results, 2, table.maxn(results))
 				end
@@ -2338,6 +2556,10 @@ public static class CoopHeroLua
 			local name = type(values) == "table" and values[1] or nil
 			if type(name) == "string" and name ~= "" and state.dog ~= nil and state.dog:IsAlive() then
 				Creature.SetPlayerDefinedName(state.dog, name)
+				C.Say("use run: the joiner named player two's dog '" .. name .. "'; the dog here is "
+					.. tostring(Refii._dog_name ~= nil and Refii._dog_name(Refii.handle(state.dog)) or "?"))
+			else
+				C.Say("use run: the joiner's rename gave no name (" .. tostring(name) .. "); the dog keeps its own")
 			end
 		end, "JoinerRenamed")
 		C.JoinerShows(Dog, "Dog", "TriggerRenameScreen", function(shipped)
@@ -2353,22 +2575,46 @@ public static class CoopHeroLua
 			end
 		end)
 		-- The screen stands from the frame after it is asked for until its player closes it.
+		-- The name comes from the platform keyboard, which the card polls (keyboard_ui.cpp: the card's Update waits
+		-- for the XOVERLAPPED to leave 997): done when the dog's name changed, else when the UI is idle after the
+		-- keyboard had its chance (a cancel keeps the name), at most C.RenameWaitFrames world frames.
+		C.RenameWaitFrames = 1800
 		C.JoinerRenameIdle = C.Permanent(function(state)
 			state.frames = (state.frames or 0) + 1
-			return state.frames > 2 and not GUI.IsUIActive(), true
+			local now = state.dog ~= nil and state.dog:IsAlive() and Refii._dog_name ~= nil and Refii._dog_name(Refii.handle(state.dog)) or nil
+			if state.frames > 2 and now ~= state.was then
+				return true, true
+			end
+			-- The platform keyboard is no GUI screen: while its request is up (Refii._keyboard_pending,
+			-- keyboard_ui.cpp) the rename has not answered yet.
+			if Refii._keyboard_pending ~= nil and Refii._keyboard_pending() then
+				return state.frames > C.RenameWaitFrames, true
+			end
+			return state.frames > C.RenameWaitFrames or (state.frames > 60 and not GUI.IsUIActive()), true
 		end, "JoinerRenameIdle")
 		C.JoinerRenameAfter = C.Permanent(function(dog)
 			if dog == nil or not dog:IsAlive() or Refii._dog_name == nil then
 				return false
 			end
-			return Refii._dog_name(Refii.handle(dog)) or false
+			local name = Refii._dog_name(Refii.handle(dog))
+			C.Say("joiner: player two's dog is named '" .. tostring(name) .. "' for the host")
+			return name or false
 		end, "JoinerRenameAfter")
 		function RefiiCoop.JoinerRenameDog(dog)
+			-- The host's player-two dog is this machine's replica of it; when the route could not name it
+			-- (C.RouteLenient), the dog this machine records as player two's (Refii.player_dog(2)).
+			if (dog == nil or not dog:IsAlive()) and C.PartnerDog ~= nil then
+				dog = C.PartnerDog()
+			end
 			if dog == nil or not dog:IsAlive() then
+				C.Say("joiner: the host's rename screen has no dog of player two's here")
 				return false
 			end
+			C.Say("joiner: the rename screen opens for player two's dog")
 			Dog.TriggerRenameScreen(dog)
-			return C.Call1(C.JoinerRenameAfter, dog, C.Wait1, C.JoinerRenameIdle, { frames = 0 }, coroutine.yield)
+			local was = Refii._dog_name ~= nil and Refii._dog_name(Refii.handle(dog)) or nil
+			return C.Call1(C.JoinerRenameAfter, dog, C.Wait1, C.JoinerRenameIdle, { frames = 0, dog = dog, was = was },
+				coroutine.yield)
 		end
 
 		-- POTIONS, FOOD, DRINK AND BOOKS CHANGE THE JOINER'S OWN HERO TOO. ApplyBonusEffects changes the
@@ -4057,8 +4303,10 @@ public static class CoopHeroLua
 			return nil
 		end
 
-		-- A token's value here; false second when it names something this machine does not have.
-		function C.RouteDecode(token, caller)
+		-- A token's value here; false second when it names something this machine does not have. With
+		-- `missing` (a list), an entity this machine does not have inside a table is left out of it and
+		-- its token listed there, and the table still decodes (C.RouteLenient's calls, after their wait).
+		function C.RouteDecode(token, caller, missing)
 			local tag, rest = token:sub(1, 1), token:sub(2)
 			if token == "_" or token == "" then
 				return nil, true
@@ -4092,8 +4340,13 @@ public static class CoopHeroLua
 					if k == nil then
 						return nil, false
 					end
-					local key, key_ok = C.RouteDecode(Unescape(k), caller)
-					local value, value_ok = C.RouteDecode(Unescape(v), caller)
+					local key, key_ok = C.RouteDecode(Unescape(k), caller, missing)
+					local token_v = Unescape(v)
+					local value, value_ok = C.RouteDecode(token_v, caller, missing)
+					if not value_ok and missing ~= nil and key_ok and key ~= nil and token_v:sub(1, 1) == "u" then
+						missing[#missing + 1] = tostring(key) .. "=" .. token_v
+						value, value_ok = nil, true
+					end
 					if not key_ok or not value_ok or key == nil then
 						return nil, false
 					end
@@ -4372,12 +4625,26 @@ public static class CoopHeroLua
 			return true
 		end
 
-		function C.RouteArrive(line)
+		-- A CALL WAITS FOR WHAT IT NAMES. A call that names an entity this machine does not have yet waits
+		-- for it, up to C.RouteWaitFrames world frames, and the calls after it wait behind it (they run in
+		-- the order they were made): an entity the host made at run time reaches this machine as its replica
+		-- through the guest's own replication, a channel of its own, and the call naming it can come first —
+		-- the spade a dig puts in hero two's hand (OnCarriedActionUseDig: Inventory.InstantiateItem, then
+		-- Carrying.PutEntityInSlot, then the DIG action whose IntoAction/LoopAction carry Spade = it). The
+		-- replica is found by the host's UID (mod_events.cpp ReplicaOfUid). When the wait is over a call of
+		-- C.RouteLenient runs with what is still missing left out of its tables (an action plays without its
+		-- prop rather than not at all) and any other call is refused, as before. Answers never wait.
+		C.RouteWaitFrames = 45
+		C.RouteLenient = C.RouteLenient or { ["RefiiCoop.JoinerAct"] = true, ["RefiiCoop.JoinerRenameDog"] = true }
+		C.RoutePending = C.RoutePending or {}
+
+		-- One line: true when it is done with (run, refused or not a call), false while it waits.
+		function C.RouteArrive(line, waited)
 			local kind = line:sub(1, 1)
 			local fields = Split(line:sub(2))
 			local id = tonumber(fields[1])
 			if id == nil then
-				return
+				return true
 			end
 			if kind == "a" then
 				if C.RouteOpen[id] ~= nil then
@@ -4387,51 +4654,75 @@ public static class CoopHeroLua
 					end
 					C.RouteAnswers[id] = values
 				end
-				return
+				return true
 			end
 			if kind ~= "c" or #fields < 4 then
-				return
+				return true
 			end
 			local player, mode, name = tonumber(fields[2]), fields[3], fields[4]
-			if id > C.RouteDone then
-				C.RouteDone = id
-			end
 			if name == "@clear" then
+				if id > C.RouteDone then
+					C.RouteDone = id
+				end
 				local token = tonumber((fields[5] or ""):sub(2))
 				local handle = token ~= nil and C.RouteHandles[token] or nil
 				C.RouteHandles[token or -1] = nil
 				if handle ~= nil and type(handle.Clear) == "function" then
 					pcall(handle.Clear, handle)
 				end
-				return
+				return true
 			end
 			local fn = C.RouteFunction(name)
 			local hero = player == 2 and C.ShippedGetPlayerHenchman() or C.ShippedGetPlayerHero()
 			local recent = MessageEvents.GetMostRecentMessageID()
 			local caller = { LastMessageID_YesNoQuestionReply = recent, LastPosted = recent, LastMessageID_MenuBox = recent,
 				LastMessageID_ButtonBox = recent }
+			local over = (waited or 0) >= C.RouteWaitFrames
+			local missing = over and C.RouteLenient[name] and {} or nil
 			local args = { n = #fields - 4 }
+			local unknown = nil
 			for i = 5, #fields do
-				local value, ok = C.RouteDecode(fields[i], caller)
+				local value, ok = C.RouteDecode(fields[i], caller, missing)
+				if not ok and missing ~= nil and fields[i]:sub(1, 1) == "u" then
+					missing[#missing + 1] = "argument " .. tostring(i - 4) .. "=" .. fields[i]
+					value, ok = nil, true
+				end
 				if not ok then
-					fn = nil
+					unknown = unknown or fields[i]
 				end
 				args[i - 4] = value
 			end
-			if fn == nil or hero == nil then
-				if not C.RouteSaid[name] then
-					C.RouteSaid[name] = true
-					C.Say("route: " .. tostring(name) .. " cannot run here (no such function, hero or entity)")
+			if unknown ~= nil and fn ~= nil and hero ~= nil and not over then
+				return false
+			end
+			if id > C.RouteDone then
+				C.RouteDone = id
+			end
+			if fn == nil or hero == nil or unknown ~= nil then
+				local said = tostring(name) .. "|" .. tostring(fn == nil) .. tostring(hero == nil) .. tostring(unknown ~= nil)
+				if not C.RouteSaid[said] then
+					C.RouteSaid[said] = true
+					C.Say("route: " .. tostring(name) .. " cannot run here ("
+						.. (fn == nil and "no such function" or hero == nil and "no such hero"
+							or ("no such entity " .. tostring(unknown) .. " after " .. tostring(waited or 0) .. " world frames"))
+						.. ")")
 				end
 				if mode == "q" then
 					C.RouteAnswer(id, { n = 0 })
 				end
-				return
+				return true
+			end
+			if missing ~= nil and #missing > 0 then
+				C.Say("route: " .. tostring(name) .. " runs without what this machine does not have after "
+					.. tostring(waited or 0) .. " world frames: " .. table.concat(missing, " "))
+			elseif (waited or 0) > 0 then
+				C.Say("route: " .. tostring(name) .. " found what it names after " .. tostring(waited) .. " world frame(s)")
 			end
 			local thread = { co = coroutine.create(C.RouteRun), id = id, mode = mode, name = name }
 			if not C.RouteStep(thread, coroutine.resume(thread.co, hero, fn, args)) then
 				C.RouteThreads[#C.RouteThreads + 1] = thread
 			end
+			return true
 		end
 
 		-- Once a world frame on either machine (the camera's FrameUpdate).
@@ -4456,7 +4747,22 @@ public static class CoopHeroLua
 				if line == nil then
 					break
 				end
-				C.RouteArrive(line)
+				if line:sub(1, 1) == "a" then
+					C.RouteArrive(line)
+				else
+					C.RoutePending[#C.RoutePending + 1] = { line = line, waited = 0 }
+				end
+			end
+			local pending = C.RoutePending
+			local ran = 0
+			while ran < 32 and #pending > 0 do
+				local head = pending[1]
+				if not C.RouteArrive(head.line, head.waited) then
+					head.waited = head.waited + 1
+					break
+				end
+				table.remove(pending, 1)
+				ran = ran + 1
 			end
 			if C.IsJoiner() and Refii.player_set ~= nil and C.RouteDoneSaid ~= C.RouteDone then
 				C.RouteDoneSaid = C.RouteDone
@@ -4492,6 +4798,21 @@ public static class CoopHeroLua
 		end
 
 		C.RouteWrapAll()
+
+		-- ONLY PLAYER ONE CHOOSES THE PRIMARY QUEST. The one shipped question that asks, a guard's community
+		-- service (behaviourguard.lua: `GUI.AskSetQuestPrimaryQuestion("TEXT_QUEST_QRCS001_NAME", self)` then
+		-- `QuestTracker.SetAsActive(…, true, not answer)`), run for player two the arrested one, is not put
+		-- to them: it answers the game's own No (the route's default for the question), so the quest is
+		-- active and the primary one stays as it was.
+		C.Wrap("GUI", "AskSetQuestPrimaryQuestion", "QuestPick", function(shipped)
+			return function(...)
+				if C.Acting() ~= nil then
+					C.Say("quest: player two is not asked to make a quest primary; the answer is the game's No")
+					return false
+				end
+				return shipped(...)
+			end
+		end)
 
 		-- ============================================================================
 		-- THE PLAYER-AGNOSTIC PRIMITIVES, the mod API's core: the co-op layer above and the mods
@@ -4733,6 +5054,82 @@ public static class CoopHeroLua
 				return shipped(...)
 			end, "EnableTreeCanopyFading")
 			Camera.EnableTreeCanopyFading = C.EnableTreeCanopyFading
+		end
+
+		-- A CAMERA'S FADE IS ITS OWN VIEW'S. A camera fades what stands near it (camerabase.lua 304-375):
+		-- FadeEntityBasedOnPositionIfNeeded sets GraphicAppearance.SetCameraAlpha(e, clamp((dXY - r) / r)) for
+		-- CameraManager.GetFadedCameraObjects(self.CurrentPosition, r * 2) and a mode's own hero, and
+		-- FadeUpEntitiesIfNeeded takes every entry not faded this frame back up by 0.05 a frame. What it faded is
+		-- kept in ONE class table, CameraBase.FadedEntities, and the setter writes ONE field per entity, the
+		-- renderable's camera alpha +116 (SetCameraAlpha sub_82573128, store 0x825731D4; entity_appearance.cpp),
+		-- which every view draws. Player two's manager updates after player one's in every local co-op game,
+		-- shared screen or split. So player two's update (C.PartnerCameraUpdating):
+		--  - keeps its own book: CameraBase.FadedEntities is player two's around its fade calls, one book per
+		--    manager (C.PartnerCameraManager), so neither camera's fade-up runs the other camera's entries;
+		--  - writes no camera alpha: the field holds player one's camera's fades, the one camera of a shared screen;
+		--  - states its book whole at the end of each fade-up (Refii._partner_camera_alphas(e1, a1, e2, a2, ...)),
+		--    which player two's half draws while split (Godot Engine_ViewFade).
+		function C.PartnerFadeBook()
+			local manager = C.PartnerCameraManager()
+			if C.PartnerFaded == nil or C.PartnerFadedManager ~= manager then
+				C.PartnerFaded, C.PartnerFadedManager = {}, manager
+				if Refii ~= nil and Refii._partner_camera_alphas ~= nil then
+					Refii._partner_camera_alphas()
+				end
+			end
+			return C.PartnerFaded
+		end
+
+		function C.StatePartnerFadeBook()
+			if Refii == nil or Refii._partner_camera_alphas == nil then
+				return
+			end
+			local words, n = {}, 0
+			for _, entry in pairs(C.PartnerFaded or {}) do
+				if type(entry) == "table" and entry.Entity ~= nil and type(entry.FadeAmount) == "number" and entry.Entity:IsAlive() then
+					words[n + 1], words[n + 2] = entry.Entity, math.min(entry.FadeAmount, 1)
+					n = n + 2
+				end
+			end
+			Refii._partner_camera_alphas(unpack(words, 1, n))
+		end
+
+		for _, name in ipairs({ "FadeEntityBasedOnPositionIfNeeded", "FadeUpEntitiesIfNeeded" }) do
+			local mine = C["CameraBase" .. name]
+			if CameraBase ~= nil and CameraBase[name] ~= nil and CameraBase[name] ~= mine then
+				local shipped = CameraBase[name]
+				local fadeUp = name == "FadeUpEntitiesIfNeeded"
+				C["CameraBase" .. name] = C.Permanent(function(self, ...)
+					if not C.PartnerCameraUpdating() then
+						return shipped(self, ...)
+					end
+					local own = CameraBase.FadedEntities
+					CameraBase.FadedEntities = C.PartnerFadeBook()
+					local results = { pcall(shipped, self, ...) }
+					C.PartnerFaded = CameraBase.FadedEntities
+					CameraBase.FadedEntities = own
+					if not results[1] then
+						error(results[2], 0)
+					end
+					if fadeUp then
+						pcall(C.StatePartnerFadeBook)
+					end
+					return unpack(results, 2, table.maxn(results))
+				end, "CameraBase" .. name)
+				CameraBase[name] = C["CameraBase" .. name]
+			end
+		end
+
+		if GraphicAppearance ~= nil and GraphicAppearance.SetCameraAlpha ~= nil and
+				GraphicAppearance.SetCameraAlpha ~= C.SetCameraAlpha then
+			local shipped = GraphicAppearance.SetCameraAlpha
+			C.SetCameraAlpha = C.Permanent(function(...)
+				if C.PartnerCameraUpdating() then
+					return
+				end
+				return shipped(...)
+			end, "SetCameraAlpha")
+			GraphicAppearance.SetCameraAlpha = C.SetCameraAlpha
 		end
 
 		-- THE HUD'S PLAYER ICONS: a camera's statement is its own player's, anything else's is everyone's.

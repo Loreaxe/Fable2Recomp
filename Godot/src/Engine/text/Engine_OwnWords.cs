@@ -939,6 +939,20 @@ public static class Engine_OwnWords
 			"El jugador 2 ha abandonado la partida.", "Игрок 2 покинул игру.", "Gracz 2 opuścił grę.",
 			"Hráč 2 opustil hru.", "A 2-es játékos kilépett a játékból.", "プレイヤー 2 がゲームから抜けました。",
 			"플레이어 2가 게임에서 나갔습니다.", "玩家 2 已離開遊戲。")
+		.Add("REFII_F2_COOP_ITEM_TO_PLAYER_ONE", "This quest item goes to Player One's Hero.",
+			"Cet objet de quête revient au Héros du joueur 1.", "Dieser Questgegenstand geht an den Helden von Spieler 1.",
+			"Questo oggetto della missione va all'Eroe del giocatore 1.", "Este objeto de misión es para el Héroe del jugador 1.",
+			"Этот предмет задания достаётся Герою игрока 1.", "Ten przedmiot zadania trafia do Bohatera gracza 1.",
+			"Tento úkolový předmět dostane Hrdina hráče 1.", "Ez a küldetéstárgy az 1-es játékos Hősét illeti.",
+			"このクエストアイテムはプレイヤー 1 のヒーローのものになります。", "이 퀘스트 아이템은 플레이어 1의 영웅에게 갑니다.",
+			"此任務物品歸玩家 1 的英雄所有。")
+		.Add("REFII_F2_COOP_ITEM_OWN_COPY", "Your partner found this. You have your own.",
+			"Votre partenaire l'a trouvé. Vous avez le vôtre.", "Dein Partner hat das gefunden. Du hast dein eigenes.",
+			"L'ha trovato il tuo compagno. Tu hai il tuo.", "Lo ha encontrado tu compañero. Tú tienes el tuyo.",
+			"Это нашёл ваш напарник. У вас есть свой экземпляр.", "Twój partner to znalazł. Ty masz własny egzemplarz.",
+			"Tohle našel tvůj partner. Ty máš vlastní.", "Ezt a társad találta. Neked is megvan a sajátod.",
+			"パートナーがこれを見つけました。あなたにも同じものがあります。", "파트너가 이것을 찾았습니다. 당신도 같은 것을 가집니다.",
+			"這是您的夥伴找到的。您也有一份。")
 		.Add("REFII_F2_COOP_PROGRESSION", "Each Hero keeps their own gold and experience.",
 			"Chaque Héros garde son or et son expérience.", "Jeder Held behält sein eigenes Gold und seine Erfahrung.",
 			"Ogni Eroe tiene il proprio oro e la propria esperienza.", "Cada Héroe conserva su oro y su experiencia.",

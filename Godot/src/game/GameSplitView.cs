@@ -81,6 +81,11 @@ public partial class GameSplitView : CanvasLayer
 	private bool _hybridSplit;
 	private float _progress;
 
+	public override void _EnterTree()
+	{
+		Current = this;
+	}
+
 	public override void _Ready()
 	{
 		// Over the window's world and under the UI (its CanvasLayer is 5).
@@ -89,6 +94,11 @@ public partial class GameSplitView : CanvasLayer
 
 	public override void _ExitTree()
 	{
+		if (ReferenceEquals(Current, this))
+		{
+			Current = null;
+		}
+
 		Close();
 	}
 
@@ -305,6 +315,56 @@ public partial class GameSplitView : CanvasLayer
 	/// is told, hybrid's state and swap, the tether as stated now (values 21..23) with the thresholds it
 	/// gives, and hybrid's last decision.
 	/// </summary>
+	/// <summary>The split view in the tree, for <see cref="Report"/>.</summary>
+	private static GameSplitView? Current { get; set; }
+
+	/// <summary>
+	/// Each camera that can draw 3D and the per-view slots its effects hold now: the window's, player one's and
+	/// player two's. On a drawn split the window draws no 3D and its effects claim no slot
+	/// (Refii.Core.Engine_Views.MayClaimViewSlot); each half holds its own view's slots.
+	/// </summary>
+	private System.Collections.Generic.List<object?> SlotOwners()
+	{
+		var rows = new System.Collections.Generic.List<object?>();
+		Camera3D?[] cameras = { _window, _cameras[0], _cameras[1] };
+		string[] names = { "window", "playerOne", "playerTwo" };
+		for (int i = 0; i < cameras.Length; i++)
+		{
+			if (cameras[i] is not { } camera || !GodotObject.IsInstanceValid(camera))
+			{
+				continue;
+			}
+
+			var row = new System.Collections.Generic.Dictionary<string, object?>
+			{
+				["camera"] = names[i],
+				["compositorAttached"] = camera.Compositor is not null,
+			};
+			if (camera.Compositor is { } compositor)
+			{
+				foreach (CompositorEffect effect in compositor.CompositorEffects)
+				{
+					switch (effect)
+					{
+						case Refii.Lighting.Engine_ScreenSpaceAoEffect ao:
+							row["ssao"] = $"view {ao.View}{(ao.HoldsViewSlot ? " held" : "")}";
+							break;
+						case Refii.Fx.Engine_FxDepthCaptureEffect depth:
+							row["depth"] = $"view {depth.View}{(depth.HoldsViewSlot ? " held" : "")}";
+							break;
+						case Refii.Lighting.Engine_PostFxEffect post:
+							row["postFx"] = $"view {post.View}{(post.HoldsViewSlot ? " held" : "")}";
+							break;
+					}
+				}
+			}
+
+			rows.Add(row);
+		}
+
+		return rows;
+	}
+
 	public static System.Collections.Generic.Dictionary<string, object?> Report()
 	{
 		bool stated = TetherStated(out float distance, out float separation);
@@ -317,6 +377,11 @@ public partial class GameSplitView : CanvasLayer
 			["guestSplit"] = GuestSplit,
 			["hybridSplit"] = HybridSplit,
 			["swapProgress"] = SwapProgress,
+			["partnerFadeBook"] = Refii.Entities.Engine_ViewFade.BookCount,
+			["perViewFades"] = Refii.Entities.Engine_ViewFade.PerViewCount,
+			["viewSlots"] = Current?.SlotOwners(),
+			["perViewFadesEntered"] = Refii.Entities.Engine_ViewFade.Entered,
+			["perViewFadesLeft"] = Refii.Entities.Engine_ViewFade.Left,
 			["tetherSerial"] = HostBridge.Stated(HostBridge.StatedValue.CoopTetherSerial),
 			["tetherDistance"] = stated ? distance : null,
 			["tetherSeparation"] = stated ? separation : null,
@@ -538,7 +603,7 @@ public partial class GameSplitView : CanvasLayer
 				Far = 20_000f,
 				KeepAspect = Camera3D.KeepAspectEnum.Width,
 				Attributes = Refii.Lighting.Engine_LevelLighting.BuildCameraAttributes(),
-				Compositor = Refii.Lighting.Engine_LevelLighting.BuildCompositor(player),
+				Compositor = Refii.Lighting.Engine_LevelLighting.BuildCompositor(player, splitCamera: true),
 			};
 			camera.Current = true;
 			view.AddChild(camera);

@@ -2068,11 +2068,15 @@ public static class Engine_UiGameTemplates
         "logo",
         "White",
         "PressStart",
-        "Legal"
+        "Legal",
+        "Component",
+        "Component2",
+        "Component3"
       ],
       "ownedElsewhere": [
         "dialog"
-      ]
+      ],
+      "glints": "intensity"
     },
     "1012": {
       "name": "backdrop",

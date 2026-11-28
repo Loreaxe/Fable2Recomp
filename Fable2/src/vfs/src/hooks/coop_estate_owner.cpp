@@ -68,12 +68,14 @@
 
 /// Player two brought a hero (a character from a save) rather than standing as the plain henchman.
 extern "C" int RefiiCoopGetOwnHero(void);
+extern "C" uint8_t* RefiiGuestBase(void);
 /// mod_events.cpp: on the online host, hero two's use target as the joiner states it.
 extern "C" int32_t refii_household_joiner_use_target(PPCContext* ctx, uint8_t* base, uint32_t comp77, uint32_t* out);
 
 PPC_EXTERN_FUNC(__imp__rex_CECBuilding_Owner);
 PPC_EXTERN_FUNC(__imp__rex_CECUseTarget_Target);
 PPC_EXTERN_FUNC(__imp__rex_lhEntity_DisplayName);
+PPC_EXTERN_FUNC(__imp__rex_lhStats_GetTitle);
 
 namespace {
 
@@ -104,6 +106,43 @@ Session g_open;
 /// Inside a partner's screen: the owner's comp77 and the sign it answers.
 thread_local uint32_t t_owner_use = 0u;
 thread_local uint32_t t_owner_target = 0u;
+
+/// Inside a partner's screen bound to the viewer (kViewerOwnersProperties): the owner's player, and how
+/// deep the lend is (only the outermost scope lends and restores).
+thread_local int32_t t_lend_owner = 0;
+thread_local uint32_t t_lend_depth = 0u;
+
+/// The (kind, component) pair entry the guest reads for `entity`'s component `kind`, its address: the
+/// entity's index table at +0x8C (a byte per kind naming the pair, `lbz r10,<kind>(r11)`), the pairs from
+/// +0x48 to +0x4C, 8 bytes each with the component at +4 (`lwz r11,0x48(r6) ; rotlwi r10,r10,3 ; add ;
+/// lwz …,4(r9)`, the binding 0x826B1ABC..0x826B1AD0 / disc 0x82596D6C), else the pairs searched by kind
+/// (the binding's own fallback, 0x826B1AE0..0x826B1B94). 0 when the entity has no such component: the
+/// presence bit `entity+0x24 + kind/32·4`, bit kind%32 (`lwz r11,0x2C(r6) ; extrwi r10,r11,1,18` for 77).
+uint32_t PairSlot(uint8_t* base, uint32_t entity, uint32_t kind) {
+  using refii::vfs::LoadGuestU32;
+  if (!Heap(entity) || kind >= 256u ||
+      ((LoadGuestU32(base, entity + 0x24u + (kind / 32u) * 4u) >> (kind % 32u)) & 1u) == 0u) {
+    return 0u;
+  }
+  const uint32_t pairs = LoadGuestU32(base, entity + 0x48u);
+  const uint32_t end = LoadGuestU32(base, entity + 0x4Cu);
+  if (!Heap(pairs) || end < pairs || end - pairs > 8u * 512u) {
+    return 0u;
+  }
+  const uint32_t index = LoadGuestU32(base, entity + 0x8Cu);
+  if (Heap(index)) {
+    const uint32_t at = pairs + 8u * base[index + kind];
+    if (at + 8u <= end && LoadGuestU32(base, at) == kind) {
+      return at;
+    }
+  }
+  for (uint32_t at = pairs; at + 8u <= end; at += 8u) {
+    if (LoadGuestU32(base, at) == kind) {
+      return at;
+    }
+  }
+  return 0u;
+}
 
 }  // namespace
 
@@ -140,11 +179,41 @@ EstateTargetScope::EstateTargetScope(uint32_t screen) : use_(t_owner_use), targe
     t_owner_use = facts->owner_use;
     t_owner_target = facts->target;
   }
+  // THE OWNER'S PROPERTIES IN THE VIEWER'S PLACE (mod_events.cpp RefiiEstateBuyerOpens, kViewerOwnersProperties):
+  // the viewer's comp69 pair points at the owner's properties until the outermost scope ends, so the screen's
+  // own reads of its bound hero's properties are the owner's. Nothing outside the screen's four slots
+  // (OnEnter, Update, OnMenuEvent, the confirm) runs inside the scope.
+  uint8_t* base = RefiiGuestBase();
+  if (facts == nullptr || base == nullptr || facts->access != static_cast<uint8_t>(refii::coop::EstateAccess::kPartner) ||
+      facts->lend_hero == 0u || facts->lend_props == 0u) {
+    return;
+  }
+  if (t_lend_depth++ != 0u) {
+    nested_ = true;  // an outer scope lent it
+    return;
+  }
+  lent_slot_ = PairSlot(base, facts->lend_hero, 69u);
+  if (lent_slot_ != 0u) {
+    lent_was_ = refii::vfs::LoadGuestU32(base, lent_slot_ + 4u);
+    refii::mods::StoreU32(base, lent_slot_ + 4u, facts->lend_props);
+    t_lend_owner = facts->owner;
+  }
+  counted_ = true;
 }
 
 EstateTargetScope::~EstateTargetScope() {
   t_owner_use = use_;
   t_owner_target = target_;
+  if (!counted_ && !nested_) {
+    return;
+  }
+  --t_lend_depth;
+  if (counted_ && lent_slot_ != 0u) {
+    if (uint8_t* base = RefiiGuestBase()) {
+      refii::mods::StoreU32(base, lent_slot_ + 4u, lent_was_);
+    }
+    t_lend_owner = 0;
+  }
 }
 
 int32_t EstateOwnerPlayer(const PPCContext& ctx, uint8_t* base, uint32_t building) {
@@ -439,4 +508,42 @@ REX_EXTERN(rex_lhEntity_DisplayName) {
     return;
   }
   __imp__rex_lhEntity_DisplayName(ctx, base);
+}
+
+// PAGE 1'S OWNER CAPTION ON A PARTNER'S SCREEN BOUND TO THE VIEWER (kViewerOwnersProperties). With the owner's
+// properties lent, page 1's owned test on its hero (`bl sub_828D14E8` 0x829994E8 / disc 0x828EDDF8) answers
+// owned, and an owned page names its hero by `Lua_Stats_GetTitle(out, hero's comp57)` (TU1 `sub_824D8A10` /
+// disc `sub_8249FB88`, 0x98 bytes each; its three calls in page 1 at 0x829995DC / 0x82999690 / 0x829996A8,
+// disc 0x828EDEEC / 0x828EDFA0 / 0x828EDFB8, each followed by `b loc_82999708` / `b loc_828EE018`, the
+// caption's `sub_8230E0E8(wide, &tag)`). The bound hero is the viewer, so there the caption is the OWNER's
+// title: this machine's own hero's, or the other machine's as it states it (`refii.title`, StateOwnTitle),
+// made into the CharString the call returns (`*out` the rep, as `lhCharString_CtorFromCStr` makes it). A
+// titleless owner gives the empty tag, as page 1 does for a titleless viewer.
+REX_EXTERN(rex_lhStats_GetTitle) {
+  const uint32_t ret = static_cast<uint32_t>(ctx.lr);
+  if (t_lend_owner == 0 || (ret != refii::guest::Address(0x829995E0u) && ret != refii::guest::Address(0x82999694u) &&
+                            ret != refii::guest::Address(0x829996ACu))) {
+    __imp__rex_lhStats_GetTitle(ctx, base);
+    return;
+  }
+  const uint32_t out = ctx.r3.u32;
+  const int32_t owner = t_lend_owner;
+  std::string tag;
+  if (refii_mod_player_here(owner) != 0) {
+    tag = TitleTag(ctx, base, refii_mod_player_hero(base, owner));
+  } else {
+    char stated[REFII_MOD_PLAYER_TEXT_MAX + 1] = {};
+    if (refii_bridge_player_get_text(owner, kTitleKey, sizeof(kTitleKey) - 1u, stated, sizeof(stated)) >= 0) {
+      tag = stated;
+    }
+  }
+  PPCContext frame = refii::mods::Frame(ctx, 0x300u);
+  const uint32_t chars = (frame.r1.u32 + 0x100u) & ~0xFu;
+  std::memcpy(base + chars, tag.c_str(), tag.size() + 1u);
+  PPCContext make = frame;
+  make.r3.u64 = out;
+  make.r4.u64 = chars;
+  make.r5.s64 = -1;
+  rex_lhCharString_CtorFromCStr(make, base);
+  ctx.r3.u64 = out;
 }

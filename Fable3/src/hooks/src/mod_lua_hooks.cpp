@@ -1913,6 +1913,30 @@ REFII_F3_NATIVE(NativePartnerPlayerIcons) {
   g_results = 0;
 }
 
+/// Refii._partner_camera_alphas(e1, a1, e2, a2, ...): player two's camera's fade book, stated whole at the end of
+/// each of its fade-ups by Fable3CoreLua.cs's wrap (its SetCameraAlpha calls write no guest field); no arguments
+/// empties it. Each entity is a game Entity userdata or a handle (EntityArgument); one that resolves to nothing
+/// is left out. Read by the shell for player two's half (core/payload_bridge.h).
+REFII_F3_NATIVE(NativePartnerCameraAlphas) {
+  constexpr int32_t kMaxPairs = 512;
+  uint32_t entities[kMaxPairs];
+  float alphas[kMaxPairs];
+  uint32_t count = 0u;
+  const int32_t top = lua.Top();
+  for (int32_t index = 1; index + 1 <= top && count < static_cast<uint32_t>(kMaxPairs); index += 2) {
+    const uint32_t entity = EntityArgument(lua, index);
+    if (entity == 0u) {
+      continue;
+    }
+    const double alpha = lua.Number(index + 1);
+    entities[count] = entity;
+    alphas[count] = static_cast<float>(alpha < 0.0 ? 0.0 : alpha > 1.0 ? 1.0 : alpha);
+    ++count;
+  }
+  refii_bridge_partner_camera_alphas_set(entities, alphas, count);
+  g_results = 0;
+}
+
 /// Refii._camera_player_icons(on): true around a camera's own GUI.SetShouldDrawPlayerIcons (SACCamera:Activate /
 /// :Deactivate, Fable3CoreLua.cs's wrap), so the native's send to the session's partner is skipped: a camera's
 /// switch is its own machine's (coop_player_icons.cpp RefiiF3PlayerIconsStayHere).
@@ -2786,6 +2810,7 @@ Native g_natives[] = {
     {"_partner_camera_manager", &NativePartnerCameraManager, 0u},
     {"_partner_screen", &NativePartnerScreen, 0u},
     {"_partner_player_icons", &NativePartnerPlayerIcons, 0u},
+    {"_partner_camera_alphas", &NativePartnerCameraAlphas, 0u},
     {"_camera_player_icons", &NativeCameraPlayerIcons, 0u},
 };
 

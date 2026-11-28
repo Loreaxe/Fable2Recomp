@@ -805,7 +805,62 @@ public sealed partial class Engine_HudView : Node3D, IEvaluatedExpressionHud
         }
 
         FinishBuild(missing, unplaced);
+        TrackGlints();
         Rebuilt?.Invoke(this);
+    }
+
+    /// <summary>
+    /// THE GUI GLINTS this view draws (<see cref="Engine_UiParticles"/>): the title's opacity
+    /// channel, or null for a view that draws none (the editor's previews, the labs). Set before
+    /// <see cref="Build"/>.
+    /// </summary>
+    public Engine_UiParticles.OpacityChannel? Glints { get; init; }
+
+    private Engine_UiParticles? _glints;
+
+    /// <summary>The view's glint driver once a build found a glint element, else null — where a title's one-shots go.</summary>
+    public Engine_UiParticles? GlintDriver => _glints;
+
+    /// <summary>
+    /// Hands the glint driver every piece cut from the guest's own document, each with the element
+    /// its state is keyed to — a player-two view's pieces included: they are the document's widgets
+    /// keyed to player two's elements, the guest's own. NOT a copy (<see cref="Built.Origin"/>: a mod's
+    /// copy of a shipped piece, a mod meter in the game's art): a glint is the guest's CHUDParticle
+    /// component, which exists for the guest's elements only; a copy carries the original's
+    /// `ParticleEffect` attribute but no component, and re-dressed (the health orb as the will or
+    /// stamina orb) it would put the heart's glint on art that is not the heart.
+    /// </summary>
+    private void TrackGlints()
+    {
+        if (Glints is not { } channel || Screen is not { } screen)
+        {
+            return;
+        }
+
+        if (_glints is null)
+        {
+            if (System.Array.TrueForAll(Engine_UiParticles.EffectsOf(screen), effect => effect is null))
+            {
+                return;
+            }
+
+            _glints = new Engine_UiParticles { Name = "Glints", Channel = channel, Label = Name, Resolve = () => Resolve };
+            AddChild(_glints);
+        }
+
+        var roots = new List<(Node3D Root, System.Func<int, int>? StateOf)>(_built.Count);
+        foreach (Built built in _built)
+        {
+            if (built.Origin is not null)
+            {
+                continue;
+            }
+
+            System.Func<int, int>? stateOf = built.Keys is null ? null : built.StateOf;
+            roots.Add((built.Node, stateOf));
+        }
+
+        _glints.Track(screen, roots);
     }
 
     /// <summary>

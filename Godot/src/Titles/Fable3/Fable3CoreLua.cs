@@ -1280,6 +1280,71 @@ function Refii._wrap_coop_camera()
 			end
 		end
 	end
+	-- A CAMERA'S FADE IS ITS OWN VIEW'S. A camera fades what stands near it (camerabase.lua 329-390):
+	-- FadeEntityBasedOnPositionIfNeeded sets GraphicAppearance.SetCameraAlpha(e, clamp((d2D - r) / r)) for
+	-- CameraManager.GetFadedCameraObjects(self.CurrentPosition, r * 2) and a mode's own hero, and
+	-- FadeUpEntitiesIfNeeded takes every entry not faded this frame back up by 0.05 a frame. What it faded is
+	-- kept in ONE class table, CameraBase.FadedEntities, and the setter writes ONE field per entity, the
+	-- renderable's camera alpha +0x80 (Lua_GraphicAppearance_SetCameraAlpha `stfs f31,0x80(r31)` TU3 0x826B2378,
+	-- disc 0x82688658), which every view draws. The shipped couch screen had one camera; player two's manager
+	-- updates after player one's on every couch screen, shared or split. So player two's update
+	-- (CC.PartnerUpdating):
+	--  - keeps its own book: CameraBase.FadedEntities is player two's around its fade calls, one book per
+	--    manager (CC.PartnerManager), so neither camera's fade-up runs the other camera's entries;
+	--  - writes no camera alpha: the field holds player one's camera's fades, the one camera of the shipped
+	--    screen, and the shared picture is player one's camera;
+	--  - states its book whole at the end of each fade-up (Refii._partner_camera_alphas(e1, a1, e2, a2, ...)),
+	--    which player two's half draws while split (Godot Engine_ViewFade).
+	function CC.FadeBook()
+		local manager = CC.PartnerManager()
+		if CC.PartnerFaded == nil or CC.PartnerFadedManager ~= manager then
+			CC.PartnerFaded, CC.PartnerFadedManager = {}, manager
+			if Refii._partner_camera_alphas ~= nil then Refii._partner_camera_alphas() end
+		end
+		return CC.PartnerFaded
+	end
+	function CC.StateFadeBook()
+		if Refii._partner_camera_alphas == nil then return end
+		local words, n = {}, 0
+		for _, entry in pairs(CC.PartnerFaded or {}) do
+			if type(entry) == "table" and entry.Entity ~= nil and type(entry.FadeAmount) == "number" and entry.Entity:IsAlive() then
+				words[n + 1], words[n + 2] = entry.Entity, math.min(entry.FadeAmount, 1)
+				n = n + 2
+			end
+		end
+		Refii._partner_camera_alphas((table.unpack or unpack)(words, 1, n))
+	end
+	if type(CameraBase) == "table" then
+		Refii._coop_camera_fade = Refii._coop_camera_fade or {}
+		for _, name in ipairs({ "FadeEntityBasedOnPositionIfNeeded", "FadeUpEntitiesIfNeeded" }) do
+			local shipped = CameraBase[name]
+			if type(shipped) == "function" and shipped ~= Refii._coop_camera_fade[name] then
+				local fadeUp = name == "FadeUpEntitiesIfNeeded"
+				local wrap = function(self, ...)
+					if not CC.PartnerUpdating() then return shipped(self, ...) end
+					local own = CameraBase.FadedEntities
+					CameraBase.FadedEntities = CC.FadeBook()
+					local ok, a, b, c, d = pcall(shipped, self, ...)
+					CC.PartnerFaded = CameraBase.FadedEntities
+					CameraBase.FadedEntities = own
+					if not ok then error(a, 0) end
+					if fadeUp then pcall(CC.StateFadeBook) end
+					return a, b, c, d
+				end
+				Refii._coop_camera_fade[name] = wrap
+				CameraBase[name] = wrap
+			end
+		end
+	end
+	if type(GraphicAppearance) == "table" and type(GraphicAppearance.SetCameraAlpha) == "function" and
+			GraphicAppearance.SetCameraAlpha ~= Refii._coop_camera_alpha then
+		local shipped = GraphicAppearance.SetCameraAlpha
+		Refii._coop_camera_alpha = function(...)
+			if CC.PartnerUpdating() then return end
+			return shipped(...)
+		end
+		GraphicAppearance.SetCameraAlpha = Refii._coop_camera_alpha
+	end
 end
 Refii._wrap_camera()
 function Refii.host_serial(serial) return serial end

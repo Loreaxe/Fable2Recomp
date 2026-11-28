@@ -120,6 +120,18 @@ public partial class GameWorld : Node3D
 	public static bool ShouldEnableSceneRendering(bool hasActiveWorld, bool coverHeld, bool readyForWarmupAndSettle) =>
 		hasActiveWorld;
 
+	/// <summary>
+	/// Whether the window's own 3D pass draws: the scene renders, and the screen is not split. While
+	/// <see cref="GameSplitView.Active"/> the halves are the two players' SubViewports and the window draws no 3D
+	/// (GameSplitView.Draw). Asked every frame here, so this frame's write keeps the split's: a write of the scene's
+	/// answer alone turned the window's pass back on the frame after every split, and it ran under the halves with
+	/// its own compositor, whose view-0 effects (Engine_ScreenSpaceAoEffect, Engine_PostFxEffect,
+	/// Engine_FxDepthCaptureEffect) then took the view-0 globals from player one's half each frame: player one's
+	/// half sampled the window camera's ambient occlusion, exposure and depth, laid over its own picture at the
+	/// window's projection. Pure.
+	/// </summary>
+	public static bool WindowDraws3D(bool sceneRendering, bool splitDrawn) => sceneRendering && !splitDrawn;
+
 	/// <summary>True when root 3D quality upscaling/AA (FSR2, FXAA, MSAA) should be active for the world.</summary>
 	public static bool ShouldEnableWorldQualityAndEffects(bool hasActiveWorld, bool coverHeld, bool readyForWarmupAndSettle) =>
 		hasActiveWorld && (!coverHeld || readyForWarmupAndSettle);
@@ -640,7 +652,8 @@ public partial class GameWorld : Node3D
 		}
 		if (_cachedRootViewport is { } rootViewport)
 		{
-			bool disable3D = !ShouldEnableSceneRendering(HasActiveWorld, CoverHeld, ReadyForWarmupAndSettle);
+			bool disable3D = !WindowDraws3D(
+				ShouldEnableSceneRendering(HasActiveWorld, CoverHeld, ReadyForWarmupAndSettle), GameSplitView.Active);
 			if (rootViewport.Disable3D != disable3D)
 			{
 				rootViewport.Disable3D = disable3D;

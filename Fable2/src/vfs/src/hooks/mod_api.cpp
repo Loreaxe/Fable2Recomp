@@ -373,6 +373,7 @@ void RunModTicks(PPCContext& ctx, uint8_t* base) {
   }
 
   DriveHouseholds(ctx, base, seconds);
+  DriveWorldState(ctx, base, seconds);
   PumpActionInterrupts(ctx, base);
   refii_mod_run_ticks(&ctx, base, seconds);
   RunModEventsTick(ctx, base, seconds);

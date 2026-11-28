@@ -80,6 +80,12 @@ public partial class Engine_PostFxEffect : CompositorEffect
     private static ImageTexture? _placeholderTexture;
     private static readonly Engine_PostFxEffect?[] _publishers = new Engine_PostFxEffect?[2];
 
+    /// <summary>Built for a split camera (GameSplitView); the window camera's chain claims no slot while split.</summary>
+    public bool SplitCamera { get; set; }
+
+    /// <summary>Whether this chain holds its view's slot (the exposure global, its layers' snapshots) now: the debug channel's per-view owner read.</summary>
+    public bool HoldsViewSlot => View is >= 0 and < 2 && ReferenceEquals(System.Threading.Volatile.Read(ref _publishers[View]), this);
+
     // D3D12 / Intel Arc DXIL warning: never bind an uninitialized `new Texture2Drd()` (`TextureRdRid == default`)
     // to a global shader parameter. Shaders sample `fable_exposure_tex` before PostFX runs its first pass;
     // a null RID creates an unbound SRV descriptor on D3D12.
@@ -625,7 +631,8 @@ public partial class Engine_PostFxEffect : CompositorEffect
         Callable.From(() =>
         {
             System.Threading.Volatile.Write(ref _claimQueued, 0);
-            if (_disposed || !_ready || _exposureRd != exposureRid || !exposureRid.IsValid)
+            if (_disposed || !_ready || _exposureRd != exposureRid || !exposureRid.IsValid ||
+                !Refii.Core.Engine_Views.MayClaim(SplitCamera))
             {
                 return;
             }

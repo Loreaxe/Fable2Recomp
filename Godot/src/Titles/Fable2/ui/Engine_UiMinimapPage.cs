@@ -235,10 +235,11 @@ public static class Engine_UiMinimapPage
 		Shown && Engine_UiWorldMapPage.RegionOf(row) >= 0;
 
 	/// <summary>The highlighted region row's own minimap statement, when it has landed for that row; null
-	/// otherwise or while the page does not stand.</summary>
+	/// otherwise or while the page does not stand. Says once per statement what it is (SayDrawn), whether
+	/// or not the page is turned to.</summary>
 	private static Engine_UiPageFills.Fill? Stated(Engine_UiExpandableMenu.Item? row)
 	{
-		if (!Standing(row))
+		if (Engine_UiWorldMapPage.RegionOf(row) < 0)
 		{
 			_drawnFrom = null;
 			return null;
@@ -246,20 +247,26 @@ public static class Engine_UiMinimapPage
 
 		uint id = ((uint)row!.IdHigh << 16) | ((uint)row.IdLow & 0xFFFFu);
 		Engine_UiPageFills.Fill? fill = Engine_UiPageFills.ForRow(ScreenId, Scope, id);
-		SayDrawn(id, fill);
-		return fill;
+		SayDrawn(id, fill, Shown);
+		return Shown ? fill : null;
 	}
 
-	/// <summary>The statement the standing page last said it was drawn from (one line each).</summary>
+	/// <summary>The statement last said, and whether the page stood then (one line each).</summary>
 	private static Engine_UiPageFills.Fill? _drawnFrom;
 
+	private static bool _drawnStanding;
+
 	/// <summary>
-	/// WHAT THE PAGE IS DRAWN FROM, once per statement while it stands: the region row's own minimap
-	/// statement (its map image's texture and turn, its legend's texts and rows, the projection and the
-	/// icons) — or, before that row's statement has landed, that the page is blank. A run reads the source
-	/// of every map it showed from this line (the native side's `the minimap fill stated` names the same).
+	/// WHAT THE PAGE IS DRAWN FROM, once per statement and once more when the page is turned to: the
+	/// region row's own minimap statement (its map image's texture and turn, its legend's texts and rows,
+	/// the projection and the icons) — or, before that row's statement has landed, that the page is blank.
+	/// A run reads the source of every map it showed from this line (the native side's `the minimap fill
+	/// stated` names the same row). No icons and no projection is the fill's own answer for a region the hero
+	/// is not in, or one with no proper minimap (`lwz r10,0xB4(r11) ; cmplw cr6,r10,r23` 0x829AC864 / 0x829AC86C,
+	/// `beq` 0x829AC888; disc 0x828FED24 / 0x828FED2C / 0x828FED48): the map image and the legend are still the
+	/// statement's.
 	/// </summary>
-	private static void SayDrawn(uint id, Engine_UiPageFills.Fill? fill)
+	private static void SayDrawn(uint id, Engine_UiPageFills.Fill? fill, bool standing)
 	{
 		// The test host has no Godot runtime to print through.
 		if (Refii.Core.Engine_AppRoot.IsTestHost)
@@ -273,14 +280,31 @@ public static class Engine_UiMinimapPage
 			return;
 		}
 
-		if (ReferenceEquals(fill, _drawnFrom))
+		if (ReferenceEquals(fill, _drawnFrom) && standing == _drawnStanding)
 		{
 			return;
 		}
 
 		_drawnFrom = fill;
-		uint image = fill.Textures.TryGetValue(MapImage, out uint hash) ? hash : 0u;
-		float turn = fill.Rotations.TryGetValue(MapImage, out Vector3 rotation) ? rotation.Z : 0f;
+		_drawnStanding = standing;
+		uint image = 0u;
+		foreach ((string path, uint hash) in fill.Textures)
+		{
+			if (path.EndsWith(MapImage, System.StringComparison.Ordinal))
+			{
+				image = hash;
+			}
+		}
+
+		float turn = 0f;
+		foreach ((string path, Vector3 rotation) in fill.Rotations)
+		{
+			if (path.EndsWith(MapImage, System.StringComparison.Ordinal))
+			{
+				turn = rotation.Z;
+			}
+		}
+
 		int shown = 0;
 		foreach (bool on in fill.Shown.Values)
 		{
@@ -290,11 +314,13 @@ public static class Engine_UiMinimapPage
 		string projection = fill.Projection is { } map
 			? string.Create(CultureInfo.InvariantCulture,
 				$"north {map.DegreesToNorth:0.###} icon turn {map.IconRotation:0.###} offset ({map.IconOffset.X:0.###}, {map.IconOffset.Y:0.###}, {map.IconOffset.Z:0.###}) scale {map.IconScale:0.###} proper {map.Proper} extent {map.Extent:0.###}")
-			: "none";
-		Say(string.Create(CultureInfo.InvariantCulture,
-			$"[minimap-page] region row {id}: drawn from the guest's fill — map image {image:X8} turned {turn:0.###} rad, " +
-			$"{fill.Textures.Count} texture(s), {fill.Texts.Count} text(s), legend rows {shown} shown / " +
-			$"{fill.Shown.Count - shown} hidden, projection {projection}, {fill.Icons.Count} icon(s)"));
+			: "none (no icons: the hero is not in this region, or it has no proper minimap)";
+		string what = string.Create(CultureInfo.InvariantCulture,
+			$"map image {image:X8} turned {turn:0.###} rad, {fill.Textures.Count} texture(s), {fill.Texts.Count} text(s)");
+		string legend = string.Create(CultureInfo.InvariantCulture,
+			$"legend rows {shown} shown / {fill.Shown.Count - shown} hidden, {fill.Icons.Count} icon(s)");
+		Say($"[minimap-page] region row {id}: {(standing ? "drawn from" : "stated by")} the guest's fill — {what}, " +
+			$"{legend}, projection {projection}" + (standing ? string.Empty : "; the page draws it when the stick turns to the map"));
 	}
 
 	/// <summary>
@@ -307,6 +333,8 @@ public static class Engine_UiMinimapPage
 		var values = new Dictionary<string, string>(System.StringComparer.Ordinal);
 		if (!Standing(row))
 		{
+			// The statement's line is said while the row is up, turned to or not (SayDrawn).
+			Stated(row);
 			return values;
 		}
 

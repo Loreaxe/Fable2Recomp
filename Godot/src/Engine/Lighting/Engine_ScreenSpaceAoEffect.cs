@@ -61,6 +61,12 @@ public partial class Engine_ScreenSpaceAoEffect : CompositorEffect
 	/// </summary>
 	private static readonly Engine_ScreenSpaceAoEffect?[] _publishers = new Engine_ScreenSpaceAoEffect?[2];
 
+	/// <summary>Built for a split camera (GameSplitView); the window camera's effect claims no slot while split.</summary>
+	public bool SplitCamera { get; set; }
+
+	/// <summary>Whether this effect holds its view's slot (<c>fable_ssao_tex</c> / <c>_second</c>) now: the debug channel's per-view owner read.</summary>
+	public bool HoldsViewSlot => View is >= 0 and < 2 && ReferenceEquals(System.Threading.Volatile.Read(ref _publishers[View]), this);
+
 	private RenderingDevice? _rd;
 	private Rid _traceShader;
 	private Rid _tracePipeline;
@@ -308,7 +314,8 @@ public partial class Engine_ScreenSpaceAoEffect : CompositorEffect
 		{
 			System.Threading.Volatile.Write(ref _publishQueued, 0);
 			Rid current = _outAoTex;
-			if (_released || !_publishedValid || !current.IsValid || view is < 0 or >= 2)
+			if (_released || !_publishedValid || !current.IsValid || view is < 0 or >= 2 ||
+				!Refii.Core.Engine_Views.MayClaim(SplitCamera))
 			{
 				return;
 			}

@@ -63,6 +63,8 @@ REX_EXTERN(rex_lhGuiQueryScreen_Update) {
   if (!said.exchange(true)) {
     Said("villager card (10)", "Update", h, base[h + 0x20u]);
   }
+  // On an online joiner the card's opinion block is the host's (coop_villager_use.cpp JoinerCardTick).
+  refii::vfs::JoinerCardTick(ctx, base, h);
   if (base[h + 0x20u] == 0u || LoadU32(base, h + 0x4Cu) == 997u) {
     return;
   }

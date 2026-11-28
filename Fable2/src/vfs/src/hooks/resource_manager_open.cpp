@@ -214,7 +214,12 @@ REX_EXTERN(rex_lhGui_RunLuaString) {
       }
     }
 
-    refii::vfs::RunMenuChunk(chunk, presentation);
+    // The host's run of the shop for an online joiner (coop_shop_for_joiner.cpp) records nothing into this
+    // machine's presentation: its rows and marks went to the joiner's statement (the spawn sink).
+    const bool for_joiner = refii::vfs::JoinerShopRunning();
+    if (!for_joiner) {
+      refii::vfs::RunMenuChunk(chunk, presentation);
+    }
 
     // The capture's list boundary, keyed by the screen the guest states. `sub_826CE110` is the
     // class-level clear the pause and inventory paths reach; the logbook submits its
@@ -237,7 +242,9 @@ REX_EXTERN(rex_lhGui_RunLuaString) {
     // of the row just spawned; the answer is that row's place in this presentation's populate.
     if (chunk.find("g_Menu:GetLastItemIndex") != std::string::npos) {
       refii::vfs::AnswerParamNumber(
-          presentation, "Float1", static_cast<float>(refii::vfs::MenuLastSpawnOrdinal(presentation)));
+          presentation, "Float1",
+          static_cast<float>(for_joiner ? refii::vfs::JoinerShopLastSpawnOrdinal()
+                                        : refii::vfs::MenuLastSpawnOrdinal(presentation)));
     }
 
     // `g_Menu:GetMenuItemDataByName()` — `sub_823DF660` (disc `sub_8283F948`) runs it at
@@ -246,7 +253,7 @@ REX_EXTERN(rex_lhGui_RunLuaString) {
     // not got gets the script's own miss, "No Text Tag" (`expandablemenu.lua`).
     if (chunk.find("g_Menu:GetMenuItemDataByName") != std::string::npos) {
       std::string text_tag;
-      if (!refii::vfs::MenuByNameTextTag(presentation, &text_tag)) {
+      if (for_joiner || !refii::vfs::MenuByNameTextTag(presentation, &text_tag)) {
         static std::atomic<uint64_t> missed{0};
         const uint64_t m = missed.fetch_add(1, std::memory_order_relaxed) + 1u;
         if (m <= 16u || (m & (m - 1u)) == 0u) {

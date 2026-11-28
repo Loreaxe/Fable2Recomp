@@ -68,6 +68,26 @@ constexpr bool EstateOwnerCopyServes(bool has_properties, bool has_targeting) {
   return has_properties && has_targeting;
 }
 
+/// How a partner's screen is bound on this machine (RefiiEstateBuyerOpens):
+///   kOwner — to the owner's hero (it carries properties and targeting): the owner's rows on the owner's
+///            hero, the owner's use target answered as the viewer's sign (E2);
+///   kViewerOwnersProperties — the owner's hero here has its properties but no targeting (an online
+///            joiner's copy of the host's hero has no component 77, as a run logged it): the
+///            screen is the viewer's own hero (its targeting is the sign it used, its input, its purse),
+///            with the owner's properties lent in place of the viewer's while the screen runs, and every
+///            action forwarded to the host, which runs it for the owner;
+///   kNone  — neither: the page only.
+enum class EstatePartnerBinding : uint8_t { kOwner, kViewerOwnersProperties, kNone };
+
+constexpr EstatePartnerBinding EstatePartnerBindingFor(bool owner_properties, bool owner_targeting,
+                                                       bool viewer_properties, bool viewer_targeting) {
+  if (EstateOwnerCopyServes(owner_properties, owner_targeting)) {
+    return EstatePartnerBinding::kOwner;
+  }
+  return owner_properties && viewer_properties && viewer_targeting ? EstatePartnerBinding::kViewerOwnersProperties
+                                                                   : EstatePartnerBinding::kNone;
+}
+
 }  // namespace refii::coop
 
 #endif

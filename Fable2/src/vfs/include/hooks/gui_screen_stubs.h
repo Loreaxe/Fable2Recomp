@@ -105,6 +105,9 @@ bool DispatchRealEstateClose(PPCContext& ctx, uint8_t* base, uint32_t player);
 /// arrest stated just before it becomes the open screen's.
 void CrimeScreenOpening();
 
+/// The arrested player (1 or 2) of the crime screen up or opening, 0 when its opener was no arrest.
+uint32_t CrimeArrestedPlayer();
+
 /// `Crime:<p>:pay|resist|service` — a crime row's A: the handler's own OnMenuEvent with that row's
 /// event (50 / 51 / 52); its gates, its message and its exit are the guest's.
 bool DispatchCrime(PPCContext& ctx, uint8_t* base, uint32_t player, const std::string& choice);

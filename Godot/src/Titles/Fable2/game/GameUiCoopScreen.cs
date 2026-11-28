@@ -243,6 +243,7 @@ public partial class GameUi
 				GD.Print("[game-ui] co-op save fan down");
 			}
 
+			_coopPickerCursorSaid = -1;
 			return;
 		}
 
@@ -284,8 +285,38 @@ public partial class GameUi
 			FillCoopSaveFan(book, state);
 		}
 
-		_coopSaveCards.Select(CoopPicker(state).Cursor);
+		int cursor = CoopPicker(state).Cursor;
+		_coopSaveCards.Select(cursor);
+		SayCoopPickerCursor(state, cursor);
 		PointCoopSaveFan(state);
+	}
+
+	/// <summary>The cursor the fan last said it lifted, -1 while the fan is down.</summary>
+	private int _coopPickerCursorSaid = -1;
+
+	/// <summary>
+	/// Names the save under the picker's cursor whenever it moves: its index, its caption and its page,
+	/// and who holds the cursor — the guest on its six, this past them (Engine_CoopSavePicker).
+	/// </summary>
+	private void SayCoopPickerCursor(Engine_UiCoopStated.State state, int cursor)
+	{
+		if (cursor == _coopPickerCursorSaid || cursor < 0 || cursor >= state.Saves.Count)
+		{
+			return;
+		}
+
+		_coopPickerCursorSaid = cursor;
+		GD.Print($"[game-ui] co-op picker: cursor on save {cursor} of {state.Saves.Count} " +
+			$"'{CoopCaption(state.Saves[cursor].Text)}' — page " +
+			$"{Engine_FrontEndSavePages.PageOf(cursor) + 1}/{Engine_FrontEndSavePages.PageCount(state.Saves.Count)}, " +
+			$"{(_coopPickerOwned is null ? "the guest's cursor" : "held past the guest's six")}");
+	}
+
+	/// <summary>A card's caption as the log names it: its first line (the hero and the region).</summary>
+	private static string CoopCaption(string text)
+	{
+		int end = text.IndexOf('\n');
+		return end < 0 ? text : text[..end];
 	}
 
 	private void FillCoopSaveFan(Engine_UiOwnedBook book, Engine_UiCoopStated.State state)
@@ -325,9 +356,15 @@ public partial class GameUi
 		_coopSaveCards.DimmedSave = state.OwnSave;
 		_coopSaveCards.Select(CoopPicker(state).Cursor);
 		_coopSaveCards.Visible = true;
+		var order = new System.Text.StringBuilder();
+		for (int i = 0; i < state.Saves.Count; ++i)
+		{
+			order.Append(i == 0 ? string.Empty : " | ").Append(i).Append(" '").Append(CoopCaption(state.Saves[i].Text)).Append('\'');
+		}
+
 		GD.Print($"[game-ui] co-op save fan: {saves.Count} save(s) from card {baseSlot}, " +
 			$"{portraits} portrait(s), cursor {CoopPicker(state).Cursor}, steps over {state.OwnSave} — " +
-			_coopSaveCards.Describe());
+			_coopSaveCards.Describe() + " — in order: " + order);
 	}
 
 	/// <summary>

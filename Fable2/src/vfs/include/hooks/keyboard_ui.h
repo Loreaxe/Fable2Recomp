@@ -17,6 +17,9 @@ inline constexpr char kKeyboardCancelAction[] = "keyboard-cancel";
 /// cancelled. False when no keyboard is open.
 bool AnswerKeyboardUi(uint8_t* base, const char* text);
 
+/// A keyboard request is up, its answer not given yet (the platform keyboard is asking the player).
+bool KeyboardUiPending();
+
 }  // namespace refii::vfs
 
 #endif

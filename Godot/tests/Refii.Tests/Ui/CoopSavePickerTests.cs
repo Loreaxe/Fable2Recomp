@@ -168,4 +168,114 @@ public class CoopSavePickerTests
 		AssertThat(edges.Feed(false, false, false, false, false, 0, 0, 0)).IsEqual(Press.None);
 		AssertThat(edges.Feed(false, false, false, false, false, 0, 0, 24576)).IsEqual(Press.Right);
 	}
+
+	/// <summary>
+	/// One press as the whole picker answers it: this side's outcome, and where it leaves the press
+	/// to the guest, the guest's own answer — its loop steps over player one's save, its setter keeps
+	/// <c>0 &lt;= N &lt; min(count, 6)</c>, its A commits its cursor when the header parsed.
+	/// </summary>
+	private static (int Guest, int? Owned, int Commit) Answer(int saves, int own, uint valid, int guest, int? owned, Press press)
+	{
+		var picker = new Picker(saves, guest, own, valid, owned);
+		Engine_CoopSavePicker.Outcome outcome = Engine_CoopSavePicker.Apply(picker, press);
+		if (outcome.Taken)
+		{
+			return (outcome.GuestCursor >= 0 ? outcome.GuestCursor : guest, outcome.Owned, outcome.Commit);
+		}
+
+		if (press is Press.Left or Press.Right)
+		{
+			int to = Engine_CoopSavePicker.Step(guest, press == Press.Right ? 1 : -1, saves, own);
+			return (to >= 0 && to < System.Math.Min(saves, Engine_CoopSavePicker.GuestCards) ? to : guest, owned, -1);
+		}
+
+		return (guest, owned, press == Press.Accept && picker.IsValid(guest) ? guest : -1);
+	}
+
+	/// <summary>Every save the cursor stands on walking one way from <paramref name="guest"/> until it stops.</summary>
+	private static System.Collections.Generic.List<int> Walk(int saves, int own, int guest, int? owned, Press press)
+	{
+		var seen = new System.Collections.Generic.List<int> { owned ?? guest };
+		for (int i = 0; i < saves + 2; ++i)
+		{
+			(guest, owned, _) = Answer(saves, own, 0xFFu, guest, owned, press);
+			if ((owned ?? guest) == seen[^1])
+			{
+				break;
+			}
+
+			seen.Add(owned ?? guest);
+		}
+
+		return seen;
+	}
+
+	/// <summary>
+	/// SEVEN SAVES WITH PLAYER ONE'S LEFT OUT (local co-op: the host's listing omits the save player
+	/// one plays, so the opener states seven and steps over none). The run of 2026-11-28 18:07: the
+	/// guest kept its cursor on save 1 from the open before, save 0 is the newest — the save player
+	/// two had just quit — and saves 5 and 6 stand on page 2. Every save is reached with the D-pad or
+	/// the stick (one press type), the page buttons and the pointer, and chosen with A or a click.
+	/// </summary>
+	[TestCase]
+	public void SevenSavesWithPlayerOnesLeftOutAreEveryOneReachedAndChosen()
+	{
+		const int saves = 7;
+		const uint valid = 0x7Fu;
+
+		// Left from the kept cursor reaches save 0; right from there every save in turn, the
+		// seventh held here past the guest's six; left walks all the way back.
+		AssertThat(Walk(saves, -1, 1, null, Press.Left)).ContainsExactly(1, 0);
+		AssertThat(Walk(saves, -1, 0, null, Press.Right)).ContainsExactly(0, 1, 2, 3, 4, 5, 6);
+		AssertThat(Walk(saves, -1, 5, 6, Press.Left)).ContainsExactly(6, 5, 4, 3, 2, 1, 0);
+
+		// A chooses the save under the cursor, the guest's on its six and this side's past them.
+		for (int save = 0; save < Engine_CoopSavePicker.GuestCards; ++save)
+		{
+			AssertThat(Answer(saves, -1, valid, save, null, Press.Accept).Commit).IsEqual(save);
+		}
+
+		AssertThat(Answer(saves, -1, valid, 5, 6, Press.Accept).Commit).IsEqual(6);
+
+		// Five to a page: page 2 holds saves 5 and 6, on cards 3 and 4.
+		AssertThat(Engine_FrontEndSavePages.PageCount(saves)).IsEqual(2);
+		AssertThat(Engine_FrontEndSavePages.FirstOn(1)).IsEqual(5);
+		AssertThat(Engine_FrontEndSavePages.CountOn(saves, 1)).IsEqual(2);
+		AssertThat(Engine_FrontEndSavePages.BaseSlot(2)).IsEqual(3);
+
+		// The page buttons: from save 1 to save 5, nothing past page 2, back to save 4.
+		(int guest, int? owned, _) = Answer(saves, -1, valid, 1, null, Press.PageNext);
+		AssertThat(guest).IsEqual(5);
+		AssertThat(owned is null).IsTrue();
+		(guest, owned, _) = Answer(saves, -1, valid, 5, null, Press.PageNext);
+		AssertThat(guest).IsEqual(5);
+		AssertThat(owned is null).IsTrue();
+		(guest, owned, _) = Answer(saves, -1, valid, 5, 6, Press.PagePrevious);
+		AssertThat(guest).IsEqual(4);
+		AssertThat(owned is null).IsTrue();
+
+		// The pointer: on the guest's six its own presses walk there, past them this takes it; a click chooses.
+		for (int save = 0; save < Engine_CoopSavePicker.GuestCards; ++save)
+		{
+			AssertThat(Engine_CoopSavePicker.Point(new Picker(saves, 1, -1, valid, null), save, true).Taken).IsFalse();
+			AssertThat(Engine_CoopSavePicker.Presses(1, save, saves, -1)).IsEqual(save - 1);
+		}
+
+		Engine_CoopSavePicker.Outcome seventh = Engine_CoopSavePicker.Point(new Picker(saves, 1, -1, valid, null), 6, true);
+		AssertThat(seventh.Owned).IsEqual(6);
+		AssertThat(seventh.Commit).IsEqual(6);
+	}
+
+	/// <summary>
+	/// Eight saves with player one's kept in the listing and stepped over: seven reached either way,
+	/// wherever player one's stands — before the guest's edge, or on its sixth.
+	/// </summary>
+	[TestCase]
+	public void PlayerOnesSaveSteppedOverLeavesSevenReached()
+	{
+		AssertThat(Walk(8, 2, 0, null, Press.Right)).ContainsExactly(0, 1, 3, 4, 5, 6, 7);
+		AssertThat(Walk(8, 2, 5, 7, Press.Left)).ContainsExactly(7, 6, 5, 4, 3, 1, 0);
+		AssertThat(Walk(8, 5, 0, null, Press.Right)).ContainsExactly(0, 1, 2, 3, 4, 6, 7);
+		AssertThat(Walk(8, 5, 4, 7, Press.Left)).ContainsExactly(7, 6, 4, 3, 2, 1, 0);
+	}
 }

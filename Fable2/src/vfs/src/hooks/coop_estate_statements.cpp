@@ -401,6 +401,15 @@ void DriveJoiner(PPCContext& ctx, uint8_t* base, float seconds) {
       if (old != g_joiner.buildings.end() && old->second.record == record) {
         stated.applied_to = old->second.applied_to;  // unchanged: this machine's own writes stand
       }
+      constexpr uint32_t kRent = static_cast<uint32_t>(refii::vfs::EstateValue::kRent);
+      if (old != g_joiner.buildings.end() &&
+          (old->second.record.values[kRent] != record.values[kRent] || old->second.record.level != record.level)) {
+        // An open property page restates its rent / profit line from the rent getter each Update (page 1's
+        // `sub_8299A728`: `bl sub_8282C110`, which answers this statement); this line says when it changed.
+        REXLOG_INFO("Refii estate: the host's statement of building {:016X}: rent {} -> {}, level {} -> {}",
+                    record.building, old->second.record.values[kRent], record.values[kRent],
+                    static_cast<int32_t>(old->second.record.level), static_cast<int32_t>(record.level));
+      }
       next[record.building] = stated;
     }
     g_joiner.buildings = std::move(next);
@@ -455,6 +464,8 @@ void DriveEstateStatements(PPCContext& ctx, uint8_t* base, float seconds) {
 }
 
 void EstateStatementsChanged() { g_host.restate_in = 0.0; }
+
+std::string WideTextUtf8(uint8_t* base, uint32_t wide) { return WideUtf8(base, wide); }
 
 void EstateLook(PPCContext& ctx, uint8_t* base, uint64_t sign_uid) {
   const uint32_t sign = refii_household_resolve_uid(&ctx, base, sign_uid);

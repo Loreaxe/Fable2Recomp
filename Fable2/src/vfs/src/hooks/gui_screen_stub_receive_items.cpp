@@ -18,6 +18,7 @@
 #include "core/guest_build.h"
 #include "core/mod_values.h"
 #include "core/refii_mod.h"
+#include "core/refii_mod_events.h"
 #include "hooks/gui_screen_stub_support.h"
 #include "hooks/gui_screen_stubs.h"
 #include "hooks/ppc_externs.h"
@@ -49,6 +50,10 @@ namespace {
 /// Host-only record kind; the host side names it Engine_UiReceiveItemsSurface.StateKind.
 constexpr int32_t kCardKind = 1006;
 
+/// The GUI owner stated for the open card (StateReceivedCardOwner): -1 none; else the owner before it, 1
+/// player two, 0 player one, put back when the card leaves. Guest tick thread only.
+int32_t g_card_owner_before = -1;
+
 constexpr uint32_t kCardVtable = 0x820C0E08u;
 
 /// The NameAndIcon line at `handle`: a guest string, two hops, NUL-terminated. Quotes, commas and line
@@ -79,13 +84,21 @@ REX_EXTERN(rex_CGUIReceiveItems_DrawCard) {
   REX_FUNC_PROLOGUE();
   const uint32_t h = ctx.r3.u32;
   const uint32_t preview = h + 96u;
+  // THE AMOUNT IS THE EXTRA LINE'S. +72 is that line's amount, written with the line's key at
+  // +68 (`stw r29,0x48(r31)` / `stw r11,0x44(r31)` in the money fill `sub_825383D0`, TU1 0x82538494 / 0x82538498,
+  // disc `sub_82403B70`); an item's SetItem writes +68 the empty text (`stw r10,0x44(r29)` TU1 0x82538188 / disc
+  // 0x82403928, the key of "" — FNV-1's basis 0x811C9DC5)
+  // and leaves +72 as the last money card left it, and the card's own draw never reads +72. So it is stated only
+  // under a line of its own: a gold card's 150 no longer rides on the hat card after it.
+  const uint32_t extra = LoadU32(base, h + 68u);
+  const uint32_t amount = extra != 0u && extra != 0x811C9DC5u ? LoadU32(base, h + 72u) : 0u;
   char fields[512];
   std::snprintf(fields, sizeof(fields),
                 "up=1,peer=%u,front=1,usable=%u,record=%u,model=%u,icon=%u,title=%u,desc=%u,extra=%u,amount=%u,"
                 "name='%s'",
                 base[h + 324u] != 0u ? 1u : 0u, base[h + 80u] != 0u ? 1u : 0u, LoadU32(base, preview),
                 LoadU32(base, preview + 124u), LoadU32(base, h + 56u), LoadU32(base, h + 60u),
-                LoadU32(base, h + 64u), LoadU32(base, h + 68u), LoadU32(base, h + 72u),
+                LoadU32(base, h + 64u), extra, amount,
                 NameLine(base, h + 76u).c_str());
   refii::mods::PostEvent(kCardKind, fields);
   base[h + 81u] = 1u;
@@ -159,11 +172,40 @@ REX_EXTERN(rex_CGUIReceiveItems_OnLeave) {
   base[h + 325u] = 0u;
   refii::mods::PostEvent(kCardKind, "up=0");
   Said("received item (8)", "OnLeave", h);
+  if (g_card_owner_before >= 0) {
+    const bool before_two = g_card_owner_before == 1;
+    g_card_owner_before = -1;
+    StateGuiOwner(ctx, base, s.frame, before_two);
+    REXLOG_INFO("Refii screen stub: received item (8) — the card left; the GUI's owner is player {} again",
+                before_two ? 2 : 1);
+  }
 }
 
 // ---- THE LEVERS -----------------------------------------------------------------------------
 
 namespace refii::vfs {
+
+// guest_tick_pump.cpp: this machine is an online joiner; local player two owns the GUI; the inventory action
+// player two's book posts (`Inventory:<op>:<record>`, acted on the hero whose menus are open).
+bool IsCoopJoiner(uint8_t* base);
+bool MenusActForPlayerTwo(uint8_t* base);
+bool DispatchInventoryAction(PPCContext& ctx, uint8_t* base, const std::string& body, int32_t addressed,
+                             uint32_t ticket);
+
+// THE CARD IS ITS RECEIVER'S. The item card's opener `sub_823C4340` (TU1 0x823C4340 / disc 0x824F9570) states
+// no GUI owner — SetScreen(8), SetActiveScreen, SetItem, EnterGuiMode (0x823C4378..0x823C43AC) — so the card
+// inherits the last statement and the GUI tick serves that player's input. The core Lua states its receiver
+// right after GUI.DisplayReceivedItem opened it (Refii._received_card_owner: the hero whose inventory holds the
+// item), through the setter every world screen's opener uses (StateGuiOwner), and the owner before it is put
+// back when the card leaves (OnLeave, above). A card replaced by the next one hands the first statement on.
+void StateReceivedCardOwner(PPCContext& ctx, uint8_t* base, bool player_two) {
+  if (g_card_owner_before < 0) {
+    g_card_owner_before = StatedPausePlayerTwo() ? 1 : 0;
+  }
+  const Scratch s = Claim(ctx);
+  StateGuiOwner(ctx, base, s.frame, player_two);
+  REXLOG_INFO("Refii screen stub: received item (8) — the card is player {}'s (its receiver)", player_two ? 2 : 1);
+}
 
 bool DispatchCard(PPCContext& ctx, uint8_t* base, uint32_t player, const std::string& verb) {
   // The handler's two closing arms (`sub_82537128`): 36 Done, behind the one-second gate
@@ -193,6 +235,70 @@ bool DispatchCard(PPCContext& ctx, uint8_t* base, uint32_t player, const std::st
       return true;
     }
     const uint32_t record = LoadU32(base, h + 96u);
+    // EQUIP NOW FOR THE CARD'S OWN PLAYER. `sub_8246FFF0(record)` (disc `sub_8283BB90`, the same 140
+    // instructions) looks the record up in the LOCAL player's inventory — the pick inlined, `lbz r8,0x34` /
+    // `lbz r11,0x35` of the net manager, `li r4,1`, `li r4,2` when not both, `bl sub_82264230` (TU1
+    // 0x82470030..0x82470068 / disc 0x8283BBD0..0x8283BC08), the record's hero, its component 13,
+    // `CECInventory_FindItemByRecordHash` (0x824701B4) — and hands the item to
+    // `lhGuiInventory_ActivateItemByCategory(G+52, item, 1)` (0x82470200 / disc 0x825A5A40), which reads the
+    // item's InventoryItemComponent "Category" and routes it: 1 to the pending weapon pick `sub_826CA098`, 2..6 /
+    // 16 / 24 / 26 to the use `sub_826CA170`, 9..13 / 17..23 to the wear `sub_826CB218(…, 0)`. Each of those
+    // takes a player of its own: the use `lhEntity_GetModel(players[0])` — the hero-one slot, list+0x68 / +4
+    // (`addi r3,r3,0x68 ; lwz r11,4(r3)` lhEntity_GetModel TU1 0x8222C1C4 / disc 0x8222C21C; the use's read
+    // 0x826CA198..0x826CA1AC / disc 0x825A6120..0x825A6134); the wear `sub_8229EE78(sub_821C7CE0(G))`
+    // (0x826CB24C / 0x826CB380); the weapon only marks GUI+52's slots (0x826CA134 / 0x826CA160), and the
+    // card's own dismiss (`ExitScreen`) applies them to `lhEntity_GetModel(players[0])` again (0x8236EE98..
+    // 0x8236EEB0 / disc 0x82337098..0x823370B0).
+    // Player two's card — local player two owning the GUI (the card's owner, StateReceivedCardOwner), or this
+    // machine an online joiner (its own card, Refii._received_item):
+    //   * a WEAPON takes the road player two's own book takes — local player two: `Inventory:equip:<record>`
+    //     (EquipRecord on their hero, DispatchInventoryAction's direct path); an online joiner: the co-op kit's
+    //     pick, which the host arms (below). The guest's pending pick lands on the hero-one slot at the dismiss;
+    //   * anything else runs the guest's own Equip now under OwnerScope: in local co-op "the local player"
+    //     answers player two (the inline pick above, RefiiCoopInlineLocalPlayer at 0x82470068 / 0x8283BC08;
+    //     `sub_821C7CE0`'s own, RefiiCoopShopPlayer) and the hero-one slot holds hero two (ListedHeroScope);
+    //     a joiner's picks already answer its own hero (not the session host: `li r4,2`) and the slot is lent.
+    const bool joiner = IsCoopJoiner(base);
+    const bool local_two = !joiner && refii_mod_coop_mode(base) == 1 && MenusActForPlayerTwo(base);
+    if (joiner || local_two) {
+      uint32_t component = 0u;
+      int32_t category = -1;
+      const bool known = refii_mod_record_ref(&ctx, base, record, "InventoryItemComponent", &component) != 0 &&
+                         component != 0u && refii_mod_record_int(&ctx, base, component, "Category", &category) != 0;
+      if (known && category == 1 && joiner) {
+        // AN ONLINE JOINER'S WEAPON IS THE HOST'S TO ARM. The joiner's book never equips on the joiner: its
+        // `Inventory:equip:` becomes the co-op kit's pick (Fable2UiVerbs, CoopHeroKit.SetLocalWeapon), the host
+        // arms hero two from the kit (ApplyEquip → EquipRecord; "a joiner never instantiates") and the joiner
+        // attaches the host's replica by net id. An item drawn HERE instead is a joiner-local entity whose net id
+        // the host cannot resolve: its attach message (`ld r4,0x48(r31)` → `lhNetManager_FindEntityByNetId` →
+        // `CECHeldItems_AttachItemToSlot`, TU1 0x824FEC6C..0x824FECCC / disc 0x82504434..0x82504494) is refused on
+        // the host (coop_player_hooks.cpp), and player two shows unarmed there. So the card's pick takes the
+        // book's road — the same event the quick slots post on a joiner (PerformQuickslot kind 3).
+        char fields[64];
+        std::snprintf(fields, sizeof(fields), "player=2,op='weapon',record='0x%08x'", record);
+        refii::mods::PostEvent(REFII_MOD_HOST_HERO_KIND, fields);
+        Call(ctx, base, s.frame, 0x82538BF0u, {h, 1u});
+        REXLOG_INFO("Refii guest-tick pump: Card:{}:equip — this joiner's card: weapon 0x{:08X} goes to the co-op kit; "
+                    "the host arms player two with it, the card dismissed", player, record);
+        return true;
+      }
+      if (known && category == 1) {
+        DispatchInventoryAction(ctx, base, "equip:" + std::to_string(record), 0, 0u);
+        Call(ctx, base, s.frame, 0x82538BF0u, {h, 1u});
+        REXLOG_INFO("Refii guest-tick pump: Card:{}:equip — player two's card (local): weapon 0x{:08X} drawn by "
+                    "player two's own equip, the card dismissed", player, record);
+        return true;
+      }
+      {
+        OwnerScope scope(base, 8u);
+        Call(ctx, base, s.frame, 0x8246FFF0u, {record});
+        Call(ctx, base, s.frame, 0x82538BF0u, {h, 1u});
+      }
+      REXLOG_INFO("Refii guest-tick pump: Card:{}:equip — player two's card ({}): record 0x{:08X} (category {}) "
+                  "activated for player two's hero, the card dismissed", player, joiner ? "this joiner's" : "local",
+                  record, category);
+      return true;
+    }
     Call(ctx, base, s.frame, 0x8246FFF0u, {record});
     Call(ctx, base, s.frame, 0x82538BF0u, {h, 1u});
     REXLOG_INFO("Refii guest-tick pump: Card:{}:equip — record 0x{:08X} activated, the card dismissed", player,

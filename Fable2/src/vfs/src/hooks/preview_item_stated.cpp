@@ -70,6 +70,18 @@ REX_EXTERN(rex_lhGuiPreviewObject_Set) {
     const uint32_t ref = ctx.r4.u32;
     const uint32_t record = ref >= 0x10000u && ref < 0xC0000000u ? refii::vfs::LoadGuestU32(base, ref) : 0u;
     const uint32_t screen = ScreenOfPreview(ctx, base, preview);
+    // A relay (page_fills_stated.cpp: the online joiner's shop item pane, run on the host): the record is the
+    // statement; this machine builds no preview model and keeps no "said" for it — the joiner shows it.
+    if (refii::vfs::PageFillRelaying()) {
+        refii::vfs::NotePageFillRecord("preview", record);
+        if (screen != 0u) {
+            char hex[9];
+            std::snprintf(hex, sizeof hex, "%08X", record);
+            const std::string text = hex;
+            Post("@PreviewItem.Set", screen, &text);
+        }
+        return;
+    }
     __imp__rex_lhGuiPreviewObject_Set(ctx, base);
     refii::vfs::NotePageFillRecord("preview", record);
 
@@ -97,6 +109,12 @@ REX_EXTERN(rex_lhGuiPreviewObject_Set) {
 REX_EXTERN(rex_lhGuiPreviewObject_Hide) {
     REX_FUNC_PROLOGUE();
     const uint32_t screen = ScreenOfPreview(ctx, base, ctx.r3.u32);
+    if (refii::vfs::PageFillRelaying()) {
+        if (screen != 0u) {
+            Post("@PreviewItem.Hide", screen, nullptr);
+        }
+        return;
+    }
     __imp__rex_lhGuiPreviewObject_Hide(ctx, base);
     if (screen == 0u) {
         return;

@@ -29,8 +29,10 @@ namespace Refii.Entities;
 /// them. A bone under two hidden roots collapses to the outer one (<see cref="Collapse"/>). The twin's
 /// skin is copied again whenever the rig's changes. The skeleton is never written, so the shadow
 /// proxy (its own skeleton) and every other mesh on the rig are unchanged.</para>
-/// <para>THE LOOK IS THE BODY'S. Mesh, materials, transparency, ranges and the instance shader
-/// parameters are copied from the body on every update; shadows stay the proxy's (the twin casts none).
+/// <para>THE LOOK IS THE BODY'S, AT ITS VIEW'S FADE. Mesh, materials, ranges and the instance shader
+/// parameters are copied from the body on every update, and the fade is the one the twin's view draws the body at
+/// (<see cref="Engine_ViewFade.TransparencyIn"/>: each split half its own camera's); shadows stay the proxy's (the
+/// twin casts none).
 /// Visibility follows the body: the twin is a child of the body's skeleton, under the body.</para>
 /// </remarks>
 public sealed class Engine_ViewTwin
@@ -205,7 +207,7 @@ public sealed class Engine_ViewTwin
 			SyncBinds();
 		}
 
-		MirrorLook();
+		CopyLook(_body, _twin, view, ref _materialsKey, _parameters);
 		uint twinLayers = Engine_ViewHides.TwinLayers(view, _body.Layers);
 		if (_twin.Layers != twinLayers)
 		{
@@ -220,10 +222,39 @@ public sealed class Engine_ViewTwin
 	/// </summary>
 	public static void DrawBody(MeshInstance3D body, bool firstTwin, bool secondTwin)
 	{
+		if (firstTwin || secondTwin)
+		{
+			Narrowed[body] = (firstTwin, secondTwin);
+		}
+		else
+		{
+			Narrowed.Remove(body);
+		}
+
 		if (GodotObject.IsInstanceValid(body))
 		{
 			RenderingServer.InstanceSetLayerMask(body.GetInstance(), Engine_ViewHides.BodyLayers(firstTwin, secondTwin, body.Layers));
 		}
+	}
+
+	/// <summary>The bodies <see cref="DrawBody"/> keeps out of a view, and which views have their twin.</summary>
+	private static readonly Dictionary<MeshInstance3D, (bool First, bool Second)> Narrowed =
+		new(ReferenceEqualityComparer.Instance);
+
+	/// <summary>
+	/// Whether <paramref name="body"/> stands a twin in either view (a rig's hidden bones), and which: its
+	/// views are this class's, so a per-view fade reaches it through the twins (<see cref="Engine_ViewFade"/>).
+	/// </summary>
+	public static bool Narrows(MeshInstance3D body, out bool firstTwin, out bool secondTwin)
+	{
+		if (Narrowed.TryGetValue(body, out (bool First, bool Second) views) && GodotObject.IsInstanceValid(body))
+		{
+			(firstTwin, secondTwin) = views;
+			return true;
+		}
+
+		firstTwin = secondTwin = false;
+		return false;
 	}
 
 	/// <summary>The twin gone; the body's views are its owner's to restore (<see cref="DrawBody"/>).</summary>
@@ -267,9 +298,15 @@ public sealed class Engine_ViewTwin
 		}
 	}
 
-	private void MirrorLook()
+	/// <summary>
+	/// Keeps <paramref name="twin"/> <paramref name="body"/>'s look as view <paramref name="view"/> draws it: mesh,
+	/// materials, ranges and instance parameters copied; the fade the body takes in that view
+	/// (<see cref="Engine_ViewFade.TransparencyIn"/>) with the overlay it needs. <paramref name="materialsKey"/> and
+	/// <paramref name="parameters"/> are the caller's, naming the instance parameters once per material set.
+	/// </summary>
+	internal static void CopyLook(MeshInstance3D body, MeshInstance3D twin, int view, ref ulong materialsKey,
+		List<StringName> parameters)
 	{
-		MeshInstance3D body = _body, twin = _twin;
 		if (!ReferenceEquals(twin.Mesh, body.Mesh))
 		{
 			twin.Mesh = body.Mesh;
@@ -281,9 +318,10 @@ public sealed class Engine_ViewTwin
 			twin.MaterialOverride = body.MaterialOverride;
 		}
 
-		if (twin.MaterialOverlay != body.MaterialOverlay)
+		Material? overlay = Engine_ViewFade.OverlayIn(body, view);
+		if (twin.MaterialOverlay != overlay)
 		{
-			twin.MaterialOverlay = body.MaterialOverlay;
+			twin.MaterialOverlay = overlay;
 		}
 
 		key = Fold(key, body.Mesh);
@@ -301,9 +339,10 @@ public sealed class Engine_ViewTwin
 			key = Fold(key, material);
 		}
 
-		if (twin.Transparency != body.Transparency)
+		float transparency = Engine_ViewFade.TransparencyIn(body, view);
+		if (twin.Transparency != transparency)
 		{
-			twin.Transparency = body.Transparency;
+			twin.Transparency = transparency;
 		}
 
 		if (twin.GIMode != body.GIMode)
@@ -350,21 +389,26 @@ public sealed class Engine_ViewTwin
 
 		// The instance parameters the body's materials declare: named once per material set, then
 		// copied every update (a fade or a tint moves them between frames).
-		if (key != _materialsKey)
+		// The instance parameters the body's materials declare, named from the shaders' source (never the server's
+		// list: Engine_InstanceUniformNames). On a new material set every one is copied, a value not held asked of
+		// the server once (a returned value, so it waits); after that only the held ones, which are what moves.
+		bool fresh = key != materialsKey;
+		if (fresh)
 		{
-			_materialsKey = key;
-			_parameters.Clear();
-			foreach (Godot.Collections.Dictionary parameter in RenderingServer.InstanceGeometryGetShaderParameterList(body.GetInstance()))
-			{
-				if (parameter.TryGetValue("name", out Variant name))
-				{
-					_parameters.Add(name.AsStringName());
-				}
-			}
+			materialsKey = key;
+			parameters.Clear();
+			NamesScratch.Clear();
+			Refii.Core.Engine_InstanceUniformNames.OfNode(body, NamesScratch);
+			parameters.AddRange(NamesScratch);
 		}
 
-		foreach (StringName name in _parameters)
+		foreach (StringName name in parameters)
 		{
+			if (!fresh && !Refii.Core.Engine_InstanceParams.Holds(body, name))
+			{
+				continue;
+			}
+
 			Variant value = Refii.Core.Engine_InstanceParams.Get(body, name);
 			if (value.VariantType != Variant.Type.Nil)
 			{
@@ -372,6 +416,8 @@ public sealed class Engine_ViewTwin
 			}
 		}
 	}
+
+	private static readonly HashSet<StringName> NamesScratch = new();
 
 	private static ulong Fold(ulong key, GodotObject? item) =>
 		(key ^ (item is null ? 0ul : item.GetInstanceId())) * 1099511628211ul;

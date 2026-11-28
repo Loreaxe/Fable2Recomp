@@ -23,6 +23,7 @@ PartnerDogFacts Hero() {
   f.hero_one_has_dog = true;
   f.kit_stated = true;
   f.attempt_due = true;
+  f.partner_bound = true;
   f.hero_ticks = 30u;
   return f;
 }
@@ -72,6 +73,29 @@ int main() {
     PartnerDogFacts f = Hero();
     f.attempt_due = false;
     assert(NextPartnerDogStep(f, kGone, kWait) == PartnerDogStep::kNone);
+  }
+
+  // A new hero whose Player does not hold them yet (the join's deferred SetupCamera): no dog until it
+  // does, whatever else holds — making it would teach its tricks to a master whose Player has no body.
+  {
+    PartnerDogFacts f = Hero();
+    f.partner_bound = false;
+    assert(NextPartnerDogStep(f, kGone, kWait) == PartnerDogStep::kNone);
+    f.kit_stated = false;
+    f.hero_ticks = 100000u;
+    assert(NextPartnerDogStep(f, kGone, kWait) == PartnerDogStep::kNone);
+    f.partner_bound = true;
+    assert(NextPartnerDogStep(f, kGone, kWait) == PartnerDogStep::kSpawn);
+  }
+
+  // An unbound Player never holds back the dress or the destroy of a dog that stands.
+  {
+    PartnerDogFacts f = Hero();
+    f.partner_bound = false;
+    f.has_dog = true;
+    assert(NextPartnerDogStep(f, kGone, kWait) == PartnerDogStep::kDress);
+    f.partner_is_hero = false;
+    assert(NextPartnerDogStep(f, kGone, kWait) == PartnerDogStep::kDestroy);
   }
 
   // A new hero whose kit has not come waits for it, then takes the plain breed.

@@ -23,13 +23,22 @@
 // plain henchman has none, as shipped; the host destroys it when player two leaves or becomes the
 // henchman (`entity:Destroy()`, `sub_8238D828`, which sends DestroyEntity to the joiner). A joiner
 // never creates or destroys one. The rule is core/coop_partner_dog_rule.h.
+//
+// NOT BEFORE PLAYER TWO'S PLAYER HOLDS THEIR BODY. The create teaches the dog its tricks, and a grown
+// hero's completed DogLover set reaches Stats.SetTitleAsFreeToBuy, which reads the id-2 Player's body
+// untested (the rule header has the instructions). At a local join that body is bound only by the
+// deferred SetupCamera, frames after the new hero stands; the dog made in between faulted at guest
+// 0x14 (2026-11-28). The guest's own lookup is read here: `sub_82264230(players, 2)` then
+// `sub_8229EE78` (Player+0x10 the weak block, its first word the body).
 
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <string>
+#include <vector>
 
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
@@ -49,12 +58,14 @@ extern "C" int RefiiCoopDressPartnerDog(PPCContext* ctx, uint8_t* base, uint32_t
 extern "C" int RefiiCoopPartnerDogName(char* out, uint32_t capacity);
 extern "C" void RefiiCoopPartnerScreen(int on);
 extern "C" REX_FUNC(__imp__rex_CECDog_Update);
+extern "C" REX_FUNC(rex_CECDog_UnlockTrick);
 extern "C" REX_FUNC(__imp__rex_CECDog_TeleportNearMasterOffScreen);
 extern "C" REX_FUNC(__imp__rex_CECDog_IsMasterInsideBuilding);
 extern "C" uint32_t RefiiGdbRecordId(PPCContext* ctx, uint8_t* base, const char* name);
 extern "C" uint32_t refii_mod_component(uint8_t* base, uint32_t entity, uint32_t id);
 extern "C" uint32_t RefiiCoopPartnerDogKit(uint32_t* definition, int32_t* searching, int32_t* combat,
                                            char* tricks, uint32_t capacity);
+extern "C" uint32_t RefiiCoopPlayerWithId(uint8_t* base, uint32_t id);
 
 namespace {
 
@@ -81,6 +92,18 @@ std::array<uint32_t, 4> g_doomed{};
 
 std::atomic<bool> g_said_bind{false};
 std::atomic<bool> g_said_global{false};
+
+/// The id-2 Player holds `hero_two` as its body (`sub_8229EE78` on it: Player+0x10 the weak block,
+/// `*block` the body), or there is no id-2 Player (an online host's; the guest's lookup answers 0 and
+/// SetTitleAsFreeToBuy skips the read). False from the new hero's creation until SetupCamera.
+bool PartnerPlayerHoldsBody(uint8_t* base, uint32_t hero_two) {
+  const uint32_t player = RefiiCoopPlayerWithId(base, 2u);
+  if (player == 0u) {
+    return true;
+  }
+  const uint32_t block = refii::vfs::LoadGuestU32(base, player + 0x10u);
+  return Plausible(block) && refii::vfs::LoadGuestU32(base, block) == hero_two;
+}
 
 /// Whose master a dog gets at a hero-one pick: player two for player two's dog, else `hero_one`.
 ///
@@ -141,6 +164,9 @@ void Destroy(PPCContext* ctx, uint8_t* base, uint32_t dog) {
   refii_mod_run_game_lua(ctx, base, chunk);
 }
 
+/// Set while Spawn teaches player two's new dog the tricks it already knew (RefiiCoopDogTrickRestored).
+bool g_restoring_tricks = false;
+
 /// Creates player two's dog near them from their HeroState's dog. The breed must be one of the
 /// game's own hero dogs; anything else (or none) makes the plain one.
 void Spawn(PPCContext* ctx, uint8_t* base) {
@@ -150,13 +176,19 @@ void Spawn(PPCContext* ctx, uint8_t* base) {
   char tricks[1024] = {};
   RefiiCoopPartnerDogKit(&definition, &searching, &combat, tricks, sizeof(tricks));
 
-  // The trick names are GDB names (the pump keeps only [A-Za-z0-9_]); quoted for a Lua table.
+  // The tricks are record ids (`0x<id>`, CoopHeroKit.DogTrickTokens), taught below through the guest's own record
+  // handle; a GDB name (an older kit) goes into the chunk's Lua table as before (the pump keeps only [A-Za-z0-9_]).
   std::string list;
+  std::vector<uint32_t> trick_ids;
   for (const char* at = tricks; *at != '\0';) {
     const char* end = std::strchr(at, ',');
     const std::size_t length = end != nullptr ? static_cast<std::size_t>(end - at) : std::strlen(at);
-    if (length != 0u) {
-      list += (list.empty() ? "\"" : ",\"") + std::string(at, length) + "\"";
+    const std::string token(at, length);
+    if (token.size() == 10u && token[0] == '0' && token[1] == 'x') {
+      const uint32_t id = static_cast<uint32_t>(std::strtoul(token.c_str() + 2, nullptr, 16));
+      if (id != 0u) trick_ids.push_back(id);
+    } else if (length != 0u) {
+      list += (list.empty() ? "\"" : ",\"") + token + "\"";
     }
     at += length + (end != nullptr ? 1u : 0u);
   }
@@ -205,11 +237,40 @@ void Spawn(PPCContext* ctx, uint8_t* base) {
       "  local record = GDB.GetRecord(name)\n"
       "  if record ~= nil and not record:IsNull() then Dog.UnlockTrickIfNecessary(dog, record) end\n"
       "end\n";
+  g_restoring_tricks = true;
   const bool ran = refii_mod_run_game_lua(ctx, base, chunk.c_str()) != 0;
   const uint32_t dog = RefiiCoopPlayerDog(base, 2);
-  REXLOG_INFO("coop dogs: player two's dog {} ({}, stated breed 0x{:08X}, levels {}/{}, tricks [{}]){}",
-              dog != 0u ? "created" : "NOT created", breed, definition, searching, combat, tricks,
-              ran ? "" : " — the chunk failed");
+  // Each trick id taught as the Lua binding teaches a record: the record handle `sub_821DA348(pair, hash)`
+  // (disc `sub_821D9ED8`; what GDB.GetRecord makes, Lua_GDB_GetRecord 0x827E6C48: +0 the hash, +4 the GDB entry
+  // `GDBManager_FindEntryByHash`), then Dog.UnlockTrickIfNecessary on the dog component (97) with it
+  // (rex_CECDog_UnlockTrick, TU1 0x828114D0: r3 the component, r4 the pair).
+  uint32_t taught = 0u;
+  const uint32_t dog_comp = dog != 0u && refii_mod_entity_alive(base, dog) != 0 ? refii_mod_component(base, dog, 97u) : 0u;
+  if (dog_comp != 0u && ctx != nullptr) {
+    for (uint32_t id : trick_ids) {
+      PPCContext frame = refii::mods::Frame(*ctx, 0x200u);
+      const uint32_t pair = (frame.r1.u32 + 0x80u) & ~0xFu;
+      refii::mods::StoreU32(base, pair, 0u);
+      refii::mods::StoreU32(base, pair + 4u, 0u);
+      PPCContext make = frame;
+      make.r3.u64 = pair;
+      make.r4.u64 = id;
+      if (!refii::mods::CallGuest(make, base, refii::guest::Address(0x821DA348u)) ||
+          refii::mods::LoadU32(base, pair + 4u) == 0u) {
+        continue;  // no such record here
+      }
+      PPCContext teach = frame;
+      teach.r3.u64 = dog_comp;
+      teach.r4.u64 = pair;
+      rex_CECDog_UnlockTrick(teach, base);
+      ++taught;
+    }
+  }
+  g_restoring_tricks = false;
+  REXLOG_INFO("coop dogs: player two's dog {} ({}, stated breed 0x{:08X}, levels {}/{}, tricks [{}], {} of {} trick "
+              "record(s) taught){}",
+              dog != 0u ? "created" : "NOT created", breed, definition, searching, combat, tricks, taught,
+              trick_ids.size(), ran ? "" : " — the chunk failed");
 }
 
 void Tick(PPCContext* ctx, uint8_t* base, float) {
@@ -217,6 +278,7 @@ void Tick(PPCContext* ctx, uint8_t* base, float) {
   static uint32_t hero_two_ticks = 0u;
   static uint32_t gone_ticks = 0u;
   static uint32_t next_attempt = 0u;
+  static bool said_unbound = false;
   ++tick;
   if ((tick % kCadence) != 0u || base == nullptr) {
     return;
@@ -258,6 +320,15 @@ void Tick(PPCContext* ctx, uint8_t* base, float) {
     facts.hero_one_has_dog = RefiiCoopPlayerDog(base, 1) != 0u;
     uint32_t definition = 0u;
     facts.kit_stated = RefiiCoopPartnerDogKit(&definition, nullptr, nullptr, nullptr, 0u) != 0u;
+    facts.partner_bound = PartnerPlayerHoldsBody(base, hero_two);
+    if (!facts.partner_bound && facts.hero_one_has_dog && !said_unbound) {
+      said_unbound = true;
+      REXLOG_INFO("coop dogs: player two's dog waits for player two's Player to hold their hero (0x{:08X})",
+                  hero_two);
+    } else if (facts.partner_bound && said_unbound) {
+      said_unbound = false;
+      REXLOG_INFO("coop dogs: player two's Player holds their hero (0x{:08X}); the dog can be made", hero_two);
+    }
   }
 
   switch (refii::coop::NextPartnerDogStep(facts, kGoneTicks, kKitWaitTicks)) {
@@ -394,4 +465,18 @@ REX_EXTERN(rex_CECDog_IsMasterInsideBuilding) {
     return;
   }
   __imp__rex_CECDog_IsMasterInsideBuilding(ctx, base);
+}
+
+// A TRICK THE DOG ALREADY KNEW IS RESTORED, NOT LEARNT. Dog.UnlockTrickIfNecessary (TU1 0x828114D0 / disc 0x82787498)
+// appends a new trick (`bl sub_82524B28` 0x82811560 / disc `bl sub_82601548` 0x82787528) and then plays the lesson:
+// DogTrickTutorial (`bl lhTutorials_Display` 0x8281159C), DogLearningFX, and for THE PLAYERS' HERO — `bl sub_82174410`
+// (0x828117BC), its comp57 (`cmpwi cr6,r7,0x39`) — achievement 14 (`li r4,0xE` / `bl CECStats_UnlockAchievement`
+// 0x828118D8) and, when the count equals ExpressionsTaughtForDogLover, `Lua_Stats_SetTitleAsFreeToBuy(stats,
+// "ObjectInventoryHeroTitleDogLover")` (0x8281195C), then the Completionist count (0x82811968..0x828119D8). Player
+// two's dog made at a join (Spawn) is taught the tricks it already knew, so every join told the HOST's hero it had
+// earned Dog Lover. A save's tricks are restored, never taught, on the 360. Before `lis r11,aDogtricktutori@ha`
+// (TU1 0x82811564 / disc 0x8278752C), true jumps to the function's end (0x828119DC / 0x827879A4): the trick is
+// appended (and the mod event raised, mod_events.cpp rex_CECDog_UnlockTrick), nothing else.
+bool RefiiCoopDogTrickRestored() {
+  return g_restoring_tricks;
 }

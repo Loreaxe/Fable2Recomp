@@ -108,6 +108,21 @@ public static class Engine_UiTemplateJson
 
 	public static int Integer(JsonNode? node, int fallback = 0) => (int)Number(node, fallback);
 
+	/// <summary>A screen's glint channel (Engine_UiScreenTemplate.Glints) as the file spells it: "intensity", "alpha", or "" for none.</summary>
+	private static string GlintsText(Engine_UiParticles.OpacityChannel? channel) => channel switch
+	{
+		Engine_UiParticles.OpacityChannel.Intensity => "intensity",
+		Engine_UiParticles.OpacityChannel.Alpha => "alpha",
+		_ => string.Empty,
+	};
+
+	private static Engine_UiParticles.OpacityChannel? GlintsOf(string text) => text switch
+	{
+		"intensity" => Engine_UiParticles.OpacityChannel.Intensity,
+		"alpha" => Engine_UiParticles.OpacityChannel.Alpha,
+		_ => null,
+	};
+
 	private static string TextOr(JsonObject record, string key, string fallback) =>
 		record.TryGetPropertyValue(key, out JsonNode? node) ? Text(node) : fallback;
 
@@ -382,6 +397,7 @@ public static class Engine_UiTemplateJson
 		screen.PageRootUnit = TextOr(record, "pageRootUnit", screen.PageRootUnit);
 		screen.BackdropUnit = TextOr(record, "backdropUnit", screen.BackdropUnit);
 		screen.BoxPresentation = TextOr(record, "boxPresentation", screen.BoxPresentation);
+		if (record.TryGetPropertyValue("glints", out JsonNode? glints)) screen.Glints = GlintsOf(Text(glints));
 
 		if (record.TryGetPropertyValue("ownsList", out JsonNode? owns)) screen.OwnsList = Flag(owns);
 		if (record.TryGetPropertyValue("restFromFile", out JsonNode? rest)) screen.RestFromFile = Flag(rest);
@@ -683,6 +699,7 @@ public static class Engine_UiTemplateJson
 		PutList("chrome", screen.ChromeUnits);
 		PutList("panelSubtrees", screen.PanelSubtrees);
 		PutList("ownedElsewhere", screen.OwnedElsewhere);
+		Put("glints", GlintsText(screen.Glints));
 		Put("boxPresentation", screen.BoxPresentation);
 		PutList("boxUnits", screen.BoxUnits);
 		PutMap("boxPaths", screen.BoxPaths);

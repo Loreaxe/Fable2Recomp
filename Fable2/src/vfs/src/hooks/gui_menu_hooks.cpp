@@ -178,8 +178,22 @@ REX_EXTERN(rex_lhGuiMenu_GetHighlightedItemData) {
     }
 
     AnsweredRow row;
-    const bool stated = StatedRowForCurrentScreen(&row);
+    bool stated = StatedRowForCurrentScreen(&row);
     const uint32_t screen = CurrentScreen();
+    // The host's run of an online joiner's highlighted shop row (coop_shop_for_joiner.cpp ShowRow): the row is the
+    // joiner's, whatever this machine's own screen is.
+    {
+        uint32_t look_type = 0u;
+        uint32_t look_id = 0u;
+        std::string look_name;
+        if (refii::vfs::JoinerShopLookRow(&look_type, &look_id, &look_name)) {
+            row = NoRow();
+            row.event_type = static_cast<int32_t>(look_type);
+            row.id = static_cast<int32_t>(look_id);
+            std::snprintf(row.name, sizeof row.name, "%s", look_name.c_str());
+            stated = true;
+        }
+    }
     if (!stated) {
         row = NoRow();
         if (screen == 14u) {
